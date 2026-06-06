@@ -1,7 +1,9 @@
 # arda — Antigen Receptor Domain Annotation
 
-Fast FR/CDR region annotation for **TCR** and **BCR** nucleotide *and* amino-acid
-sequences (MHC groove/helix annotation is scaffolded for a future release).
+**Versatile, fast, exact** FR/CDR annotation of **TCR** and **BCR** sequences —
+mRNA and protein in FASTA, and reads in FASTQ from both **amplicon** and **bulk
+RNA-seq** — for nucleotide *and* amino-acid input, across all loci at once (MHC
+groove/helix annotation is scaffolded for a future release).
 
 `arda` does the expensive IgBLAST work **once, offline** — building a pre-aligned
 reference database of every in-frame V·J germline scaffold with FR1–4 / CDR1–3
@@ -43,8 +45,13 @@ Supported organisms: **human, mouse** (full IG + TR), **rat, rabbit, rhesus_monk
 arda info                                   # resolved paths + tool availability
 arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
+arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
 arda build-db --organism all                # rebuild references (needs IgBLAST)
 ```
+
+Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on
+**both strands** by default (reverse-complement reads are re-oriented and flagged
+`rev_comp=T`); a single search annotates a mixed bulk RNA-seq file across all loci.
 
 ## Library
 
@@ -70,7 +77,52 @@ records = arda.annotate_sequences(
    C++ `transfer_regions` projects scaffold region coordinates onto the query
    (handling indels, truncation, mid-codon alignment starts) → AIRR TSV.
 
-See [`memory/`](memory/) for design rationale and gotchas.
+See [`memory/`](memory/) for design rationale and gotchas. Fast sequence
+primitives (`translate`, `detect_coding_frame`, `reverse_complement`,
+`back_translate`) live in the C++ extension and are re-exported from
+`arda.refbuild.translate` — mirpy-API-compatible, so mirpy can `import arda` and
+reuse them.
+
+## Performance
+
+Exact annotation that matches IgBLAST while being several times faster, scaling to
+large FASTQ. Synthetic human IGH, 16 threads (`scripts/bench_vs_igblast.py`):
+
+| sequences | arda | arda rate | speedup vs IgBLAST | region concordance |
+|----------:|-----:|----------:|-------------------:|-------------------:|
+| 10,000    | 5.5s | ~1.8k/s   | 4.4×               | 98.9%              |
+| 50,000    | 16s  | ~3.0k/s   | 7.3×               |                    |
+| 100,000   | 30s  | ~3.3k/s   | 7.9×               |                    |
+
+On 100 real GenBank IGH mRNA records, region concordance with IgBLAST is **99.7%**
+(remaining diffs are one-residue FR1/CDR3 boundary conventions; V-gene assignment
+agrees 100/100).
+
+**Bulk RNA-seq is much faster than amplicon**, because mmseqs prefilters by k-mer
+matching — reads with no receptor k-mer are rejected before alignment. At 150 nt
+reads, 16 threads (`scripts/bench_prefilter.py`):
+
+| receptor content | throughput |
+|-----------------:|-----------:|
+| 100% (amplicon)  | ~5.7k reads/s |
+| 10%              | ~19k reads/s |
+| 1% (blood RNA-seq) | ~25k reads/s |
+
+Extrapolated to a **32-core node**, a 30M-read bulk RNA-seq library (~1% receptor)
+annotates in roughly **10–20 min** — the same order of magnitude as a STAR genome
+alignment pass on the same data (STAR is faster per read, but arda maps only to a
+tiny germline DB and the non-receptor majority costs just prefilter rejection).
+For inputs this large, stream/shard the FASTQ (see Roadmap) — the current API
+loads all reads into memory.
+
+## Roadmap / TODO
+
+- **D-segment mapping** — scaffolds are V·J only, so `v_call`/`j_call` and all
+  FR/CDR coordinates are assigned but `d_call` is not yet. Planned: align the CDR3
+  interior against a D germline DB after V/J transfer, including **double D-D
+  junctions** (D-D fusions → `d_call` + `d2_call`).
+- MHC class I/II groove + α-helix annotation (references already pre-fetched).
+- Process-pool sharding for very large FASTQ (mmseqs is already threaded).
 
 ## Development
 

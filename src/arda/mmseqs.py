@@ -125,13 +125,21 @@ def convertalis(
     *,
     format_output: str = DEFAULT_FORMAT_OUTPUT,
     threads: int = 1,
+    search_type: int | None = None,
 ) -> Path:
-    """Convert an alignment result DB to a TSV with the requested columns."""
-    run([
+    """Convert an alignment result DB to a TSV with the requested columns.
+
+    ``search_type`` must be passed for nucleotide results (3) so convertalis can
+    interpret the alignment; otherwise mmseqs cannot tell nt from translated.
+    """
+    args = [
         "convertalis", str(query_db), str(target_db), str(result_db), str(out_tsv),
         "--format-output", format_output,
         "--threads", str(threads),
-    ])
+    ]
+    if search_type is not None:
+        args += ["--search-type", str(search_type)]
+    run(args)
     return Path(out_tsv)
 
 
@@ -147,9 +155,14 @@ def easy_search(
     max_seqs: int = 300,
     threads: int = 1,
     format_output: str = DEFAULT_FORMAT_OUTPUT,
+    strand: int | None = None,
     extra: list[str] | None = None,
 ) -> Path:
-    """One-shot createdb+search+convertalis producing a TSV."""
+    """One-shot createdb+search+convertalis producing a TSV.
+
+    ``strand`` (nucleotide search only): 1 forward, 2 both strands; ``None`` lets
+    mmseqs default (forward).
+    """
     args = [
         "easy-search", str(query_fasta), str(target_fasta_or_db),
         str(out_tsv), str(tmp_dir),
@@ -160,6 +173,8 @@ def easy_search(
         "--threads", str(threads),
         "--format-output", format_output,
     ]
+    if strand is not None:
+        args += ["--strand", str(strand)]
     if extra:
         args += extra
     run(args)

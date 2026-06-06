@@ -1,100 +1,107 @@
-"""Real-world concordance test: arda vs IgBLAST on GenBank mRNA.
+"""Real-world concordance vs IgBLAST, from committed GenBank fixtures.
 
-Fetches human immunoglobulin heavy-chain mRNA records from NCBI, annotates them
-both with IgBLAST (the gold standard) and with arda, and checks that the FR/CDR
-amino-acid region calls agree. Guarded by ``ARDA_REALWORLD=1`` (needs network +
-the human reference DB + the per-locus germline BLAST DBs from the build).
+Uses versioned fixtures under ``tests/data/realworld/`` (GenBank mRNA + IgBLAST
+AIRR reference, built by ``scripts/build_test_fixtures.py``), so this runs offline
+and reproducibly — it needs only mmseqs + the human reference DB, not network or
+IgBLAST. Covers IGH (BCR, with D + long CDR3) and TRB (TCR).
 
-    env ARDA_REALWORLD=1 ARDA_MMSEQS=$(which mmseqs) \\
-        python -m pytest tests/realworld -s
+Asserts:
+  * region concordance with IgBLAST (per locus),
+  * the AIRR CDR3/junction invariants — ``junction_aa`` starts with C and ends with
+    F/W, and ``cdr3_aa == junction_aa[1:-1]`` exactly (no off-by-one),
+  * trimmed inputs (V-only and J-side fragments) annotate sensibly.
 """
 
 from __future__ import annotations
 
-import os
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import pytest
 import polars as pl
 
-from arda.paths import data_dir, vdj_dir
-from arda import igblast
 from arda.annotate.mapper import annotate_records
+from arda.annotate.io import read_sequences
 from tests.conftest import requires_mmseqs, requires_human_db
 
-pytestmark = [
-    pytest.mark.skipif(not os.getenv("ARDA_REALWORLD"), reason="set ARDA_REALWORLD=1"),
-    requires_mmseqs,
-    requires_human_db,
-]
+pytestmark = [requires_mmseqs, requires_human_db]
 
-EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-QUERY = '"immunoglobulin heavy chain"[Title] AND Homo sapiens[Organism] AND mRNA[Filter]'
-N_RECORDS = 50
+FIXTURES = Path(__file__).resolve().parent.parent / "data" / "realworld"
+LOCI = ["igh", "trb"]
 REGIONS = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3")
 
 
-def _fetch_mrna(n: int) -> Path:
-    """Fetch n IGH mRNA records as FASTA (cached under data/realworld)."""
-    out_dir = data_dir() / "realworld"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fasta = out_dir / "igh_mrna.fasta"
-    if fasta.exists() and fasta.stat().st_size > 0:
-        return fasta
-    es = f"{EUTILS}/esearch.fcgi?db=nuccore&retmax={n}&term=" + urllib.parse.quote(QUERY)
-    with urllib.request.urlopen(es, timeout=120) as r:
-        xml = r.read().decode()
-    ids = [s.split("</Id>")[0] for s in xml.split("<Id>")[1:]]
-    if not ids:
-        pytest.skip("NCBI returned no records")
-    ef = f"{EUTILS}/efetch.fcgi?db=nuccore&rettype=fasta&retmode=text&id=" + ",".join(ids)
-    with urllib.request.urlopen(ef, timeout=300) as r:
-        fasta.write_bytes(r.read())
-    return fasta
-
-
-def _igblast_airr(fasta: Path) -> pl.DataFrame:
-    db = data_dir() / "blastdb" / "Homo_sapiens"
-    aux = vdj_dir().parent.parent / "bin" / "optional_file" / "human_gl.aux"
-    out = fasta.with_suffix(".igblast.airr.tsv")
-    igblast.igblastn_airr(
-        fasta, out, organism="human",
-        germline_db_v=db / "IGHV", germline_db_j=db / "IGHJ", germline_db_d=db / "IGHD",
-        auxiliary_data=aux if Path(aux).exists() else None,
-        ig_seqtype="Ig", num_threads=os.cpu_count() or 1,
-    )
-    return pl.read_csv(out, separator="\t", infer_schema_length=0)
-
-
-def test_arda_matches_igblast_regions():
-    from arda.annotate.io import read_sequences
-
-    fasta = _fetch_mrna(N_RECORDS)
-    queries = list(read_sequences(fasta))
-    igb = {r["sequence_id"]: r for r in _igblast_airr(fasta).iter_rows(named=True)}
+def _load(locus: str):
+    fa = FIXTURES / f"{locus}_mrna.fasta"
+    airr = FIXTURES / f"{locus}_mrna.igblast.airr.tsv"
+    if not fa.exists() or not airr.exists():
+        pytest.skip(f"missing fixture for {locus} (run scripts/build_test_fixtures.py)")
+    queries = list(read_sequences(fa))
+    igb = {r["sequence_id"]: r for r in pl.read_csv(
+        airr, separator="\t", infer_schema_length=0).iter_rows(named=True)}
     arda = {r["sequence_id"]: r for r in annotate_records(queries, "human", "nt", threads=4)}
+    return queries, igb, arda
 
+
+@pytest.mark.parametrize("locus", LOCI)
+def test_region_concordance(locus):
+    _, igb, arda = _load(locus)
     compared = agree = 0
     for sid, ig in igb.items():
         ar = arda.get(sid)
         if not ar:
             continue
         for r in REGIONS:
-            ig_aa = (ig.get(f"{r}_aa") or "").strip()
-            ar_aa = (ar.get(f"{r}_aa") or "").strip()
-            if not ig_aa or not ar_aa:
+            i = (ig.get(f"{r}_aa") or "").strip()
+            a = (ar.get(f"{r}_aa") or "").strip()
+            if not i or not a:
                 continue
             compared += 1
-            # Terminal regions (FR1 start, CDR3 ends) legitimately differ by one
-            # boundary residue between tools, so accept substring containment there;
-            # internal regions must match exactly.
-            if r in ("fwr1", "cdr3"):
-                agree += ig_aa in ar_aa or ar_aa in ig_aa
-            else:
-                agree += ig_aa == ar_aa
-    assert compared > 0, "no comparable regions"
+            agree += (i in a or a in i) if r in ("fwr1", "cdr3") else (i == a)
+    assert compared > 0
     frac = agree / compared
-    print(f"\n[realworld] region concordance: {agree}/{compared} = {frac:.1%}")
-    assert frac >= 0.90
+    print(f"\n[{locus}] region concordance: {agree}/{compared} = {frac:.1%}")
+    assert frac >= 0.95
+
+
+@pytest.mark.parametrize("locus", LOCI)
+def test_cdr3_junction_airr_invariants(locus):
+    """junction_aa = C...[FW] and cdr3_aa == junction_aa[1:-1], matching IgBLAST.
+
+    The structural invariant ``cdr3_aa == junction_aa[1:-1]`` must hold for EVERY
+    record (it is guaranteed by construction). The biological anchors (C-start,
+    F/W-end, exact IgBLAST CDR3) must hold for the vast majority; a rare oddball
+    record (unusual/non-productive rearrangement) may differ as it does for IgBLAST.
+    """
+    _, igb, arda = _load(locus)
+    n = c_start = fw_end = cdr3_ok = 0
+    for sid, ar in arda.items():
+        ja, c3 = (ar.get("junction_aa") or ""), (ar.get("cdr3_aa") or "")
+        if not ja:
+            continue
+        n += 1
+        # Structural invariant — strict, must always hold.
+        assert c3 == ja[1:-1], f"{sid}: cdr3 {c3!r} != junction[1:-1] {ja[1:-1]!r}"
+        c_start += ja.startswith("C")
+        fw_end += ja.endswith(("F", "W"))
+        cdr3_ok += c3 == (igb.get(sid, {}).get("cdr3_aa") or "")
+    assert n > 0
+    print(f"\n[{locus}] junction C-start {c_start}/{n}, F/W-end {fw_end}/{n}, "
+          f"cdr3==igblast {cdr3_ok}/{n}")
+    assert c_start / n >= 0.97 and fw_end / n >= 0.97 and cdr3_ok / n >= 0.95
+
+
+def test_trimmed_inputs():
+    """V-only (FR1-FR3) and J-side (CDR3-FR4) fragments annotate without error."""
+    queries, _, arda = _load("igh")
+    qmap = dict(queries)
+    sid = next(s for s in arda if arda[s].get("fwr3_end") and arda[s].get("fwr4_end"))
+    full, ar = qmap[sid], arda[sid]
+    v_only = full[int(ar["fwr1_start"]) - 1 : int(ar["fwr3_end"])]
+    j_side = full[int(ar["cdr3_start"]) - 1 : int(ar["fwr4_end"])]
+
+    rv = annotate_records([("v", v_only)], "human", "nt", threads=4)[0]
+    assert rv["fwr1_aa"] and rv["cdr1_aa"] and rv["fwr3_aa"]      # V regions present
+    assert not rv["fwr4_aa"]                                       # no J in a V fragment
+
+    rj = annotate_records([("j", j_side)], "human", "nt", threads=4)[0]
+    assert rj["cdr3_aa"] and rj["fwr4_aa"]                         # J-side regions present

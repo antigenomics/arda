@@ -6,4 +6,6 @@ Running notes on non-obvious design decisions and gotchas, so future work
 - [scaffold-enumeration.md](scaffold-enumeration.md) — why V×J only (not V×D×J), dedup, N-spacer.
 - [reading-frames.md](reading-frames.md) — V frame detection, J frame from aux, FR4 sanity check.
 - [igblast-gotchas.md](igblast-gotchas.md) — dummy D db, IGDATA, aux files, AIRR coords.
-- [markup-transfer.md](markup-transfer.md) — runtime projection algorithm + indel/strand semantics (Phase 2).
+- [markup-transfer.md](markup-transfer.md) — runtime projection, indel/strand semantics, D-segment TODO.
+- [mmseqs-params.md](mmseqs-params.md) — tuned nt/aa params, all-loci single DB, caching, speedup.
+- [discordance-and-scaling.md](discordance-and-scaling.md) — why arda≈IgBLAST, alignment-phase frame fix, bulk RNA-seq prefilter speed, 30M-read estimate.

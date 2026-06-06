@@ -32,9 +32,19 @@ boundary, acceptable).
 `arda` conda env where `mmseqs` is on PATH. When running from another env (e.g.
 dev/base), set `$ARDA_MMSEQS` to the env binary.
 
+## Done since v1
+- **Reverse-complement** nt queries: `--strand 2`; reverse hits (qstart>qend) are
+  re-oriented (revcomp query, remap coords), `rev_comp=T`. See [[mmseqs-params]].
+- **Target-DB caching**: `_cached_target_db` createdb once under `data/mmseqs_db/`.
+- **C++ seq primitives**: translate/detect_frame/reverse_complement/back_translate
+  in `src/_markup/markup.cpp`, re-exported by `refbuild/translate.py` (mirpy-compatible).
+
 ## TODO / known gaps
-- Reverse-complement nt queries: `rev_comp` is hard-coded "F"; mmseqs nt search
-  strand handling not yet wired (detect qstart>qend / use --search-type strand).
-- No mmseqs target-DB caching yet (easy-search rebuilds each call; target is small).
-- Multiprocessing: mmseqs is threaded; the transfer step is serial (cheap). Chunked
-  process-pool sharding deferred to the benchmark phase.
+- **D-segment mapping** (NOT done): scaffolds are V×J only, so `d_call` and the D
+  region inside CDR3 are not assigned. Future: after V/J transfer, align the CDR3
+  interior against a D germline DB and emit `d_call`/`d_sequence_*`. Must handle
+  **double D-D junctions** (D-D fusions, seen in IGH/TRD) — possibly >1 D segment
+  per rearrangement (AIRR `d2_call`). See README TODO.
+- Multiprocessing: mmseqs is threaded; transfer is serial (cheap). Chunked
+  process-pool sharding for huge FASTQ still deferred.
+- `productive` is heuristic (stop-free V..J span), not full AIRR productivity.

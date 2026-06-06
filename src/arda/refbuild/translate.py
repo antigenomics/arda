@@ -1,13 +1,22 @@
 """Native nucleotide translation and reading-frame utilities.
 
-No BioPython: a plain dict codon table is faster and dependency-free. Used both
-to normalize V germline to its coding frame when building scaffolds and to
-derive protein markup from nucleotide coordinates.
+No BioPython. The hot functions (``translate``, ``detect_coding_frame``,
+``reverse_complement``, ``back_translate``) are implemented in the C++ extension
+``arda._markup`` and re-exported here; a pure-Python fallback keeps the module
+importable if the extension is unavailable. These mirror mirpy's mirseq API so
+mirpy can later ``import arda`` and reuse them.
 """
 
 from __future__ import annotations
 
-__all__ = ["CODON_TABLE", "translate", "detect_coding_frame", "aa_coords_from_nt"]
+__all__ = [
+    "CODON_TABLE",
+    "translate",
+    "detect_coding_frame",
+    "reverse_complement",
+    "back_translate",
+    "aa_coords_from_nt",
+]
 
 _BASES = "TCAG"
 _AA = "FFLLSSSSYY**CC*WLLLLPPPPHHQQRRRRIIIMTTTTNNKKSSRRVVVVAAAADDEEGGGG"
@@ -21,36 +30,60 @@ for _a in _BASES:
             _i += 1
 
 
-def translate(nt: str, frame: int = 0) -> str:
-    """Translate a nucleotide string from ``frame`` (0/1/2).
+# Human (Kazusa) most-frequent codon per amino acid — used for back-translation.
+_HUMAN_CODON = {
+    "A": "GCC", "R": "AGG", "N": "AAC", "D": "GAC", "C": "TGC", "Q": "CAG",
+    "E": "GAG", "G": "GGC", "H": "CAC", "I": "ATC", "L": "CTG", "K": "AAG",
+    "M": "ATG", "F": "TTC", "P": "CCC", "S": "AGC", "T": "ACC", "W": "TGG",
+    "Y": "TAC", "V": "GTG",
+}
 
-    Codons containing any non-ACGT base (e.g. ``N``) translate to ``X``; stop
-    codons are ``*``.
-    """
-    s = nt.upper()
-    out = []
-    table = CODON_TABLE
-    for i in range(frame, len(s) - 2, 3):
-        out.append(table.get(s[i : i + 3], "X"))
-    return "".join(out)
+try:  # Fast path: C++ extension.
+    from .. import _markup as _ext
 
+    def translate(nt: str, frame: int = 0) -> str:
+        """Translate a nucleotide string from ``frame`` (0/1/2)."""
+        return _ext.translate(nt, frame)
 
-def detect_coding_frame(nt: str) -> int:
-    """Return the reading frame (0/1/2) with the fewest stop codons.
+    def detect_coding_frame(nt: str) -> int:
+        """Return the reading frame (0/1/2) with the fewest stop codons."""
+        return _ext.detect_coding_frame(nt)
 
-    For a genuine germline V-REGION exactly one frame is stop-free; ties resolve
-    to the lowest frame.
-    """
-    best_frame = 0
-    best_stops = None
-    for f in (0, 1, 2):
-        stops = translate(nt, f).count("*")
-        if best_stops is None or stops < best_stops:
-            best_stops = stops
-            best_frame = f
-            if stops == 0:
-                break
-    return best_frame
+    def reverse_complement(nt: str) -> str:
+        """Reverse-complement a nucleotide string (non-ACGT -> ``N``)."""
+        return _ext.reverse_complement(nt)
+
+    def back_translate(aa: str, unknown: str = "NNN") -> str:
+        """Mock back-translation via most-frequent human codons."""
+        return _ext.back_translate(aa, unknown)
+
+except Exception:  # pragma: no cover - pure-Python fallback
+    _comp = str.maketrans("ACGTacgtN", "TGCATGCAN")
+
+    def translate(nt: str, frame: int = 0) -> str:
+        """Translate a nucleotide string from ``frame`` (0/1/2)."""
+        s = nt.upper()
+        table = CODON_TABLE
+        return "".join(table.get(s[i : i + 3], "X") for i in range(frame, len(s) - 2, 3))
+
+    def detect_coding_frame(nt: str) -> int:
+        """Return the reading frame (0/1/2) with the fewest stop codons."""
+        best_frame, best_stops = 0, None
+        for f in (0, 1, 2):
+            stops = translate(nt, f).count("*")
+            if best_stops is None or stops < best_stops:
+                best_stops, best_frame = stops, f
+                if stops == 0:
+                    break
+        return best_frame
+
+    def reverse_complement(nt: str) -> str:
+        """Reverse-complement a nucleotide string (non-ACGT -> ``N``)."""
+        return nt.upper().translate(_comp)[::-1]
+
+    def back_translate(aa: str, unknown: str = "NNN") -> str:
+        """Mock back-translation via most-frequent human codons."""
+        return "".join(_HUMAN_CODON.get(c, unknown) for c in aa)
 
 
 def aa_coords_from_nt(nt_start: int, nt_end: int, coding_start: int) -> tuple[int, int]:

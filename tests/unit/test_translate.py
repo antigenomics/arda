@@ -3,6 +3,8 @@
 from arda.refbuild.translate import (
     translate,
     detect_coding_frame,
+    reverse_complement,
+    back_translate,
     aa_coords_from_nt,
     CODON_TABLE,
 )
@@ -40,3 +42,21 @@ def test_aa_coords_from_nt():
     assert aa_coords_from_nt(4, 9, 1) == (2, 3)
     # coding starts at nt 3 (frame origin shifted)
     assert aa_coords_from_nt(3, 8, 3) == (1, 2)
+
+
+def test_reverse_complement():
+    assert reverse_complement("ATGC") == "GCAT"
+    assert reverse_complement("AAAN") == "NTTT"
+    # double revcomp is identity
+    s = "ACGTTGCANNACGT"
+    assert reverse_complement(reverse_complement(s)) == s
+
+
+def test_back_translate_human_codons():
+    # M->ATG, W->TGG, C->TGC (most-frequent human codons)
+    assert back_translate("MWC") == "ATGTGGTGC"
+    # unknown residue -> NNN
+    assert back_translate("X") == "NNN"
+    # back-translation then translation recovers the protein
+    aa = "MKWLV"
+    assert translate(back_translate(aa)) == aa

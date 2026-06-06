@@ -85,6 +85,19 @@ def test_insertion_in_cdr3_shifts_fr4(human_ref):
     assert re.match(r"[FW]G.G", rec["fwr4_aa"])
 
 
+def test_reverse_complement_strand(human_ref):
+    from arda.refbuild.translate import reverse_complement
+
+    fa, ref, ids = human_ref
+    sid = ids[0]
+    fwd = annotate_records([(sid, fa[sid])], "human", "nt", threads=4)[0]
+    rc = annotate_records([("rc", reverse_complement(fa[sid]))], "human", "nt", threads=4)[0]
+    assert fwd["rev_comp"] == "F" and rc["rev_comp"] == "T"
+    # Region calls must be identical regardless of input strand.
+    for k in ("v_call", "j_call", "cdr1_aa", "cdr3_aa", "fwr4_aa"):
+        assert fwd[k] == rc[k]
+
+
 def test_no_hit_yields_empty_record():
     rec = annotate_records([("random", "ACGT" * 40)], "human", "nt", threads=4)[0]
     assert rec["sequence_id"] == "random"

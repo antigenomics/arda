@@ -63,11 +63,13 @@ def annotate(
     organism: str = typer.Option("human", help="Reference organism."),
     seqtype: str = typer.Option("nt", help="Input sequence type: nt or aa."),
     threads: int = typer.Option(0, help="Worker processes (0 = all cores)."),
+    strand: str = typer.Option("both", help="nt only: 'both' strands or 'forward'."),
 ) -> None:
-    """Annotate FR/CDR regions and write an AIRR TSV (Phase 2)."""
+    """Annotate FR/CDR regions and write an AIRR TSV."""
     from .annotate.mapper import annotate_file
 
-    annotate_file(input, output, organism=organism, seqtype=seqtype, threads=threads)
+    annotate_file(input, output, organism=organism, seqtype=seqtype,
+                  threads=threads, strand=strand)
 
 
 if __name__ == "__main__":

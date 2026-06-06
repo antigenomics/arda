@@ -13,6 +13,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <array>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,6 +21,110 @@
 namespace py = pybind11;
 
 using Interval = std::pair<int, int>;
+
+// ---------------------------------------------------------------------------
+// Fast sequence primitives (translation / back-translation / reverse-complement).
+//
+// These are deliberately API-compatible with mirpy's mir.basic.mirseq so that
+// mirpy can later `import arda` and reuse them. Standard genetic code; codons
+// with any non-ACGT base translate to 'X'; stop codons are '*'; a trailing
+// partial codon is dropped (arda) — translate_bidi mirrors mirpy's '_' padding.
+// ---------------------------------------------------------------------------
+
+// 2-bit base index: A=0, C=1, G=2, T=3; anything else = -1.
+static std::array<int8_t, 256> make_base_idx() {
+    std::array<int8_t, 256> t{};
+    t.fill(-1);
+    t['A'] = t['a'] = 0; t['C'] = t['c'] = 1; t['G'] = t['g'] = 2; t['T'] = t['t'] = 3;
+    return t;
+}
+static const std::array<int8_t, 256> BASE_IDX = make_base_idx();
+
+// Codon table indexed by (b0*16 + b1*4 + b2) with A=0,C=1,G=2,T=3.
+static const char AA_TABLE[64] = {
+    'K','N','K','N', 'T','T','T','T', 'R','S','R','S', 'I','I','M','I',  // A__
+    'Q','H','Q','H', 'P','P','P','P', 'R','R','R','R', 'L','L','L','L',  // C__
+    'E','D','E','D', 'A','A','A','A', 'G','G','G','G', 'V','V','V','V',  // G__
+    '*','Y','*','Y', 'S','S','S','S', '*','C','W','C', 'L','F','L','F',  // T__
+};
+
+// Complement LUT.
+static std::array<char, 256> make_comp() {
+    std::array<char, 256> t{};
+    for (int i = 0; i < 256; ++i) t[i] = 'N';
+    t['A'] = t['a'] = 'T'; t['T'] = t['t'] = 'A';
+    t['G'] = t['g'] = 'C'; t['C'] = t['c'] = 'G'; t['N'] = t['n'] = 'N';
+    return t;
+}
+static const std::array<char, 256> COMP = make_comp();
+
+// Human (Kazusa) most-frequent codon per amino acid, for mock back-translation.
+static char BT_TABLE[128][4];
+static bool init_bt() {
+    for (auto &c : BT_TABLE) { c[0] = 'N'; c[1] = 'N'; c[2] = 'N'; c[3] = '\0'; }
+    const char *aa = "ARNDCQEGHILKMFPSTWYV";
+    const char *co[] = {"GCC","AGG","AAC","GAC","TGC","CAG","GAG","GGC","CAC","ATC",
+                        "CTG","AAG","ATG","TTC","CCC","AGC","ACC","TGG","TAC","GTG"};
+    for (int i = 0; aa[i]; ++i) {
+        unsigned u = static_cast<unsigned char>(aa[i]);
+        BT_TABLE[u][0] = co[i][0]; BT_TABLE[u][1] = co[i][1]; BT_TABLE[u][2] = co[i][2];
+    }
+    return true;
+}
+static const bool BT_INIT = init_bt();
+
+static std::string translate(const std::string &nt, int frame) {
+    std::string out;
+    const int n = static_cast<int>(nt.size());
+    if (frame < 0) frame = 0;
+    out.reserve((n - frame) / 3 + 1);
+    for (int i = frame; i + 3 <= n; i += 3) {
+        const int8_t a = BASE_IDX[(unsigned char)nt[i]];
+        const int8_t b = BASE_IDX[(unsigned char)nt[i + 1]];
+        const int8_t c = BASE_IDX[(unsigned char)nt[i + 2]];
+        out.push_back((a < 0 || b < 0 || c < 0) ? 'X' : AA_TABLE[a * 16 + b * 4 + c]);
+    }
+    return out;
+}
+
+static int detect_coding_frame(const std::string &nt) {
+    int best_frame = 0, best_stops = -1;
+    for (int f = 0; f < 3; ++f) {
+        int stops = 0;
+        const int n = static_cast<int>(nt.size());
+        for (int i = f; i + 3 <= n; i += 3) {
+            const int8_t a = BASE_IDX[(unsigned char)nt[i]];
+            const int8_t b = BASE_IDX[(unsigned char)nt[i + 1]];
+            const int8_t c = BASE_IDX[(unsigned char)nt[i + 2]];
+            if (a >= 0 && b >= 0 && c >= 0 && AA_TABLE[a * 16 + b * 4 + c] == '*') ++stops;
+        }
+        if (best_stops < 0 || stops < best_stops) {
+            best_stops = stops; best_frame = f;
+            if (stops == 0) break;
+        }
+    }
+    return best_frame;
+}
+
+static std::string reverse_complement(const std::string &nt) {
+    std::string out(nt.size(), 'N');
+    for (size_t i = 0; i < nt.size(); ++i)
+        out[nt.size() - 1 - i] = COMP[(unsigned char)nt[i]];
+    return out;
+}
+
+static std::string back_translate(const std::string &aa, const std::string &unknown) {
+    std::string out;
+    out.reserve(aa.size() * 3);
+    for (char ch : aa) {
+        unsigned u = static_cast<unsigned char>(ch);
+        if (u < 128 && BT_TABLE[u][0] != 'N')
+            out.append(BT_TABLE[u], 3);
+        else
+            out.append(unknown);
+    }
+    return out;
+}
 
 // Project a single reference interval onto query coordinates. Kept as a simple
 // primitive (used by unit tests); transfer_regions is the batched workhorse.
@@ -112,4 +217,16 @@ PYBIND11_MODULE(_markup, m) {
           "Project multiple 1-based closed reference (target) intervals onto "
           "1-based closed query coordinates in a single alignment walk. Returns "
           "one (q_start, q_end) per region; (-1,-1) where uncovered.");
+
+    // Fast sequence primitives (also consumable by mirpy).
+    m.def("translate", &translate, py::arg("nt"), py::arg("frame") = 0,
+          "Translate a nucleotide string from `frame` (0/1/2). Non-ACGT codons "
+          "-> 'X', stops -> '*', trailing partial codon dropped.");
+    m.def("detect_coding_frame", &detect_coding_frame, py::arg("nt"),
+          "Return the reading frame (0/1/2) with the fewest stop codons.");
+    m.def("reverse_complement", &reverse_complement, py::arg("nt"),
+          "Reverse-complement a nucleotide string (non-ACGT -> 'N').");
+    m.def("back_translate", &back_translate, py::arg("aa"), py::arg("unknown") = "NNN",
+          "Mock back-translation using the most-frequent human (Kazusa) codon per "
+          "amino acid; unknown residues -> `unknown` (default 'NNN').");
 }
