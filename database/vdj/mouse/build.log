@@ -1,0 +1,15 @@
+2026-06-06 19:32:46,980 INFO === arda reference build: mouse (Mus_musculus) ===
+2026-06-06 19:33:09,348 INFO TRA: V=282 J=61 raw_combos=17202 unique_scaffolds=15128 annotated=15128
+2026-06-06 19:33:09,584 INFO TRA: dropped 788 scaffolds with incomplete markup
+2026-06-06 19:33:12,729 INFO TRG: V=28 J=4 raw_combos=112 unique_scaffolds=112 annotated=112
+2026-06-06 19:33:12,734 INFO TRG: dropped 12 scaffolds with incomplete markup
+2026-06-06 19:33:17,621 INFO IGK: V=142 J=10 raw_combos=1420 unique_scaffolds=1400 annotated=1400
+2026-06-06 19:33:17,648 INFO IGK: dropped 20 scaffolds with incomplete markup
+2026-06-06 19:33:20,683 INFO IGL: V=14 J=5 raw_combos=70 unique_scaffolds=70 annotated=70
+2026-06-06 19:33:20,685 INFO IGL: dropped 50 scaffolds with incomplete markup
+2026-06-06 19:33:33,984 INFO IGH: V=544 J=8 raw_combos=4352 unique_scaffolds=4224 annotated=4224
+2026-06-06 19:33:34,063 INFO IGH: dropped 361 scaffolds with incomplete markup
+2026-06-06 19:33:38,883 INFO TRB: V=48 J=18 raw_combos=864 unique_scaffolds=864 annotated=864
+2026-06-06 19:33:43,124 INFO TRD: V=53 J=3 raw_combos=159 unique_scaffolds=159 annotated=159
+2026-06-06 19:33:43,128 INFO TRD: dropped 3 scaffolds with incomplete markup
+2026-06-06 19:33:43,251 INFO TOTAL: 20723 scaffolds across 7 loci in 56.3s -> /Users/mikesh/vcs/code/arda/database/vdj/mouse

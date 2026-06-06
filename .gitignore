@@ -1,3 +1,19 @@
+promt.md
+
+# --- arda-specific ---------------------------------------------------------
+# Downloaded IgBLAST release (binaries + internal_data + optional_file).
+/bin/
+# Raw downloads & intermediate build artifacts (IMGT zip, HLA/MHC, blast DBs,
+# mmseqs DBs, cached genbank records for tests). The curated `database/` is committed.
+/data/
+# CMake/scikit-build out-of-tree build dir.
+/build/
+# The curated reference DB is committed, including its build logs (overrides
+# the global *.log rule below).
+!database/
+!database/**/*.log
+# ---------------------------------------------------------------------------
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -216,3 +232,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# arda: keep curated reference DB logs (must come after the global *.log rule)
+!database/**/*.log

@@ -1,0 +1,11 @@
+2026-06-06 19:33:43,278 INFO === arda reference build: rat (Rattus_norvegicus) ===
+2026-06-06 19:33:43,279 WARNING TRA: IMGT gene file not found: Rattus_norvegicus/TR/TRAV.fasta under /Users/mikesh/vcs/code/arda/data/imgt/reference — skipped
+2026-06-06 19:33:43,279 WARNING TRG: IMGT gene file not found: Rattus_norvegicus/TR/TRGV.fasta under /Users/mikesh/vcs/code/arda/data/imgt/reference — skipped
+2026-06-06 19:33:48,896 INFO IGK: V=141 J=7 raw_combos=987 unique_scaffolds=987 annotated=987
+2026-06-06 19:33:48,916 INFO IGK: dropped 159 scaffolds with incomplete markup
+2026-06-06 19:33:51,782 INFO IGL: V=8 J=4 raw_combos=32 unique_scaffolds=16 annotated=16
+2026-06-06 19:33:56,980 INFO IGH: V=153 J=4 raw_combos=612 unique_scaffolds=604 annotated=604
+2026-06-06 19:33:56,995 INFO IGH: dropped 8 scaffolds with incomplete markup
+2026-06-06 19:33:56,999 WARNING TRB: IMGT gene file not found: Rattus_norvegicus/TR/TRBV.fasta under /Users/mikesh/vcs/code/arda/data/imgt/reference — skipped
+2026-06-06 19:33:56,999 WARNING TRD: IMGT gene file not found: Rattus_norvegicus/TR/TRDV.fasta under /Users/mikesh/vcs/code/arda/data/imgt/reference — skipped
+2026-06-06 19:33:57,008 INFO TOTAL: 1440 scaffolds across 3 loci in 13.7s -> /Users/mikesh/vcs/code/arda/database/vdj/rat

@@ -1,0 +1,5 @@
+/* arda docs overrides. Namespaced to avoid theme collisions. */
+.arda-lead {
+  font-size: 1.1rem;
+  color: var(--pst-color-text-base);
+}

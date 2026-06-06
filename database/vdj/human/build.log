@@ -1,0 +1,16 @@
+2026-06-06 19:26:47,350 INFO === arda reference build: human (Homo_sapiens) ===
+2026-06-06 19:27:02,717 INFO TRA: V=125 J=69 raw_combos=8625 unique_scaffolds=8625 annotated=8625
+2026-06-06 19:27:02,855 INFO TRA: dropped 727 scaffolds with incomplete markup
+2026-06-06 19:27:06,146 INFO TRG: V=22 J=7 raw_combos=154 unique_scaffolds=132 annotated=132
+2026-06-06 19:27:06,152 INFO TRG: dropped 22 scaffolds with incomplete markup
+2026-06-06 19:27:10,243 INFO IGK: V=103 J=10 raw_combos=1030 unique_scaffolds=920 annotated=920
+2026-06-06 19:27:10,263 INFO IGK: dropped 92 scaffolds with incomplete markup
+2026-06-06 19:27:14,711 INFO IGL: V=105 J=11 raw_combos=1155 unique_scaffolds=1050 annotated=1050
+2026-06-06 19:27:14,734 INFO IGL: dropped 10 scaffolds with incomplete markup
+2026-06-06 19:27:28,248 INFO IGH: V=379 J=14 raw_combos=5306 unique_scaffolds=5124 annotated=5124
+2026-06-06 19:27:28,333 INFO IGH: dropped 405 scaffolds with incomplete markup
+2026-06-06 19:27:35,720 INFO TRB: V=166 J=16 raw_combos=2656 unique_scaffolds=2624 annotated=2624
+2026-06-06 19:27:35,775 INFO TRB: dropped 48 scaffolds with incomplete markup
+2026-06-06 19:27:40,941 INFO TRD: V=22 J=5 raw_combos=110 unique_scaffolds=110 annotated=110
+2026-06-06 19:27:40,946 INFO TRD: dropped 37 scaffolds with incomplete markup
+2026-06-06 19:27:41,053 INFO TOTAL: 17244 scaffolds across 7 loci in 53.7s -> /Users/mikesh/vcs/code/arda/database/vdj/human

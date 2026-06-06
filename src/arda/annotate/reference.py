@@ -1,0 +1,74 @@
+"""Load the curated reference markup for runtime projection.
+
+For nucleotide annotation we use ``markup.tsv`` + ``alleles.fasta``; for amino
+acid annotation ``markup.aa.tsv`` + ``alleles.aa.fasta``. Both expose region
+``*_start``/``*_end`` columns in the same coordinate space (nt or aa), so the
+projection code is identical.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import polars as pl
+
+from ..paths import vdj_dir
+
+__all__ = ["REGIONS", "RefEntry", "Reference", "load_reference"]
+
+# Canonical region order (matches build output and AIRR field grouping).
+REGIONS = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
+
+
+@dataclass(slots=True)
+class RefEntry:
+    """Per-scaffold reference markup: region coords (in target space) + calls."""
+
+    locus: str
+    v_call: str
+    j_call: str
+    starts: list[int]   # one per REGIONS, 1-based closed (target coords)
+    ends: list[int]
+
+
+@dataclass
+class Reference:
+    """In-memory reference for one (organism, seqtype)."""
+
+    organism: str
+    seqtype: str
+    target_fasta: Path
+    entries: dict[str, RefEntry]
+
+    def get(self, scaffold_id: str) -> RefEntry | None:
+        return self.entries.get(scaffold_id)
+
+
+def load_reference(organism: str, seqtype: str = "nt") -> Reference:
+    """Load reference markup + target FASTA path for an organism."""
+    base = vdj_dir(organism)
+    if not base.is_dir():
+        raise FileNotFoundError(
+            f"No reference DB for organism {organism!r} at {base}. Run `arda build-db`."
+        )
+    if seqtype == "aa":
+        markup_path = base / "markup.aa.tsv"
+        target_fasta = base / "alleles.aa.fasta"
+    else:
+        markup_path = base / "markup.tsv"
+        target_fasta = base / "alleles.fasta"
+
+    df = pl.read_csv(markup_path, separator="\t", infer_schema_length=0)
+    start_cols = [f"{r}_start" for r in REGIONS]
+    end_cols = [f"{r}_end" for r in REGIONS]
+    entries: dict[str, RefEntry] = {}
+    for row in df.iter_rows(named=True):
+        entries[row["scaffold_id"]] = RefEntry(
+            locus=row["locus"],
+            v_call=row["v_call"],
+            j_call=row["j_call"],
+            starts=[int(row[c]) for c in start_cols],
+            ends=[int(row[c]) for c in end_cols],
+        )
+    return Reference(organism, seqtype, target_fasta, entries)

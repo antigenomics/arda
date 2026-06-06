@@ -1,0 +1,21 @@
+2026-06-06 19:44:14,385 INFO === arda reference build: rabbit (Oryctolagus_cuniculus) ===
+2026-06-06 19:44:17,317 WARNING TRA: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRAV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRAJ -organism rabbit -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Oryctolagus_cuniculus/TRA.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/_dummyD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rabbit_gl.aux` failed (exit 1):
+BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rabbit/rabbit_TR_V could not be found in [internal_data] directory
+Please refer to the BLAST+ user manual.
+) — skipped
+2026-06-06 19:44:20,281 WARNING TRG: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRGV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRGJ -organism rabbit -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Oryctolagus_cuniculus/TRG.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/_dummyD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rabbit_gl.aux` failed (exit 1):
+BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rabbit/rabbit_TR_V could not be found in [internal_data] directory
+Please refer to the BLAST+ user manual.
+) — skipped
+2026-06-06 19:44:25,136 INFO IGK: V=67 J=19 raw_combos=1273 unique_scaffolds=1206 annotated=1206
+2026-06-06 19:44:28,446 INFO IGL: V=22 J=4 raw_combos=88 unique_scaffolds=84 annotated=84
+2026-06-06 19:44:32,712 INFO IGH: V=39 J=11 raw_combos=429 unique_scaffolds=429 annotated=429
+2026-06-06 19:44:36,397 WARNING TRB: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRBV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRBJ -organism rabbit -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Oryctolagus_cuniculus/TRB.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRBD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rabbit_gl.aux` failed (exit 1):
+BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rabbit/rabbit_TR_V could not be found in [internal_data] directory
+Please refer to the BLAST+ user manual.
+) — skipped
+2026-06-06 19:44:40,022 WARNING TRD: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRDV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRDJ -organism rabbit -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Oryctolagus_cuniculus/TRD.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Oryctolagus_cuniculus/TRDD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rabbit_gl.aux` failed (exit 1):
+BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rabbit/rabbit_TR_V could not be found in [internal_data] directory
+Please refer to the BLAST+ user manual.
+) — skipped
+2026-06-06 19:44:40,053 INFO TOTAL: 1719 scaffolds across 3 loci in 25.7s -> /Users/mikesh/vcs/code/arda/database/vdj/rabbit

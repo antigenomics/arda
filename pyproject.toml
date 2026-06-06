@@ -1,0 +1,51 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "arda"
+version = "0.1.0"
+description = "Antigen Receptor Domain Annotation — fast TCR/BCR (and later MHC) region annotation"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPLv3" }
+authors = [{ name = "Mikhail Shugay", email = "mikhail.shugay@gmail.com" }]
+keywords = ["immunology", "tcr", "bcr", "airr", "igblast", "mmseqs2", "annotation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "polars>=1.0",
+    "typer>=0.12",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+docs = ["sphinx", "pydata-sphinx-theme", "nbsphinx"]
+test = ["pytest", "pytest-cov"]
+dev = ["ruff", "pytest", "pybind11"]
+
+[project.scripts]
+arda = "arda.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/antigenomics/arda"
+Repository = "https://github.com/antigenomics/arda"
+
+[tool.scikit-build]
+wheel.packages = ["src/arda"]
+cmake.version = ">=3.18"
+build-dir = "build/{wheel_tag}"
+# Keep the editable install rebuilding the C++ ext automatically on import.
+editable.rebuild = true
+editable.verbose = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

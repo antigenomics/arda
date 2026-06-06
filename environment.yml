@@ -1,0 +1,24 @@
+# Dedicated conda environment for arda.
+# Provides Python, the MMseqs2 binary (runtime), a C++ toolchain (build), and
+# perl (for IgBLAST's edit_imgt_file.pl used during the offline DB build).
+#
+#   conda env create -f environment.yml
+#   conda activate arda
+#   pip install -e .
+#
+# IgBLAST binaries are NOT installed here — they are downloaded into ./bin by
+# setup.sh (gitignored) because the conda-forge build lags the NCBI release.
+name: arda
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - mmseqs2
+  - perl
+  - cxx-compiler
+  - cmake
+  - pip
+  - pip:
+      - scikit-build-core>=0.10
+      - pybind11>=2.12
