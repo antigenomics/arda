@@ -78,6 +78,7 @@ def _annotate_chunk(
     threads: int,
     sensitivity: float,
     mm_strand: int | None,
+    map_d: bool = True,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB."""
     if not records:
@@ -119,7 +120,9 @@ def _annotate_chunk(
             qlen = len(qseq)
             hit = dict(hit)
             hit["qstart"], hit["qend"] = qlen - qs + 1, qlen - qe + 1
-        out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev))
+        dg = ref.d_germlines.get(entry.locus) if (seqtype == "nt" and map_d) else None
+        out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
+                                d_germlines=dg))
     return out
 
 
@@ -142,6 +145,7 @@ def annotate_records(
     threads: int = 0,
     sensitivity: float | None = None,
     strand: str = "both",
+    map_d: bool = True,
 ) -> list[dict]:
     """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
 
@@ -149,11 +153,15 @@ def annotate_records(
         strand: ``"both"`` (default, nt only) searches both strands and re-orients
             reverse-complement hits; ``"forward"`` searches the plus strand only.
             Ignored for protein input.
+        map_d: ``True`` (default) maps D segments into the junction of VDJ-locus
+            hits (``d_call``/``d2_call``/``np*``); ``False`` skips D mapping (nt
+            input only — D mapping never runs for protein input).
     """
     ref, target_db, threads, sensitivity, mm_strand = _prep(
         organism, seqtype, threads, sensitivity, strand)
     return _annotate_chunk(records, ref, target_db, seqtype,
-                           threads=threads, sensitivity=sensitivity, mm_strand=mm_strand)
+                           threads=threads, sensitivity=sensitivity,
+                           mm_strand=mm_strand, map_d=map_d)
 
 
 def annotate_file(
@@ -166,6 +174,7 @@ def annotate_file(
     sensitivity: float | None = None,
     strand: str = "both",
     chunk_size: int = _CHUNK_SIZE,
+    map_d: bool = True,
 ) -> Path:
     """Annotate a FASTA/FASTQ file and stream an AIRR TSV.
 
@@ -198,7 +207,7 @@ def annotate_file(
                 break
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
                                    threads=threads, sensitivity=sensitivity,
-                                   mm_strand=mm_strand)
+                                   mm_strand=mm_strand, map_d=map_d)
             fh.write(format_rows(recs))
     t.join()
     return output

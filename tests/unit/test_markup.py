@@ -42,3 +42,24 @@ def test_project_region_primitive():
     assert _markup.project_region(taln, taln, 0, 0, 2, 4) == (2, 4)
     qaln = "ABCD-FG"
     assert _markup.project_region(qaln, taln, 0, 0, 2, 4) == (2, 3)
+
+
+def test_d_local_align_exact():
+    # D found exactly within the interior (0-based inclusive offsets).
+    d = "AGGATATTGTAGT"
+    interior = "CCCC" + d + "GGGG"
+    score, s, e = _markup.d_local_align(interior, d)
+    assert (score, s, e) == (len(d), 4, 4 + len(d) - 1)
+    assert interior[s : e + 1] == d
+
+
+def test_d_local_align_trimmed_and_case_insensitive():
+    # Only a trimmed 3' substring of D survives; matching ignores case.
+    d = "GGGACAGGGGGC"
+    interior = "ttttGGGGGCtt"           # 6-nt match GGGGGC
+    score, s, e = _markup.d_local_align(interior, d)
+    assert score == 6 and interior[s : e + 1].upper() == "GGGGGC"
+
+
+def test_d_local_align_no_match():
+    assert _markup.d_local_align("AAAAAAAA", "GGGGGGGG") == (0, -1, -1)

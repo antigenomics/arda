@@ -23,12 +23,24 @@ __all__ = ["transfer_hit", "AIRR_COLUMNS"]
 
 # Output column order (AIRR-compatible subset + locus).
 AIRR_COLUMNS = (
-    ["sequence_id", "sequence", "locus", "v_call", "j_call", "rev_comp", "productive",
-     "v_sequence_start", "v_sequence_end", "j_sequence_start", "junction", "junction_aa"]
+    ["sequence_id", "sequence", "locus", "v_call", "d_call", "d2_call", "j_call",
+     "rev_comp", "productive",
+     "v_sequence_start", "v_sequence_end",
+     "d_sequence_start", "d_sequence_end", "d2_sequence_start", "d2_sequence_end",
+     "j_sequence_start", "np1", "np2", "np3", "junction", "junction_aa"]
     + [c for r in REGIONS for c in (f"{r}_start", f"{r}_end", r, f"{r}_aa")]
 )
 
 _VSIDE = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3")
+
+# D-segment mapping. D germlines are short (~8-31 nt) and trimmed on both ends, so
+# they are mapped by gapless local alignment (``_markup.d_local_align``, net score
+# match=+1/mismatch=-1) of every locus D allele against the V..J interior of the
+# junction — not via the mmseqs scaffold DB. Thresholds below balance sensitivity
+# against chance matches in a short interior.
+_D_MIN_SCORE = 6        # minimum net score to call a D segment
+_D2_MIN_SCORE = 7       # stricter threshold for a second (D-D fusion) segment
+_DD_LOCI = {"IGH", "TRD"}   # loci where tandem D-D fusions occur
 
 
 def _empty_record(query_id: str, query_seq: str) -> dict:
@@ -81,6 +93,70 @@ def _junction_nt(query_seq, cs, f4, coding_start, v_end_q):
     return junction_nt, junction_aa, cdr3_aa, phase
 
 
+def _best_d(interior, d_germlines, min_score, exclude=None):
+    """Best-aligning D against ``interior`` as ``(score, length, allele, s, e)``.
+
+    ``s``/``e`` are 0-based inclusive offsets within ``interior``. ``exclude`` is an
+    optional ``(s, e)`` span the match must not overlap (used to find a second,
+    non-overlapping D). Returns ``None`` if nothing scores at least ``min_score``.
+    """
+    best = None
+    for allele, dseq in d_germlines:
+        score, s, e = _markup.d_local_align(interior, dseq)
+        if score < min_score or s < 0:
+            continue
+        if exclude is not None:
+            xs, xe = exclude
+            if not (e < xs or s > xe):       # overlaps the excluded span
+                continue
+        cand = (score, e - s + 1, allele, s, e)
+        if best is None or cand[:2] > best[:2] or (cand[:2] == best[:2] and allele < best[2]):
+            best = cand
+    return best
+
+
+def _map_d(rec, query_seq, locus, v_end_q, j_start_q, d_germlines):
+    """Map D segment(s) into the V..J interior and populate d_call/np regions.
+
+    Coordinates emitted are AIRR (1-based closed, query space). For D-D loci a
+    second non-overlapping D is sought; the two are then ordered 5'->3' as
+    ``d_call`` / ``d2_call`` with ``np1``/``np2``/``np3`` between V, the D(s), and J.
+    """
+    if not d_germlines or not v_end_q or not j_start_q:
+        return
+    i_lo, i_hi = v_end_q + 1, j_start_q - 1       # 1-based interior bounds (query)
+    if i_hi < i_lo:
+        return
+    interior = query_seq[i_lo - 1 : i_hi]
+    d1 = _best_d(interior, d_germlines, _D_MIN_SCORE)
+    if d1 is None:
+        return
+
+    segs = [d1]
+    if locus in _DD_LOCI:
+        d2 = _best_d(interior, d_germlines, _D2_MIN_SCORE, exclude=(d1[3], d1[4]))
+        if d2 is not None:
+            segs.append(d2)
+    segs.sort(key=lambda c: c[3])                 # order 5'->3' by interior start
+
+    def q(off):                                   # interior 0-based offset -> query 1-based
+        return i_lo + off
+
+    _, _, a1, s1, e1 = segs[0]
+    rec["d_call"] = a1
+    rec["d_sequence_start"], rec["d_sequence_end"] = q(s1), q(e1)
+    if len(segs) == 2:
+        _, _, a2, s2, e2 = segs[1]
+        rec["d2_call"] = a2
+        rec["d2_sequence_start"], rec["d2_sequence_end"] = q(s2), q(e2)
+        rec["np1"] = query_seq[v_end_q : q(s1) - 1]
+        rec["np2"] = query_seq[q(e1) : q(s2) - 1]
+        rec["np3"] = query_seq[q(e2) : j_start_q - 1]
+    else:
+        rec["np1"] = query_seq[v_end_q : q(s1) - 1]
+        rec["np2"] = query_seq[q(e1) : j_start_q - 1]
+
+
 def transfer_hit(
     query_id: str,
     query_seq: str,
@@ -88,6 +164,7 @@ def transfer_hit(
     ref: RefEntry,
     seqtype: str = "nt",
     rev_comp: bool = False,
+    d_germlines: list[tuple[str, str]] | None = None,
 ) -> dict:
     """Build an AIRR record by projecting ``ref`` region coords onto the query."""
     coords = _markup.transfer_regions(
@@ -153,6 +230,8 @@ def transfer_hit(
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
             rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
+        # D-segment mapping (VDJ loci only; gated by presence of D germlines).
+        _map_d(rec, query_seq, ref.locus, v_end_q, j_start_q, d_germlines)
     else:  # aa input: regions are already amino acids; no frame bridging needed.
         for name, (qs, qe) in region_q.items():
             rec[f"{name}_aa"] = query_seq[qs - 1 : qe]

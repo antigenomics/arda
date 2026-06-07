@@ -42,9 +42,29 @@ class Reference:
     seqtype: str
     target_fasta: Path
     entries: dict[str, RefEntry]
+    d_germlines: dict[str, list[tuple[str, str]]]  # locus -> [(allele, nt_seq)]
 
     def get(self, scaffold_id: str) -> RefEntry | None:
         return self.entries.get(scaffold_id)
+
+
+def _load_d_germlines(base: Path) -> dict[str, list[tuple[str, str]]]:
+    """Load ``d_germlines.fasta`` (``>locus|allele``) grouped by locus.
+
+    Used for runtime D-segment mapping in nucleotide space. Returns an empty
+    mapping if the file is absent (older reference builds, or VJ-only species).
+    """
+    path = base / "d_germlines.fasta"
+    out: dict[str, list[tuple[str, str]]] = {}
+    if not path.exists():
+        return out
+    from ..refbuild.imgt import read_fasta
+
+    for header, seq in read_fasta(path):
+        locus, _, allele = header.partition("|")
+        if allele and seq:
+            out.setdefault(locus, []).append((allele, seq.upper()))
+    return out
 
 
 def load_reference(organism: str, seqtype: str = "nt") -> Reference:
@@ -83,4 +103,5 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
             v_sequence_end=_int(row["v_sequence_end"]) if has_vj else 0,
             j_sequence_start=_int(row["j_sequence_start"]) if has_vj else 0,
         )
-    return Reference(organism, seqtype, target_fasta, entries)
+    d_germlines = _load_d_germlines(base) if seqtype == "nt" else {}
+    return Reference(organism, seqtype, target_fasta, entries, d_germlines)

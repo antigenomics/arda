@@ -66,12 +66,15 @@ def annotate(
     strand: str = typer.Option("both", help="nt only: 'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
         50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Map D segments (d_call/d2_call/np*) for VDJ loci; nt input only."),
 ) -> None:
     """Annotate FR/CDR regions and write an AIRR TSV (streamed, memory-bounded)."""
     from .annotate.mapper import annotate_file
 
     annotate_file(input, output, organism=organism, seqtype=seqtype,
-                  threads=threads, strand=strand, chunk_size=chunk_size)
+                  threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d)
 
 
 if __name__ == "__main__":

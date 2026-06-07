@@ -3,17 +3,26 @@
 Implemented: offline V·J reference build (5 organisms), MMseqs2 runtime mapping,
 C++ markup transfer, reverse-complement handling, all-loci single-DB querying,
 streaming/bounded-memory FASTQ I/O, out-of-frame junction translation, extended
-V/J-position markup, offline GenBank-vs-IgBLAST test fixtures.
+V/J-position markup, D-segment mapping (incl. D-D fusions), offline
+GenBank-vs-IgBLAST test fixtures.
 
 ## TODO
 
-- [ ] **D-segment mapping.** Scaffolds are V·J only, so `v_call`/`j_call` and all
-      FR/CDR coordinates are assigned but `d_call` is not. Plan: after V/J transfer,
-      align the CDR3 interior (between the projected CDR3 start and end) against a D
-      germline DB and emit `d_call` + `d_sequence_start`/`d_sequence_end`.
-  - [ ] **Double D-D junctions.** Handle rearrangements with two D segments (D-D
-        fusions, seen in IGH/TRD): emit a second `d2_call` + `d2_sequence_*` and
-        the intervening N regions (`np1`/`np2`/`np3` in AIRR terms).
+- [x] **D-segment mapping.** After V/J transfer, the V..J interior of the junction
+      (between the projected `v_sequence_end` and `j_sequence_start`) is aligned
+      against the per-organism D germline set by gapless local alignment in the C++
+      `_markup.d_local_align` primitive — mmseqs is unreliable on ~8-31 nt D — and
+      the best hit is emitted as `d_call` + `d_sequence_start`/`d_sequence_end`
+      (AIRR, query coords). D germlines ship in `database/vdj/<org>/d_germlines.fasta`
+      (VDJ loci only); VJ loci are skipped automatically. Concordance vs IgBLAST:
+      TRB/TRD ~97% gene agreement where both call a D; IGH ~46-69% (paralogous
+      germlines + SHM make IGH D inherently ambiguous).
+  - [x] **Double D-D junctions.** For D-D loci (IGH/TRD) a second non-overlapping D
+        is sought above a stricter threshold and emitted as `d2_call` + `d2_sequence_*`;
+        `np1`/`np2`/`np3` partition the junction between V, the D(s), and J.
+        (Limitation: a very long junction can exceed what mmseqs aligns *through*,
+        collapsing the projected interior — this only lowers D recall, never
+        produces a wrong call.)
 
 - [ ] **Multi-node sharding.** Single-node streaming + threading is implemented;
       add a SLURM-array mode that shards a huge FASTQ across array tasks and

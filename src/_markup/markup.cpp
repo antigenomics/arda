@@ -15,6 +15,7 @@
 
 #include <array>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -203,6 +204,43 @@ static std::vector<Interval> transfer_regions(
     return out;
 }
 
+// Gapless local alignment of a (short) D germline against a query interior.
+//
+// D segments are tiny (~8-31 nt) and exonuclease-trimmed on both ends, so the
+// useful signal is the best-scoring contiguous ungapped match between any
+// substring of the interior and any substring of D. mmseqs' k-mer prefilter is
+// unreliable at this length, so we brute-force every diagonal (Kadane's
+// maximum-subarray per diagonal) with match=+1 / mismatch=-1 scoring. The D set
+// per locus is small (≤ ~40 alleles) and the interior is short, so this is cheap.
+//
+// Returns (score, start, end): best score and the 0-based inclusive offsets of
+// the matched segment within `interior`. (0, -1, -1) if no positive-scoring
+// segment exists. Comparison is case-insensitive; N (or any non-matching base)
+// counts as a mismatch.
+static std::tuple<int, int, int> d_local_align(const std::string &interior,
+                                                const std::string &d) {
+    const int n = static_cast<int>(interior.size());
+    const int m = static_cast<int>(d.size());
+    int best = 0, bs = -1, be = -1;
+    auto up = [](char c) -> char {
+        return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 32) : c;
+    };
+    // Each diagonal is a fixed offset = i - j (i over interior, j over D).
+    for (int off = -(m - 1); off <= n - 1; ++off) {
+        int cur = 0, cur_start = -1;
+        const int i_lo = off > 0 ? off : 0;
+        const int i_hi = (n - 1 < off + m - 1) ? n - 1 : off + m - 1;
+        for (int i = i_lo; i <= i_hi; ++i) {
+            const int j = i - off;
+            const int sc = (up(interior[i]) == up(d[j])) ? 1 : -1;
+            if (cur <= 0) { cur = sc; cur_start = i; }
+            else { cur += sc; }
+            if (cur > best) { best = cur; bs = cur_start; be = i; }
+        }
+    }
+    return {best, bs, be};
+}
+
 PYBIND11_MODULE(_markup, m) {
     m.doc() = "arda markup-transfer hot path (C++/pybind11)";
     m.attr("__version__") = "0.2.0";
@@ -229,4 +267,8 @@ PYBIND11_MODULE(_markup, m) {
     m.def("back_translate", &back_translate, py::arg("aa"), py::arg("unknown") = "NNN",
           "Mock back-translation using the most-frequent human (Kazusa) codon per "
           "amino acid; unknown residues -> `unknown` (default 'NNN').");
+    m.def("d_local_align", &d_local_align, py::arg("interior"), py::arg("d"),
+          "Gapless local alignment (match=+1, mismatch=-1) of a short D germline "
+          "against a query interior. Returns (score, start, end) with 0-based "
+          "inclusive offsets of the best segment in `interior`; (0,-1,-1) if none.");
 }

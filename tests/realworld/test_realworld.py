@@ -116,6 +116,60 @@ def test_cdr3_junction_airr_invariants(org):
     assert cdr3_ok / prod >= 0.97 and junc_ok / prod >= 0.95
 
 
+def _d_gene(call: str) -> str:
+    return call.split(",")[0].split("*")[0] if call else ""
+
+
+@pytest.mark.parametrize("org", ORGANISMS)
+def test_d_call_concordance(org):
+    """D-segment concordance with IgBLAST.
+
+    D calls are inherently noisier than V/J — the germlines are short, trimmed by
+    exonuclease at both ends, and (for IGH) highly paralogous. We measure
+    gene-level agreement among records *both* tools call a D for. TRB/TRD have few,
+    distinct germlines -> high agreement; IGH has ~50 similar D genes, so only
+    loose agreement is expected (consistent with IgBLAST-vs-other-tool reports).
+    """
+    _, igb, arda = _load(org)
+    # group -> [igblast_real_D, co_called_by_both, gene_agree]
+    stats = {"clean": [0, 0, 0], "igh": [0, 0, 0]}   # clean = TRB/TRD
+    for sid, ig in igb.items():
+        loc = ig.get("locus")
+        if loc not in ("IGH", "TRB", "TRD"):
+            continue
+        dig = ig.get("d_call") or ""
+        if not dig or dig == "dummyD":              # skip empty / placeholder D
+            continue
+        grp = "igh" if loc == "IGH" else "clean"
+        stats[grp][0] += 1
+        da = (arda.get(sid) or {}).get("d_call") or ""
+        if not da:
+            continue
+        stats[grp][1] += 1
+        stats[grp][2] += _d_gene(da) == _d_gene(dig)
+
+    parts = []
+    for g, (tot, co, ag) in stats.items():
+        if tot:
+            parts.append(f"{g}: igb_D={tot} co_called={co} "
+                         f"agree={ag}" + (f" ({ag/co:.0%})" if co else ""))
+    print(f"\n[{org}] D concordance — " + "; ".join(parts))
+
+    clean_tot, clean_co, clean_ag = stats["clean"]
+    igh_tot, igh_co, igh_ag = stats["igh"]
+    # TRB/TRD: distinct germlines, expect strong agreement where both call a D.
+    if clean_co >= 30:
+        assert clean_ag / clean_co >= 0.80
+    # IGH: paralogous germlines + SHM; only loose inter-tool agreement expected.
+    if igh_co >= 30:
+        assert igh_ag / igh_co >= 0.35
+    # arda should still call a D for a non-trivial share of IgBLAST-D records.
+    if clean_tot >= 50:
+        assert clean_co / clean_tot >= 0.30
+    if igh_tot >= 50:
+        assert igh_co / igh_tot >= 0.30
+
+
 def test_trimmed_inputs():
     """V-only (FR1-FR3) and J-side (CDR3-FR4) fragments annotate without error."""
     queries, _, arda = _load("human")

@@ -28,11 +28,13 @@ pytestmark = [
 ]
 
 
-def _query_set(n: int) -> list[tuple[str, str]]:
+def _query_set(n: int, loci: tuple[str, ...] | None = None) -> list[tuple[str, str]]:
     from pathlib import Path
     from arda.refbuild.imgt import read_fasta
 
     fa = read_fasta(Path(vdj_dir("human") / "alleles.fasta"))
+    if loci:
+        fa = [(sid, seq) for sid, seq in fa if sid.split("_")[0] in loci]
     rng = random.Random(0)
     out = []
     for k in range(n):
@@ -65,3 +67,33 @@ def test_thread_scaling():
         dt = time.perf_counter() - t0
         base = base or dt
         print(f"  threads={threads:>2}  time={dt:6.2f}s  speedup={base/dt:4.2f}x")
+
+
+def _timed(queries, *, map_d, threads, repeats=3):
+    """Best-of-`repeats` wall time for annotating `queries` (warms caches first)."""
+    annotate_records(queries, "human", "nt", threads=threads, map_d=map_d)  # warm-up
+    best = float("inf")
+    for _ in range(repeats):
+        t0 = time.perf_counter()
+        annotate_records(queries, "human", "nt", threads=threads, map_d=map_d)
+        best = min(best, time.perf_counter() - t0)
+    return best
+
+
+@pytest.mark.parametrize("n", [2000, 10000])
+def test_d_mapping_overhead(n):
+    """Extra wall time from D mapping, measured on a VDJ-only (IGH/TRB/TRD) query
+    set — the worst case, since D mapping only runs for VDJ-locus hits. Reports
+    absolute and per-sequence overhead so the cost of the option is on record."""
+    threads = os.cpu_count() or 1
+    queries = _query_set(n, loci=("IGH", "TRB", "TRD"))
+    off = _timed(queries, map_d=False, threads=threads)
+    on = _timed(queries, map_d=True, threads=threads)
+    overhead = on - off
+    pct = 100.0 * overhead / off if off else 0.0
+    print(f"\n[bench] D-mapping overhead (VDJ-only, n={n:>6}, threads={threads}): "
+          f"off={off:6.3f}s  on={on:6.3f}s  "
+          f"extra={overhead*1e3:7.1f} ms ({pct:+5.1f}%)  "
+          f"per_seq={overhead/n*1e6:6.2f} us")
+    # Sanity: D mapping is a short per-hit local alignment, not a new mmseqs pass.
+    assert overhead < off  # never more than doubles end-to-end time

@@ -17,7 +17,7 @@ import polars as pl
 
 from ..paths import data_dir, vdj_dir
 from ..igblast import SUPPORTED_ORGANISMS
-from .loci import LOCI, IMGT_SPECIES_DIR
+from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR
 from . import imgt, combinations, airr_extract
 from .translate import translate, aa_coords_from_nt
 from .airr_extract import REGION_NAMES
@@ -128,6 +128,29 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
     return nt_rows, aa_rows, combo_rows, fasta_nt, fasta_aa
 
 
+def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]:
+    """Return ``(locus, allele, ungapped_seq)`` for every D allele of each VDJ locus.
+
+    D segments map at runtime via gapless local alignment (not the V·J scaffold
+    DB), so we ship the raw germline sequences alongside the scaffolds. Loci with
+    no IMGT D file for this species (e.g. rat TRD) are skipped.
+    """
+    out: list[tuple[str, str, str]] = []
+    for locus in VDJ_LOCI:
+        try:
+            path = imgt.ungap_gene(species_dir, locus.group, locus.d)
+        except FileNotFoundError:
+            logger.info("%s: no IMGT D file (%s) for %s — no D germlines",
+                        locus.name, locus.d, species_dir)
+            continue
+        for header, seq in imgt.read_fasta(path):
+            allele = header.split("|")[0].strip().split()[0]
+            s = seq.upper().replace(".", "")
+            if allele and s:
+                out.append((locus.name, allele, s))
+    return out
+
+
 def build_species(organism: str) -> Path:
     """Build the reference DB for one organism. Returns the output directory."""
     if organism not in IMGT_SPECIES_DIR:
@@ -157,6 +180,13 @@ def build_species(organism: str) -> Path:
     pl.DataFrame(nt_all).write_csv(out_dir / "markup.tsv", separator="\t")
     pl.DataFrame(aa_all).write_csv(out_dir / "markup.aa.tsv", separator="\t")
     pl.DataFrame(combo_all).write_csv(out_dir / "combinations.tsv", separator="\t")
+
+    # D germlines for runtime D-segment mapping (VDJ loci only).
+    d_germ = _collect_d_germlines(species_dir, logger)
+    (out_dir / "d_germlines.fasta").write_text(
+        "".join(f">{loc}|{al}\n{s}\n" for loc, al, s in d_germ))
+    logger.info("D germlines: %d alleles across %d loci",
+                len(d_germ), len({loc for loc, _, _ in d_germ}))
 
     dt = time.perf_counter() - t0
     logger.info("TOTAL: %d scaffolds across %d loci in %.1fs -> %s",

@@ -39,12 +39,34 @@ dev/base), set `$ARDA_MMSEQS` to the env binary.
 - **C++ seq primitives**: translate/detect_frame/reverse_complement/back_translate
   in `src/_markup/markup.cpp`, re-exported by `refbuild/translate.py` (mirpy-compatible).
 
+## D-segment mapping (done)
+After V/J transfer, `transfer._map_d` takes the V..J interior of the junction
+(query coords `v_sequence_end+1 .. j_sequence_start-1`) and gapless-local-aligns
+every locus D germline against it via the C++ `_markup.d_local_align` (match=+1/
+mismatch=-1; mmseqs is unreliable at ~8-31 nt). Best hit (score≥`_D_MIN_SCORE`=6)
+→ `d_call` + `d_sequence_start`/`d_sequence_end` (AIRR, 1-based closed, query
+space). For D-D loci (IGH/TRD) a second non-overlapping D above `_D2_MIN_SCORE`=7
+→ `d2_call`/`d2_sequence_*`; `np1`/`np2`/`np3` partition the interior between V,
+the D(s), and J. D germlines ship in `database/vdj/<org>/d_germlines.fasta`
+(`>locus|allele`, VDJ loci only), loaded into `Reference.d_germlines`; VJ loci get
+no germlines so D mapping is skipped. `build._collect_d_germlines` writes the file
+during refbuild (from `imgt.ungap_gene`). Concordance vs IgBLAST (committed
+fixtures): TRB/TRD ~97% gene agreement among co-called; IGH ~46-69% (paralogous D
++ SHM). **Limitation**: a long junction can exceed what mmseqs aligns *through*,
+so the projected interior collapses and D mapping silently no-ops (lowers recall,
+never a wrong call). Tests: `tests/unit` (d_local_align), `tests/synthetic`
+(single-D e2e + `_map_d` double-D logic + option toggle), `tests/realworld`
+(per-org concordance), `tests/benchmark` (overhead).
+
+**Optional**: `map_d` (default True) threads through `annotate_records`/
+`annotate_file`/`adapter.annotate_sequences` and CLI `--map-d/--no-map-d`; gated in
+`_annotate_chunk` (`dg = ... if seqtype=='nt' and map_d else None`). D mapping is a
+short per-hit C++ local alignment, not a new mmseqs pass, so the cost is tiny:
+benchmark (`test_d_mapping_overhead`, VDJ-only worst case, M3, 16 threads) shows
+**+1.0% @ 2k, +1.3% @ 10k** wall time (~7-15 µs/seq). Negligible on real bulk
+RNA-seq where most reads aren't VDJ hits.
+
 ## TODO / known gaps
-- **D-segment mapping** (NOT done): scaffolds are V×J only, so `d_call` and the D
-  region inside CDR3 are not assigned. Future: after V/J transfer, align the CDR3
-  interior against a D germline DB and emit `d_call`/`d_sequence_*`. Must handle
-  **double D-D junctions** (D-D fusions, seen in IGH/TRD) — possibly >1 D segment
-  per rearrangement (AIRR `d2_call`). See README TODO.
 - `productive` is heuristic (stop-free V..J span), not full AIRR productivity.
 
 ## Streaming I/O (done)
