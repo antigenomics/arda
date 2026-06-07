@@ -94,9 +94,12 @@ large FASTQ. Synthetic human IGH, 16 threads (`scripts/bench_vs_igblast.py`):
 | 50,000    | 16s  | ~3.0k/s   | 7.3×               |                    |
 | 100,000   | 30s  | ~3.3k/s   | 7.9×               |                    |
 
-On 100 real GenBank IGH mRNA records, region concordance with IgBLAST is **99.7%**
-(remaining diffs are one-residue FR1/CDR3 boundary conventions; V-gene assignment
-agrees 100/100).
+On ~7.3k real GenBank mRNA records spanning **all five organisms and their loci**
+(committed, gzipped test fixtures), region concordance with IgBLAST on productive
+records is **98–99.7%** per organism; `junction_aa`/`cdr3_aa` match IgBLAST ~99%
+and satisfy the AIRR invariants exactly. V-gene assignment agrees ~100%. (GenBank
+also contains genomic/partial/non-productive entries that confuse both tools; those
+are excluded from the comparison.)
 
 **Bulk RNA-seq is much faster than amplicon**, because mmseqs prefilters by k-mer
 matching — reads with no receptor k-mer are rejected before alignment. At 150 nt
@@ -112,8 +115,9 @@ Extrapolated to a **32-core node**, a 30M-read bulk RNA-seq library (~1% recepto
 annotates in roughly **10–20 min** — the same order of magnitude as a STAR genome
 alignment pass on the same data (STAR is faster per read, but arda maps only to a
 tiny germline DB and the non-receptor majority costs just prefilter rejection).
-For inputs this large, stream/shard the FASTQ (see Roadmap) — the current API
-loads all reads into memory.
+Large FASTQ is **streamed in bounded chunks** (a background reader prefetches the
+next chunk while the current one is annotated), so memory stays flat regardless of
+input size — `--chunk-size` tunes it.
 
 ## Roadmap / TODO
 
@@ -122,7 +126,7 @@ loads all reads into memory.
   interior against a D germline DB after V/J transfer, including **double D-D
   junctions** (D-D fusions → `d_call` + `d2_call`).
 - MHC class I/II groove + α-helix annotation (references already pre-fetched).
-- Process-pool sharding for very large FASTQ (mmseqs is already threaded).
+- Multi-node sharding (single-node streaming + threading is implemented).
 
 ## Development
 

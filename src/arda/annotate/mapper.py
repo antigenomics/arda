@@ -8,7 +8,9 @@ hot path) -> AIRR TSV.
 from __future__ import annotations
 
 import os
+import queue
 import tempfile
+import threading
 from pathlib import Path
 
 import polars as pl
@@ -17,11 +19,15 @@ from .. import mmseqs
 from ..paths import data_dir
 from ..refbuild.translate import reverse_complement
 from . import io as seqio
-from .reference import load_reference
+from .reference import load_reference, Reference
 from .transfer import transfer_hit, AIRR_COLUMNS
-from .airr_out import write_airr
+from .airr_out import airr_header, format_rows
 
 __all__ = ["annotate_file", "annotate_records"]
+
+# Streaming defaults: process the input in bounded chunks so memory stays flat
+# regardless of input size (a 30M-read FASTQ never fully loads).
+_CHUNK_SIZE = 50_000
 
 _SEARCH_TYPE = {"nt": mmseqs.SEARCH_TYPE_NUCLEOTIDE, "aa": mmseqs.SEARCH_TYPE_PROTEIN}
 
@@ -63,31 +69,19 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     return {row["query"]: row for row in df.iter_rows(named=True)}
 
 
-def annotate_records(
+def _annotate_chunk(
     records: list[tuple[str, str]],
-    organism: str = "human",
-    seqtype: str = "nt",
+    ref: Reference,
+    target_db: Path,
+    seqtype: str,
     *,
-    threads: int = 0,
-    sensitivity: float | None = None,
-    strand: str = "both",
+    threads: int,
+    sensitivity: float,
+    mm_strand: int | None,
 ) -> list[dict]:
-    """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
-
-    Args:
-        strand: ``"both"`` (default, nt only) searches both strands and re-orients
-            reverse-complement hits; ``"forward"`` searches the plus strand only.
-            Ignored for protein input.
-    """
-    if seqtype not in _SEARCH_TYPE:
-        raise ValueError(f"seqtype must be 'nt' or 'aa', got {seqtype!r}")
-    ref = load_reference(organism, seqtype)
-    threads = threads or (os.cpu_count() or 1)
-    sensitivity = _SENSITIVITY[seqtype] if sensitivity is None else sensitivity
-    mm_strand = (2 if strand == "both" else 1) if seqtype == "nt" else None
-
-    target_db = _cached_target_db(ref.target_fasta, organism, seqtype)
-
+    """Annotate one batch against a preloaded reference + cached target DB."""
+    if not records:
+        return []
     with tempfile.TemporaryDirectory(prefix="arda_") as td:
         tmp = Path(td)
         query_fa = seqio.write_fasta(iter(records), tmp / "query.fasta")
@@ -129,6 +123,39 @@ def annotate_records(
     return out
 
 
+def _prep(organism, seqtype, threads, sensitivity, strand):
+    if seqtype not in _SEARCH_TYPE:
+        raise ValueError(f"seqtype must be 'nt' or 'aa', got {seqtype!r}")
+    ref = load_reference(organism, seqtype)
+    threads = threads or (os.cpu_count() or 1)
+    sensitivity = _SENSITIVITY[seqtype] if sensitivity is None else sensitivity
+    mm_strand = (2 if strand == "both" else 1) if seqtype == "nt" else None
+    target_db = _cached_target_db(ref.target_fasta, organism, seqtype)
+    return ref, target_db, threads, sensitivity, mm_strand
+
+
+def annotate_records(
+    records: list[tuple[str, str]],
+    organism: str = "human",
+    seqtype: str = "nt",
+    *,
+    threads: int = 0,
+    sensitivity: float | None = None,
+    strand: str = "both",
+) -> list[dict]:
+    """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
+
+    Args:
+        strand: ``"both"`` (default, nt only) searches both strands and re-orients
+            reverse-complement hits; ``"forward"`` searches the plus strand only.
+            Ignored for protein input.
+    """
+    ref, target_db, threads, sensitivity, mm_strand = _prep(
+        organism, seqtype, threads, sensitivity, strand)
+    return _annotate_chunk(records, ref, target_db, seqtype,
+                           threads=threads, sensitivity=sensitivity, mm_strand=mm_strand)
+
+
 def annotate_file(
     input: str | Path,
     output: str | Path,
@@ -136,10 +163,42 @@ def annotate_file(
     seqtype: str = "nt",
     *,
     threads: int = 0,
+    sensitivity: float | None = None,
     strand: str = "both",
+    chunk_size: int = _CHUNK_SIZE,
 ) -> Path:
-    """Annotate a FASTA/FASTQ file and write an AIRR TSV."""
-    records = list(seqio.read_sequences(input))
-    airr = annotate_records(records, organism=organism, seqtype=seqtype,
-                            threads=threads, strand=strand)
-    return write_airr(airr, output)
+    """Annotate a FASTA/FASTQ file and stream an AIRR TSV.
+
+    The input is processed in bounded chunks with a background reader thread that
+    prefetches the next chunk while the current one is annotated (mmseqs releases
+    the GIL during its subprocess), so memory stays flat for arbitrarily large
+    FASTQ and read parsing overlaps compute. The reference + target DB are loaded
+    once and reused across all chunks.
+    """
+    output = Path(output)
+    ref, target_db, threads, sensitivity, mm_strand = _prep(
+        organism, seqtype, threads, sensitivity, strand)
+
+    chunks: queue.Queue = queue.Queue(maxsize=2)
+
+    def reader():
+        try:
+            for chunk in seqio.chunked(seqio.read_sequences(input), chunk_size):
+                chunks.put(chunk)
+        finally:
+            chunks.put(None)  # sentinel
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    with open(output, "w") as fh:
+        fh.write(airr_header() + "\n")
+        while True:
+            chunk = chunks.get()
+            if chunk is None:
+                break
+            recs = _annotate_chunk(chunk, ref, target_db, seqtype,
+                                   threads=threads, sensitivity=sensitivity,
+                                   mm_strand=mm_strand)
+            fh.write(format_rows(recs))
+    t.join()
+    return output

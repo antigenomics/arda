@@ -62,14 +62,16 @@ def annotate(
     output: Path = typer.Option(..., "--output", "-o", help="Output AIRR TSV."),
     organism: str = typer.Option("human", help="Reference organism."),
     seqtype: str = typer.Option("nt", help="Input sequence type: nt or aa."),
-    threads: int = typer.Option(0, help="Worker processes (0 = all cores)."),
+    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
     strand: str = typer.Option("both", help="nt only: 'both' strands or 'forward'."),
+    chunk_size: int = typer.Option(
+        50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
 ) -> None:
-    """Annotate FR/CDR regions and write an AIRR TSV."""
+    """Annotate FR/CDR regions and write an AIRR TSV (streamed, memory-bounded)."""
     from .annotate.mapper import annotate_file
 
     annotate_file(input, output, organism=organism, seqtype=seqtype,
-                  threads=threads, strand=strand)
+                  threads=threads, strand=strand, chunk_size=chunk_size)
 
 
 if __name__ == "__main__":

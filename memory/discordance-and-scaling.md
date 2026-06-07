@@ -24,6 +24,40 @@ mmseqs k-mer prefilter rejects non-receptor reads before alignment, so mostly-ju
 input is far faster: 100% receptor ~5.7k/s, 10% ~19k/s, 1% ~25k/s
 (`scripts/bench_prefilter.py`). This matches blood bulk RNA-seq (~1-5% receptor).
 
+## CDR3 / junction correctness (AIRR-critical)
+CDR3 length is query-specific, so its end is **J-anchored** (= FR4 start − 1), NOT
+taken from the fixed-length scaffold — otherwise long somatic CDR3s get truncated.
+`junction_aa` is built as `Cys + cdr3_aa + [FW]` so `cdr3_aa == junction_aa[1:-1]`
+holds **by construction** (never off by one). On committed fixtures: junction
+C-start / FW-end / cdr3==IgBLAST all ~100% for IGH/TRB. See transfer.py `_set_junction`.
+
+## Trimmed inputs & region deletion
+- V-only (FR1-FR3) fragments: annotate FR1-3 + CDR1-2 correctly, no CDR3/FR4.
+- J-side (CDR3-FR4) fragments: coding frame is derived from the **alignment phase**
+  (not FR1), so CDR3/FR4 aa are produced even without V.
+- Deleting an internal region (e.g. CDR2) collapses it to ~0 residues; flanks and
+  distal regions still round-trip exactly (nt and aa). Tests in tests/synthetic.
+
+## Committed test fixtures (offline)
+`tests/data/realworld/<organism>.fasta.gz` + `<organism>.igblast.airr.tsv.gz`:
+balanced ~7.3k GenBank mRNA across all 5 organisms × loci (IG all; TR human/mouse;
+NCBI lacks 500 for rare groups like TRG so totals < 10k), gzipped, with IgBLAST AIRR
+reference. `tests/realworld` runs offline (mmseqs + DB only), parametrized per
+organism. Rebuild via `scripts/build_test_fixtures.py`.
+
+## Multi-species concordance (productive records)
+Region concordance vs IgBLAST: human 98.6%, mouse 99.6%, rat 98.0%, rabbit 99.7%,
+rhesus 99.4%. junction/cdr3 vs IgBLAST ~99% all species. KEY: compare only on
+IgBLAST-productive records and skip IgBLAST regions with stops — GenBank junk
+(genomic/partial/pseudogene, e.g. mouse IGK AM0863xx with stops in FR3) otherwise
+drags mouse to ~91%. On productive rearrangements arda ≈ IgBLAST everywhere.
+
+## Junction emitted only with both flanks
+A junction is emitted ONLY when both conserved residues are present (Cys before
+cdr3 AND [FW] opening FR4). Truncated queries past the Cys get empty junction
+rather than a partial one — so `cdr3_aa == junction_aa[1:-1]` holds for every
+emitted junction. (transfer.py `_set_junction`.)
+
 ## 30M-read / 32-core estimate
 ~25k/s at 16 threads, 1% content → ~35-40k/s at 32 cores (mmseqs scales sublinearly)
 → **~10-20 min for 30M reads**. Same order of magnitude as a STAR genome-mapping

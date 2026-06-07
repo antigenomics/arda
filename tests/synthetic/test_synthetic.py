@@ -98,6 +98,51 @@ def test_reverse_complement_strand(human_ref):
         assert fwd[k] == rc[k]
 
 
+def _aa_ref():
+    from pathlib import Path
+    from arda.refbuild.imgt import read_fasta
+    fa = dict(read_fasta(Path(vdj_dir("human") / "alleles.aa.fasta")))
+    aa = pl.read_csv(vdj_dir("human") / "markup.aa.tsv", separator="\t", infer_schema_length=0)
+    ref = {r["scaffold_id"]: r for r in aa.iter_rows(named=True)}
+    return fa, ref
+
+
+def test_region_deletion_nt(human_ref):
+    """Deleting an internal region (CDR2) collapses it; neighbours stay correct."""
+    fa, ref, ids = human_ref
+    sid = next(i for i in ids if i.startswith("IGH_") and ref[i]["cdr2_start"])
+    s, r = fa[sid], ref[sid]
+    c2s, c2e = int(r["cdr2_start"]), int(r["cdr2_end"])
+    deleted = s[: c2s - 1] + s[c2e:]                       # remove whole CDR2
+    out = annotate_records([("del", deleted)], "human", "nt", threads=4)[0]
+    # Flanking and distal regions remain present and round-trip exactly.
+    for reg in ("fwr1", "cdr1", "fwr2", "fwr3", "cdr3", "fwr4"):
+        if out[reg]:
+            s_, e_ = int(out[f"{reg}_start"]), int(out[f"{reg}_end"])
+            assert deleted[s_ - 1 : e_] == out[reg]
+    # The deleted region is gone (empty or collapsed to <= a boundary residue).
+    assert len(out["cdr2_aa"]) <= 1
+    # CDR3/FR4 still annotated downstream of the deletion, with valid junction.
+    assert out["cdr3_aa"] and out["fwr4_aa"]
+    assert out["junction_aa"].startswith("C") and out["junction_aa"].endswith(("F", "W"))
+
+
+def test_region_deletion_aa():
+    """Same, for protein input against the aa reference."""
+    fa, ref = _aa_ref()
+    sid = next(i for i in fa if i.startswith("IGH_") and ref[i]["cdr2_start"]
+               and ref[i].get("fwr4"))
+    p, r = fa[sid], ref[sid]
+    c2s, c2e = int(r["cdr2_start"]), int(r["cdr2_end"])
+    deleted = p[: c2s - 1] + p[c2e:]
+    out = annotate_records([("del", deleted)], "human", "aa", threads=4)[0]
+    for reg in ("fwr1", "cdr1", "fwr2", "fwr3", "cdr3", "fwr4"):
+        if out[reg]:
+            s_, e_ = int(out[f"{reg}_start"]), int(out[f"{reg}_end"])
+            assert deleted[s_ - 1 : e_] == out[reg]
+    assert len(out["cdr2"]) <= 1
+
+
 def test_no_hit_yields_empty_record():
     rec = annotate_records([("random", "ACGT" * 40)], "human", "nt", threads=4)[0]
     assert rec["sequence_id"] == "random"

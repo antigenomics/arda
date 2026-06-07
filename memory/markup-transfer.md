@@ -45,6 +45,13 @@ dev/base), set `$ARDA_MMSEQS` to the env binary.
   interior against a D germline DB and emit `d_call`/`d_sequence_*`. Must handle
   **double D-D junctions** (D-D fusions, seen in IGH/TRD) — possibly >1 D segment
   per rearrangement (AIRR `d2_call`). See README TODO.
-- Multiprocessing: mmseqs is threaded; transfer is serial (cheap). Chunked
-  process-pool sharding for huge FASTQ still deferred.
 - `productive` is heuristic (stop-free V..J span), not full AIRR productivity.
+
+## Streaming I/O (done)
+`annotate_file` streams the input in bounded chunks (`_CHUNK_SIZE=50k`) via a
+background reader thread (prefetch queue, maxsize 2) that parses the next chunk
+while mmseqs annotates the current (subprocess releases the GIL). Reference +
+cached target DB load once and are reused across chunks. Memory is flat for
+arbitrarily large FASTQ; output is written incrementally (`airr_header` +
+`format_rows`). `annotate_records` (in-memory) shares the same `_annotate_chunk`
+core. CLI `--chunk-size`. Multi-node sharding still TODO.

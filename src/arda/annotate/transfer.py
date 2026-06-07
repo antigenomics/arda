@@ -137,13 +137,16 @@ def _set_junction(rec, query_seq, region_q, *, seqtype, protein=None, cdr3_aa_st
     f4 = region_q["fwr4"][0]
     flank = 3 if seqtype == "nt" else 1
     js, je = cs - flank, f4 + (flank - 1)
-    if js < 1 or je > len(query_seq):
-        return
-    rec["junction"] = query_seq[js - 1 : je]
     cdr3_aa = rec.get("cdr3_aa", "")
     fw = rec.get("fwr4_aa", "")[:1]
     if seqtype == "nt":
         cys = protein[cdr3_aa_start - 2] if (cdr3_aa_start and cdr3_aa_start >= 2) else ""
     else:
         cys = query_seq[cs - 2] if cs >= 2 else ""
+    # A valid AIRR junction needs BOTH conserved flanks (Cys104 and [FW]118). If
+    # the query is truncated past the Cys, emit no junction rather than a partial
+    # one — this keeps the invariant cdr3_aa == junction_aa[1:-1] always true.
+    if not cys or not fw or js < 1 or je > len(query_seq):
+        return
+    rec["junction"] = query_seq[js - 1 : je]
     rec["junction_aa"] = cys + cdr3_aa + fw
