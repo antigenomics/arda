@@ -16,7 +16,6 @@ Bootstrap
 
 * ``--no-conda`` — use the already-active environment instead of creating ``arda``.
 * ``--build-db`` — rebuild the reference database after install (needs IgBLAST).
-* ``--mhc`` — pre-fetch MHC allele references (reference-only).
 * ``--tests`` — run the fast unit + synthetic suites.
 
 What gets installed

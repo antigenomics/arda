@@ -2,8 +2,7 @@
 
 **Versatile, fast, exact** FR/CDR annotation of **TCR** and **BCR** sequences —
 mRNA and protein in FASTA, and reads in FASTQ from both **amplicon** and **bulk
-RNA-seq** — for nucleotide *and* amino-acid input, across all loci at once (MHC
-groove/helix annotation is scaffolded for a future release).
+RNA-seq** — for nucleotide *and* amino-acid input, across all loci at once.
 
 `arda` does the expensive IgBLAST work **once, offline** — building a pre-aligned
 reference database of every in-frame V·J germline scaffold with FR1–4 / CDR1–3
@@ -125,7 +124,6 @@ input size — `--chunk-size` tunes it.
   FR/CDR coordinates are assigned but `d_call` is not yet. Planned: align the CDR3
   interior against a D germline DB after V/J transfer, including **double D-D
   junctions** (D-D fusions → `d_call` + `d2_call`).
-- MHC class I/II groove + α-helix annotation (references already pre-fetched).
 - Multi-node sharding (single-node streaming + threading is implemented).
 
 ## Development

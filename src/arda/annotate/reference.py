@@ -30,6 +30,8 @@ class RefEntry:
     j_call: str
     starts: list[int]   # one per REGIONS, 1-based closed (target coords)
     ends: list[int]
+    v_sequence_end: int = 0    # scaffold nt position of V germline end (0 = unknown)
+    j_sequence_start: int = 0  # scaffold nt position of J germline start
 
 
 @dataclass
@@ -62,6 +64,14 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
     df = pl.read_csv(markup_path, separator="\t", infer_schema_length=0)
     start_cols = [f"{r}_start" for r in REGIONS]
     end_cols = [f"{r}_end" for r in REGIONS]
+    has_vj = "v_sequence_end" in df.columns and "j_sequence_start" in df.columns
+
+    def _int(v) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return 0
+
     entries: dict[str, RefEntry] = {}
     for row in df.iter_rows(named=True):
         entries[row["scaffold_id"]] = RefEntry(
@@ -70,5 +80,7 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
             j_call=row["j_call"],
             starts=[int(row[c]) for c in start_cols],
             ends=[int(row[c]) for c in end_cols],
+            v_sequence_end=_int(row["v_sequence_end"]) if has_vj else 0,
+            j_sequence_start=_int(row["j_sequence_start"]) if has_vj else 0,
         )
     return Reference(organism, seqtype, target_fasta, entries)

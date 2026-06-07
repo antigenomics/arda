@@ -143,6 +143,36 @@ def test_region_deletion_aa():
     assert len(out["cdr2"]) <= 1
 
 
+def test_out_of_frame_junction(human_ref):
+    """A 1-nt CDR3 insertion makes V/J out of frame: junction is still reported,
+    translated with an N-bridge ('_' codon), FR4 stays readable, and the V/J split
+    positions are populated."""
+    fa, ref, ids = human_ref
+    sid = next(i for i in ids if i.startswith("IGH_") and ref[i]["cdr3_start"])
+    s = fa[sid]
+    c3s = int(ref[sid]["cdr3_start"])
+    frameshift = s[: c3s + 4] + "A" + s[c3s + 4:]   # +1 nt inside CDR3
+    out = annotate_records([("oof", frameshift)], "human", "nt", threads=4)[0]
+    assert out["productive"] == "F"                  # out of frame
+    assert out["junction_aa"]                         # still reported
+    assert "_" in out["junction_aa"]                  # N-bridge marker
+    assert out["cdr3_aa"] == out["junction_aa"][1:-1]  # invariant holds with '_'
+    assert re.match(r"[FW]G.G", out["fwr4_aa"])        # FR4 still reads correctly
+    assert int(out["v_sequence_end"]) > 0 and int(out["j_sequence_start"]) > 0
+
+
+def test_vj_positions_reported(human_ref):
+    """v_sequence_end and j_sequence_start are transferred and reported for the
+    vast majority of hits (a few scaffolds lack the extended igblast markup)."""
+    fa, ref, ids = human_ref
+    out = annotate_records([(i, fa[i]) for i in ids[:40]], "human", "nt", threads=4)
+    have = [r for r in out if r["v_call"]]
+    assert have
+    both = sum(1 for r in have if str(r["v_sequence_end"]).isdigit()
+               and str(r["j_sequence_start"]).isdigit())
+    assert both / len(have) >= 0.9
+
+
 def test_no_hit_yields_empty_record():
     rec = annotate_records([("random", "ACGT" * 40)], "human", "nt", threads=4)[0]
     assert rec["sequence_id"] == "random"

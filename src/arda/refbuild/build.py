@@ -102,6 +102,11 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
         nt_row = {"scaffold_id": sid, "locus": locus.name,
                   "v_call": v_call, "j_call": j_call,
                   "productive": rec.get("productive"),
+                  # Extended markup: scaffold nt positions of the V germline end and
+                  # J germline start, transferred to queries to locate the V/J split
+                  # inside the junction (and to bridge frame for out-of-frame calls).
+                  "v_sequence_end": rec.get("v_sequence_end") or "",
+                  "j_sequence_start": rec.get("j_sequence_start") or "",
                   "junction": rec.get("junction"), "junction_aa": rec.get("junction_aa")}
         aa_row = {"scaffold_id": sid, "locus": locus.name,
                   "v_call": v_call, "j_call": j_call, "coding_start": coding_start,

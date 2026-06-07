@@ -27,9 +27,26 @@ input is far faster: 100% receptor ~5.7k/s, 10% ~19k/s, 1% ~25k/s
 ## CDR3 / junction correctness (AIRR-critical)
 CDR3 length is query-specific, so its end is **J-anchored** (= FR4 start − 1), NOT
 taken from the fixed-length scaffold — otherwise long somatic CDR3s get truncated.
-`junction_aa` is built as `Cys + cdr3_aa + [FW]` so `cdr3_aa == junction_aa[1:-1]`
-holds **by construction** (never off by one). On committed fixtures: junction
-C-start / FW-end / cdr3==IgBLAST all ~100% for IGH/TRB. See transfer.py `_set_junction`.
+`cdr3_aa == junction_aa[1:-1]` holds **by construction** for every emitted junction.
+
+**Out-of-frame junctions are reported** (not dropped). `transfer.py _junction_nt`:
+the nt junction is the real query slice (Cys104 codon .. [FW]118 codon). For
+translation, when V and J are in different frames (phase = (fwr4_start −
+coding_start) % 3 ≠ 0), insert k=(3−phase)%3 N **after the V germline end**
+(`v_sequence_end`, clamped to stay inside CDR3 so Cys/[FW] flanks survive); the
+codon(s) containing inserted N render as `_`. FR4 is translated in its own J frame
+(`translate(Q[fwr4_start-1:])`) so it reads `WGQG…` even for non-productive reads.
+`productive` = in-frame AND no stop in V-side/junction.
+
+**Extended scaffold markup**: `markup.tsv` now stores `v_sequence_end` /
+`j_sequence_start` (scaffold nt); these are transferred to queries (point
+projection) → AIRR `v_sequence_end`, `j_sequence_start`, locating the V/J split in
+the junction. V and J can rarely overlap/cross — handled by clamping.
+
+**Concordance scoring**: non-canonical junctions (not C…[FW], or containing `_`)
+are reported but **excluded** from junction/cdr3 concordance metrics. On the
+committed fixtures, productive-canonical junction & cdr3 match IgBLAST ~100% per
+species; productive region concordance 98–99.7%.
 
 ## Trimmed inputs & region deletion
 - V-only (FR1-FR3) fragments: annotate FR1-3 + CDR1-2 correctly, no CDR3/FR4.

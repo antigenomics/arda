@@ -1,21 +1,9 @@
-2026-06-06 19:44:40,057 INFO === arda reference build: rhesus_monkey (Macaca_mulatta) ===
-2026-06-06 19:44:43,898 WARNING TRA: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRAV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRAJ -organism rhesus_monkey -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Macaca_mulatta/TRA.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/_dummyD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rhesus_monkey_gl.aux` failed (exit 1):
-BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rhesus_monkey/rhesus_monkey_TR_V could not be found in [internal_data] directory
-Please refer to the BLAST+ user manual.
-) — skipped
-2026-06-06 19:44:46,878 WARNING TRG: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRGV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRGJ -organism rhesus_monkey -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Macaca_mulatta/TRG.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/_dummyD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rhesus_monkey_gl.aux` failed (exit 1):
-BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rhesus_monkey/rhesus_monkey_TR_V could not be found in [internal_data] directory
-Please refer to the BLAST+ user manual.
-) — skipped
-2026-06-06 19:44:50,836 INFO IGK: V=136 J=5 raw_combos=680 unique_scaffolds=680 annotated=680
-2026-06-06 19:44:55,241 INFO IGL: V=113 J=9 raw_combos=1017 unique_scaffolds=1008 annotated=1008
-2026-06-06 19:45:01,180 INFO IGH: V=126 J=10 raw_combos=1260 unique_scaffolds=1260 annotated=1260
-2026-06-06 19:45:05,293 WARNING TRB: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRBV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRBJ -organism rhesus_monkey -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Macaca_mulatta/TRB.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRBD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rhesus_monkey_gl.aux` failed (exit 1):
-BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rhesus_monkey/rhesus_monkey_TR_V could not be found in [internal_data] directory
-Please refer to the BLAST+ user manual.
-) — skipped
-2026-06-06 19:45:09,628 WARNING TRD: failed (`/Users/mikesh/vcs/code/arda/bin/igblastn -germline_db_V /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRDV -germline_db_J /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRDJ -organism rhesus_monkey -ig_seqtype TCR -query /Users/mikesh/vcs/code/arda/data/scaffolds/Macaca_mulatta/TRD.fasta -outfmt 19 -num_threads 16 -germline_db_D /Users/mikesh/vcs/code/arda/data/blastdb/Macaca_mulatta/TRDD -auxiliary_data /Users/mikesh/vcs/code/arda/bin/optional_file/rhesus_monkey_gl.aux` failed (exit 1):
-BLAST query/options error: Germline annotation database /Users/mikesh/vcs/code/arda/bin/internal_data/rhesus_monkey/rhesus_monkey_TR_V could not be found in [internal_data] directory
-Please refer to the BLAST+ user manual.
-) — skipped
-2026-06-06 19:45:09,652 INFO TOTAL: 2948 scaffolds across 3 loci in 29.6s -> /Users/mikesh/vcs/code/arda/database/vdj/rhesus_monkey
+2026-06-07 06:22:51,681 INFO === arda reference build: rhesus_monkey (Macaca_mulatta) ===
+2026-06-07 06:22:51,682 INFO TRA: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-06-07 06:22:51,682 INFO TRG: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-06-07 06:22:54,920 INFO IGK: V=136 J=5 raw_combos=680 unique_scaffolds=680 annotated=680
+2026-06-07 06:22:58,584 INFO IGL: V=113 J=9 raw_combos=1017 unique_scaffolds=1008 annotated=1008
+2026-06-07 06:23:03,247 INFO IGH: V=126 J=10 raw_combos=1260 unique_scaffolds=1260 annotated=1260
+2026-06-07 06:23:03,266 INFO TRB: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-06-07 06:23:03,266 INFO TRD: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-06-07 06:23:03,284 INFO TOTAL: 2948 scaffolds across 3 loci in 11.6s -> /Users/mikesh/vcs/code/arda/database/vdj/rhesus_monkey

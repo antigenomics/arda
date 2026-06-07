@@ -1,8 +1,7 @@
 """arda — Antigen Receptor Domain Annotation.
 
-Fast FR/CDR (and later MHC) region annotation for TCR/BCR nucleotide and amino
-acid sequences, via offline IgBLAST-built references mapped at runtime with
-MMseqs2.
+Fast FR/CDR region annotation for TCR/BCR nucleotide and amino acid sequences,
+via offline IgBLAST-built references mapped at runtime with MMseqs2.
 """
 
 from __future__ import annotations

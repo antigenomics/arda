@@ -20,14 +20,12 @@ ENV_NAME="arda"
 USE_CONDA=1
 DO_BUILD_DB=0
 DO_TESTS=0
-DO_MHC=0
 
 for arg in "$@"; do
   case "$arg" in
     --no-conda) USE_CONDA=0 ;;
     --build-db) DO_BUILD_DB=1 ;;
     --tests)    DO_TESTS=1 ;;
-    --mhc)      DO_MHC=1 ;;
     *) echo "Unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -73,10 +71,6 @@ $PY -c "import arda; print('arda', arda.__version__)"
 if [[ "$DO_BUILD_DB" -eq 1 ]]; then
   log "building reference database"
   $PY -m arda.cli build-db --organism all
-fi
-if [[ "$DO_MHC" -eq 1 ]]; then
-  log "pre-fetching MHC references"
-  $PY "$ROOT/scripts/fetch_mhc.py"
 fi
 if [[ "$DO_TESTS" -eq 1 ]]; then
   log "running fast tests"

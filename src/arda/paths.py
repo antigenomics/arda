@@ -22,7 +22,6 @@ __all__ = [
     "data_dir",
     "database_dir",
     "vdj_dir",
-    "mhc_dir",
 ]
 
 _MARKERS = ("pyproject.toml", "setup.sh")
@@ -72,10 +71,4 @@ def database_dir() -> Path:
 def vdj_dir(species: str | None = None) -> Path:
     """``database/vdj`` (or a single species subdirectory)."""
     base = database_dir() / "vdj"
-    return base / species if species else base
-
-
-def mhc_dir(species: str | None = None) -> Path:
-    """``database/mhc`` (or a single species subdirectory)."""
-    base = database_dir() / "mhc"
     return base / species if species else base
