@@ -87,6 +87,27 @@ records = arda.annotate_sequences(
 #    v_sequence_end, j_sequence_start, productive, rev_comp, ...
 ```
 
+### Annotating bare germline segments
+
+There is no coverage filter, so a **V-only** or **J-only** query maps to its
+scaffold and only the regions inside the query's coverage are returned. This lets
+you annotate isolated germline V or J alleles without synthesising a
+rearrangement — a bare V yields `fwr1..fwr3`, a bare J yields `fwr4`:
+
+```python
+from arda.annotate.mapper import annotate_records
+
+recs = annotate_records(
+    [("TRBV9*01", v_germline_nt), ("TRBJ2-7*01", j_germline_nt)],
+    organism="human", seqtype="nt", strand="forward", map_d=False,
+)
+# V record -> fwr1/cdr1/fwr2/cdr2/fwr3 (+ v_sequence_end = CDR3 start)
+# J record -> fwr4 (+ j_sequence_start = CDR3 end / FR4 start)
+```
+
+(mirpy uses exactly this to bake per-allele FR/CDR subsequences into its gene
+library; see `tests/synthetic/test_germline_segments.py`.)
+
 ## How it works
 
 1. **Reference build** (`arda.refbuild`, offline): download IMGT/V-QUEST germlines

@@ -26,6 +26,21 @@ What gets installed
   references, not at annotation time.
 * The ``arda`` package + the ``arda._markup`` C++ extension (editable install).
 
+MMseqs2 without conda
+---------------------
+
+If you install with plain ``pip`` (no conda env) and ``mmseqs`` is not on
+``PATH``, arda **auto-fetches** a static MMseqs2 binary into ``bin/mmseqs`` on
+first use — no manual install needed. Controls:
+
+* ``$ARDA_MMSEQS`` — use a specific mmseqs binary (highest priority).
+* ``$ARDA_MMSEQS_ASSET`` — override the release asset (e.g.
+  ``mmseqs-linux-sse41.tar.gz`` on pre-AVX2 CPUs).
+* ``$ARDA_NO_AUTO_FETCH`` — disable auto-fetch (then install mmseqs yourself).
+
+Fetch eagerly with ``python scripts/fetch_mmseqs.py`` (``setup.sh --no-conda``
+does this for you).
+
 The committed ``database/vdj/<organism>/`` references — including **precompiled
 MMseqs2 indexes** under ``mmseqs/`` — mean most users do not need to build
 anything. The shipped indexes are used when the local MMseqs2 version matches;

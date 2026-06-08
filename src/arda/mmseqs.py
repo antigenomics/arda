@@ -5,7 +5,9 @@ binary discovery, a subprocess runner, and the ``createdb`` / ``search`` /
 ``convertalis`` (and ``easy-search``) pipeline used by the annotator.
 
 Discovery order for the binary: ``$ARDA_MMSEQS`` → ``<project>/bin/mmseqs`` →
-``mmseqs`` on ``PATH``.
+``mmseqs`` on ``PATH``. If none are found, a static binary is auto-fetched into
+``<project>/bin/mmseqs`` (one-time, transparent) unless ``$ARDA_NO_AUTO_FETCH``
+is set — so neither pip nor conda users need to install mmseqs manually.
 """
 
 from __future__ import annotations
@@ -50,7 +52,12 @@ class MMseqsError(RuntimeError):
 
 @lru_cache(maxsize=1)
 def mmseqs_binary() -> str:
-    """Locate the ``mmseqs`` executable."""
+    """Locate the ``mmseqs`` executable, auto-fetching a static build if needed.
+
+    Resolution: ``$ARDA_MMSEQS`` → ``<project>/bin/mmseqs`` → ``mmseqs`` on
+    ``PATH``. If still not found, download a static binary into
+    ``<project>/bin/mmseqs`` (one-time) unless ``$ARDA_NO_AUTO_FETCH`` is set.
+    """
     env = os.environ.get("ARDA_MMSEQS")
     if env:
         return env
@@ -60,10 +67,26 @@ def mmseqs_binary() -> str:
     found = shutil.which("mmseqs")
     if found:
         return found
+    if not os.environ.get("ARDA_NO_AUTO_FETCH"):
+        fetched = _auto_fetch()
+        if fetched is not None:
+            return fetched
     raise MMseqsError(
-        "mmseqs binary not found. Install it (conda install -c bioconda mmseqs2) "
-        "or set $ARDA_MMSEQS."
+        "mmseqs binary not found. Install it (conda install -c bioconda mmseqs2), "
+        "set $ARDA_MMSEQS, or allow auto-fetch (unset $ARDA_NO_AUTO_FETCH)."
     )
+
+
+def _auto_fetch() -> str | None:
+    """Download a static mmseqs binary into ``bin/``; return its path or None."""
+    try:
+        from ._mmseqs_fetch import fetch
+
+        return str(fetch(bin_dir()))
+    except Exception as exc:  # noqa: BLE001 - network/layout failures are non-fatal here
+        import warnings
+        warnings.warn(f"mmseqs auto-fetch failed: {exc}", RuntimeWarning, stacklevel=2)
+        return None
 
 
 def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:

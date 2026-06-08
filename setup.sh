@@ -58,6 +58,16 @@ fi
 log "pip install -e . (builds _markup)"
 $PY -m pip install -e "$ROOT"
 
+# --- 3b. mmseqs2 (no-conda only) -------------------------------------------
+# The conda env provides mmseqs2; without conda, fetch a static binary into bin/
+# (arda also auto-fetches lazily on first use, so this is just eager).
+if [[ "$USE_CONDA" -eq 0 ]]; then
+  if ! command -v mmseqs >/dev/null 2>&1; then
+    log "fetching static mmseqs2 binary into ./bin"
+    $PY "$ROOT/scripts/fetch_mmseqs.py" --dest "$ROOT/bin" || true
+  fi
+fi
+
 # --- 4. verification -------------------------------------------------------
 log "verifying toolchain"
 if [[ "$USE_CONDA" -eq 1 ]]; then
