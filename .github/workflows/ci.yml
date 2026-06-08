@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+
+      - name: Install MMseqs2 (static binary)
+        run: |
+          curl -fsSL https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz -o mmseqs.tar.gz
+          tar xzf mmseqs.tar.gz
+          echo "ARDA_MMSEQS=$PWD/mmseqs/bin/mmseqs" >> "$GITHUB_ENV"
+
+      - name: Install arda (builds the C++ extension)
+        run: pip install -e .[test]
+
+      - name: Show environment
+        run: |
+          "$ARDA_MMSEQS" version
+          python -c "import arda, arda._markup as m; print('arda', arda.__version__, '_markup', m.__version__)"
+
+      # Unit + synthetic + real-world (offline, against committed fixtures + DB).
+      # The committed mmseqs indexes are version-tagged; if CI's mmseqs differs,
+      # arda transparently rebuilds a private cache — this also exercises that path.
+      - name: Run tests
+        run: python -m pytest tests/unit tests/synthetic tests/realworld -q

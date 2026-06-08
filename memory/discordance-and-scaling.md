@@ -56,7 +56,7 @@ species; productive region concordance 98–99.7%.
   distal regions still round-trip exactly (nt and aa). Tests in tests/synthetic.
 
 ## Committed test fixtures (offline)
-`tests/data/realworld/<organism>.fasta.gz` + `<organism>.igblast.airr.tsv.gz`:
+`tests/assets/realworld/<organism>.fasta.gz` + `<organism>.igblast.airr.tsv.gz`:
 balanced ~7.3k GenBank mRNA across all 5 organisms × loci (IG all; TR human/mouse;
 NCBI lacks 500 for rare groups like TRG so totals < 10k), gzipped, with IgBLAST AIRR
 reference. `tests/realworld` runs offline (mmseqs + DB only), parametrized per

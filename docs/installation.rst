@@ -26,5 +26,8 @@ What gets installed
   references, not at annotation time.
 * The ``arda`` package + the ``arda._markup`` C++ extension (editable install).
 
-The committed ``database/vdj/<organism>/`` references mean most users do not need
-to build anything.
+The committed ``database/vdj/<organism>/`` references — including **precompiled
+MMseqs2 indexes** under ``mmseqs/`` — mean most users do not need to build
+anything. The shipped indexes are used when the local MMseqs2 version matches;
+otherwise arda rebuilds a private cache on first run. ``arda build-index`` (re)builds
+the shipped indexes for your MMseqs2 version.

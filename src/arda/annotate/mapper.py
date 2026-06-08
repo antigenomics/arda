@@ -16,14 +16,14 @@ from pathlib import Path
 import polars as pl
 
 from .. import mmseqs
-from ..paths import data_dir
+from ..paths import data_dir, vdj_dir
 from ..refbuild.translate import reverse_complement
 from . import io as seqio
 from .reference import load_reference, Reference
 from .transfer import transfer_hit, AIRR_COLUMNS
 from .airr_out import airr_header, format_rows
 
-__all__ = ["annotate_file", "annotate_records"]
+__all__ = ["annotate_file", "annotate_records", "build_index"]
 
 # Streaming defaults: process the input in bounded chunks so memory stays flat
 # regardless of input size (a 30M-read FASTQ never fully loads).
@@ -39,20 +39,67 @@ _SENSITIVITY = {"nt": 7.0, "aa": 7.0}
 _MAX_SEQS = 50
 
 
-def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
-    """Build (once) and reuse an mmseqs DB for the reference scaffolds.
+def _dbtype(seqtype: str) -> int:
+    return 2 if seqtype == "nt" else 1
 
-    Cached under ``data/mmseqs_db/<organism>_<seqtype>``; rebuilt if the source
-    FASTA is newer than the cached DB. Avoids re-creating the target DB on every
-    annotation call (the dominant overhead for small inputs).
+
+def _committed_index(organism: str, seqtype: str) -> Path | None:
+    """A precompiled mmseqs DB shipped in ``database/`` if it matches the local
+    mmseqs version (DBs are version-sensitive). Returns its path or ``None``."""
+    d = vdj_dir(organism) / "mmseqs" / seqtype
+    db, ver = d / "db", d / "VERSION"
+    if db.exists() and ver.exists():
+        try:
+            if ver.read_text().strip() == mmseqs.version():
+                return db
+        except Exception:  # noqa: BLE001 — mmseqs missing; fall through to rebuild
+            return None
+    return None
+
+
+def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
+    """Resolve the mmseqs target DB for the reference scaffolds.
+
+    Prefers the precompiled DB shipped in ``database/vdj/<org>/mmseqs/<seqtype>``
+    (used out of the box when its mmseqs version matches). Otherwise builds once
+    into a ``data/mmseqs_db`` cache and reuses it (rebuilt if the FASTA is newer).
     """
+    committed = _committed_index(organism, seqtype)
+    if committed is not None:
+        return committed
     cache = data_dir() / "mmseqs_db" / f"{organism}_{seqtype}"
     cache.mkdir(parents=True, exist_ok=True)
     db = cache / "db"
-    dbtype = 2 if seqtype == "nt" else 1
     if not db.exists() or db.stat().st_mtime < Path(target_fasta).stat().st_mtime:
-        mmseqs.createdb(target_fasta, db, dbtype=dbtype)
+        mmseqs.createdb(target_fasta, db, dbtype=_dbtype(seqtype))
     return db
+
+
+def build_index(organism: str = "all", *, force: bool = False) -> None:
+    """(Re)build the precompiled mmseqs DBs shipped under ``database/``.
+
+    Writes ``database/vdj/<org>/mmseqs/<seqtype>/db*`` + a ``VERSION`` marker so
+    the runtime can use them out of the box (and detect a mmseqs-version mismatch).
+    Skips up-to-date DBs unless ``force``.
+    """
+    from ..igblast import SUPPORTED_ORGANISMS
+    orgs = SUPPORTED_ORGANISMS if organism == "all" else (organism,)
+    ver = mmseqs.version()
+    for org in orgs:
+        for seqtype in ("nt", "aa"):
+            fasta = vdj_dir(org) / ("alleles.aa.fasta" if seqtype == "aa" else "alleles.fasta")
+            if not fasta.exists():
+                continue
+            out = vdj_dir(org) / "mmseqs" / seqtype
+            db, vfile = out / "db", out / "VERSION"
+            if db.exists() and not force and vfile.exists() and vfile.read_text().strip() == ver:
+                continue
+            out.mkdir(parents=True, exist_ok=True)
+            for stale in out.glob("db*"):
+                stale.unlink()
+            mmseqs.createdb(fasta, db, dbtype=_dbtype(seqtype))
+            vfile.write_text(ver + "\n")
+            print(f"[arda] built mmseqs index {org}/{seqtype} ({ver})")
 
 
 def _best_hits(tsv: Path) -> dict[str, dict]:

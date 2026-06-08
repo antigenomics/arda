@@ -32,10 +32,13 @@ autodoc_mock_imports = ["polars", "typer", "requests", "arda._markup"]
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
+# Served as a project page under the org custom domain (antigenomics.github.io
+# -> docs.isalgo.dev), so arda's docs live at docs.isalgo.dev/arda/.
+html_baseurl = "https://docs.isalgo.dev/arda/"
 html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 html_theme_options = {
-    "github_url": "https://github.com/mikessh/arda",
+    "github_url": "https://github.com/antigenomics/arda",
     "show_nav_level": 2,
 }

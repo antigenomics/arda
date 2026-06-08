@@ -1,6 +1,6 @@
 """Real-world concordance vs IgBLAST, from committed gzipped GenBank fixtures.
 
-Fixtures under ``tests/data/realworld/<organism>.fasta.gz`` (+ IgBLAST AIRR
+Fixtures under ``tests/assets/realworld/<organism>.fasta.gz`` (+ IgBLAST AIRR
 reference ``<organism>.igblast.airr.tsv.gz``) are built by
 ``scripts/build_test_fixtures.py`` — a balanced ~10k mRNA set across all five
 organisms and their loci (IG for all; TR for human/mouse). Tests run offline,
@@ -27,7 +27,7 @@ from tests.conftest import requires_mmseqs, requires_human_db
 
 pytestmark = [requires_mmseqs, requires_human_db]
 
-FIXTURES = Path(__file__).resolve().parent.parent / "data" / "realworld"
+FIXTURES = Path(__file__).resolve().parent.parent / "assets" / "realworld"
 REGIONS = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3")
 ORGANISMS = sorted(p.name[: -len(".fasta.gz")] for p in FIXTURES.glob("*.fasta.gz"))
 

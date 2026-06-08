@@ -1,4 +1,18 @@
-# arda — Antigen Receptor Domain Annotation
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/arda_dark.png">
+    <img alt="arda" src="assets/arda_light.png" width="340">
+  </picture>
+</p>
+
+<h1 align="center">arda — Antigen Receptor Domain Annotation</h1>
+
+<p align="center">
+  <a href="https://github.com/antigenomics/arda/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/antigenomics/arda/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://docs.isalgo.dev/arda/"><img alt="docs" src="https://github.com/antigenomics/arda/actions/workflows/docs.yml/badge.svg"></a>
+  <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="license" src="https://img.shields.io/badge/license-GPLv3-green">
+</p>
 
 **Versatile, fast, exact** FR/CDR annotation of **TCR** and **BCR** sequences —
 mRNA and protein in FASTA, and reads in FASTQ from both **amplicon** and **bulk
@@ -45,8 +59,15 @@ arda info                                   # resolved paths + tool availability
 arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
-arda build-db --organism all                # rebuild references (needs IgBLAST)
+arda build-db   --organism all              # rebuild references (needs IgBLAST)
+arda build-index --organism all             # (re)build the precompiled mmseqs DBs
 ```
+
+The reference database ships with **precompiled MMseqs2 indexes**
+(`database/vdj/<organism>/mmseqs/`), so annotation runs out of the box with no
+build step. They are used automatically when the local MMseqs2 version matches the
+shipped one; otherwise arda transparently rebuilds a private cache on first run
+(`arda build-index` regenerates the shipped DBs for your version).
 
 Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on
 **both strands** by default (reverse-complement reads are re-oriented and flagged
@@ -61,8 +82,9 @@ records = arda.annotate_sequences(
     ["GACGTGCAG...", ("clone7", "CAGGTG...")],  # strings or (id, seq) pairs
     seqtype="nt", organism="human",
 )
-# -> list of AIRR record dicts: v_call, j_call, fwr1..fwr4, cdr1..cdr3,
-#    *_start/*_end (1-based closed), *_aa, junction, productive, ...
+# -> list of AIRR record dicts: v_call, d_call/d2_call, j_call, fwr1..fwr4,
+#    cdr1..cdr3, *_start/*_end (1-based closed), *_aa, junction(_aa), np1/np2/np3,
+#    v_sequence_end, j_sequence_start, productive, rev_comp, ...
 ```
 
 ## How it works
@@ -74,7 +96,10 @@ records = arda.annotate_sequences(
    markup.tsv, markup.aa.tsv, combinations.tsv, build.log}`.
 2. **Runtime** (`arda.annotate`): MMseqs2 search query→scaffolds → best hit →
    C++ `transfer_regions` projects scaffold region coordinates onto the query
-   (handling indels, truncation, mid-codon alignment starts) → AIRR TSV.
+   (handling indels, truncation, mid-codon alignment starts, reverse strand) → for
+   VDJ loci a gapless C++ local alignment of the CDR3 interior against the D
+   germlines adds `d_call`/`d2_call` + `np*` → AIRR TSV. Out-of-frame junctions are
+   reported with an N-bridge (`_`) so FR4 still reads.
 
 See [`memory/`](memory/) for design rationale and gotchas. Fast sequence
 primitives (`translate`, `detect_coding_frame`, `reverse_complement`,
@@ -120,11 +145,10 @@ input size — `--chunk-size` tunes it.
 
 ## Roadmap / TODO
 
-- **D-segment mapping** — scaffolds are V·J only, so `v_call`/`j_call` and all
-  FR/CDR coordinates are assigned but `d_call` is not yet. Planned: align the CDR3
-  interior against a D germline DB after V/J transfer, including **double D-D
-  junctions** (D-D fusions → `d_call` + `d2_call`).
-- Multi-node sharding (single-node streaming + threading is implemented).
+See [`ROADMAP.md`](ROADMAP.md). Done: V·J reference build (5 organisms), MMseqs2
+mapping, C++ markup transfer, reverse-complement, all-loci querying, streaming I/O,
+out-of-frame junctions, **D-segment mapping incl. D-D fusions**, precompiled
+indexes. Next: multi-node (SLURM) sharding; full AIRR productivity.
 
 ## Development
 

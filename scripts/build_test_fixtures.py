@@ -1,7 +1,7 @@
 """Fetch a balanced ~10k GenBank mRNA set across all 5 species + loci, with an
 IgBLAST reference, stored gzipped as committed test fixtures.
 
-Per species we write ``tests/data/realworld/<organism>.fasta.gz`` (all loci) and
+Per species we write ``tests/assets/realworld/<organism>.fasta.gz`` (all loci) and
 ``<organism>.igblast.airr.tsv.gz`` (IgBLAST AIRR, concatenated across loci). Only
 loci IgBLAST can annotate are fetched: IG for all species, TR only for human/mouse
 (no TR internal annotation ships for rat/rabbit/rhesus). Runs offline at test time.
@@ -22,7 +22,7 @@ from arda.igblast import SUPPORTED_ORGANISMS, igblastn_airr, has_internal_annota
 from arda.refbuild.loci import LOCI, IMGT_SPECIES_DIR
 
 EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-OUT = Path(__file__).resolve().parents[1] / "tests" / "data" / "realworld"
+OUT = Path(__file__).resolve().parents[1] / "tests" / "assets" / "realworld"
 PER_GROUP = 500          # records per (species, locus)
 SPECIES_LATIN = {
     "human": "Homo sapiens", "mouse": "Mus musculus", "rat": "Rattus norvegicus",

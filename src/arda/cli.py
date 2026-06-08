@@ -56,6 +56,21 @@ def build_db(
     build(organism)
 
 
+@app.command("build-index")
+def build_index_cmd(
+    organism: str = typer.Option("all", help="Organism (or 'all')."),
+    force: bool = typer.Option(False, "--force", help="Rebuild even if up to date."),
+) -> None:
+    """(Re)build the precompiled mmseqs DBs shipped under database/.
+
+    These let `arda annotate` run out of the box; they are regenerated here for the
+    locally installed mmseqs version when it differs from the shipped one.
+    """
+    from .annotate.mapper import build_index
+
+    build_index(organism, force=force)
+
+
 @app.command()
 def annotate(
     input: Path = typer.Option(..., "--input", "-i", help="Input FASTA/FASTQ."),

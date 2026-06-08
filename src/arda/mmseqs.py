@@ -22,6 +22,7 @@ __all__ = [
     "MMseqsError",
     "mmseqs_binary",
     "run",
+    "version",
     "createdb",
     "search",
     "convertalis",
@@ -74,6 +75,12 @@ def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
             f"`{' '.join(cmd)}` failed (exit {proc.returncode}):\n{proc.stderr}"
         )
     return proc
+
+
+@lru_cache(maxsize=1)
+def version() -> str:
+    """Return the mmseqs version string (e.g. ``18.8cc5c``)."""
+    return run(["version"]).stdout.strip()
 
 
 def createdb(fasta: str | Path, db: str | Path, *, dbtype: int | None = None) -> Path:

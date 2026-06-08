@@ -4,9 +4,17 @@
 The runtime target is a **single** mmseqs DB built from `database/vdj/<organism>/
 alleles{,.aa}.fasta`, which contains scaffolds for *all* loci (IGH/IGK/IGL/TRA/
 TRB/TRG/TRD). So one search annotates mixed **bulk RNA-seq** across every locus at
-once; the per-query `locus` (AIRR field) comes from the best-hit scaffold. The
-target DB is cached under `data/mmseqs_db/<organism>_<seqtype>` and rebuilt only if
-the source FASTA is newer (`_cached_target_db` in annotate/mapper.py).
+once; the per-query `locus` (AIRR field) comes from the best-hit scaffold.
+
+## Precompiled (shipped) indexes
+The mmseqs target DBs are **committed** under `database/vdj/<organism>/mmseqs/<nt|aa>/`
+(createdb output + a `VERSION` marker), so annotation runs out of the box (~24 MB
+total). `_cached_target_db` (annotate/mapper.py): prefer the committed DB **iff its
+`VERSION` == local `mmseqs version`** (DBs are version-sensitive); else build once
+into `data/mmseqs_db/<org>_<seqtype>` (private cache, never dirties git). `arda
+build-index [--force]` (mapper.build_index) regenerates the shipped DBs for the
+local version — a maintainer tool, deliberately NOT in setup.sh so end users don't
+dirty the committed blobs. CI uses a different mmseqs build → exercises the fallback.
 
 ## Tuned defaults (annotate/mapper.py)
 - nt: `--search-type 3`, `-s 7.0`, `--max-seqs 50`, `--strand 2` (both strands),
