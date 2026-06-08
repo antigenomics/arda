@@ -83,7 +83,18 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
         tarball = tmp / asset
         _download(url, tarball)
         with tarfile.open(tarball) as tf:
-            tf.extractall(tmp)  # noqa: S202 - trusted official MMseqs2 release
+            tmp_resolved = tmp.resolve()
+            for member in tf.getmembers():
+                if member.issym() or member.islnk():
+                    raise RuntimeError(
+                        f"Refusing to extract link from MMseqs2 archive: {member.name}"
+                    )
+                member_path = (tmp / member.name).resolve()
+                if not str(member_path).startswith(str(tmp_resolved) + os.sep):
+                    raise RuntimeError(
+                        f"Refusing to extract path outside temp dir: {member.name}"
+                    )
+            tf.extractall(tmp)
         extracted = next(tmp.rglob("bin/mmseqs"), None)  # static archives: mmseqs/bin/mmseqs
         if extracted is None:
             raise RuntimeError(f"Unexpected MMseqs2 archive layout in {asset}")
