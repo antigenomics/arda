@@ -67,7 +67,7 @@ def mmseqs_binary() -> str:
     found = shutil.which("mmseqs")
     if found:
         return found
-    if not os.environ.get("ARDA_NO_AUTO_FETCH"):
+    if "ARDA_NO_AUTO_FETCH" not in os.environ:
         fetched = _auto_fetch()
         if fetched is not None:
             return fetched
