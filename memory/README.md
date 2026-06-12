@@ -9,3 +9,4 @@ Running notes on non-obvious design decisions and gotchas, so future work
 - [markup-transfer.md](markup-transfer.md) — runtime projection, indel/strand semantics, D-segment TODO.
 - [mmseqs-params.md](mmseqs-params.md) — tuned nt/aa params, all-loci single DB, caching, speedup.
 - [discordance-and-scaling.md](discordance-and-scaling.md) — why arda≈IgBLAST, alignment-phase frame fix, bulk RNA-seq prefilter speed, 30M-read estimate.
+- [cluster-slurm.md](cluster-slurm.md) — split/merge/slurm sharding design + how it's tested without a cluster.

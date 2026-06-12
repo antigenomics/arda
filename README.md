@@ -61,7 +61,11 @@ arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
+arda slurm -i big.fastq -o big.airr.tsv --shards 50 --partition cpu   # cluster scale
 ```
+
+See [`examples/`](examples/) for a runnable per-locus demo and
+[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for measured speed/accuracy.
 
 The reference database ships with **precompiled MMseqs2 indexes**
 (`database/vdj/<organism>/mmseqs/`), so annotation runs out of the box with no
@@ -169,7 +173,7 @@ input size — `--chunk-size` tunes it.
 See [`ROADMAP.md`](ROADMAP.md). Done: V·J reference build (5 organisms), MMseqs2
 mapping, C++ markup transfer, reverse-complement, all-loci querying, streaming I/O,
 out-of-frame junctions, **D-segment mapping incl. D-D fusions**, precompiled
-indexes. Next: multi-node (SLURM) sharding; full AIRR productivity.
+indexes, **multi-node (SLURM) sharding**. Next: full AIRR productivity.
 
 ## Development
 

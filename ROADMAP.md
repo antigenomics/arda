@@ -24,9 +24,12 @@ GenBank-vs-IgBLAST test fixtures.
         collapsing the projected interior — this only lowers D recall, never
         produces a wrong call.)
 
-- [ ] **Multi-node sharding.** Single-node streaming + threading is implemented;
-      add a SLURM-array mode that shards a huge FASTQ across array tasks and
-      concatenates the per-shard AIRR TSVs.
+- [x] **Multi-node sharding.** `arda split` round-robins a huge FASTA/FASTQ into N
+      shards (one pass); `arda merge` concatenates per-shard AIRR TSVs (single
+      header); `arda slurm` renders/submits a `submit.sh` chaining split →
+      `sbatch --array` annotate → merge via an `afterok` dependency
+      (`arda.cluster`). Split/merge/script are unit-tested; the cluster run is
+      pending a live SLURM test.
 
 - [ ] **Full AIRR productivity.** `productive` is currently a heuristic (in-frame
       + stop-free V..J span); align it with the complete AIRR productivity rules
