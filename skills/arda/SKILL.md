@@ -66,6 +66,24 @@ Read [references/annotation.md](references/annotation.md) for the full field lis
 parameter semantics (strand/sensitivity/threads/chunking), AIRR column order, and
 performance notes.
 
+## Batch annotation — never loop (use mmseqs2's own parallelism)
+
+**Always gather every sequence first, make ONE `annotate_sequences` call, then do
+downstream analysis on the batch output.** Each `annotate_*` call pays a fixed ~825ms
+mmseqs2 process+index-load cost; a batch of 300 sequences costs the *same* ~930ms total
+because mmseqs2 parallelises internally across threads. So:
+
+```python
+# RIGHT — one batched call, mmseqs2 threads internally
+recs = arda.annotate_sequences([(cid, seq) for cid, seq in all_chains], organism="human")
+by_id = {r["sequence_id"]: r for r in recs}     # then map back per-item, downstream
+```
+
+Do **not** wrap per-item `annotate_*` in a Python `ProcessPoolExecutor`/`ThreadPoolExecutor`
+or a loop: a process pool that forks after mmseqs2/BLAS have spawned threads **deadlocks**,
+a thread pool just serialises on the same overhead, and either way you pay the fixed cost N
+times instead of once. mmseqs2 is the parallel layer — Python orchestration is single-call.
+
 ## Region & junction semantics
 
 - Region coordinates are projected through the MMseqs2 alignment, so they are
