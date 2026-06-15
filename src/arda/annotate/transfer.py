@@ -21,9 +21,13 @@ from .reference import RefEntry, REGIONS
 
 __all__ = ["transfer_hit", "AIRR_COLUMNS"]
 
-# Output column order (AIRR-compatible subset + locus).
+# Output column order (AIRR-compatible subset + locus). ``mmseqs2_score``/``_evalue``/
+# ``_identity`` carry the alignment quality of the chosen scaffold hit. The score is the
+# mmseqs2 bit score over the *whole* V+J scaffold (not a per-segment AIRR ``v_score``), so
+# it is named after its source; callers use it to rank references and filter weak hits.
 AIRR_COLUMNS = (
     ["sequence_id", "sequence", "locus", "v_call", "d_call", "d2_call", "j_call",
+     "mmseqs2_score", "mmseqs2_evalue", "mmseqs2_identity",
      "rev_comp", "productive",
      "v_sequence_start", "v_sequence_end",
      "d_sequence_start", "d_sequence_end", "d2_sequence_start", "d2_sequence_end",
@@ -174,6 +178,17 @@ def transfer_hit(
     rec = _empty_record(query_id, query_seq)
     rec.update(locus=ref.locus, v_call=ref.v_call, j_call=ref.j_call,
                rev_comp="T" if rev_comp else "F", productive="")
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return ""
+
+    # Alignment quality of the scaffold hit (mmseqs2 bit score / E-value / % identity).
+    rec["mmseqs2_score"] = _num(hit.get("bits"))
+    rec["mmseqs2_evalue"] = _num(hit.get("evalue"))
+    rec["mmseqs2_identity"] = _num(hit.get("pident"))
 
     region_q: dict[str, tuple[int, int]] = {}
     for name, (qs, qe) in zip(REGIONS, coords):

@@ -85,6 +85,20 @@ def test_insertion_in_cdr3_shifts_fr4(human_ref):
     assert re.match(r"[FW]G.G", rec["fwr4_aa"])
 
 
+def test_mmseqs2_score_exposed(human_ref):
+    # The mmseqs2 alignment quality of the chosen scaffold hit is surfaced on the record:
+    # a strong, exact hit scores well above zero, near-perfect identity, tiny E-value.
+    fa, ref, ids = human_ref
+    sid = ids[0]
+    rec = annotate_records([(sid, fa[sid])], "human", "nt", threads=4)[0]
+    assert isinstance(rec["mmseqs2_score"], float) and rec["mmseqs2_score"] > 0
+    assert rec["mmseqs2_identity"] > 90.0
+    assert rec["mmseqs2_evalue"] < 1e-3
+    # A query with no germline similarity yields no hit and a blank (filterable) score.
+    miss = annotate_records([("junk", "ACGT" * 30)], "human", "nt", threads=4)[0]
+    assert miss["mmseqs2_score"] == "" and miss["locus"] == ""
+
+
 def test_reverse_complement_strand(human_ref):
     from arda.refbuild.translate import reverse_complement
 
