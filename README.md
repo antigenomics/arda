@@ -1,4 +1,9 @@
-![logo](assets/arda_dark.svg)
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/arda_dark.svg">
+    <img alt="arda" src="assets/arda_light.svg" width="340">
+  </picture>
+</p>
 
 # arda — Antigen Receptor Domain Annotation
 
