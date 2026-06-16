@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/arda_dark.svg">
-    <img alt="arda" src="assets/arda_light.svg" width="340">
+    <source media="(prefers-color-scheme: light)" srcset="assets/arda_light.svg">
+    <img alt="arda" src="assets/arda_dark.svg" width="340">
   </picture>
 </p>
 
