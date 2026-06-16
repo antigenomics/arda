@@ -5,7 +5,14 @@
   </picture>
 </p>
 
-# arda — Antigen Receptor Domain Annotation
+<h1 align="center">arda — Antigen Receptor Domain Annotation</h1>
+
+<p align="center">
+  <a href="https://github.com/antigenomics/arda/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/antigenomics/arda/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://docs.isalgo.dev/arda/"><img alt="docs" src="https://github.com/antigenomics/arda/actions/workflows/docs.yml/badge.svg"></a>
+  <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="license" src="https://img.shields.io/badge/license-GPLv3-green">
+</p>
 
 **Versatile, fast, exact** FR/CDR annotation of **TCR** and **BCR** sequences —
 mRNA and protein in FASTA, and reads in FASTQ from both **amplicon** and **bulk
