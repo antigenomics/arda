@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 project = "arda"
 author = "Mikhail Shugay"
 copyright = "2026, Mikhail Shugay"
-release = "0.1.0"
+release = "2.0.1"
 
 extensions = [
     "sphinx.ext.autodoc",

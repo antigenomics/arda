@@ -115,6 +115,7 @@ arda annotate -i reads.fastq.gz -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta -o out.tsv --seqtype aa --no-map-d
 arda build-db --organism all                # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for local mmseqs version
+arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node: split → array → merge
 ```
 
 ## mmseqs2 (auto-installed)

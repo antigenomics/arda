@@ -40,3 +40,23 @@ def test_dedup_collapses_identical_scaffolds():
     sc = combinations.build_locus_scaffolds(_locus("TRA"), v, j, {"J1": 0})
     assert len(sc) == 1
     assert sc[0].v_calls == ["V1", "V2"]
+
+
+def test_load_j_frames_parses_aux_skipping_comments(tmp_path, monkeypatch):
+    aux_dir = tmp_path / "optional_file"
+    aux_dir.mkdir()
+    (aux_dir / "human_gl.aux").write_text(
+        "# comment line\n"
+        "IGHJ1*01\t1\t13\n"
+        "IGHJ2*01\t2\t10\n"
+        "malformed_line_without_frame\n"
+        "\n"
+    )
+    monkeypatch.setattr(combinations, "bin_dir", lambda: tmp_path)
+    frames = combinations.load_j_frames("human")
+    assert frames == {"IGHJ1*01": 1, "IGHJ2*01": 2}
+
+
+def test_load_j_frames_missing_file_returns_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(combinations, "bin_dir", lambda: tmp_path)
+    assert combinations.load_j_frames("nonexistent") == {}
