@@ -1,0 +1,18 @@
+language: java
+sudo: required
+jdk: oraclejdk9
+
+addons:
+  apt:
+    packages:
+      - oracle-java9-installer
+
+install:
+  - wget https://github.com/mikessh/igblast-bin/raw/master/binaries/linux-x64/igblastn && chmod +x igblastn
+  - wget https://github.com/mikessh/igblast-bin/raw/master/binaries/linux-x64/makeblastdb && chmod +x makeblastdb
+
+script:
+  - jdk_switcher use oraclejdk8
+  - gradle build --info
+  - jdk_switcher use oraclejdk9
+  - chmod +x travis_cli_test.sh && bash travis_cli_test.sh
