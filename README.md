@@ -8,6 +8,7 @@
 <h1 align="center">arda — Antigen Receptor Domain Annotation</h1>
 
 <p align="center">
+  <a href="https://pypi.org/project/arda-mapper/"><img alt="PyPI" src="https://img.shields.io/pypi/v/arda-mapper"></a>
   <a href="https://github.com/antigenomics/arda/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/antigenomics/arda/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://docs.isalgo.dev/arda/"><img alt="docs" src="https://github.com/antigenomics/arda/actions/workflows/docs.yml/badge.svg"></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-blue">
@@ -41,13 +42,21 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
 ## Install
 
 ```bash
+pip install arda-mapper   # from PyPI (imports as `arda`); binary wheels ship the C++ extension
+```
+
+`mmseqs2` (the search backend) is fetched/managed by arda at runtime. For development — and to
+get the committed germline references on disk — use `setup.sh`:
+
+```bash
 bash setup.sh            # creates conda env `arda`, fetches IgBLAST, pip install -e .
 conda activate arda
 ```
 
 Flags: `--no-conda` (use the active env), `--build-db` (rebuild references after
 install), `--tests` (run the fast suites). The committed `database/vdj/<organism>/`
-references mean **most users never need to build anything**.
+references mean **most users never need to build anything**; a `pip`-only install builds them
+on first use (or set `$ARDA_HOME` to a checkout).
 
 Supported organisms: **human, mouse** (full IG + TR), **rat, rabbit, rhesus_monkey**
 (IG only — IgBLAST ships no TR internal annotation for these).
