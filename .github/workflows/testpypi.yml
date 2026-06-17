@@ -1,10 +1,7 @@
 name: Publish To TestPyPI
 
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:  # manual dry-run; needs a TestPyPI trusted publisher for arda-mapper
 
 permissions:
   contents: read
