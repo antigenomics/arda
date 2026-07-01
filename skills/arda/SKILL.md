@@ -14,10 +14,12 @@ description: >
   semantics, reference-build pipeline, or mmseqs install/troubleshooting.
 license: GPL-3.0
 compatibility: >
-  Python 3.10+; arda installed (conda env `arda` via `bash setup.sh`, or
-  `pip install`). Annotation needs the `mmseqs` binary — arda auto-fetches a
-  static build into bin/ on first use if it is missing, so no manual install is
-  required. Shell is fish — use fish syntax in terminal commands.
+  Python 3.10+; `pip install arda-mapper` (>=2.0.3) — no source checkout and **no
+  `ARDA_HOME`**: the curated `vdj/` reference auto-fetches into `~/.cache/arda` on first use
+  (set `ARDA_NO_AUTO_FETCH` for air-gapped runs), and the `mmseqs` binary auto-fetches a
+  static build into the cache if missing — so a bare `pip install` annotates out of the box.
+  A source checkout / `$ARDA_HOME` still uses the committed `database/`. Shell is fish — use
+  fish syntax in terminal commands.
 metadata:
   repo: https://github.com/antigenomics/arda
 ---

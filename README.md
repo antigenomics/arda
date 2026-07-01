@@ -55,8 +55,11 @@ conda activate arda
 
 Flags: `--no-conda` (use the active env), `--build-db` (rebuild references after
 install), `--tests` (run the fast suites). The committed `database/vdj/<organism>/`
-references mean **most users never need to build anything**; a `pip`-only install builds them
-on first use (or set `$ARDA_HOME` to a checkout).
+references mean **most users never need to build anything**. A `pip install arda-mapper`
+with no source checkout **auto-fetches** the curated references into `~/.cache/arda` on
+first use (the `arda-reference-vdj.tar.gz` release asset) and builds the MMseqs2 index
+there — **no `$ARDA_HOME` and no build step required** (set `ARDA_NO_AUTO_FETCH` for
+air-gapped runs with a pre-populated cache).
 
 Supported organisms: **human, mouse** (full IG + TR), **rat, rabbit, rhesus_monkey**
 (IG only — IgBLAST ships no TR internal annotation for these).

@@ -42,7 +42,13 @@ Fetch eagerly with ``python scripts/fetch_mmseqs.py`` (``setup.sh --no-conda``
 does this for you).
 
 The committed ``database/vdj/<organism>/`` references — including **precompiled
-MMseqs2 indexes** under ``mmseqs/`` — mean most users do not need to build
-anything. The shipped indexes are used when the local MMseqs2 version matches;
-otherwise arda rebuilds a private cache on first run. ``arda build-index`` (re)builds
-the shipped indexes for your MMseqs2 version.
+MMseqs2 indexes** under ``mmseqs/`` — mean a source checkout needs no build. The shipped
+indexes are used when the local MMseqs2 version matches; otherwise arda rebuilds a private
+cache on first run. ``arda build-index`` (re)builds the shipped indexes for your MMseqs2
+version.
+
+**PyPI install (no source tree).** ``pip install arda-mapper`` ships code only. On first use
+it **auto-fetches** the curated ``vdj/`` references (the ``arda-reference-vdj.tar.gz`` release
+asset, ~3 MB) into ``$XDG_CACHE_HOME/arda`` (default ``~/.cache/arda``) and builds the MMseqs2
+index there — **no ``$ARDA_HOME`` and no reference build required**. Set
+``ARDA_NO_AUTO_FETCH`` to disable the download (air-gapped runs with a pre-populated cache).
