@@ -63,9 +63,23 @@ _VSIDE = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3")
 # match=+1/mismatch=-1) of every locus D allele against the V..J interior of the
 # junction — not via the mmseqs scaffold DB. Thresholds below balance sensitivity
 # against chance matches in a short interior.
+#
+# These two numbers have never been measured. A net score of 6 is six exact bases in an
+# interior that is often only 10-20 nt long, scanned against 48 human IGH D alleles, and
+# there is no minimum-length, coverage or E-value floor. ROADMAP.md records the
+# consequence: IGH D concordance vs IgBLAST is 46-69 % (TRB/TRD ~97 %). Both are being
+# calibrated against the PRJNA371303 TRB amplicon truth, with a dinucleotide-shuffled
+# interior as the false-call control — see arda-benchmark ``scripts/d_calibration.py``.
 _D_MIN_SCORE = 6        # minimum net score to call a D segment
 _D2_MIN_SCORE = 7       # stricter threshold for a second (D-D fusion) segment
-_DD_LOCI = {"IGH", "TRD"}   # loci where tandem D-D fusions occur
+
+# A tandem D-D fusion is sought in EVERY locus that has D germlines -- IGH, TRB and TRD.
+# There used to be a ``_DD_LOCI = {"IGH", "TRD"}`` here, which made a TRBD1->TRBD2 tandem
+# unrepresentable. TRB D-D fusions are real, and excluding TRB was doubly costly: the
+# PRJNA371303 amplicons are TRA + TRB, and TRA has no D, so TRB is the *only* locus in the
+# benchmark with a matched amplicon D truth. The one locus we could measure was the one we
+# did not search. The rate of the second call (real or spurious) is what the shuffle
+# control above measures; do not re-introduce a hard-coded locus allow-list to suppress it.
 
 
 def _empty_record(query_id: str, query_seq: str) -> dict:
@@ -119,13 +133,28 @@ def _junction_nt(query_seq, cs, f4, coding_start, v_end_q):
 
 
 def _best_d(interior, d_germlines, min_score, exclude=None):
-    """Best-aligning D against ``interior`` as ``(score, length, allele, s, e)``.
+    """Best-aligning D against ``interior`` as ``(score, length, alleles, s, e)``.
 
     ``s``/``e`` are 0-based inclusive offsets within ``interior``. ``exclude`` is an
     optional ``(s, e)`` span the match must not overlap (used to find a second,
     non-overlapping D). Returns ``None`` if nothing scores at least ``min_score``.
+
+    ``alleles`` is the sorted tuple of EVERY allele producing the winning alignment --
+    same score, same span -- not one arbitrary member of it. Seven pairs of human IGH D
+    germlines are byte-identical across *different genes* (``IGHD4-11*01``/``IGHD4-4*01``,
+    ``IGHD5-18*01``/``IGHD5-5*01``, and the five ``IGHD*/OR15-*a``/``*b`` pairs). A read
+    matching one matches the other, at every score, always. The previous tiebreak picked
+    the lexicographically smaller allele NAME, so ``IGHD4-11*01`` beat ``IGHD4-4*01``
+    because ``"1" < "4"`` in ASCII -- an arbitrary gene call, made 100 % of the time for
+    those pairs rather than occasionally, and a mechanical contributor to the 46-69 % IGH
+    D concordance. Report the ambiguity, as ``v_call``/``j_call`` already do.
+
+    Alleles that tie on ``(score, length)`` but align at a DIFFERENT span are not
+    coordinate-compatible and cannot share one ``d_sequence_start``/``_end``; the winning
+    span is chosen deterministically (highest score, then longest, then 5'-most) and only
+    the alleles sharing *that* span are reported.
     """
-    best = None
+    best = None                              # (rank, [alleles], s, e)
     for allele, dseq in d_germlines:
         score, s, e = _markup.d_local_align(interior, dseq)
         if score < min_score or s < 0:
@@ -134,18 +163,29 @@ def _best_d(interior, d_germlines, min_score, exclude=None):
             xs, xe = exclude
             if not (e < xs or s > xe):       # overlaps the excluded span
                 continue
-        cand = (score, e - s + 1, allele, s, e)
-        if best is None or cand[:2] > best[:2] or (cand[:2] == best[:2] and allele < best[2]):
-            best = cand
-    return best
+        # Rank only on the ALIGNMENT, never on the allele name: equal rank means an
+        # identical span, hence genuine ambiguity rather than a winner to be broken.
+        rank = (score, e - s + 1, -s)
+        if best is None or rank > best[0]:
+            best = (rank, [allele], s, e)
+        elif rank == best[0]:
+            best[1].append(allele)
+    if best is None:
+        return None
+    (score, length, _), alleles, s, e = best
+    return score, length, tuple(sorted(alleles)), s, e
 
 
-def _map_d(rec, query_seq, locus, v_end_q, j_start_q, d_germlines):
+def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines):
     """Map D segment(s) into the V..J interior and populate d_call/np regions.
 
-    Coordinates emitted are AIRR (1-based closed, query space). For D-D loci a
-    second non-overlapping D is sought; the two are then ordered 5'->3' as
-    ``d_call`` / ``d2_call`` with ``np1``/``np2``/``np3`` between V, the D(s), and J.
+    Coordinates emitted are AIRR (1-based closed, query space). A second, non-overlapping
+    D is sought in every locus that has D germlines (IGH, TRB, TRD -- the caller passes
+    ``None`` for VJ loci, which returns immediately). The two are ordered 5'->3' as
+    ``d_call`` / ``d2_call`` -- POSITIONALLY, so ``d_call`` is the 5' segment and need not
+    be the higher-scoring one -- with ``np1``/``np2``/``np3`` between V, the D(s), and J.
+
+    ``d_call`` and ``d2_call`` are comma-separated allele ambiguity lists (see ``_best_d``).
     """
     if not d_germlines or not v_end_q or not j_start_q:
         return
@@ -158,21 +198,20 @@ def _map_d(rec, query_seq, locus, v_end_q, j_start_q, d_germlines):
         return
 
     segs = [d1]
-    if locus in _DD_LOCI:
-        d2 = _best_d(interior, d_germlines, _D2_MIN_SCORE, exclude=(d1[3], d1[4]))
-        if d2 is not None:
-            segs.append(d2)
+    d2 = _best_d(interior, d_germlines, _D2_MIN_SCORE, exclude=(d1[3], d1[4]))
+    if d2 is not None:
+        segs.append(d2)
     segs.sort(key=lambda c: c[3])                 # order 5'->3' by interior start
 
     def q(off):                                   # interior 0-based offset -> query 1-based
         return i_lo + off
 
     _, _, a1, s1, e1 = segs[0]
-    rec["d_call"] = a1
+    rec["d_call"] = ",".join(a1)
     rec["d_sequence_start"], rec["d_sequence_end"] = q(s1), q(e1)
     if len(segs) == 2:
         _, _, a2, s2, e2 = segs[1]
-        rec["d2_call"] = a2
+        rec["d2_call"] = ",".join(a2)
         rec["d2_sequence_start"], rec["d2_sequence_end"] = q(s2), q(e2)
         rec["np1"] = query_seq[v_end_q : q(s1) - 1]
         rec["np2"] = query_seq[q(e1) : q(s2) - 1]
@@ -273,7 +312,7 @@ def transfer_hit(
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
             rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
-        _map_d(rec, query_seq, ref.locus, v_end_q, j_start_q, d_germlines)
+        _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines)
     else:  # aa input: regions are already amino acids; no frame bridging needed.
         for name, (qs, qe) in region_q.items():
             rec[f"{name}_aa"] = query_seq[qs - 1 : qe]
