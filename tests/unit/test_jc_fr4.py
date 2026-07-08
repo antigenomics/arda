@@ -16,6 +16,8 @@ from arda import paths
 from arda.refbuild.constant import _fr4_span, build_jc_scaffolds
 from arda.refbuild.combinations import load_j_fr4_offsets
 
+from tests.conftest import imgt_reference_available
+
 # ---- pure span math: no reference DB, no aux file, no mmseqs -------------------------------------
 
 
@@ -62,8 +64,11 @@ def test_fr4_span_refuses_an_out_of_range_span():
 
 _HAS_BUNDLE = (paths.database_dir() / "c_genes" / "human.fasta").exists()
 _HAS_AUX = bool(load_j_fr4_offsets("human"))
+# build_jc_scaffolds loads J alleles from IMGT, so these also need the IMGT reference downloaded
+# (a plain checkout / CI has the committed database but not the IMGT download).
 requires_jc_inputs = pytest.mark.skipif(
-    not (_HAS_BUNDLE and _HAS_AUX), reason="C-gene bundle or IgBLAST aux file not present")
+    not (_HAS_BUNDLE and _HAS_AUX and imgt_reference_available()),
+    reason="C-gene bundle, IgBLAST aux, or IMGT reference not present")
 
 
 @pytest.mark.skipif(not _HAS_AUX, reason="IgBLAST aux file not present")

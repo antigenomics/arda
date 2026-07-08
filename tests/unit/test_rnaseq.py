@@ -15,7 +15,7 @@ from arda import paths
 
 from arda.rnaseq.map import read_pairs, map_rnaseq, merge_pair
 from arda.refbuild.translate import reverse_complement
-from tests.conftest import requires_mmseqs, requires_human_db
+from tests.conftest import requires_mmseqs, requires_human_db, requires_imgt
 
 
 def test_merge_pair_overlapping():
@@ -346,6 +346,7 @@ def test_read_pairs_rejects_shuffled_or_truncated_mates(tmp_path):
         list(read_pairs(r1, r2t))
 
 
+@requires_imgt
 @pytest.mark.skipif(not (paths.database_dir() / "c_genes" / "human.fasta").exists(),
                     reason="C-gene bundle not present")
 def test_jc_scaffolds_translate_through_the_splice_junction():
@@ -373,6 +374,7 @@ def test_jc_scaffolds_translate_through_the_splice_junction():
     assert isotype_class(next(s for s in jc if "IGHG1*01" in s.c_call).c_call) == "IGHG"
 
 
+@requires_imgt
 @pytest.mark.skipif(not (paths.database_dir() / "c_genes").exists(),
                     reason="C-gene bundle not present")
 def test_every_shipped_c_gene_maps_to_a_known_locus():
@@ -414,6 +416,7 @@ _SPECIES_DIRS = {"human": "Homo_sapiens", "mouse": "Mus_musculus", "rat": "Rattu
                  "rabbit": "Oryctolagus_cuniculus", "rhesus_monkey": "Macaca_mulatta"}
 
 
+@requires_imgt
 @pytest.mark.skipif(not (paths.database_dir() / "c_genes").exists(),
                     reason="C-gene bundle not present")
 def test_jc_scaffolds_read_through_the_splice_for_every_functional_c_gene():
