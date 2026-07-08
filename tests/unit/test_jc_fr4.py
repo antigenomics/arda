@@ -66,6 +66,21 @@ requires_jc_inputs = pytest.mark.skipif(
     not (_HAS_BUNDLE and _HAS_AUX), reason="C-gene bundle or IgBLAST aux file not present")
 
 
+@pytest.mark.skipif(not _HAS_AUX, reason="IgBLAST aux file not present")
+def test_load_j_fr4_offsets_parses_both_columns_from_the_real_aux():
+    """Pin ``load_j_fr4_offsets`` to ground truth in bin/optional_file/human_gl.aux -- BOTH column 4
+    (cdr3_stop) and column 5 (extra_bp). Every other FR4 test either reads the shipped markup (built
+    with correct code, so blind to a parser regression) or feeds ``_fr4_span`` offsets directly, so
+    without this a change that drops or mis-indexes column 5 ships silently. ``extra_bp`` matters:
+    IGHJ6*02 has extra_bp=0 (34-nt FR4) vs IGHJ4*02's 1, and hardcoding it to 0 passes all other
+    tests."""
+    off = load_j_fr4_offsets("human")
+    assert off["IGHJ4*02"] == (13, 1)
+    assert off["IGHJ6*02"] == (28, 0)      # extra_bp genuinely 0 here -- the discriminating case
+    assert off["IGKJ1*01"] == (6, 1)
+    assert "IGHJ1P*01" not in off           # a 3-column pseudogene row has no FR4 offset
+
+
 @requires_jc_inputs
 @pytest.mark.parametrize("organism,species_dir", [("human", "Homo_sapiens"), ("mouse", "Mus_musculus")])
 def test_built_jc_scaffolds_carry_an_in_bounds_fr4(organism, species_dir):
