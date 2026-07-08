@@ -5,3 +5,14 @@
 2026-07-08 22:19:47,392 INFO TRG: dropped 22 scaffolds with incomplete markup
 2026-07-08 22:19:52,137 INFO IGK: V=103 J=10 raw_combos=1030 unique_scaffolds=920 annotated=920
 2026-07-08 22:19:52,150 INFO IGK: dropped 92 scaffolds with incomplete markup
+2026-07-08 22:19:57,356 INFO IGL: V=105 J=11 raw_combos=1155 unique_scaffolds=1050 annotated=1050
+2026-07-08 22:19:57,371 INFO IGL: dropped 10 scaffolds with incomplete markup
+2026-07-08 22:20:11,325 INFO IGH: V=379 J=14 raw_combos=5306 unique_scaffolds=5124 annotated=5124
+2026-07-08 22:20:11,391 INFO IGH: dropped 405 scaffolds with incomplete markup
+2026-07-08 22:20:18,986 INFO TRB: V=166 J=16 raw_combos=2656 unique_scaffolds=2624 annotated=2624
+2026-07-08 22:20:19,021 INFO TRB: dropped 48 scaffolds with incomplete markup
+2026-07-08 22:20:23,988 INFO TRD: V=22 J=5 raw_combos=110 unique_scaffolds=110 annotated=110
+2026-07-08 22:20:23,991 INFO TRD: dropped 37 scaffolds with incomplete markup
+2026-07-08 22:20:24,124 INFO constant region: 345 J+C scaffolds across 7 loci (+2.0% over 17311 V-J scaffolds)
+2026-07-08 22:20:24,276 INFO D germlines: 54 alleles across 3 loci
+2026-07-08 22:20:24,279 INFO TOTAL: 17656 scaffolds across 7 loci in 57.3s -> /Users/mikesh/vcs/code/arda/database/vdj/human

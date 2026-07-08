@@ -277,12 +277,19 @@ def map_rnaseq(
         organism, seqtype, threads, sensitivity, strand)
 
     chunks: queue.Queue = queue.Queue(maxsize=2)
+    # The reader runs in a daemon thread, so anything it raises -- a missing FASTQ, a shuffled mate
+    # file, a truncated gzip -- dies there unheard while `finally` still posts the sentinel. The main
+    # loop then sees a clean end-of-stream and reports "0/0 reads mapped", exit 0. A pipeline reads
+    # that as "this sample has no receptor reads". Capture it and re-raise on the consumer side.
+    reader_exc: list[BaseException] = []
 
     def reader():
         try:
             pairs = read_pairs(r1, r2, reconstruct=reconstruct)
             for chunk in seqio.chunked(pairs, chunk_size):
                 chunks.put(chunk)
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
+            reader_exc.append(exc)
         finally:
             chunks.put(None)  # sentinel
 
@@ -299,6 +306,8 @@ def map_rnaseq(
             while True:
                 chunk = chunks.get()
                 if chunk is None:
+                    if reader_exc:
+                        raise reader_exc[0]
                     break
                 report.total_reads += len(chunk)
                 keep = mapper._annotate_chunk(

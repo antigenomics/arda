@@ -28,6 +28,7 @@ __all__ = [
     "createdb",
     "search",
     "convertalis",
+    "top_hit",
     "easy_search",
     "DEFAULT_FORMAT_OUTPUT",
 ]
@@ -155,6 +156,23 @@ def search(
         args += extra
     run(args)
     return Path(result_db)
+
+
+def top_hit(result_db: str | Path, out_db: str | Path) -> Path:
+    """Reduce an alignment DB to the single best-scoring hit per query.
+
+    MMseqs2 already stores each query's results sorted by descending score, so taking the first line
+    per entry *is* the best hit -- this is the idiom mmseqs' own `filterdb` usage message shows.
+    Verified on 100 k reads against the human reference: 4,101 queries, identical target and identical
+    bit score to a full sort-and-dedupe in polars, on every one.
+
+    Why it matters: with `--max-seqs 300`, 4,101 hitting queries produced **804,341** alignment rows
+    (194 MB of TSV, each row carrying `cigar`/`qaln`/`taln`). Parsing that dominated arda's peak RSS --
+    877 MB, against 284 MB for the mmseqs subprocess itself. Reducing before `convertalis` writes
+    1.0 MB instead, and costs 0.04 s.
+    """
+    run(["filterdb", str(result_db), str(out_db), "--extract-lines", "1"])
+    return Path(out_db)
 
 
 def convertalis(

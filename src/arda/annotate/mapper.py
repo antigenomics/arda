@@ -53,30 +53,48 @@ _SENSITIVITY = {"nt": 7.0, "aa": 7.0}
 # `--max-seqs` if memory-bound.
 _MAX_SEQS = 300
 
-# MMseqs2's nucleotide prefilter allocates a k-mer index table of 4**k entries. At the tool's
-# default k=15 that is 4**15 * 8 B ~ 8.6 GB -- measured at 8.3-8.5 GB peak RSS, and INDEPENDENT of
-# database size (6 MB), --max-seqs, --chunk-size and --threads (8328 MB at 1 thread, 8383 MB at 8).
-# k=13 costs ~0.7 GB. Measured on 51 / 100 / 150 bp libraries: 6-14x less memory, never slower,
-# and it maps slightly MORE reads (a shorter seed finds the short J overlaps of J->C reads).
-# See arda-benchmark RESULTS.md. Nucleotide only: the amino-acid prefilter is a different index.
-_KMER = {"nt": 13, "aa": None}
+# MMseqs2's nucleotide prefilter allocates a k-mer index table of 4**k entries, so peak RSS tracks
+# 4**k * 8 B almost exactly and is INDEPENDENT of database size, --max-seqs, --chunk-size and
+# --threads. Measured on the V+J | J+C reference, 100 k reads, 8 threads:
+#
+#     k       11      12      13      14      15
+#     RSS   202 MB  298 MB  697 MB  2313 MB  ~8.4 GB
+#     wall  3.76 s  3.60 s  4.63 s  4.15 s      --
+#
+# and recall/precision are INVARIANT over k=11..14 (recall 1.0000, precision .9463-.9469, FP 269-270).
+# So k is a pure memory/speed knob in this range: 12 is both the fastest measured and 2.3x smaller
+# than 13. arda-benchmark OPTIMIZATION.md §6.3c. Nucleotide only: the aa prefilter is a different index.
+_KMER = {"nt": 12, "aa": None}
+
+
+# Columns of DEFAULT_FORMAT_OUTPUT that are genuinely text; everything else is numeric.
+_STR_COLS = frozenset({"query", "target", "cigar", "qaln", "taln"})
 
 
 def _dbtype(seqtype: str) -> int:
     return 2 if seqtype == "nt" else 1
 
 
-def _committed_index(organism: str, seqtype: str) -> Path | None:
-    """A precompiled mmseqs DB shipped in ``database/`` if it matches the local
-    mmseqs version (DBs are version-sensitive). Returns its path or ``None``."""
+def _committed_index(organism: str, seqtype: str, target_fasta: Path | None = None) -> Path | None:
+    """A precompiled mmseqs DB shipped in ``database/`` — if it is version-matched **and current**.
+
+    The staleness check is not optional. ``build-db`` rewrites ``alleles.fasta`` in place, and without
+    this every later run silently searched the *previous* reference; the only symptom was a result that
+    quietly refused to change. Found exactly that way: a rebuild adding 345 constant-region scaffolds
+    produced zero constant-region hits. The ``data/mmseqs_db`` fallback below has always compared
+    mtimes -- this path did not.
+    """
     d = vdj_dir(organism) / "mmseqs" / seqtype
     db, ver = d / "db", d / "VERSION"
-    if db.exists() and ver.exists():
-        try:
-            if ver.read_text().strip() == mmseqs.version():
-                return db
-        except Exception:  # noqa: BLE001 — mmseqs missing; fall through to rebuild
-            return None
+    if not (db.exists() and ver.exists()):
+        return None
+    if target_fasta is not None and db.stat().st_mtime < Path(target_fasta).stat().st_mtime:
+        return None  # the reference was rebuilt after this index was compiled
+    try:
+        if ver.read_text().strip() == mmseqs.version():
+            return db
+    except Exception:  # noqa: BLE001 — mmseqs missing; fall through to rebuild
+        return None
     return None
 
 
@@ -87,7 +105,7 @@ def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
     (used out of the box when its mmseqs version matches). Otherwise builds once
     into a ``data/mmseqs_db`` cache and reuses it (rebuilt if the FASTA is newer).
     """
-    committed = _committed_index(organism, seqtype)
+    committed = _committed_index(organism, seqtype, target_fasta)
     if committed is not None:
         return committed
     cache = data_dir() / "mmseqs_db" / f"{organism}_{seqtype}"
@@ -136,8 +154,12 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     cols = mmseqs.DEFAULT_FORMAT_OUTPUT.split(",")
     if tsv.stat().st_size == 0:  # no hits at all
         return {}
+    # Typed, not `infer_schema_length=0`. Reading 17 columns as Utf8 and then casting one of them was
+    # a large share of peak RSS before `mmseqs.top_hit` shrank this file from 194 MB to 1 MB; keep the
+    # schema explicit so it stays cheap if `top_hit` is ever bypassed.
+    schema = {c: (pl.Utf8 if c in _STR_COLS else pl.Float64) for c in cols}
     df = pl.read_csv(tsv, separator="\t", has_header=False, new_columns=cols,
-                     infer_schema_length=0)
+                     schema_overrides=schema)
     if df.height == 0:
         return {}
     df = df.with_columns(pl.col("bits").cast(pl.Float64, strict=False))
@@ -181,8 +203,12 @@ def _annotate_chunk(
             max_seqs=max_seqs, threads=threads, kmer=kmer,
             extra=(["--strand", str(mm_strand)] if mm_strand is not None else None),
         )
-        mmseqs.convertalis(query_db, target_db, res_db, out_tsv, threads=threads,
-                           search_type=_SEARCH_TYPE[seqtype])
+        # Reduce to one alignment per query BEFORE materialising it as text. With --max-seqs 300 a
+        # 100 k-read chunk emits ~804 k alignment rows -- 194 MB of cigar/qaln/taln -- of which we
+        # keep 4 k. Parsing the other 800 k was arda's single largest memory consumer (877 MB peak,
+        # vs 284 MB for mmseqs itself). Bit-identical: same target and score on all 4,101 queries.
+        mmseqs.convertalis(query_db, target_db, mmseqs.top_hit(res_db, tmp / "bestDB"),
+                           out_tsv, threads=threads, search_type=_SEARCH_TYPE[seqtype])
         best = _best_hits(out_tsv)
 
     out: list[dict] = []

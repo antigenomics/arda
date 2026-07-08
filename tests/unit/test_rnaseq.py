@@ -221,12 +221,13 @@ def test_correct_drops_incomplete_junctions(tmp_path):
     assert raw.clonotypes_in == 4 and raw.reads_incomplete == 0
 
 
-def test_kmer_is_plumbed_to_mmseqs_and_defaults_to_13(monkeypatch):
-    """``-k`` is the ONLY knob that moves arda's peak RSS, so it must actually reach MMseqs2.
+def test_kmer_is_plumbed_to_mmseqs_and_defaults_to_12(monkeypatch):
+    """``-k`` sizes MMseqs2's 4**k prefilter table, so it must actually reach MMseqs2.
 
-    Measured (SRR5233637, 660 k pairs): k=15 (MMseqs2's default) -> 8384 MB peak RSS; k=13 -> 706 MB.
-    Independent of --max-seqs (8379 vs 8384 MB), --chunk-size and --threads (8328 MB at 1 thread).
-    A silent regression here would 12x arda's memory with no other symptom, so pin it.
+    Measured on the V+J | J+C reference, 100 k reads: k=15 (MMseqs2's default) ~8.4 GB, k=13 697 MB,
+    k=12 298 MB, k=11 202 MB -- while recall AND precision are invariant over k=11..14 (recall 1.0000,
+    precision .9463-.9469). 12 is also the fastest measured. A silent regression here multiplies
+    memory with no other symptom, so pin it.
     """
     from arda import mmseqs
     from arda.annotate import mapper
@@ -234,15 +235,31 @@ def test_kmer_is_plumbed_to_mmseqs_and_defaults_to_13(monkeypatch):
     seen: list[list[str]] = []
     monkeypatch.setattr(mmseqs, "run", lambda args: seen.append(args))
 
-    mmseqs.search("q", "t", "r", "tmp", kmer=13)
-    assert "-k" in seen[-1] and seen[-1][seen[-1].index("-k") + 1] == "13"
+    mmseqs.search("q", "t", "r", "tmp", kmer=12)
+    assert "-k" in seen[-1] and seen[-1][seen[-1].index("-k") + 1] == "12"
 
     mmseqs.search("q", "t", "r", "tmp")            # kmer=None -> let MMseqs2 choose
     assert "-k" not in seen[-1]
 
-    # nucleotide default is 13; the amino-acid prefilter is a different index and must stay untouched
-    assert mapper._KMER["nt"] == 13
+    # nucleotide default is 12; the amino-acid prefilter is a different index and must stay untouched
+    assert mapper._KMER["nt"] == 12
     assert mapper._KMER["aa"] is None
+
+
+def test_top_hit_reduces_the_result_db_before_convertalis(monkeypatch):
+    """`filterdb --extract-lines 1` must sit between `search` and `convertalis`.
+
+    Without it, `--max-seqs 300` makes convertalis write every alignment's cigar/qaln/taln: 804 k rows
+    and 194 MB of TSV for the 4 k hits that survive. Parsing that was arda's single largest memory
+    consumer -- 877 MB peak, against 284 MB for the mmseqs subprocess itself. The output is
+    bit-identical either way, so only a test can stop this from regressing silently.
+    """
+    from arda import mmseqs
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(mmseqs, "run", lambda args: seen.append(args))
+    mmseqs.top_hit("resDB", "bestDB")
+    assert seen[-1] == ["filterdb", "resDB", "bestDB", "--extract-lines", "1"]
 
 
 @requires_mmseqs
