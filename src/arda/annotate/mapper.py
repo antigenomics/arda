@@ -133,7 +133,11 @@ def build_index(organism: str = "all", *, force: bool = False) -> None:
                 continue
             out = vdj_dir(org) / "mmseqs" / seqtype
             db, vfile = out / "db", out / "VERSION"
-            if db.exists() and not force and vfile.exists() and vfile.read_text().strip() == ver:
+            # Skip only if the DB is version-matched AND newer than the FASTA. Matching on the mmseqs
+            # version alone made `build-index` a silent no-op after `build-db` rewrote alleles.fasta:
+            # the rebuilt reference was never compiled, and the runtime kept searching the old one.
+            fresh = db.exists() and db.stat().st_mtime >= fasta.stat().st_mtime
+            if fresh and not force and vfile.exists() and vfile.read_text().strip() == ver:
                 continue
             out.mkdir(parents=True, exist_ok=True)
             for stale in out.glob("db*"):

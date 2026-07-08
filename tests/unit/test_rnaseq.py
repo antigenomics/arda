@@ -371,3 +371,25 @@ def test_jc_scaffolds_translate_through_the_splice_junction():
     # the whole point: this must stay a rounding error next to the 17,244 V-J scaffolds
     assert len(jc) < 600, "J+C scaffolds should be additive, not multiplicative"
     assert isotype_class(next(s for s in jc if "IGHG1*01" in s.c_call).c_call) == "IGHG"
+
+
+@pytest.mark.skipif(not (paths.database_dir() / "c_genes").exists(),
+                    reason="C-gene bundle not present")
+def test_every_shipped_c_gene_maps_to_a_known_locus():
+    """A C gene whose name does not resolve to a locus is dropped *silently* and its whole locus loses
+    its constant region. Mouse shipped `TCRG-C1..C4` (an alternate nomenclature) where IMGT names them
+    `TRGC1..4`, so mouse TRG had no J+C scaffolds and nothing said so. Assert the mapping is total."""
+    from arda.refbuild.constant import _locus_of, build_jc_scaffolds
+    from arda.refbuild.imgt import read_fasta
+    from arda.refbuild.loci import LOCI
+
+    known = {loc.name for loc in LOCI}
+    for fa in sorted((paths.database_dir() / "c_genes").glob("*.fasta")):
+        for header, _ in read_fasta(fa):
+            gene = header.split()[0]
+            assert _locus_of(gene) in known, f"{fa.name}: {gene} -> {_locus_of(gene)!r} is not a locus"
+
+    # mouse must reach all seven loci, human too -- the regression that motivated this test
+    for organism, species_dir, loci in (("human", "Homo_sapiens", 7), ("mouse", "Mus_musculus", 7)):
+        jc = build_jc_scaffolds(organism, species_dir)
+        assert len({s.locus for s in jc}) == loci, f"{organism}: {sorted({s.locus for s in jc})}"

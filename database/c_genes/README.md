@@ -46,10 +46,18 @@ Report the isotype **class**, never the subclass: IGHG1–4 are ~95 % identical 
 top-scoring *gene* ties on ~27 % of real reads while the top *class* is unique on essentially all of
 them (`refbuild.constant.isotype_class`).
 
-| organism | CH1 exons |
-|---|---|
-| human | 25 |
-| mouse | 21 |
-| rabbit | 15 |
-| rhesus_monkey | 8 |
-| rat | 3 |
+Gene names follow IMGT's locus-prefixed convention (`TRGC1`, not `TCRG-C1`). A name whose first three
+characters are not a locus is dropped **silently**, taking that locus's whole constant region with it —
+`tests/unit/test_rnaseq.py` asserts the mapping is total for every shipped bundle.
+
+| organism | CH1 exons | loci with J+C scaffolds | J+C scaffolds |
+|---|---|---|---|
+| human | 25 | 7 | 345 |
+| mouse | 21 | 7 | 210 |
+| rabbit | 15 | 3 | 137 |
+| rhesus_monkey | 8 | 3 | 153 |
+| rat | 3 | 0 | 0 |
+
+**rat has no J+C scaffolds, and that is correct.** Its three CH1 exons are all TR (`TRAC1`, `TRBC1/2`),
+and the IMGT V-QUEST reference directory ships **no TR directory at all** for rat — so there is no J to
+splice them onto. `refbuild` logs the skip per locus rather than failing the species build.

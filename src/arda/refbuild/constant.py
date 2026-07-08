@@ -9,8 +9,8 @@ of the class — so C never has to sit downstream of a V. Appending ``C[:150]`` 
 scaffolds multiplies them by the number of distinct C stubs per locus (11 for IGH) and yields 73,360
 scaffolds, 37 Mnt: mmseqs' per-query cost rises 1.71x and its peak RSS by 367 MB.
 
-Adding ~442 ``J + C`` scaffolds *beside* the V-J ones is accuracy-identical and costs +2.6 % scaffolds
-and +9 MB RSS. A read spanning V->J->C still maps to its V-J scaffold and soft-clips the C tail
+Adding 345 ``J + C`` scaffolds *beside* the 17,244 V-J ones (human) is accuracy-identical and costs
++2.0 % scaffolds and +9 MB RSS. A read spanning V->J->C still maps to its V-J scaffold and soft-clips the C tail
 (V-supported recall is already 100 %); a V-less J->C read finally has somewhere legal to end.
 
 These scaffolds never see IgBLAST. It cannot annotate a sequence with no V, and ``build.build_species``
@@ -31,6 +31,7 @@ reconstructs the mRNA and translates contiguously, which is the bundle's accepta
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +40,8 @@ from . import imgt
 from .loci import LOCI
 
 __all__ = ["JCScaffold", "C_STUB_NT", "c_genes_path", "isotype_class", "build_jc_scaffolds"]
+
+logger = logging.getLogger(__name__)
 
 # A read cannot see further into C than its own length. 150 nt covers every Illumina read in the
 # benchmark set (51-152 bp) with room for the J-side overhang. Longer stubs only inflate the DB:
@@ -108,7 +111,16 @@ def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT) 
         stubs = by_locus.get(locus.name)
         if not stubs:
             continue
-        j_alleles = imgt.load_functional_alleles(species_dir, locus.group, locus.j)
+        # One locus without an IMGT J file must not kill the species build. Rat has a TRAC gene but
+        # IMGT ships no `Rattus_norvegicus/TR/TRAJ.fasta`; `_process_locus` already guards its own
+        # per-locus work this way. Note a J+C scaffold needs no IgBLAST and no V, so it is still worth
+        # building for a locus whose V-J scaffolds were skipped for want of an internal-annotation file.
+        try:
+            j_alleles = imgt.load_functional_alleles(species_dir, locus.group, locus.j)
+        except FileNotFoundError:
+            logger.info("%s: no IMGT J file (%s) for %s — no J+C scaffolds",
+                        locus.name, locus.j, species_dir)
+            continue
         if not j_alleles:
             continue
         # collapse J alleles that share an identical sequence, exactly as the V-J builder does

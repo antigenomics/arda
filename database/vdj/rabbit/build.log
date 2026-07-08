@@ -1,9 +1,11 @@
-2026-06-07 06:22:41,678 INFO === arda reference build: rabbit (Oryctolagus_cuniculus) ===
-2026-06-07 06:22:41,679 INFO TRA: no IgBLAST TR internal annotation for rabbit — skipped
-2026-06-07 06:22:41,679 INFO TRG: no IgBLAST TR internal annotation for rabbit — skipped
-2026-06-07 06:22:45,797 INFO IGK: V=67 J=19 raw_combos=1273 unique_scaffolds=1206 annotated=1206
-2026-06-07 06:22:48,352 INFO IGL: V=22 J=4 raw_combos=88 unique_scaffolds=84 annotated=84
-2026-06-07 06:22:51,655 INFO IGH: V=39 J=11 raw_combos=429 unique_scaffolds=429 annotated=429
-2026-06-07 06:22:51,667 INFO TRB: no IgBLAST TR internal annotation for rabbit — skipped
-2026-06-07 06:22:51,667 INFO TRD: no IgBLAST TR internal annotation for rabbit — skipped
-2026-06-07 06:22:51,679 INFO TOTAL: 1719 scaffolds across 3 loci in 10.0s -> /Users/mikesh/vcs/code/arda/database/vdj/rabbit
+2026-07-08 22:52:09,869 INFO === arda reference build: rabbit (Oryctolagus_cuniculus) ===
+2026-07-08 22:52:09,869 INFO TRA: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-08 22:52:09,870 INFO TRG: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-08 22:52:16,460 INFO IGK: V=67 J=19 raw_combos=1273 unique_scaffolds=1206 annotated=1206
+2026-07-08 22:52:20,385 INFO IGL: V=22 J=4 raw_combos=88 unique_scaffolds=84 annotated=84
+2026-07-08 22:52:26,551 INFO IGH: V=39 J=11 raw_combos=429 unique_scaffolds=429 annotated=429
+2026-07-08 22:52:26,562 INFO TRB: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-08 22:52:26,562 INFO TRD: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-08 22:52:26,600 INFO constant region: 137 J+C scaffolds across 3 loci (+8.0% over 1719 V-J scaffolds)
+2026-07-08 22:52:26,639 INFO D germlines: 15 alleles across 3 loci
+2026-07-08 22:52:26,639 INFO TOTAL: 1856 scaffolds across 3 loci in 16.8s -> /Users/mikesh/vcs/code/arda/database/vdj/rabbit
