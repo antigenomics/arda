@@ -3,12 +3,13 @@ name: arda
 description: >
   Fast TCR/BCR FR/CDR region annotation (Antigen Receptor Domain Annotation).
   Use whenever the user wants to annotate immune-receptor sequences with
-  framework/CDR regions, V/D/J gene calls, junction/CDR3 boundaries, or AIRR
-  output — for TCR (TRA/TRB/TRG/TRD) or BCR (IGH/IGK/IGL), nucleotide or amino
-  acid, single sequences or large FASTA/FASTQ. Also use for: getting germline
-  FR1-FR3/CDR1-CDR2 (V) or FR4 (J) subsequences for individual alleles; building
-  or rebuilding the reference database from IMGT germlines via IgBLAST; or
-  diagnosing mmseqs2 setup. arda runs MMseqs2 + a C++ coordinate projection
+  framework/CDR regions, V/D/J gene calls, constant-region isotype (c_call/c_class),
+  junction/CDR3 boundaries, or AIRR output — for TCR (TRA/TRB/TRG/TRD) or BCR
+  (IGH/IGK/IGL), nucleotide or amino acid, single sequences or large FASTA/FASTQ.
+  Also use for: extracting the receptor repertoire (clonotypes, isotype usage) from
+  bulk RNA-seq; getting germline FR1-FR3/CDR1-CDR2 (V) or FR4 (J) subsequences for
+  individual alleles; building or rebuilding the reference database from IMGT
+  germlines via IgBLAST; or diagnosing mmseqs2 setup. arda runs MMseqs2 + a C++ coordinate projection
   (IgBLAST is offline/build-time only), so it is much faster than IgBLAST at
   annotation time. Load references/ files for the detailed API, region/junction
   semantics, reference-build pipeline, or mmseqs install/troubleshooting.
@@ -59,10 +60,11 @@ annotate_file("reads.fastq.gz", "out.airr.tsv", organism="human")  # streamed, m
 ```
 
 Each record dict carries (1-based closed coords, query space): `locus`,
-`v_call`/`d_call`/`d2_call`/`j_call`, `productive`, `rev_comp`, `v_sequence_end`,
-`j_sequence_start`, `np1/np2/np3`, `junction(_aa)`, and per region in
+`v_call`/`d_call`/`d2_call`/`j_call`, the constant-region `c_call`/`c_class`
+(isotype), `productive`, `rev_comp`, `v_sequence_end`, `j_sequence_start`,
+`np1/np2/np3`, `junction(_aa)`, and per region in
 `(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4)`: `{r}_start`, `{r}_end`, `{r}`,
-`{r}_aa`.
+`{r}_aa`. Ambiguous D and C calls are comma-joined allele lists (as V/J are).
 
 Read [references/annotation.md](references/annotation.md) for the full field list,
 parameter semantics (strand/sensitivity/threads/chunking), AIRR column order, and
@@ -107,7 +109,9 @@ bare-germline recipe, junction/CDR3 details, and coordinate round-trip rules.
 | human, mouse | TRA, TRB, TRG, TRD, IGH, IGK, IGL |
 | rat, rabbit, rhesus_monkey | IGH, IGK, IGL (IG only) |
 
-VDJ loci (D segments mapped, nt only): IGH, TRB, TRD. D-D fusions: IGH, TRD.
+VDJ loci (D segments mapped, nt only): IGH, TRB, TRD. D-D fusions sought in all
+three. Constant-region `J + C` scaffolds (isotype `c_call`/`c_class`) are built for
+every locus with a CH1 exon in the bundle.
 
 ## CLI
 
@@ -115,10 +119,26 @@ VDJ loci (D segments mapped, nt only): IGH, TRB, TRD. D-D fusions: IGH, TRD.
 arda info                                   # versions + available references
 arda annotate -i reads.fastq.gz -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta -o out.tsv --seqtype aa --no-map-d
+arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # bulk RNA-seq: filter receptor reads
+arda rnaseq correct -i mapped.airr.tsv -o clones.tsv            # collapse CDR3 errors into clonotypes
+arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda build-db --organism all                # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for local mmseqs version
 arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node: split → array → merge
 ```
+
+## Bulk RNA-seq mode (`arda rnaseq`)
+
+For libraries where only 1–5% of reads are receptor-derived. `map` streams paired
+FASTQ (`--r1`/`--r2`), keeps only reads mapping to a receptor scaffold, and writes
+them as AIRR — recall-first, with `--min-score`/`--kmer`/`--max-seqs` as flexible
+knobs around one default preset. Because the reference includes `J + C`
+constant-region scaffolds, a read spanning the J→C splice (no V) still maps and
+carries `c_call`/`c_class`; in paired mode the isotype of a CDR3-bearing read is
+recovered from its constant-region mate. `correct` then collapses CDR3 sequencing
+errors into clonotypes by a parent:child count ratio (`--max-mismatches`/`--ratio`,
+`--complete-only` by default). Contig assembly (`rnaseq assemble`) is not yet
+implemented.
 
 ## mmseqs2 (auto-installed)
 

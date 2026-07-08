@@ -247,7 +247,7 @@ def test_double_d_junction(human_d_germlines):
     j_start = len(vpref) + len(junction) + 1             # first J base (1-based)
 
     rec = {}
-    _map_d(rec, query, "IGH", v_end, j_start, human_d_germlines["IGH"])
+    _map_d(rec, query, v_end, j_start, human_d_germlines["IGH"])
     assert rec.get("d_call") and rec.get("d2_call"), "expected two D segments"
     # d_call is the 5' (first) D, d2_call the 3' one.
     assert _gene(rec["d_call"]) == _gene(a1)
@@ -258,6 +258,75 @@ def test_double_d_junction(human_d_germlines):
     assert query[int(rec["d2_sequence_start"]) - 1 : int(rec["d2_sequence_end"])] == d2
     # np regions partition the junction between V, the two D, and J.
     assert rec["np1"] == np1 and rec["np2"] == np2 and rec["np3"] == np3
+
+
+def test_d_call_reports_every_tied_allele(human_d_germlines):
+    """Identical D germlines from *different genes* must both be reported, not silently
+    resolved by allele-name sort.
+
+    Seven pairs of human IGH D alleles are byte-identical across different genes
+    (IGHD4-11*01/IGHD4-4*01, IGHD5-18*01/IGHD5-5*01, five IGHD*/OR15-*a/*b pairs). A read
+    matching one matches the other at every score, always -- so a single-valued `d_call`
+    is an arbitrary gene call made 100 % of the time for those reads."""
+    from arda.annotate.transfer import _best_d, _D_MIN_SCORE
+
+    by_seq = {}
+    for allele, dseq in human_d_germlines["IGH"]:
+        by_seq.setdefault(dseq, []).append(allele)
+    twins = [(sq, sorted(al)) for sq, al in by_seq.items() if len(al) > 1]
+    assert twins, "expected identical-sequence IGH D germlines in the reference"
+
+    dseq, alleles = max(twins, key=lambda t: len(t[0]))     # longest, to clear min_score
+    score, _, called, _, _ = _best_d(dseq, human_d_germlines["IGH"], _D_MIN_SCORE)
+    assert score == len(dseq)                               # exact, full-length match
+    # Every twin is reported; the winner is not one arbitrary member of the tie.
+    assert set(alleles) <= set(called), f"{called} dropped a tied allele from {alleles}"
+    assert called == tuple(sorted(called))                  # deterministic order
+
+
+def test_double_d_in_trb(human_d_germlines):
+    """A TRBD1->TRBD2 tandem yields d2_call.
+
+    Regression: `_DD_LOCI = {"IGH", "TRD"}` excluded TRB, making a real TRB D-D fusion
+    unrepresentable -- and TRB is the only locus in the benchmark with a matched amplicon
+    D truth (PRJNA371303 is TRA + TRB; TRA has no D)."""
+    from arda.annotate.transfer import _map_d
+
+    trb = dict(human_d_germlines["TRB"])
+    (a1, d1), (a2, d2) = sorted(trb.items())[:2]
+    assert _gene(a1) != _gene(a2), "need two distinct TRB D genes"
+
+    np1, np2, np3 = "CAGAT", "TTAACGGTTAAC", "ACTGG"
+    vpref, jsuf = "ACGT" * 6, "TGCA" * 6
+    query = vpref + np1 + d1 + np2 + d2 + np3 + jsuf
+    v_end = len(vpref)
+    j_start = len(query) - len(jsuf) + 1
+
+    rec = {}
+    _map_d(rec, query, v_end, j_start, human_d_germlines["TRB"])
+    assert rec.get("d2_call"), "TRB D-D fusion not called"
+    assert _gene(rec["d_call"]) == _gene(a1) and _gene(rec["d2_call"]) == _gene(a2)
+    assert int(rec["d_sequence_end"]) < int(rec["d2_sequence_start"])
+    assert rec["np1"] == np1 and rec["np2"] == np2 and rec["np3"] == np3
+
+
+def test_d_call_is_the_5prime_segment_not_the_higher_scoring_one(human_d_germlines):
+    """`d_call`/`d2_call` are POSITIONAL. Place the longer (higher-scoring) D 3' of the
+    shorter one and assert `d2_call` -- not `d_call` -- carries it."""
+    from arda.annotate.transfer import _map_d
+
+    igh = sorted(human_d_germlines["IGH"], key=lambda x: len(x[1]))
+    short_a, short_d = next((a, s) for a, s in igh if len(s) >= 12)
+    long_a, long_d = max(igh, key=lambda x: len(x[1]))
+    assert len(long_d) > len(short_d)
+
+    vpref, jsuf = "ACGT" * 6, "TGCA" * 6
+    query = vpref + "CAGAT" + short_d + "TTAACGGTTAAC" + long_d + "ACTGG" + jsuf
+    rec = {}
+    _map_d(rec, query, len(vpref), len(query) - len(jsuf) + 1, human_d_germlines["IGH"])
+    assert rec.get("d2_call"), "expected two D segments"
+    assert _gene(rec["d_call"]) == _gene(short_a)      # 5', despite scoring lower
+    assert _gene(rec["d2_call"]) == _gene(long_a)      # 3', despite scoring higher
 
 
 def test_d_mapping_option_toggles_output(human_ref, human_d_germlines):
