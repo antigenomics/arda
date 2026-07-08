@@ -52,6 +52,11 @@ AIRR_COLUMNS = (
      "rev_comp", "productive",
      "v_sequence_start", "v_sequence_end",
      "d_sequence_start", "d_sequence_end", "d2_sequence_start", "d2_sequence_end",
+     # D germline coordinates (1-based, in the D allele) and CIGAR, emitted only when the D
+     # call is a single allele -- a byte-identical-gene ambiguity list has no one germline to
+     # anchor to. The D alignment is gapless, so the cigar is a single M run.
+     "d_germline_start", "d_germline_end", "d_cigar",
+     "d2_germline_start", "d2_germline_end", "d2_cigar",
      "j_sequence_start", "np1", "np2", "np3", "junction", "junction_aa"]
     + [c for r in REGIONS for c in (f"{r}_start", f"{r}_end", r, f"{r}_aa")]
 )
@@ -154,26 +159,28 @@ def _best_d(interior, d_germlines, min_score, exclude=None):
     span is chosen deterministically (highest score, then longest, then 5'-most) and only
     the alleles sharing *that* span are reported.
     """
-    best = None                              # (rank, [alleles], s, e)
+    best = None                              # (rank, [alleles], s, e, ds, de)
     for allele, dseq in d_germlines:
-        score, s, e = _markup.d_local_align(interior, dseq)
+        score, s, e, ds, de = _markup.d_local_align(interior, dseq)
         if score < min_score or s < 0:
             continue
         if exclude is not None:
             xs, xe = exclude
             if not (e < xs or s > xe):       # overlaps the excluded span
                 continue
-        # Rank only on the ALIGNMENT, never on the allele name: equal rank means an
-        # identical span, hence genuine ambiguity rather than a winner to be broken.
+        # Rank only on the query-side ALIGNMENT, never on the allele name: equal rank means
+        # an identical query span, hence genuine ambiguity rather than a winner to be broken.
+        # The D-germline offsets (ds, de) are the rank-winner's; they belong to a single
+        # allele, so _map_d only emits d_germline_*/d_cigar when the call is unambiguous.
         rank = (score, e - s + 1, -s)
         if best is None or rank > best[0]:
-            best = (rank, [allele], s, e)
+            best = (rank, [allele], s, e, ds, de)
         elif rank == best[0]:
             best[1].append(allele)
     if best is None:
         return None
-    (score, length, _), alleles, s, e = best
-    return score, length, tuple(sorted(alleles)), s, e
+    (score, length, _), alleles, s, e, ds, de = best
+    return score, length, tuple(sorted(alleles)), s, e, ds, de
 
 
 def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines):
@@ -206,13 +213,23 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines):
     def q(off):                                   # interior 0-based offset -> query 1-based
         return i_lo + off
 
-    _, _, a1, s1, e1 = segs[0]
+    def germline(rec, pfx, alleles, ds, de):
+        # D germline coords + cigar, only when the call is a single allele -- an ambiguity
+        # list (byte-identical D genes) has no one germline to anchor to. Gapless, so the
+        # cigar is one M run over the aligned length.
+        if len(alleles) == 1 and ds >= 0:
+            rec[f"{pfx}_germline_start"], rec[f"{pfx}_germline_end"] = ds + 1, de + 1
+            rec[f"{pfx}_cigar"] = f"{de - ds + 1}M"
+
+    _, _, a1, s1, e1, ds1, de1 = segs[0]
     rec["d_call"] = ",".join(a1)
     rec["d_sequence_start"], rec["d_sequence_end"] = q(s1), q(e1)
+    germline(rec, "d", a1, ds1, de1)
     if len(segs) == 2:
-        _, _, a2, s2, e2 = segs[1]
+        _, _, a2, s2, e2, ds2, de2 = segs[1]
         rec["d2_call"] = ",".join(a2)
         rec["d2_sequence_start"], rec["d2_sequence_end"] = q(s2), q(e2)
+        germline(rec, "d2", a2, ds2, de2)
         rec["np1"] = query_seq[v_end_q : q(s1) - 1]
         rec["np2"] = query_seq[q(e1) : q(s2) - 1]
         rec["np3"] = query_seq[q(e2) : j_start_q - 1]

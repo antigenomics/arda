@@ -213,19 +213,22 @@ static std::vector<Interval> transfer_regions(
 // maximum-subarray per diagonal) with match=+1 / mismatch=-1 scoring. The D set
 // per locus is small (≤ ~40 alleles) and the interior is short, so this is cheap.
 //
-// Returns (score, start, end): best score and the 0-based inclusive offsets of
-// the matched segment within `interior`. (0, -1, -1) if no positive-scoring
-// segment exists. Comparison is case-insensitive; N (or any non-matching base)
-// counts as a mismatch.
-static std::tuple<int, int, int> d_local_align(const std::string &interior,
-                                                const std::string &d) {
+// Returns (score, i_start, i_end, d_start, d_end): best score, the 0-based
+// inclusive offsets of the matched segment within `interior`, and the 0-based
+// inclusive offsets of the aligned span within the D germline `d`. Because the
+// alignment is gapless, the two spans have equal length and lie on one diagonal.
+// (0, -1, -1, -1, -1) if no positive-scoring segment exists. Comparison is
+// case-insensitive; N (or any non-matching base) counts as a mismatch.
+static std::tuple<int, int, int, int, int> d_local_align(const std::string &interior,
+                                                          const std::string &d) {
     const int n = static_cast<int>(interior.size());
     const int m = static_cast<int>(d.size());
-    int best = 0, bs = -1, be = -1;
+    int best = 0, bs = -1, be = -1, best_off = 0;
     auto up = [](char c) -> char {
         return (c >= 'a' && c <= 'z') ? static_cast<char>(c - 32) : c;
     };
-    // Each diagonal is a fixed offset = i - j (i over interior, j over D).
+    // Each diagonal is a fixed offset = i - j (i over interior, j over D), so the
+    // D-side coordinate of any interior position i on that diagonal is j = i - off.
     for (int off = -(m - 1); off <= n - 1; ++off) {
         int cur = 0, cur_start = -1;
         const int i_lo = off > 0 ? off : 0;
@@ -235,10 +238,12 @@ static std::tuple<int, int, int> d_local_align(const std::string &interior,
             const int sc = (up(interior[i]) == up(d[j])) ? 1 : -1;
             if (cur <= 0) { cur = sc; cur_start = i; }
             else { cur += sc; }
-            if (cur > best) { best = cur; bs = cur_start; be = i; }
+            if (cur > best) { best = cur; bs = cur_start; be = i; best_off = off; }
         }
     }
-    return {best, bs, be};
+    const int ds = (bs < 0) ? -1 : bs - best_off;
+    const int de = (be < 0) ? -1 : be - best_off;
+    return {best, bs, be, ds, de};
 }
 
 PYBIND11_MODULE(_markup, m) {
@@ -269,6 +274,7 @@ PYBIND11_MODULE(_markup, m) {
           "amino acid; unknown residues -> `unknown` (default 'NNN').");
     m.def("d_local_align", &d_local_align, py::arg("interior"), py::arg("d"),
           "Gapless local alignment (match=+1, mismatch=-1) of a short D germline "
-          "against a query interior. Returns (score, start, end) with 0-based "
-          "inclusive offsets of the best segment in `interior`; (0,-1,-1) if none.");
+          "against a query interior. Returns (score, i_start, i_end, d_start, d_end) "
+          "with 0-based inclusive offsets of the best segment in `interior` and in "
+          "the D germline; (0,-1,-1,-1,-1) if none.");
 }
