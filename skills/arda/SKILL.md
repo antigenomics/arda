@@ -61,10 +61,12 @@ annotate_file("reads.fastq.gz", "out.airr.tsv", organism="human")  # streamed, m
 
 Each record dict carries (1-based closed coords, query space): `locus`,
 `v_call`/`d_call`/`d2_call`/`j_call`, the constant-region `c_call`/`c_class`
-(isotype), `productive`, `rev_comp`, `v_sequence_end`, `j_sequence_start`,
-`np1/np2/np3`, `junction(_aa)`, and per region in
-`(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4)`: `{r}_start`, `{r}_end`, `{r}`,
-`{r}_aa`. Ambiguous D and C calls are comma-joined allele lists (as V/J are).
+(isotype), `productive`/`stop_codon`/`vj_in_frame`, `rev_comp`, `v_identity`,
+`sequence_alignment`/`germline_alignment`, `{v,j,c,d}_cigar`, `*_germline_start/end`,
+`v_sequence_end`, `j_sequence_start`, `np1/np2/np3`, `junction(_aa)`, and per region
+in `(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4)`: `{r}_start`, `{r}_end`, `{r}`,
+`{r}_aa`. Ambiguous D and C calls are comma-joined allele lists (as V/J are). The
+TSV is a **spec-valid AIRR Rearrangement** file (passes `airr.schema` validation).
 
 Read [references/annotation.md](references/annotation.md) for the full field list,
 parameter semantics (strand/sensitivity/threads/chunking), AIRR column order, and
