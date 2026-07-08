@@ -16,6 +16,7 @@ located from the transferred ``v_sequence_end`` / ``j_sequence_start``.
 from __future__ import annotations
 
 from .. import _markup
+from ..refbuild.constant import isotype_class
 from ..refbuild.translate import translate, aa_coords_from_nt, detect_coding_frame
 from .reference import RefEntry, REGIONS
 
@@ -27,7 +28,27 @@ __all__ = ["transfer_hit", "AIRR_COLUMNS"]
 # it is named after its source; callers use it to rank references and filter weak hits.
 AIRR_COLUMNS = (
     ["sequence_id", "sequence", "locus", "v_call", "d_call", "d2_call", "j_call",
+     # Constant region. `c_call` names the CH1 exon(s) of the winning `J + C` scaffold; `c_class` is
+     # the ISOTYPE CLASS (IGHG / IGHM / IGHA / ...). Report the class, never the subclass: IGHG1-4 are
+     # ~95 % identical over CH1, so the top gene is a coin-flip between them -- it ties on 26.7 % of
+     # real reads -- while the top class is unique on every one. Both empty on a V-J scaffold hit.
+     "c_call", "c_class",
      "mmseqs2_score", "mmseqs2_evalue", "mmseqs2_identity",
+     # Alignment GEOMETRY on the V-J scaffold, 1-based inclusive. A bit score is a scalar and
+     # confounds read length with identity; these let a consumer ask the sharper question
+     # "is the alignment ANCHORED?" -- i.e. does it run to the end of the read, or stop exactly
+     # at a scaffold boundary (so the unaligned tail is a linker / adapter / C-region absent
+     # from the scaffold)? A chance alignment stops mid-read AND mid-scaffold.
+     "mmseqs2_qstart", "mmseqs2_qend", "mmseqs2_qlen",
+     "mmseqs2_tstart", "mmseqs2_tend", "mmseqs2_tlen",
+     # The scaffold's own V/J boundary. A read that runs off the V into the non-templated CDR3
+     # STOPS at t_vend -- that is an explained clip, not a partial alignment. Without these two
+     # numbers a consumer cannot tell "ran out of germline" from "stopped for no reason".
+     "mmseqs2_t_vend", "mmseqs2_t_jstart",
+     # End of the V-J part of the scaffold: its full length for a V-J scaffold, the J length for a
+     # `J + C` scaffold. `tstart >= t_vjend` means the alignment lies WHOLLY inside the constant
+     # region -- real receptor mRNA, but with no V(D)J and therefore no clonotype.
+     "mmseqs2_t_vjend",
      "rev_comp", "productive",
      "v_sequence_start", "v_sequence_end",
      "d_sequence_start", "d_sequence_end", "d2_sequence_start", "d2_sequence_end",
@@ -177,6 +198,7 @@ def transfer_hit(
 
     rec = _empty_record(query_id, query_seq)
     rec.update(locus=ref.locus, v_call=ref.v_call, j_call=ref.j_call,
+               c_call=ref.c_call, c_class=isotype_class(ref.c_call),
                rev_comp="T" if rev_comp else "F", productive="")
 
     def _num(v):
@@ -189,6 +211,11 @@ def transfer_hit(
     rec["mmseqs2_score"] = _num(hit.get("bits"))
     rec["mmseqs2_evalue"] = _num(hit.get("evalue"))
     rec["mmseqs2_identity"] = _num(hit.get("pident"))
+    for _c in ("qstart", "qend", "qlen", "tstart", "tend", "tlen"):
+        rec[f"mmseqs2_{_c}"] = _num(hit.get(_c))
+    rec["mmseqs2_t_vend"] = ref.v_sequence_end or ""
+    rec["mmseqs2_t_jstart"] = ref.j_sequence_start or ""
+    rec["mmseqs2_t_vjend"] = ref.vj_end or ""
 
     region_q: dict[str, tuple[int, int]] = {}
     for name, (qs, qe) in zip(REGIONS, coords):

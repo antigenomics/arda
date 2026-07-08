@@ -36,7 +36,30 @@ _SEARCH_TYPE = {"nt": mmseqs.SEARCH_TYPE_NUCLEOTIDE, "aa": mmseqs.SEARCH_TYPE_PR
 # partial RNA-seq reads still map. The whole reference (all loci) is one DB, so a
 # single search annotates mixed bulk RNA-seq across all loci at once.
 _SENSITIVITY = {"nt": 7.0, "aa": 7.0}
-_MAX_SEQS = 50
+# Max MMseqs2 target hits kept per read, i.e. how many V-J scaffolds may compete before
+# best-hit selection. This is NOT a cosmetic knob: the V(D)J loci are paralog-dense, and at 50
+# the true scaffold was being truncated out of the candidate list *before* `_best_hits` ever saw
+# it. Measured on PRJNA371303 TRA amplicon (20k reads, arda-benchmark RESULTS.md §16):
+#
+#   max_seqs   V-gene concord.   J-gene   junction_aa exact   wall(amplicon)  wall(RNA-seq)
+#       50         83.4 %        76.0 %       84.77 %            7.6 s           48 s
+#      300         96.1 %        88.4 %       87.37 %           13.4 s           58 s
+#
+# The mapped read SET is identical either way (bit scores can only rise with more candidates —
+# verified: 68 reads scored higher at 300, 0 scored lower), so the filter and the `--min-score 75`
+# calibration are untouched; only the V/J/junction CALLS improve. This is why the V+J re-ranking
+# experiment (RESULTS §5) was a wash: no re-ranking can recover a scaffold that was never a
+# candidate. Cost is +21 % wall and 2.3x peak RSS (820 -> 1908 MB at chunk 200k); lower it via
+# `--max-seqs` if memory-bound.
+_MAX_SEQS = 300
+
+# MMseqs2's nucleotide prefilter allocates a k-mer index table of 4**k entries. At the tool's
+# default k=15 that is 4**15 * 8 B ~ 8.6 GB -- measured at 8.3-8.5 GB peak RSS, and INDEPENDENT of
+# database size (6 MB), --max-seqs, --chunk-size and --threads (8328 MB at 1 thread, 8383 MB at 8).
+# k=13 costs ~0.7 GB. Measured on 51 / 100 / 150 bp libraries: 6-14x less memory, never slower,
+# and it maps slightly MORE reads (a shorter seed finds the short J overlaps of J->C reads).
+# See arda-benchmark RESULTS.md. Nucleotide only: the amino-acid prefilter is a different index.
+_KMER = {"nt": 13, "aa": None}
 
 
 def _dbtype(seqtype: str) -> int:
@@ -103,7 +126,13 @@ def build_index(organism: str = "all", *, force: bool = False) -> None:
 
 
 def _best_hits(tsv: Path) -> dict[str, dict]:
-    """Parse the mmseqs TSV and return the top-scoring hit per query."""
+    """Parse the mmseqs TSV and return the top-scoring hit per query.
+
+    Best = highest whole-scaffold bit score. (A V-segment-restricted re-ranking was
+    tried to fix V-paralog mis-assignment on short 3'-V-anchored reads; it only traded
+    V accuracy for J and cost ~17 % throughput — the disagreement is largely irreducible
+    paralog ambiguity — so max-bits is kept. See arda-benchmark RESULTS.md.)
+    """
     cols = mmseqs.DEFAULT_FORMAT_OUTPUT.split(",")
     if tsv.stat().st_size == 0:  # no hits at all
         return {}
@@ -126,10 +155,19 @@ def _annotate_chunk(
     sensitivity: float,
     mm_strand: int | None,
     map_d: bool = True,
+    mapped_only: bool = False,
+    max_seqs: int = _MAX_SEQS,
+    kmer: int | None = -1,
 ) -> list[dict]:
-    """Annotate one batch against a preloaded reference + cached target DB."""
+    """Annotate one batch against a preloaded reference + cached target DB.
+
+    ``mapped_only`` skips the empty record for non-hits (the RNA-seq filter path,
+    where 95-99 % of reads have no hit and building throwaway records dominates).
+    """
     if not records:
         return []
+    if kmer == -1:  # sentinel: caller did not override, use the seqtype default
+        kmer = _KMER[seqtype]
     with tempfile.TemporaryDirectory(prefix="arda_") as td:
         tmp = Path(td)
         query_fa = seqio.write_fasta(iter(records), tmp / "query.fasta")
@@ -140,7 +178,7 @@ def _annotate_chunk(
         mmseqs.search(
             query_db, target_db, res_db, tmp / "mmseqs_tmp",
             search_type=_SEARCH_TYPE[seqtype], sensitivity=sensitivity,
-            max_seqs=_MAX_SEQS, threads=threads,
+            max_seqs=max_seqs, threads=threads, kmer=kmer,
             extra=(["--strand", str(mm_strand)] if mm_strand is not None else None),
         )
         mmseqs.convertalis(query_db, target_db, res_db, out_tsv, threads=threads,
@@ -152,6 +190,8 @@ def _annotate_chunk(
         hit = best.get(qid)
         entry = ref.get(hit["target"]) if hit else None
         if hit is None or entry is None:
+            if mapped_only:
+                continue
             rec = {c: "" for c in AIRR_COLUMNS}
             rec["sequence_id"], rec["sequence"] = qid, qseq
             out.append(rec)
@@ -176,6 +216,11 @@ def _annotate_chunk(
 def _prep(organism, seqtype, threads, sensitivity, strand):
     if seqtype not in _SEARCH_TYPE:
         raise ValueError(f"seqtype must be 'nt' or 'aa', got {seqtype!r}")
+    # Reject an unknown strand rather than silently searching forward-only. On stranded paired
+    # libraries R2 is antisense, so a typo here quietly discards ~40 % of the recoverable
+    # repertoire (the R2-only fragments; arda-benchmark RESULTS.md §13d).
+    if strand not in ("both", "forward"):
+        raise ValueError(f"strand must be 'both' or 'forward', got {strand!r}")
     ref = load_reference(organism, seqtype)
     threads = threads or (os.cpu_count() or 1)
     sensitivity = _SENSITIVITY[seqtype] if sensitivity is None else sensitivity

@@ -129,9 +129,17 @@ def search(
     evalue: float = 1e-3,
     max_seqs: int = 300,
     threads: int = 1,
+    kmer: int | None = None,
     extra: list[str] | None = None,
 ) -> Path:
-    """Run ``mmseqs search`` with backtrace enabled (``-a``)."""
+    """Run ``mmseqs search`` with backtrace enabled (``-a``).
+
+    Args:
+        kmer: MMseqs2 ``-k``. **This is the memory knob.** The nucleotide prefilter allocates a
+            k-mer index table of 4**k entries, so the default k=15 costs 4**15 * 8 B ~ 8.6 GB
+            regardless of database size, thread count or chunk size. k=13 costs ~0.7 GB. Leave
+            ``None`` for MMseqs2's own default.
+    """
     args = [
         "search", str(query_db), str(target_db), str(result_db), str(tmp_dir),
         "--search-type", str(search_type),
@@ -141,6 +149,8 @@ def search(
         "--threads", str(threads),
         "-a",  # keep backtrace so convertalis can emit cigar/qaln/taln
     ]
+    if kmer is not None:
+        args += ["-k", str(kmer)]
     if extra:
         args += extra
     run(args)

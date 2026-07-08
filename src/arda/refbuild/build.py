@@ -18,7 +18,7 @@ import polars as pl
 from ..paths import data_dir, vdj_dir
 from ..igblast import SUPPORTED_ORGANISMS
 from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR
-from . import imgt, combinations, airr_extract
+from . import imgt, combinations, airr_extract, constant
 from .translate import translate, aa_coords_from_nt
 from .airr_extract import REGION_NAMES
 
@@ -174,10 +174,35 @@ def build_species(organism: str) -> Path:
             continue
         nt_all += nt; aa_all += aa; combo_all += combo; fa_nt += fnt; fa_aa += faa
 
+    # A V-J scaffold is V-J all the way to its 3' end and carries no constant region.
+    lengths = {i: len(s) for i, s in fa_nt}
+    for r in nt_all:
+        r["c_call"] = ""
+        r["vj_end"] = lengths[r["scaffold_id"]]
+
+    # `J + C` scaffolds, appended -- deliberately NOT routed through IgBLAST, which cannot annotate a
+    # V-less sequence; their missing region coordinates would trip the completeness gate in
+    # `_process_locus` and every one of them would be dropped, silently. Their geometry is known by
+    # construction: J occupies [1, j_len], C occupies [j_len+1, len]. Region coords are -1, which is
+    # what `transfer_regions` already emits for a region the query does not reach.
+    n_vj = len(fa_nt)
+    jc = constant.build_jc_scaffolds(organism, species_dir)
+    for s in jc:
+        fa_nt.append((s.scaffold_id, s.sequence))
+        row = {"scaffold_id": s.scaffold_id, "locus": s.locus,
+               "v_call": "", "j_call": s.j_call, "c_call": s.c_call, "productive": "",
+               "v_sequence_end": "", "j_sequence_start": 1,
+               "vj_end": s.j_len, "junction": "", "junction_aa": ""}
+        for r in REGION_NAMES:
+            row[f"{r}_start"], row[f"{r}_end"], row[r] = -1, -1, ""
+        nt_all.append(row)
+    logger.info("constant region: %d J+C scaffolds across %d loci (+%.1f%% over %d V-J scaffolds)",
+                len(jc), len({s.locus for s in jc}), 100.0 * len(jc) / max(n_vj, 1), n_vj)
+
     # Write artifacts.
     (out_dir / "alleles.fasta").write_text("".join(f">{i}\n{s}\n" for i, s in fa_nt))
     (out_dir / "alleles.aa.fasta").write_text("".join(f">{i}\n{s}\n" for i, s in fa_aa))
-    pl.DataFrame(nt_all).write_csv(out_dir / "markup.tsv", separator="\t")
+    pl.DataFrame(nt_all, infer_schema_length=None).write_csv(out_dir / "markup.tsv", separator="\t")
     pl.DataFrame(aa_all).write_csv(out_dir / "markup.aa.tsv", separator="\t")
     pl.DataFrame(combo_all).write_csv(out_dir / "combinations.tsv", separator="\t")
 

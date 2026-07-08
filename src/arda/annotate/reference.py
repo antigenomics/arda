@@ -28,10 +28,20 @@ class RefEntry:
     locus: str
     v_call: str
     j_call: str
-    starts: list[int]   # one per REGIONS, 1-based closed (target coords)
+    starts: list[int]   # one per REGIONS, 1-based closed (target coords); -1 = region not present
     ends: list[int]
     v_sequence_end: int = 0    # scaffold nt position of V germline end (0 = unknown)
     j_sequence_start: int = 0  # scaffold nt position of J germline start
+    c_call: str = ""           # constant genes; set on `J + C` scaffolds only
+    # nt length of the V-J part: the scaffold length for a V-J scaffold, the J length for a `J + C`
+    # scaffold. A hit with `tstart >= vj_end` lies wholly inside the constant region -- real receptor
+    # mRNA carrying no V(D)J, hence no clonotype. 0 = unknown (reference built before this existed).
+    vj_end: int = 0
+
+    @property
+    def is_jc(self) -> bool:
+        """A constant-region scaffold: a J followed by the CH1 exon, with no V."""
+        return not self.v_call and bool(self.c_call)
 
 
 @dataclass
@@ -102,6 +112,9 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
             ends=[int(row[c]) for c in end_cols],
             v_sequence_end=_int(row["v_sequence_end"]) if has_vj else 0,
             j_sequence_start=_int(row["j_sequence_start"]) if has_vj else 0,
+            # absent from reference builds that predate the constant-region scaffolds
+            c_call=row.get("c_call") or "",
+            vj_end=_int(row.get("vj_end")),
         )
     d_germlines = _load_d_germlines(base) if seqtype == "nt" else {}
     return Reference(organism, seqtype, target_fasta, entries, d_germlines)

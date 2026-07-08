@@ -37,3 +37,21 @@ GenBank-vs-IgBLAST test fixtures.
 
 - [ ] **Performance.** Optional per-chunk process-pool for inputs where mmseqs is
       not the bottleneck (mostly-non-receptor bulk RNA-seq); mmseqs index reuse.
+
+- [x] **RNA-seq mode (`arda rnaseq`).** Staged pipeline for bulk RNA-seq (~1-5%
+      receptor reads). `map`: recall-first, paired-FASTQ (`--r1/--r2`), streams and
+      writes only mapped reads (keyed by read id = read-id → junction map) + optional
+      candidate FASTA + a JSON report (`arda.rnaseq.map`, reuses `annotate.mapper`
+      with a `mapped_only` fast-path). `correct`: CDR3 error correction, a port of
+      vdjtools `Corrector` (parent:child count ratio, ≤2 mismatch, 20×) over `seqtree`
+      neighbour search (`arda.rnaseq.correct`; optional dep `arda-mapper[rnaseq]`).
+      `arda igblast`: all-loci gold-standard AIRR (`refbuild.gold`). Benchmarked in the
+      `arda-benchmark` repo vs assembly-based extractors (speed) and IgBLAST (accuracy).
+  - [ ] **Stage 3 — contig assembly.** Reconstruct full-length V(D)J contigs from the
+        candidate reads (interface stub in `arda.rnaseq.assemble`; the role
+        assembly-based extractors play). Deferred — a de-novo assembler, out of scope
+        for the filter-first goal.
+  - [ ] **C k-mer prefilter (contingency).** If the MMseqs2 prefilter is
+        the throughput bottleneck vs assembly-based extractors, add a parallel spaced-seed germline
+        index (new `src/_vjprefilter/` pybind11 ext) that rejects non-receptor reads and
+        emits V/J allele hints to prune alignment. Gated on measured need.
