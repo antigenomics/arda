@@ -26,6 +26,7 @@ __all__ = [
     "Scaffold",
     "DEFAULT_D_SPACER_NT",
     "load_j_frames",
+    "load_j_fr4_offsets",
     "build_locus_scaffolds",
 ]
 
@@ -72,6 +73,44 @@ def load_j_frames(organism: str) -> dict[str, int]:
                 except ValueError:
                     continue
     return frames
+
+
+def load_j_fr4_offsets(organism: str) -> dict[str, tuple[int, int]]:
+    """Parse the same aux file -> ``{J allele: (cdr3_stop, extra_bp)}``, both 0-based nt counts.
+
+    IgBLAST's aux carries five columns: allele, coding-frame start, chain type, **CDR3 stop**, and
+    **extra bp beyond the J coding end**. arda only ever read column 2. Columns 4 and 5 pin FR4
+    inside the J exactly::
+
+        fwr4 = j_seq[cdr3_stop + 1 : len(j_seq) - extra_bp]
+
+    That is how a ``J + C`` scaffold gets an FR4 at all: ``igblastn`` cannot annotate a V-less
+    sequence, so those scaffolds are not routed through it (see ``refbuild.build``).
+
+    Verified against every V-J scaffold arda builds: the string this yields is byte-identical to
+    IgBLAST's own ``fwr4`` on all 125 human J alleles where both exist -- including IgBLAST's own
+    non-multiple-of-3 cases (``IGHJ6*02`` has ``extra_bp = 0`` and a 34 nt FR4; 726 V-J scaffolds
+    already carry one). Reproducing IgBLAST, quirks included, is the requirement here: the two
+    scaffold kinds must agree, or a J->C read and a V-J read of the same clone disagree on FR4.
+
+    Pseudogene J entries carry only three columns and are skipped -- they have no FR4 to report.
+    """
+    aux = bin_dir() / "optional_file" / f"{organism}_gl.aux"
+    out: dict[str, tuple[int, int]] = {}
+    if not aux.exists():
+        return out
+    with open(aux) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) >= 5:
+                try:
+                    out[parts[0]] = (int(parts[3]), int(parts[4]))
+                except ValueError:
+                    continue
+    return out
 
 
 def build_locus_scaffolds(

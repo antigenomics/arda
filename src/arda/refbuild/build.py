@@ -185,6 +185,12 @@ def build_species(organism: str) -> Path:
     # `_process_locus` and every one of them would be dropped, silently. Their geometry is known by
     # construction: J occupies [1, j_len], C occupies [j_len+1, len]. Region coords are -1, which is
     # what `transfer_regions` already emits for a region the query does not reach.
+    #
+    # FR4 is the exception, and it is not optional. It lies wholly inside J, so a `J + C` scaffold
+    # contains all of it, and IgBLAST's own aux file says exactly where (`load_j_fr4_offsets`).
+    # Leaving it at -1 cost every J->C read the only markup it can carry -- 19.2 % of mapped reads on
+    # SRR5233639 -- and with it `fwr4_aa`, the frame check that separates a real J->C read from a
+    # chance hit inside the constant region. Every other region needs the V's conserved Cys104.
     n_vj = len(fa_nt)
     jc = constant.build_jc_scaffolds(organism, species_dir, log=logger)
     for s in jc:
@@ -195,6 +201,9 @@ def build_species(organism: str) -> Path:
                "vj_end": s.j_len, "junction": "", "junction_aa": ""}
         for r in REGION_NAMES:
             row[f"{r}_start"], row[f"{r}_end"], row[r] = -1, -1, ""
+        if s.fwr4_start > 0:
+            row["fwr4_start"], row["fwr4_end"] = s.fwr4_start, s.fwr4_end
+            row["fwr4"] = s.sequence[s.fwr4_start - 1 : s.fwr4_end]
         nt_all.append(row)
     logger.info("constant region: %d J+C scaffolds across %d loci (+%.1f%% over %d V-J scaffolds)",
                 len(jc), len({s.locus for s in jc}), 100.0 * len(jc) / max(n_vj, 1), n_vj)

@@ -37,6 +37,7 @@ from pathlib import Path
 
 from ..paths import database_dir
 from . import imgt
+from .combinations import load_j_fr4_offsets
 from .loci import LOCI
 
 __all__ = ["JCScaffold", "C_STUB_NT", "c_genes_path", "isotype_class", "build_jc_scaffolds"]
@@ -57,6 +58,11 @@ class JCScaffold:
     c_call: str      # comma-joined: distinct C genes sharing this exact stub
     j_len: int       # nt length of the J part == `vj_end`
     sequence: str
+    # FR4, 1-based closed, in scaffold coords (the J starts at 1, so these are J-local too).
+    # -1/-1 when the aux file has no FR4 for this J -- pseudogenes and a handful of alleles.
+    # Every other region needs the V's conserved Cys104 and stays -1 on a V-less scaffold.
+    fwr4_start: int = -1
+    fwr4_end: int = -1
 
 
 def c_genes_path(organism: str) -> Path:
@@ -124,6 +130,24 @@ def _locus_of(c_gene: str) -> str:
     return c_gene.split("*")[0][:3]
 
 
+def _fr4_span(jseq: str, jcalls: list[str],
+              fr4_offsets: dict[str, tuple[int, int]]) -> tuple[int, int]:
+    """FR4 as 1-based closed coords inside ``jseq``, or ``(-1, -1)`` if not determinable.
+
+    ``jcalls`` are alleles collapsed on an identical J sequence, so their aux entries must agree.
+    Where they do not -- or where none of them has an aux entry -- report nothing rather than pick
+    one: a wrong FR4 is worse than an absent one, because it silently shifts ``fwr4_aa``'s frame.
+    """
+    spans = {fr4_offsets[a] for a in jcalls if a in fr4_offsets}
+    if len(spans) != 1:
+        return -1, -1
+    cdr3_stop, extra = spans.pop()
+    start, end = cdr3_stop + 2, len(jseq) - extra          # 1-based closed
+    if not 1 <= start <= end <= len(jseq):
+        return -1, -1
+    return start, end
+
+
 def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT,
                        log=logger) -> list[JCScaffold]:
     """One scaffold per (distinct J allele sequence x distinct C stub) within each locus.
@@ -134,6 +158,7 @@ def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT,
     cpath = c_genes_path(organism)
     if not cpath.exists():
         return []
+    fr4_offsets = load_j_fr4_offsets(organism)
 
     # locus -> {stub_seq: [c_gene, ...]}   (IGHG1-4 collapse; IGLC1-7 mostly do not)
     by_locus: dict[str, dict[str, list[str]]] = {}
@@ -163,10 +188,15 @@ def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT,
 
         idx = 0
         for jseq, jcalls in sorted(j_by_seq.items()):
+            f4s, f4e = _fr4_span(jseq, jcalls, fr4_offsets)
             for stub, cgenes in sorted(stubs.items()):
                 out.append(JCScaffold(
                     scaffold_id=f"{locus.name}_JC_{idx}", locus=locus.name,
                     j_call=",".join(sorted(jcalls)), c_call=",".join(sorted(cgenes)),
-                    j_len=len(jseq), sequence=jseq + stub))
+                    j_len=len(jseq), sequence=jseq + stub,
+                    fwr4_start=f4s, fwr4_end=f4e))
                 idx += 1
+    n_f4 = sum(1 for s in out if s.fwr4_start > 0)
+    log.info("constant region: %d/%d J+C scaffolds carry an FR4 (rest have no aux entry)",
+             n_f4, len(out))
     return out
