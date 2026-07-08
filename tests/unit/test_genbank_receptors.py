@@ -121,6 +121,24 @@ def test_human_fr4_agrees_between_vj_and_jc_scaffolds(human):
     assert recovered >= 3, "expected the XhoI-bearing IGH records to show FR4 recovery"
 
 
+def test_airr_alignment_fields_are_populated_and_consistent(human_annot):
+    """The AIRR alignment fields added in Phase B: aligned strings are equal length; V-germline
+    coords start at 1 and V identity is a fraction on a V-covered read; vj_in_frame agrees with
+    productive; a real V-less truncation (BC100294.1) has J-germline coords but no V-side fields."""
+    for acc, r in human_annot.items():
+        sa, ga = r.get("sequence_alignment") or "", r.get("germline_alignment") or ""
+        assert sa and ga and len(sa) == len(ga), f"{acc}: alignment strings absent/unequal"
+        if r["v_call"]:
+            assert int(r["v_germline_start"]) == 1, f"{acc}: V germline should start at 1"
+            vid = float(r["v_identity"])
+            assert 0.5 < vid <= 1.0, f"{acc}: implausible v_identity {vid}"
+            # productive requires an in-frame V/J; the frameshifted PQ879427.1 must read F/F.
+            assert (r["vj_in_frame"] == "T") == (r["productive"] == "T")
+    v_less = human_annot["BC100294.1"]
+    assert not v_less["v_germline_start"] and not v_less["v_identity"]
+    assert int(v_less["j_germline_start"]) >= 1     # J coverage recorded even without V
+
+
 def test_reverse_complemented_input_yields_the_same_junction(human, human_annot):
     """arda searches both strands, so an antisense molecule must give the same junction as its
     sense form -- the exact property a stranded library's R2 reads depend on."""

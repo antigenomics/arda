@@ -50,6 +50,16 @@ AIRR_COLUMNS = (
      # region -- real receptor mRNA, but with no V(D)J and therefore no clonotype.
      "mmseqs2_t_vjend",
      "rev_comp", "productive",
+     # AIRR alignment fields. `sequence_alignment`/`germline_alignment` are the mmseqs aligned
+     # query and scaffold strings (coding strand) -- the scaffold IS `V + N*pad + J [+ C]`, so its
+     # non-templated stretch reads as N, exactly what AIRR's germline_alignment expects. The flags
+     # and identity are computed during translation and were previously discarded into `productive`.
+     "stop_codon", "vj_in_frame", "v_identity",
+     "sequence_alignment", "germline_alignment",
+     # Germline coordinates (1-based, in the V or J allele). The scaffold's V part is the V germline
+     # verbatim (target pos == V-germline pos) and its J part is the full J allele, so these fall
+     # straight out of the target span with a constant offset -- no separate lookup.
+     "v_germline_start", "v_germline_end", "j_germline_start", "j_germline_end",
      "v_sequence_start", "v_sequence_end",
      "d_sequence_start", "d_sequence_end", "d2_sequence_start", "d2_sequence_end",
      # D germline coordinates (1-based, in the D allele) and CIGAR, emitted only when the D
@@ -92,6 +102,24 @@ def _empty_record(query_id: str, query_seq: str) -> dict:
     rec["sequence_id"] = query_id
     rec["sequence"] = query_seq
     return rec
+
+
+def _aln_identity(qaln: str, taln: str, tstart: int, t_lo: int, t_hi: int):
+    """Fractional identity over the germline positions in target range [t_lo, t_hi].
+
+    Walks the aligned strings tracking the target (scaffold) position; counts each
+    target-consuming column in range (a germline position covered), and how many are an
+    exact base match. Returns matches / covered as a 0-1 fraction, or "" if none covered.
+    """
+    t, covered, ident = tstart, 0, 0
+    for qa, ta in zip(qaln, taln):
+        if ta != "-":                                # target-consuming column
+            if t_lo <= t <= t_hi:
+                covered += 1
+                if qa != "-" and qa.upper() == ta.upper():
+                    ident += 1
+            t += 1
+    return round(ident / covered, 4) if covered else ""
 
 
 def _project_point(hit: dict, ref_pos: int) -> int:
@@ -273,6 +301,22 @@ def transfer_hit(
     rec["mmseqs2_t_jstart"] = ref.j_sequence_start or ""
     rec["mmseqs2_t_vjend"] = ref.vj_end or ""
 
+    # AIRR alignment strings + germline coordinates. The scaffold is `V + N*pad + J [+ C]`, so the
+    # target (scaffold) span maps to germline coords directly: V germline pos == target pos; J
+    # germline pos == target pos - t_jstart + 1. C is not part of a germline V/J alignment.
+    rec["sequence_alignment"] = hit.get("qaln") or ""
+    rec["germline_alignment"] = hit.get("taln") or ""
+    ts, te = int(hit["tstart"]), int(hit["tend"])
+    t_vend = int(ref.v_sequence_end) if ref.v_sequence_end else 0
+    t_jstart = int(ref.j_sequence_start) if ref.j_sequence_start else 0
+    t_vjend = int(ref.vj_end) if ref.vj_end else 0
+    if t_vend and ts <= t_vend:                      # alignment covers some V germline
+        rec["v_germline_start"], rec["v_germline_end"] = ts, min(te, t_vend)
+        rec["v_identity"] = _aln_identity(hit["qaln"], hit["taln"], ts, ts, t_vend)
+    if t_jstart and t_vjend and te >= t_jstart:      # alignment reaches the J germline
+        rec["j_germline_start"] = max(ts, t_jstart) - t_jstart + 1
+        rec["j_germline_end"] = min(te, t_vjend) - t_jstart + 1
+
     region_q: dict[str, tuple[int, int]] = {}
     for name, (qs, qe) in zip(REGIONS, coords):
         if qs < 0:
@@ -337,6 +381,11 @@ def transfer_hit(
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
             rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
+            # Surface the two facts `productive` collapses. stop_codon is specifically about `*`
+            # (the `_` frameshift marker is not a stop); vj_in_frame is the V/J frame agreement.
+            j_stop = "*" in rec.get("junction_aa", "")
+            rec["stop_codon"] = "F" if (vclean and not j_stop) else "T"
+            rec["vj_in_frame"] = "T" if phase == 0 else "F"
         # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines)
