@@ -61,7 +61,10 @@ for arbitrarily large inputs and read parsing overlaps compute.
 Column order (`arda.annotate.transfer.AIRR_COLUMNS`):
 
 ```
-sequence_id, sequence, locus, v_call, d_call, d2_call, j_call, rev_comp, productive,
+sequence_id, sequence, locus, v_call, d_call, d2_call, j_call, c_call, c_class,
+mmseqs2_score, mmseqs2_evalue, mmseqs2_identity,
+mmseqs2_{qstart,qend,qlen,tstart,tend,tlen,t_vend,t_jstart,t_vjend},
+rev_comp, productive,
 v_sequence_start, v_sequence_end,
 d_sequence_start, d_sequence_end, d2_sequence_start, d2_sequence_end,
 j_sequence_start, np1, np2, np3, junction, junction_aa,
@@ -74,6 +77,9 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
   amino-acid translation (V-side regions read in the V frame; FR4 in the J frame).
 - `v_sequence_end` = CDR3 start − 3 nt; `j_sequence_start` = CDR3 end + 1 (FR4 start).
 - `productive` = "T" only when in-frame and free of stop codons / N-bridge.
+- The `mmseqs2_*` columns carry the scaffold hit's alignment score and geometry;
+  `t_vend`/`t_jstart`/`t_vjend` are the scaffold's V-end / J-start / V-J-end, which
+  tell V-J hits from `J + C` constant-region hits (`tstart ≥ t_vjend` ⇒ wholly in C).
 - Round-trip invariant: `query[{r}_start-1 : {r}_end] == record[{r}]` for every
   covered region.
 
@@ -81,8 +87,21 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
 
 D germlines are short and trimmed, so they are mapped by a gapless C++ local
 alignment of every locus D allele against the V..J junction interior (not via the
-scaffold DB). For IGH/TRD a second non-overlapping D is sought; the two are ordered
-5'→3' as `d_call`/`d2_call` with `np1`/`np2`/`np3` between V, the D(s), and J.
+scaffold DB). For IGH/TRB/TRD a second non-overlapping D is sought; the two are
+ordered 5'→3' as `d_call`/`d2_call` with `np1`/`np2`/`np3` between V, the D(s), and
+J. `d_call`/`d2_call` are comma-joined lists when alleles tie (7 pairs of human IGH
+D germlines are byte-identical across different genes).
+
+## Constant region & isotype
+
+The reference includes `J + C` scaffolds — the CH1 exon of each constant gene
+spliced onto each J — so a read spanning the J→C splice (no V, hence no junction)
+still maps and yields a `c_call` (CH1 exon allele) and a `c_class` isotype. **Report
+the class, never the subclass:** IGHG1–4 are ~95% identical over CH1, so the top
+gene ties often while the top class is unique; `c_class` collapses to `IGHG`/`IGHM`/
+`IGHA`/…, or the locus constant (`IGHC`) when calls straddle classes. In paired bulk
+RNA-seq the isotype of a CDR3-bearing read is recovered from its constant-region
+mate (`arda rnaseq map`).
 
 ## Performance
 

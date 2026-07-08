@@ -71,6 +71,9 @@ arda info                                   # resolved paths + tool availability
 arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
+arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # filter receptor reads from bulk RNA-seq
+arda rnaseq correct -i mapped.airr.tsv -o clones.tsv             # collapse CDR3 errors into clonotypes
+arda igblast -i reads.fastq -o truth.airr.tsv                    # gold-standard IgBLAST (all loci)
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
 arda slurm -i big.fastq -o big.airr.tsv --shards 50 --partition cpu   # cluster scale
@@ -98,9 +101,9 @@ records = arda.annotate_sequences(
     ["GACGTGCAG...", ("clone7", "CAGGTG...")],  # strings or (id, seq) pairs
     seqtype="nt", organism="human",
 )
-# -> list of AIRR record dicts: v_call, d_call/d2_call, j_call, fwr1..fwr4,
-#    cdr1..cdr3, *_start/*_end (1-based closed), *_aa, junction(_aa), np1/np2/np3,
-#    v_sequence_end, j_sequence_start, productive, rev_comp, ...
+# -> list of AIRR record dicts: v_call, d_call/d2_call, j_call, c_call/c_class,
+#    fwr1..fwr4, cdr1..cdr3, *_start/*_end (1-based closed), *_aa, junction(_aa),
+#    np1/np2/np3, v_sequence_end, j_sequence_start, productive, rev_comp, ...
 ```
 
 ### Annotating bare germline segments
@@ -124,19 +127,44 @@ recs = annotate_records(
 (mirpy uses exactly this to bake per-allele FR/CDR subsequences into its gene
 library; see `tests/synthetic/test_germline_segments.py`.)
 
+## Bulk RNA-seq mode
+
+`arda rnaseq` is a recall-first pipeline for extracting the receptor repertoire from
+bulk RNA-seq, where 1–5% of reads are receptor-derived:
+
+- **`map`** streams paired FASTQ, keeps only reads that map to a receptor scaffold, and
+  writes them as AIRR. The reference includes **`J + C` constant-region scaffolds**, so a
+  read spanning the J→C splice — which ends in the constant region and has no V to anchor —
+  still maps, and carries a **`c_call`** (the CH1 exon) plus a **`c_class`** isotype
+  (`IGHG`/`IGHM`/`IGHA` … — the class, never the noise-prone subclass). In paired mode the
+  isotype of a CDR3-bearing read is recovered from its constant-region mate.
+- **`correct`** collapses CDR3 sequencing errors into clonotypes by a parent:child count
+  ratio (a vdjtools-style corrector), keeping only complete junctions by default.
+
+```bash
+arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
+arda rnaseq correct -i mapped.airr.tsv -o clones.tsv
+```
+
+`arda igblast -i reads.fastq -o truth.airr.tsv` runs IgBLAST across all loci as a
+gold-standard reference for benchmarking (see the `arda-benchmark` project).
+
 ## How it works
 
 1. **Reference build** (`arda.refbuild`, offline): download IMGT/V-QUEST germlines
    → enumerate deduplicated in-frame **V×J** scaffolds (D only affects CDR3
-   interior, so it isn't enumerated) → annotate with `igblastn -outfmt 19` →
-   translate → write `database/vdj/<organism>/{alleles.fasta, alleles.aa.fasta,
-   markup.tsv, markup.aa.tsv, combinations.tsv, build.log}`.
+   interior, so it isn't enumerated) plus **`J + C` constant-region scaffolds** (the
+   CH1 exon spliced onto each J, so J→C reads have somewhere to land) → annotate with
+   `igblastn -outfmt 19` → translate → write `database/vdj/<organism>/{alleles.fasta,
+   alleles.aa.fasta, markup.tsv, markup.aa.tsv, combinations.tsv, build.log}`.
 2. **Runtime** (`arda.annotate`): MMseqs2 search query→scaffolds → best hit →
    C++ `transfer_regions` projects scaffold region coordinates onto the query
    (handling indels, truncation, mid-codon alignment starts, reverse strand) → for
    VDJ loci a gapless C++ local alignment of the CDR3 interior against the D
-   germlines adds `d_call`/`d2_call` + `np*` → AIRR TSV. Out-of-frame junctions are
-   reported with an N-bridge (`_`) so FR4 still reads.
+   germlines adds `d_call`/`d2_call` + `np*`; a hit on a `J + C` scaffold adds
+   `c_call`/`c_class` → AIRR TSV. Ambiguous D and C calls are comma-joined allele
+   lists, as V/J already are. Out-of-frame junctions are reported with an N-bridge
+   (`_`) so FR4 still reads.
 
 See [`memory/`](memory/) for design rationale and gotchas. Fast sequence
 primitives (`translate`, `detect_coding_frame`, `reverse_complement`,
@@ -184,8 +212,10 @@ input size — `--chunk-size` tunes it.
 
 See [`ROADMAP.md`](ROADMAP.md). Done: V·J reference build (5 organisms), MMseqs2
 mapping, C++ markup transfer, reverse-complement, all-loci querying, streaming I/O,
-out-of-frame junctions, **D-segment mapping incl. D-D fusions**, precompiled
-indexes, **multi-node (SLURM) sharding**. Next: full AIRR productivity.
+out-of-frame junctions, **D-segment mapping incl. D-D fusions** (IGH/TRB/TRD),
+**constant-region `J + C` scaffolds** (`c_call`/`c_class` isotype), **bulk RNA-seq
+mode** (`rnaseq map`/`correct`), precompiled indexes, **multi-node (SLURM) sharding**.
+Next: full AIRR productivity; contig assembly (`rnaseq assemble`).
 
 ## Development
 
