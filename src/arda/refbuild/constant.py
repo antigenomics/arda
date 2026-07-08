@@ -63,6 +63,39 @@ def c_genes_path(organism: str) -> Path:
     return database_dir() / "c_genes" / f"{organism}.fasta"
 
 
+def germline_supplement_path(organism: str, gene_stem: str) -> Path:
+    """Germline for a locus the IMGT V-QUEST reference directory omits entirely.
+
+    V-QUEST ships **no TR directory at all** for rat, so arda's rat ``TRAC1``/``TRBC1``/``TRBC2`` CH1
+    exons had no J to splice onto and rat got zero ``J + C`` scaffolds.
+
+    Consulted **only when IMGT has no file for that stem** — a supplement that shadowed an IMGT gene
+    would be far worse than a missing one. It cannot rescue a V-J scaffold: those need IgBLAST, whose
+    ``internal_data`` carries TR annotation for human and mouse alone, so ``_process_locus`` skips rat
+    TR regardless of germline. A ``J + C`` scaffold never sees IgBLAST.
+    """
+    return database_dir() / "germline" / organism / f"{gene_stem}.fasta"
+
+
+def _load_j_alleles(organism: str, species_dir: str, locus, log=logger) -> dict[str, str]:
+    """IMGT first; the shipped supplement only if IMGT has nothing for this stem."""
+    try:
+        alleles = imgt.load_functional_alleles(species_dir, locus.group, locus.j)
+        if alleles:
+            return alleles
+    except FileNotFoundError:
+        pass
+    path = germline_supplement_path(organism, locus.j)
+    if not path.exists():
+        log.info("%s: no IMGT J file (%s) for %s and no supplement — no J+C scaffolds",
+                 locus.name, locus.j, species_dir)
+        return {}
+    alleles = {hdr.split()[0]: seq.upper() for hdr, seq in imgt.read_fasta(path)}
+    log.info("%s: J germline from SUPPLEMENT (%d alleles) — IMGT ships no %s for %s",
+             locus.name, len(alleles), locus.j, species_dir)
+    return alleles
+
+
 def isotype_class(c_call: str) -> str:
     """``IGHG1`` -> ``IGHG``; ``IGHG1,IGHG3`` -> ``IGHG``; ``IGKC`` -> ``IGKC``; ``IGHG1,IGHM`` -> ``IGHC``.
 
@@ -91,8 +124,13 @@ def _locus_of(c_gene: str) -> str:
     return c_gene.split("*")[0][:3]
 
 
-def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT) -> list[JCScaffold]:
-    """One scaffold per (distinct J allele sequence x distinct C stub) within each locus."""
+def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT,
+                       log=logger) -> list[JCScaffold]:
+    """One scaffold per (distinct J allele sequence x distinct C stub) within each locus.
+
+    ``log`` is the per-species build logger, so a supplement fallback is recorded in that species'
+    ``build.log`` rather than vanishing into a module logger nobody reads.
+    """
     cpath = c_genes_path(organism)
     if not cpath.exists():
         return []
@@ -111,16 +149,11 @@ def build_jc_scaffolds(organism: str, species_dir: str, c_len: int = C_STUB_NT) 
         stubs = by_locus.get(locus.name)
         if not stubs:
             continue
-        # One locus without an IMGT J file must not kill the species build. Rat has a TRAC gene but
-        # IMGT ships no `Rattus_norvegicus/TR/TRAJ.fasta`; `_process_locus` already guards its own
-        # per-locus work this way. Note a J+C scaffold needs no IgBLAST and no V, so it is still worth
-        # building for a locus whose V-J scaffolds were skipped for want of an internal-annotation file.
-        try:
-            j_alleles = imgt.load_functional_alleles(species_dir, locus.group, locus.j)
-        except FileNotFoundError:
-            logger.info("%s: no IMGT J file (%s) for %s — no J+C scaffolds",
-                        locus.name, locus.j, species_dir)
-            continue
+        # A locus without an IMGT J file must not kill the species build (`_process_locus` guards its
+        # own per-locus work the same way). Rat has TRAC/TRBC genes but IMGT ships no rat TR directory,
+        # so its J comes from the shipped supplement. A J+C scaffold needs no IgBLAST and no V, so it is
+        # worth building even for a locus whose V-J scaffolds were skipped for want of TR annotation.
+        j_alleles = _load_j_alleles(organism, species_dir, locus, log)
         if not j_alleles:
             continue
         # collapse J alleles that share an identical sequence, exactly as the V-J builder does

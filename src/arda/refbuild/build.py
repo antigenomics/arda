@@ -186,7 +186,7 @@ def build_species(organism: str) -> Path:
     # construction: J occupies [1, j_len], C occupies [j_len+1, len]. Region coords are -1, which is
     # what `transfer_regions` already emits for a region the query does not reach.
     n_vj = len(fa_nt)
-    jc = constant.build_jc_scaffolds(organism, species_dir)
+    jc = constant.build_jc_scaffolds(organism, species_dir, log=logger)
     for s in jc:
         fa_nt.append((s.scaffold_id, s.sequence))
         row = {"scaffold_id": s.scaffold_id, "locus": s.locus,

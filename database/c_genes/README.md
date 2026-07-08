@@ -54,10 +54,31 @@ characters are not a locus is dropped **silently**, taking that locus's whole co
 |---|---|---|---|
 | human | 25 | 7 | 345 |
 | mouse | 21 | 7 | 210 |
-| rabbit | 15 | 3 | 137 |
 | rhesus_monkey | 8 | 3 | 153 |
-| rat | 3 | 0 | 0 |
+| rabbit | 15 | 3 | 137 |
+| rat | 3 | 2 | 66 |
 
-**rat has no J+C scaffolds, and that is correct.** Its three CH1 exons are all TR (`TRAC1`, `TRBC1/2`),
-and the IMGT V-QUEST reference directory ships **no TR directory at all** for rat — so there is no J to
-splice them onto. `refbuild` logs the skip per locus rather than failing the species build.
+Rat's J comes from `database/germline/rat/`: the IMGT V-QUEST reference directory ships **no TR
+directory at all** for rat, so its `TRAC1`/`TRBC1`/`TRBC2` exons had no J to splice onto. That
+supplement is consulted only where IMGT has no file for the stem, and `build.log` records each use.
+It cannot restore rat TR **V-J** scaffolds — those need IgBLAST, whose `internal_data` carries TR
+annotation for human and mouse alone.
+
+Rabbit has no TR constant genes and rhesus_monkey none for IGK/IGL/TRG/TRD, so those loci have no J+C
+scaffolds. That is a gap in the source, not in `refbuild`.
+
+## Known defect: eight CH1 exons start 1–2 nt off
+
+`mouse TRBC1`, `rat TRBC1`, `rat TRBC2`, `rabbit IGHA5/IGLC4/IGLC5/IGLC6`, `rhesus_monkey IGHM` never
+translate through the splice, while every other functional C gene does (699/701 scaffolds). The defect
+is provable from a paralog: mouse `TRBC1` and `TRBC2` splice onto the **same** J cluster and so share a
+splice phase, yet `TRBC2` reads through and `TRBC1` does not — and `TRBC1`'s sequence is `TRBC2`'s minus
+one leading base. The missing bases are **not** reconstructed: inventing sequence to satisfy a check is
+worse than a documented defect.
+
+Consequence: for those genes the scaffold is `J + C[k:]`, so a read crossing the splice pays a `k`-nt
+gap. It still aligns and still carries the right `c_call`; only its bit score dips. **Human is clean.**
+`tests/unit/test_rnaseq.py::KNOWN_BAD_CH1_START` pins the set, so a data fix shows up as a test failure.
+
+Pseudogene C exons (`functional=P`) are kept — they carry mappable constant-region sequence — and are
+exempt from the read-through check, which they need not satisfy.

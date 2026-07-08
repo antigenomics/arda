@@ -1,15 +1,17 @@
-2026-07-08 22:53:12,295 INFO === arda reference build: rat (Rattus_norvegicus) ===
-2026-07-08 22:53:12,295 INFO TRA: no IgBLAST TR internal annotation for rat — skipped
-2026-07-08 22:53:12,296 INFO TRG: no IgBLAST TR internal annotation for rat — skipped
-2026-07-08 22:53:17,073 INFO IGK: V=141 J=7 raw_combos=987 unique_scaffolds=987 annotated=987
-2026-07-08 22:53:17,085 INFO IGK: dropped 159 scaffolds with incomplete markup
-2026-07-08 22:53:20,667 INFO IGL: V=8 J=4 raw_combos=32 unique_scaffolds=16 annotated=16
-2026-07-08 22:53:26,584 INFO IGH: V=153 J=4 raw_combos=612 unique_scaffolds=604 annotated=604
-2026-07-08 22:53:26,593 INFO IGH: dropped 8 scaffolds with incomplete markup
-2026-07-08 22:53:26,595 INFO TRB: no IgBLAST TR internal annotation for rat — skipped
-2026-07-08 22:53:26,595 INFO TRD: no IgBLAST TR internal annotation for rat — skipped
-2026-07-08 22:53:26,596 INFO constant region: 0 J+C scaffolds across 0 loci (+0.0% over 1440 V-J scaffolds)
-2026-07-08 22:53:26,633 INFO TRB: no IMGT D file (TRBD) for Rattus_norvegicus — no D germlines
-2026-07-08 22:53:26,633 INFO TRD: no IMGT D file (TRDD) for Rattus_norvegicus — no D germlines
-2026-07-08 22:53:26,634 INFO D germlines: 37 alleles across 1 loci
-2026-07-08 22:53:26,634 INFO TOTAL: 1440 scaffolds across 3 loci in 14.3s -> /Users/mikesh/vcs/code/arda/database/vdj/rat
+2026-07-08 23:05:06,563 INFO === arda reference build: rat (Rattus_norvegicus) ===
+2026-07-08 23:05:06,564 INFO TRA: no IgBLAST TR internal annotation for rat — skipped
+2026-07-08 23:05:06,564 INFO TRG: no IgBLAST TR internal annotation for rat — skipped
+2026-07-08 23:05:11,375 INFO IGK: V=141 J=7 raw_combos=987 unique_scaffolds=987 annotated=987
+2026-07-08 23:05:11,388 INFO IGK: dropped 159 scaffolds with incomplete markup
+2026-07-08 23:05:17,496 INFO IGL: V=8 J=4 raw_combos=32 unique_scaffolds=16 annotated=16
+2026-07-08 23:05:23,442 INFO IGH: V=153 J=4 raw_combos=612 unique_scaffolds=604 annotated=604
+2026-07-08 23:05:23,456 INFO IGH: dropped 8 scaffolds with incomplete markup
+2026-07-08 23:05:23,459 INFO TRB: no IgBLAST TR internal annotation for rat — skipped
+2026-07-08 23:05:23,459 INFO TRD: no IgBLAST TR internal annotation for rat — skipped
+2026-07-08 23:05:23,460 INFO TRA: J germline from SUPPLEMENT (42 alleles) — IMGT ships no TRAJ for Rattus_norvegicus
+2026-07-08 23:05:23,460 INFO TRB: J germline from SUPPLEMENT (12 alleles) — IMGT ships no TRBJ for Rattus_norvegicus
+2026-07-08 23:05:23,460 INFO constant region: 66 J+C scaffolds across 2 loci (+4.6% over 1440 V-J scaffolds)
+2026-07-08 23:05:23,497 INFO TRB: no IMGT D file (TRBD) for Rattus_norvegicus — no D germlines
+2026-07-08 23:05:23,498 INFO TRD: no IMGT D file (TRDD) for Rattus_norvegicus — no D germlines
+2026-07-08 23:05:23,498 INFO D germlines: 37 alleles across 1 loci
+2026-07-08 23:05:23,498 INFO TOTAL: 1506 scaffolds across 3 loci in 16.9s -> /Users/mikesh/vcs/code/arda/database/vdj/rat

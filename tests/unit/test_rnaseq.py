@@ -393,3 +393,76 @@ def test_every_shipped_c_gene_maps_to_a_known_locus():
     for organism, species_dir, loci in (("human", "Homo_sapiens", 7), ("mouse", "Mus_musculus", 7)):
         jc = build_jc_scaffolds(organism, species_dir)
         assert len({s.locus for s in jc}) == loci, f"{organism}: {sorted({s.locus for s in jc})}"
+
+
+# `J + CH1` must translate contiguously across the splice -- CH1 begins mid-codon, so this is the one
+# property that proves the exon's 5' boundary is right. Eight functional C genes fail it: their CH1
+# anchor in the source is 1-2 nt short (or long), which is provable from a paralog -- mouse TRBC1 and
+# TRBC2 splice onto the SAME J cluster and so share a splice phase, yet TRBC2 reads through and TRBC1
+# does not, and TRBC1's sequence is TRBC2's minus one leading base. The missing bases are not
+# reconstructed here: inventing sequence to satisfy a test is worse than a documented defect.
+#
+# Consequence: for these genes the scaffold is `J + C[k:]`, so a read crossing the splice pays a k-nt
+# gap. It still aligns and still carries the right `c_call`; only its bit score dips. Human is clean.
+# If a data fix lands, this test FAILS -- delete the entry, that is the point of pinning it.
+KNOWN_BAD_CH1_START = {
+    ("mouse", "TRBC1*01"), ("rat", "TRBC1*01"), ("rat", "TRBC2*01"),
+    ("rabbit", "IGHA5*01"), ("rabbit", "IGLC4*01"), ("rabbit", "IGLC5*01"), ("rabbit", "IGLC6*01"),
+    ("rhesus_monkey", "IGHM*01"),
+}
+_SPECIES_DIRS = {"human": "Homo_sapiens", "mouse": "Mus_musculus", "rat": "Rattus_norvegicus",
+                 "rabbit": "Oryctolagus_cuniculus", "rhesus_monkey": "Macaca_mulatta"}
+
+
+@pytest.mark.skipif(not (paths.database_dir() / "c_genes").exists(),
+                    reason="C-gene bundle not present")
+def test_jc_scaffolds_read_through_the_splice_for_every_functional_c_gene():
+    import re
+    from arda.refbuild.constant import build_jc_scaffolds
+    from arda.refbuild.imgt import read_fasta
+    from arda.refbuild.translate import translate
+
+    # IMGT J-TRP (W118) opens FR4 in IGH; J-PHE (F118) in every other locus. Both match [FW]G.G.
+    motif = re.compile(r"[FW]G.G")
+    func = {}
+    for fa in (paths.database_dir() / "c_genes").glob("*.fasta"):
+        for hdr, _ in read_fasta(fa):
+            parts = hdr.split()
+            func[(fa.stem, parts[0])] = parts[1].split("=")[1] if len(parts) > 1 else "?"
+
+    # per functional C gene: how many of its scaffolds read through, out of how many
+    tally: dict[tuple[str, str], list[int]] = {}
+    for organism, species_dir in _SPECIES_DIRS.items():
+        for sc in build_jc_scaffolds(organism, species_dir):
+            for f in range(3):
+                j_aa = translate(sc.sequence[f:sc.j_len])
+                if not (motif.search(j_aa) and "*" not in j_aa):
+                    continue                      # not the J's own reading frame
+                reads_through = "*" not in translate(sc.sequence[f:])[max(0, len(j_aa) - 6):len(j_aa) + 15]
+                for gene in sc.c_call.split(","):
+                    if func.get((organism, gene)) != "F":
+                        continue                  # a pseudogene's CH1 need not be an open frame
+                    t = tally.setdefault((organism, gene), [0, 0])
+                    t[0] += 1
+                    t[1] += reads_through
+                break
+
+    # A BOUNDARY defect makes a gene fail on EVERY J: the wrong exon start is a property of the gene.
+    # A single J failing against an otherwise-clean gene is a property of that J allele (odd length or
+    # an internal stop) and is caught by the aggregate below, not misattributed to the C gene.
+    seen_bad = {g for g, (n, ok) in tally.items() if n and ok == 0}
+    assert seen_bad == KNOWN_BAD_CH1_START, (
+        f"CH1 5'-boundary defects changed.\n  newly broken: {sorted(seen_bad - KNOWN_BAD_CH1_START)}"
+        f"\n  now fixed (remove from KNOWN_BAD_CH1_START): {sorted(KNOWN_BAD_CH1_START - seen_bad)}")
+
+    # Away from the boundary defects, read-through is near-total. The residue (human TRDJ4*02+TRDC,
+    # mouse TRAJ45*02+TRAC) is a property of those J alleles' splice phase, not of the C exon -- human
+    # TRDC reads through on 4 of its 5 J alleles. It does not affect the NUCLEOTIDE scaffold, which is
+    # the only thing arda aligns against; translation is a diagnostic for the C exon's 5' boundary.
+    checked = sum(n for g, (n, _) in tally.items() if g not in KNOWN_BAD_CH1_START)
+    passed = sum(ok for g, (_, ok) in tally.items() if g not in KNOWN_BAD_CH1_START)
+    assert checked > 600, checked
+    assert passed / checked > 0.99, f"only {passed}/{checked} functional scaffolds read through"
+
+    # no gene-wide boundary defect may appear in human, the reference species
+    assert not any(org == "human" for org, _ in seen_bad), sorted(seen_bad)
