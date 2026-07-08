@@ -18,6 +18,7 @@ from __future__ import annotations
 from .. import _markup
 from ..refbuild.constant import isotype_class
 from ..refbuild.translate import translate, aa_coords_from_nt, detect_coding_frame
+from .cigar import build_cigar, segment_cigars
 from .reference import RefEntry, REGIONS
 
 __all__ = ["transfer_hit", "AIRR_COLUMNS"]
@@ -56,6 +57,9 @@ AIRR_COLUMNS = (
      # and identity are computed during translation and were previously discarded into `productive`.
      "stop_codon", "vj_in_frame", "v_identity",
      "sequence_alignment", "germline_alignment",
+     # Per-segment CIGARs. Each is the sub-walk of the one query->scaffold alignment whose target
+     # falls in that segment's germline range, with the rest of the read soft-clipped (see cigar.py).
+     "v_cigar", "j_cigar", "c_cigar",
      # Germline coordinates (1-based, in the V or J allele). The scaffold's V part is the V germline
      # verbatim (target pos == V-germline pos) and its J part is the full J allele, so these fall
      # straight out of the target span with a constant offset -- no separate lookup.
@@ -241,23 +245,25 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines):
     def q(off):                                   # interior 0-based offset -> query 1-based
         return i_lo + off
 
-    def germline(rec, pfx, alleles, ds, de):
-        # D germline coords + cigar, only when the call is a single allele -- an ambiguity
-        # list (byte-identical D genes) has no one germline to anchor to. Gapless, so the
-        # cigar is one M run over the aligned length.
+    qlen = len(query_seq)
+
+    def germline(rec, pfx, alleles, ds, de, qs, qe):
+        # D germline coords + AIRR cigar, only when the call is a single allele -- an ambiguity
+        # list (byte-identical D genes) has no one germline to anchor to. Gapless (one M run), with
+        # the query 5' offset as leading S and the D-germline 5' offset as leading N (AIRR spec).
         if len(alleles) == 1 and ds >= 0:
             rec[f"{pfx}_germline_start"], rec[f"{pfx}_germline_end"] = ds + 1, de + 1
-            rec[f"{pfx}_cigar"] = f"{de - ds + 1}M"
+            rec[f"{pfx}_cigar"] = build_cigar(qs - 1, ds, ["M"] * (de - ds + 1), qlen - qe)
 
     _, _, a1, s1, e1, ds1, de1 = segs[0]
     rec["d_call"] = ",".join(a1)
     rec["d_sequence_start"], rec["d_sequence_end"] = q(s1), q(e1)
-    germline(rec, "d", a1, ds1, de1)
+    germline(rec, "d", a1, ds1, de1, q(s1), q(e1))
     if len(segs) == 2:
         _, _, a2, s2, e2, ds2, de2 = segs[1]
         rec["d2_call"] = ",".join(a2)
         rec["d2_sequence_start"], rec["d2_sequence_end"] = q(s2), q(e2)
-        germline(rec, "d2", a2, ds2, de2)
+        germline(rec, "d2", a2, ds2, de2, q(s2), q(e2))
         rec["np1"] = query_seq[v_end_q : q(s1) - 1]
         rec["np2"] = query_seq[q(e1) : q(s2) - 1]
         rec["np3"] = query_seq[q(e2) : j_start_q - 1]
@@ -316,6 +322,9 @@ def transfer_hit(
     if t_jstart and t_vjend and te >= t_jstart:      # alignment reaches the J germline
         rec["j_germline_start"] = max(ts, t_jstart) - t_jstart + 1
         rec["j_germline_end"] = min(te, t_vjend) - t_jstart + 1
+    # Per-segment CIGARs (v/j/c) in a single walk of the same aligned strings.
+    rec.update(segment_cigars(hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
+                              len(query_seq), t_vend, t_jstart, t_vjend))
 
     region_q: dict[str, tuple[int, int]] = {}
     for name, (qs, qe) in zip(REGIONS, coords):

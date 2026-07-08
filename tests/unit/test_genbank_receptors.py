@@ -19,6 +19,7 @@ import pytest
 
 from arda import paths
 from arda.annotate.mapper import annotate_records
+from arda.annotate.transfer import AIRR_COLUMNS
 
 from tests.conftest import requires_mmseqs, requires_human_db
 
@@ -137,6 +138,19 @@ def test_airr_alignment_fields_are_populated_and_consistent(human_annot):
     v_less = human_annot["BC100294.1"]
     assert not v_less["v_germline_start"] and not v_less["v_identity"]
     assert int(v_less["j_germline_start"]) >= 1     # J coverage recorded even without V
+
+
+def test_records_pass_the_airr_rearrangement_schema(human_annot):
+    """The payoff of the whole phase: every emitted record validates against the official AIRR
+    Rearrangement schema -- all 14 required fields present and correctly typed -- including the
+    V-less truncation and the out-of-frame record. arda's TSV is a real AIRR file, not a subset."""
+    pytest.importorskip("airr")
+    from airr.schema import RearrangementSchema
+
+    missing = [f for f in RearrangementSchema.required if f not in AIRR_COLUMNS]
+    assert not missing, f"AIRR_COLUMNS is missing required fields: {missing}"
+    for acc, r in human_annot.items():
+        RearrangementSchema.validate_row(r)          # raises on any schema violation
 
 
 def test_reverse_complemented_input_yields_the_same_junction(human, human_annot):

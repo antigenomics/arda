@@ -24,7 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 docs = ["sphinx", "pydata-sphinx-theme", "nbsphinx"]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "airr>=1.4"]  # airr: validate the AIRR Rearrangement schema
 dev = ["ruff", "pytest", "pybind11"]
 rnaseq = ["seqtree>=0.2"]  # `arda rnaseq correct` — CDR3 error correction (neighbour search)
 

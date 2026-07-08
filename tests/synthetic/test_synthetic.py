@@ -326,9 +326,13 @@ def test_d_germline_coords_and_cigar_for_an_unambiguous_call(human_d_germlines):
     rec = {}
     _map_d(rec, query, len(vpref), len(query) - len(jsuf) + 1, human_d_germlines["IGH"])
     assert "," not in rec["d_call"]                              # single allele
-    # Full-length germline match: spans the whole D, one M run.
+    # Full-length germline match from position 1 (no leading N), one M run over the whole D, with
+    # query soft-clips for the flanks (AIRR: {q5'}S {L}M {q3'}S).
     assert rec.get("d_germline_start") == 1 and rec.get("d_germline_end") == len(d_uni)
-    assert rec.get("d_cigar") == f"{len(d_uni)}M"
+    import re
+    m = re.fullmatch(r"(\d+)S(\d+)M(\d+)S", rec["d_cigar"])
+    assert m and int(m.group(2)) == len(d_uni), rec["d_cigar"]
+    assert int(m.group(1)) == len(vpref) + len("CAGAT")          # query bases 5' of the D
 
     # Ambiguous: a sequence shared by >=2 different genes -> a comma list, no germline anchor.
     d_amb, genes = next(((sq, al) for sq, al in by_seq.items() if len(al) > 1))
