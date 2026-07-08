@@ -282,25 +282,34 @@ def transfer_hit(
         rec["j_sequence_start"] = j_start_q
 
     if seqtype == "nt":
-        # V coding frame from the alignment phase (works even without FR1).
+        # V coding frame from the alignment phase (works even without FR1). A `J + C` scaffold has no
+        # V, so ``ref.starts[0]`` is -1 and there is no V frame to project -- guard the arithmetic
+        # rather than feed -1 into it. FR4 still reads in its own (J) frame, so it is translated below,
+        # outside this branch: on a V-less hit it is the only markup there is.
         t0 = ref.starts[0]
-        tstart = int(hit["tstart"])
-        p = tstart + ((t0 - tstart) % 3)
-        pj = _project_point(hit, p)
-        coding_start = pj or region_q.get("fwr1", (None,))[0]
-        if pj == 0 and coding_start is not None:
-            v_end = region_q.get("fwr3", (0, 0))[1] or len(query_seq)
-            coding_start += detect_coding_frame(query_seq[coding_start - 1 : v_end])
+        coding_start = None
+        if t0 > 0:
+            tstart = int(hit["tstart"])
+            p = tstart + ((t0 - tstart) % 3)
+            pj = _project_point(hit, p)
+            coding_start = pj or region_q.get("fwr1", (None,))[0]
+            if pj == 0 and coding_start is not None:
+                v_end = region_q.get("fwr3", (0, 0))[1] or len(query_seq)
+                coding_start += detect_coding_frame(query_seq[coding_start - 1 : v_end])
         if coding_start is not None:
             protein = translate(query_seq[coding_start - 1:], 0)
             for name, (qs, qe) in region_q.items():       # V-side aa from V frame
+                if name == "fwr4":
+                    continue                              # J frame, not V frame -- see below
                 a_s, a_e = aa_coords_from_nt(qs, qe, coding_start)
                 rec[f"{name}_aa"] = protein[max(1, a_s) - 1 : a_e]
-            # FR4 reads in its own (J) frame regardless of productivity.
-            if "fwr4" in region_q:
-                f4s, f4e = region_q["fwr4"]
-                rec["fwr4_aa"] = translate(query_seq[f4s - 1 : f4e], 0)
-            # Junction (+ CDR3 aa) with out-of-frame N-bridging.
+        # FR4 reads in its own (J) frame regardless of productivity, and regardless of whether a V
+        # frame exists at all.
+        if "fwr4" in region_q:
+            f4s, f4e = region_q["fwr4"]
+            rec["fwr4_aa"] = translate(query_seq[f4s - 1 : f4e], 0)
+        if coding_start is not None:
+            # Junction (+ CDR3 aa) with out-of-frame N-bridging. Needs the V's conserved Cys104.
             phase = None
             if "cdr3" in region_q and "fwr4" in region_q:
                 jnt, jaa, c3aa, phase = _junction_nt(
@@ -311,6 +320,7 @@ def transfer_hit(
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
             rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
+        # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines)
     else:  # aa input: regions are already amino acids; no frame bridging needed.
