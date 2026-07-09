@@ -200,7 +200,7 @@ def test_correct_parent_child_collapse(tmp_path):
 
     rep = correct_airr(airr, tmp_path / "clones.tsv", read_map=tmp_path / "map.tsv")
     out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0)
-    counts = {r["junction"]: int(r["count"]) for r in out.iter_rows(named=True)}
+    counts = {r["junction"]: int(r["duplicate_count"]) for r in out.iter_rows(named=True)}
 
     assert rep.clonotypes_in == 3 and rep.clonotypes_out == 2
     assert counts[P] == 102 and counts[U] == 5   # C1 absorbed into P, read count conserved
@@ -263,8 +263,8 @@ def test_correct_keys_on_locus_v_j_not_junction_alone(tmp_path):
 
 
 def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
-    """Paired mates `<id>/1` and `<id>/2` of one molecule both carry the junction; `count` is
-    fragments (each counted once), `n_reads` is the reads."""
+    """`duplicate_count` (AIRR) counts FRAGMENTS: mates `<id>/1` and `<id>/2` of one molecule that
+    both carry the junction are one, not two -- 10 mate-rows -> 5."""
     pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
@@ -279,8 +279,25 @@ def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
 
     correct_airr(airr, tmp_path / "clones.tsv")
     out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
-    assert int(out["count"]) == 5, "10 mate-rows are 5 fragments"
-    assert int(out["n_reads"]) == 10
+    assert int(out["duplicate_count"]) == 5, "10 mate-rows are 5 fragments"
+
+
+def test_correct_reports_dominant_isotype_as_c_call(tmp_path):
+    """`c_call` is the clonotype's dominant isotype (from the constant-region mate); mixed calls
+    collapse to the most common, and reads without one are ignored."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
+    ccalls = ["IGHG1", "IGHG1", "IGHG1", "IGHA1", ""]        # dominant = IGHG1; the empty one is ignored
+    rows = [{"sequence_id": f"r{i}", "junction": junc, "junction_aa": aa, "v_call": "IGHV3-23*01",
+             "j_call": "IGHJ4*02", "locus": "IGH", "c_call": cc} for i, cc in enumerate(ccalls)]
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    correct_airr(airr, tmp_path / "clones.tsv")
+    out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
+    assert out["c_call"] == "IGHG1" and int(out["duplicate_count"]) == 5
 
 
 def test_correct_rejects_invalid_ratio(tmp_path):
@@ -381,7 +398,7 @@ def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_sca
 
     # the clonotype table carries the correct-stage schema even when biology yields few rows
     cols = pl.read_csv(clones, separator="\t", infer_schema_length=0).columns
-    assert cols == ["junction", "junction_aa", "v_call", "j_call", "locus", "count", "n_reads"]
+    assert cols == ["junction", "junction_aa", "v_call", "j_call", "c_call", "locus", "duplicate_count"]
 
     # the merged report carries both stages, at the version the module used (defaults: k=12, min 75)
     r = json.loads(rep.read_text())

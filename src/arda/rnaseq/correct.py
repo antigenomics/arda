@@ -16,6 +16,7 @@ seqtree is an optional dependency (``pip install 'arda-mapper[rnaseq]'``).
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -115,11 +116,12 @@ def correct_airr(
 
     Args:
         airr_tsv: Stage-1 mapped-reads AIRR TSV (needs ``junction``, ``sequence_id``).
-        output: corrected clonotype table TSV (``junction``, ``junction_aa``,
-            ``v_call``, ``j_call``, ``locus``, ``count``, ``n_reads``), sorted by count.
-            A clonotype is keyed by ``(locus, v_call, j_call, junction)``; ``count`` is the
-            number of distinct FRAGMENTS (paired mates of one molecule counted once) and
-            ``n_reads`` the number of reads.
+        output: corrected clonotype table TSV (``junction``, ``junction_aa``, ``v_call``,
+            ``j_call``, ``c_call``, ``locus``, ``duplicate_count``), sorted by abundance.
+            A clonotype is keyed by ``(locus, v_call, j_call, junction)``; ``duplicate_count``
+            (AIRR) is the number of distinct FRAGMENTS -- paired mates of one molecule counted
+            once. ``c_call`` is the clonotype's dominant isotype (donated from the
+            constant-region mate; empty when no read carried one).
         ratio: parent:child count ratio; must be in ``(0, 1)`` (vdjtools default 0.05).
         require_vj: only collapse neighbours sharing ``v_call`` and ``j_call``.
         complete_only: keep only reads whose junction spans both conserved anchors, is in
@@ -168,6 +170,10 @@ def correct_airr(
     read_ids = g["read_ids"].to_list()
     junction_aa = g["junction_aa"].to_list()
     locus = [x or "" for x in g["locus"].to_list()]
+    # per-read isotype (c_call, donated from the constant-region mate on gapped pairs) -> collapsed to
+    # the clonotype's dominant call in the output. Keyed by the full sequence_id (mate suffix kept).
+    cc_map = (dict(zip(df["sequence_id"].to_list(), df["c_call"].to_list()))
+              if "c_call" in df.columns else {})
 
     report = CorrectReport(clonotypes_in=len(junctions),
                            reads=sum(len(r) for r in read_ids),   # reads; `count` is fragments
@@ -195,14 +201,18 @@ def correct_airr(
     report.clonotypes_out = len(roots)
     report.collapsed = report.clonotypes_in - report.clonotypes_out
 
+    def _dominant_ccall(read_list: list[str]) -> str:
+        calls = [c for sid in read_list if (c := cc_map.get(sid))]
+        return Counter(calls).most_common(1)[0][0] if calls else ""
+
     out = pl.DataFrame({
         "junction": [junctions[i] for i in roots],
         "junction_aa": [junction_aa[i] for i in roots],
         "v_call": [v[i] for i in roots],
         "j_call": [j[i] for i in roots],
+        "c_call": [_dominant_ccall(agg_reads[i]) for i in roots],
         "locus": [locus[i] for i in roots],
-        "count": [agg_count[i] for i in roots],
-        "n_reads": [len(agg_reads[i]) for i in roots],
+        "duplicate_count": [agg_count[i] for i in roots],
     })
     out.write_csv(output, separator="\t")
 
