@@ -13,9 +13,14 @@ Command line
 The output is a **spec-valid AIRR Rearrangement** TSV (it passes ``airr.schema``
 validation) with 1-based, closed region coordinates (``fwr1_start``/``fwr1_end`` …
 ``cdr3_start``/``cdr3_end``), region nucleotide and amino-acid sequences,
-``v_call``/``d_call``/``j_call``, the constant-region ``c_call``/``c_class``
-(isotype), per-segment CIGARs, ``sequence_alignment`` / ``germline_alignment``,
-``junction``, and ``productive``.
+``v_call``/``d_call``/``d2_call``/``j_call``, the constant-region ``c_call``/``c_class``
+(isotype), per-segment CIGARs (``v_cigar``/``d_cigar``/``j_cigar``/``c_cigar``) and the
+matching V/J/D germline coordinates, ``sequence_alignment`` / ``germline_alignment``,
+``v_identity``, ``stop_codon``, ``vj_in_frame``, ``junction``, and ``productive``.
+On a score tie ``d_call``/``d2_call`` are comma-separated allele ambiguity lists, and
+``d2_call`` is the second (3′) segment of a D-D fusion — called in every D locus (IGH,
+TRB, TRD). The ``sequence`` field holds the read **as submitted**; ``rev_comp`` = ``T``
+signals that the other output fields describe its reverse complement (per the AIRR spec).
 
 Python library
 --------------
@@ -47,9 +52,13 @@ Bulk RNA-seq mode
 scaffold. The reference includes ``J + C`` constant-region scaffolds, so a read
 spanning the J→C splice still maps and carries a ``c_call`` (CH1 exon) and a
 ``c_class`` isotype (``IGHG``/``IGHM``/``IGHA`` … — the class, never the subclass).
-``correct`` collapses CDR3 sequencing errors into clonotypes by a parent:child
-count ratio. ``arda igblast -i reads.fastq -o truth.airr.tsv`` runs IgBLAST across
-all loci as a gold-standard reference for benchmarking.
+With ``--reconstruct``, overlapping mates are merged into one fragment; a mismatch in
+the overlap is resolved base-by-base in favour of the higher-Phred call (the default,
+un-merged path is unchanged). ``correct`` collapses CDR3 sequencing errors into
+clonotypes by a parent:child count ratio; a clonotype is keyed by
+``(locus, v_call, j_call, junction)`` and its ``count`` is the number of distinct
+fragments (paired mates counted once). ``arda igblast -i reads.fastq -o truth.airr.tsv``
+runs IgBLAST across all loci as a gold-standard reference for benchmarking.
 
 Scaling
 -------

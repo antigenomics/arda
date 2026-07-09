@@ -32,6 +32,16 @@ Runtime annotation
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: arda.annotate.cigar
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.annotate.contig
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Reference build
 ---------------
 

@@ -137,9 +137,14 @@ them as AIRR — recall-first, with `--min-score`/`--kmer`/`--max-seqs` as flexi
 knobs around one default preset. Because the reference includes `J + C`
 constant-region scaffolds, a read spanning the J→C splice (no V) still maps and
 carries `c_call`/`c_class`; in paired mode the isotype of a CDR3-bearing read is
-recovered from its constant-region mate. `correct` then collapses CDR3 sequencing
-errors into clonotypes by a parent:child count ratio (`--max-mismatches`/`--ratio`,
-`--complete-only` by default). Contig assembly (`rnaseq assemble`) is not yet
+recovered from its constant-region mate. With `--reconstruct`, overlapping mates are
+merged into one fragment (giving a short read the mate's V/J context); where they
+disagree in the overlap the higher-Phred base wins (FASTQ quality is read only on this
+path, so the default stays fast). `correct` then collapses CDR3 sequencing errors into
+clonotypes — keyed by `(locus, v_call, j_call, junction)`, `count` = distinct fragments
+(paired mates of one molecule counted once) — by a parent:child count ratio
+(`--max-mismatches`/`--ratio` in `(0,1)`, `--complete-only` by default). Contig
+assembly (`rnaseq assemble`) is not yet
 implemented, but the code to give an assembled contig its AIRR cigars is
 (`annotate.contig`): `reannotate_contigs` (re-align the contig) and `merge_contig`
 (stitch the reads' alignments via the C++ `_markup.merge_alignment`). Both produce
@@ -162,6 +167,12 @@ indexes, and version-mismatch handling.
 Most users never build anything — `database/vdj/<organism>/` ships with
 precompiled markup and MMseqs2 indexes. Rebuild only when adding/refreshing an
 organism (needs IgBLAST, fetched by `setup.sh` into `bin/`).
+
+Every build writes `loci_manifest.tsv` — one row per defined locus (V-J / J+C
+scaffold counts, D germlines, unreachable-D count, `ok`/`EMPTY` status) — and warns at
+build end on any `EMPTY` locus or unreachable D germlines. This is what makes an absent
+reference visible rather than silent: rat/rabbit/rhesus have no TR loci in IMGT, so
+their TCR loci build `EMPTY` (the IG-only limitation in the table above).
 
 Read [references/reference-build.md](references/reference-build.md) for the
 `arda.refbuild` pipeline (IMGT germlines → V×J scaffolds → IgBLAST → markup TSVs)

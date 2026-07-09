@@ -47,9 +47,10 @@ for arbitrarily large inputs and read parsing overlaps compute.
 
 - **seqtype** — `"nt"` is the more complete path (D mapping, productivity, frame
   bridging). `"aa"` returns region `*_aa` directly; coordinates are in aa space.
-- **strand** — nt only. `"both"` (default) searches both strands and re-orients
-  reverse-complement hits (`rev_comp="T"`); `"forward"` searches the plus strand
-  only (use for germline/sense input to avoid spurious revcomp hits).
+- **strand** — nt only. `"both"` (default) searches both strands; a reverse-strand hit
+  is annotated on the coding strand and flagged `rev_comp="T"` (its `sequence` stays as
+  submitted, see below). `"forward"` searches the plus strand only (use for
+  germline/sense input to avoid spurious revcomp hits).
 - **sensitivity** — MMseqs2 search sensitivity; default 7.0 (tuned for short
   germline-similar queries). There is **no coverage filter**, so partial reads
   still map.
@@ -78,6 +79,10 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
   {region}_start, {region}_end, {region}, {region}_aa
 ```
 
+- `sequence` holds the read **as submitted**; the annotation (coords, CIGARs, alignment
+  strings) is computed on the coding strand. A reverse-strand hit sets `rev_comp="T"`,
+  which per AIRR means all output data are on the **reverse complement** of `sequence` —
+  `sequence` itself is not re-oriented (earlier builds stored the reverse complement here).
 - All coordinates are **1-based closed**. `*_sequence_start/end` are in query space;
   `*_germline_start/end` are in the germline allele; `{region}_*` are in query space.
 - `sequence_alignment`/`germline_alignment` are the aligned query / germline strings
@@ -113,6 +118,22 @@ gene ties often while the top class is unique; `c_class` collapses to `IGHG`/`IG
 `IGHA`/…, or the locus constant (`IGHC`) when calls straddle classes. In paired bulk
 RNA-seq the isotype of a CDR3-bearing read is recovered from its constant-region
 mate (`arda rnaseq map`).
+
+## Contig annotation
+
+`arda.annotate.contig` gives a caller-supplied assembled contig valid
+`v_cigar`/`j_cigar`/`c_cigar` two ways, which produce the **same record** (both feed a
+synthetic `hit` into `transfer_hit`, so output is field-for-field comparable):
+
+- `reannotate_contigs(records, ...)` — treat each contig as one long query and re-align
+  it through `annotate_records` (a fresh mmseqs pass, then `segment_cigars`).
+- `merge_contig(contig, reference, ...)` / `merge_contigs(...)` — stitch the member
+  reads' existing scaffold alignments into the contig's via the C++
+  `_markup.merge_alignment`, skipping the alignment pass; wins at ~10⁵ contigs/sample
+  (scRNA-seq).
+
+arda does not yet assemble contigs de-novo — these paths only re-annotate contigs the
+caller already assembled.
 
 ## Performance
 

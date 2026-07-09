@@ -1,10 +1,13 @@
 # arda roadmap
 
-Implemented: offline V·J reference build (5 organisms), MMseqs2 runtime mapping,
-C++ markup transfer, reverse-complement handling, all-loci single-DB querying,
-streaming/bounded-memory FASTQ I/O, out-of-frame junction translation, extended
-V/J-position markup, D-segment mapping (incl. D-D fusions), offline
-GenBank-vs-IgBLAST test fixtures.
+Implemented: offline V·J reference build (5 organisms) with a per-organism
+locus-coverage manifest (`loci_manifest.tsv`; warns on empty loci / unreachable
+D germlines), MMseqs2 runtime mapping, C++ markup transfer, spec-valid AIRR output
+(per-segment V/D/J/C cigars, sequence/germline alignments, read-as-submitted
+orientation via `rev_comp`), reverse-complement handling, all-loci single-DB
+querying, streaming/bounded-memory FASTQ I/O (optional quality retention),
+out-of-frame junction translation, extended V/J-position markup, D-segment mapping
+(incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures.
 
 ## TODO
 
@@ -12,13 +15,15 @@ GenBank-vs-IgBLAST test fixtures.
       (between the projected `v_sequence_end` and `j_sequence_start`) is aligned
       against the per-organism D germline set by gapless local alignment in the C++
       `_markup.d_local_align` primitive — mmseqs is unreliable on ~8-31 nt D — and
-      the best hit is emitted as `d_call` + `d_sequence_start`/`d_sequence_end`
-      (AIRR, query coords). D germlines ship in `database/vdj/<org>/d_germlines.fasta`
+      the best hit is emitted as `d_call` (a comma-separated allele ambiguity list on
+      a score tie) + `d_sequence_start`/`d_sequence_end` (AIRR, query coords). D
+      germlines ship in `database/vdj/<org>/d_germlines.fasta`
       (VDJ loci only); VJ loci are skipped automatically. Concordance vs IgBLAST:
       TRB/TRD ~97% gene agreement where both call a D; IGH ~46-69% (paralogous
       germlines + SHM make IGH D inherently ambiguous).
-  - [x] **Double D-D junctions.** For D-D loci (IGH/TRD) a second non-overlapping D
-        is sought above a stricter threshold and emitted as `d2_call` + `d2_sequence_*`;
+  - [x] **Double D-D junctions.** For D-D loci (IGH/TRB/TRD — every locus with a D
+        germline set) a second non-overlapping D is sought above a stricter threshold
+        and emitted as `d2_call` (also a comma-separated ambiguity list) + `d2_sequence_*`;
         `np1`/`np2`/`np3` partition the junction between V, the D(s), and J.
         (Limitation: a very long junction can exceed what mmseqs aligns *through*,
         collapsing the projected interior — this only lowers D recall, never
@@ -51,6 +56,13 @@ GenBank-vs-IgBLAST test fixtures.
         candidate reads (interface stub in `arda.rnaseq.assemble`; the role
         assembly-based extractors play). Deferred — a de-novo assembler, out of scope
         for the filter-first goal.
+    - [x] **Contig cigars (`arda.annotate.contig`).** Once a contig exists, give it
+          valid V/J/C cigars + AIRR alignments two ways that produce the *same* record:
+          `reannotate_contigs` (re-align the contig through `annotate_records`) and
+          `merge_contig`/`merge_contigs` (stitch the reads' existing alignments via the
+          C++ `_markup.merge_alignment`, no second mmseqs pass — ~9× faster at ~10^5
+          contigs/sample). This annotates a contig; the de-novo assembler above is still
+          what would produce one.
   - [ ] **C k-mer prefilter (contingency).** If the MMseqs2 prefilter is
         the throughput bottleneck vs assembly-based extractors, add a parallel spaced-seed germline
         index (new `src/_vjprefilter/` pybind11 ext) that rejects non-receptor reads and

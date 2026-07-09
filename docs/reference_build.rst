@@ -23,7 +23,16 @@ Outputs (per organism)
 * ``alleles.fasta`` / ``alleles.aa.fasta`` — scaffold nucleotide / protein seqs.
 * ``markup.tsv`` / ``markup.aa.tsv`` — region coordinates + sequences.
 * ``combinations.tsv`` — scaffold → contributing (V, J) allele pairs.
+* ``loci_manifest.tsv`` — one row per defined locus: V·J and J+C scaffold
+  counts, D-germline count, unreachable-D count, and ``ok`` / ``EMPTY`` status.
 * ``build.log`` — per-locus counts and dropped/incomplete summaries.
+
+The build warns at the end on any ``EMPTY`` locus (no scaffolds — reads from it
+fall through unannotated) and on any D germlines shipped for a locus with no
+scaffolds (unreachable, since runtime D lookup is keyed by a hit scaffold's
+locus). IMGT carries no TCR reference for rat, rabbit, or rhesus, so their TR
+loci (TRA, TRB, TRG, TRD) build ``EMPTY`` — now recorded in the manifest and
+warned, not silently skipped. Only human and mouse ship a full TCR reference.
 
 Reading frames
 --------------

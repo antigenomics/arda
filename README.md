@@ -138,7 +138,9 @@ bulk RNA-seq, where 1–5% of reads are receptor-derived:
   read spanning the J→C splice — which ends in the constant region and has no V to anchor —
   still maps, and carries a **`c_call`** (the CH1 exon) plus a **`c_class`** isotype
   (`IGHG`/`IGHM`/`IGHA` … — the class, never the noise-prone subclass). In paired mode the
-  isotype of a CDR3-bearing read is recovered from its constant-region mate.
+  isotype of a CDR3-bearing read is recovered from its constant-region mate. `--reconstruct`
+  merges each overlapping mate pair into one fragment, resolving overlap mismatches by the
+  higher-Phred base.
 - **`correct`** collapses CDR3 sequencing errors into clonotypes by a parent:child count
   ratio (a vdjtools-style corrector), keeping only complete junctions by default.
 
