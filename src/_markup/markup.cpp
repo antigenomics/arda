@@ -13,7 +13,11 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <algorithm>
 #include <array>
+#include <climits>
+#include <map>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -246,9 +250,113 @@ static std::tuple<int, int, int, int, int> d_local_align(const std::string &inte
     return {best, bs, be, ds, de};
 }
 
+// Stitch a contig's alignment to the scaffold from its constituent reads'
+// alignments -- the alternative to re-aligning the assembled contig with mmseqs.
+//
+// A contig is a consensus of reads that already carry per-read alignments to the
+// same scaffold (Stage 1 emits qaln/taln/qstart/tstart per read). Given the
+// assembly layout (each read's 0-based offset within the contig, in contig
+// orientation), the contig->scaffold alignment is the per-scaffold-column
+// consensus of the reads' alignments. This is the O(reads x columns) reduction
+// worth doing in C++ when a scRNA-seq sample has ~10^5 contigs.
+//
+// Inputs (one contig): the reads' aligned strings qalns[i]/talns[i] (coding
+// strand, '-' for gaps), 1-based read start qstarts[i] and scaffold start
+// tstarts[i], 0-based contig offset offsets[i] of the read's first base, and the
+// contig nucleotide string (the authoritative consensus base at each position).
+//
+// Returns (qaln, taln, qstart, qend, tstart, tend): the contig->scaffold gapped
+// alignment with contig on the query side, 1-based contig qstart/qend and 1-based
+// scaffold tstart/tend. Downstream (segment_cigars / region transfer) is identical
+// to a freshly aligned contig, so both paths share transfer_hit.
+//
+// Ceiling (ponytail: first-seen read wins a column; assumes a contiguous ungapped
+// consensus layout -- the normal output of reference-anchored assembly). The first
+// read to cover a scaffold column fixes its base and any insertion preceding it;
+// later reads do not override it (no majority vote). A scaffold column inside
+// [tstart,tend] that no read covers is a coverage gap -- not representable as one
+// contig -- and throws. Upgrade path: majority vote per column + explicit gap
+// handling if real assemblies produce disagreeing overlaps.
+static std::tuple<std::string, std::string, int, int, int, int> merge_alignment(
+    const std::vector<std::string> &qalns, const std::vector<std::string> &talns,
+    const std::vector<int> &qstarts, const std::vector<int> &tstarts,
+    const std::vector<int> &offsets, const std::string &contig) {
+
+    const size_t R = qalns.size();
+    if (R == 0)
+        throw std::invalid_argument("merge_alignment: no reads");
+
+    // Scaffold column span [t_lo, t_hi] (1-based) = union of the reads' aligned
+    // spans. tend_i = tstart_i + (non-gap chars in talns[i]) - 1.
+    int t_lo = INT_MAX, t_hi = INT_MIN;
+    for (size_t i = 0; i < R; ++i) {
+        int tref = 0;
+        for (char c : talns[i]) if (c != '-') ++tref;
+        const int te = tstarts[i] + tref - 1;
+        if (tstarts[i] < t_lo) t_lo = tstarts[i];
+        if (te > t_hi) t_hi = te;
+    }
+    const int W = t_hi - t_lo + 1;
+    std::vector<char> qbase(W, 0);   // consensus contig base per column; '-' = deletion; 0 = uncovered
+    std::vector<char> tbase(W, 0);   // scaffold base per column
+    std::vector<int> qpos_at(W, 0);  // 1-based contig position of the M at this column
+    std::map<int, std::string> ins;  // inserted contig bases keyed by the scaffold column they precede
+
+    for (size_t i = 0; i < R; ++i) {
+        const std::string &qa = qalns[i], &ta = talns[i];
+        const size_t n = std::min(qa.size(), ta.size());
+        int qpos = qstarts[i], tpos = tstarts[i];
+        std::string pending;  // inserted bases since the last aligned column, in this read
+        for (size_t k = 0; k < n; ++k) {
+            const bool qg = (qa[k] == '-'), tg = (ta[k] == '-');
+            if (!qg && !tg) {                        // M
+                const int cp = offsets[i] + qpos;    // 1-based contig position
+                const int idx = tpos - t_lo;
+                if (qbase[idx] == 0) {
+                    if (cp < 1 || cp > (int)contig.size())
+                        throw std::invalid_argument("merge_alignment: read offset outside contig");
+                    qbase[idx] = contig[cp - 1];
+                    tbase[idx] = ta[k];
+                    qpos_at[idx] = cp;
+                    if (!pending.empty()) ins[tpos] = pending;  // insertion precedes this column
+                }
+                pending.clear();
+                ++qpos; ++tpos;
+            } else if (!qg && tg) {                  // I: contig base absent from scaffold
+                const int cp = offsets[i] + qpos;
+                if (cp >= 1 && cp <= (int)contig.size()) pending.push_back(contig[cp - 1]);
+                ++qpos;
+            } else if (qg && !tg) {                  // D: scaffold base absent from contig
+                const int idx = tpos - t_lo;
+                if (qbase[idx] == 0) { qbase[idx] = '-'; tbase[idx] = ta[k]; }
+                pending.clear();
+                ++tpos;
+            }
+        }
+    }
+
+    std::string out_q, out_t;
+    out_q.reserve(W + 8); out_t.reserve(W + 8);
+    int qstart = -1, qend = -1;
+    for (int t = t_lo; t <= t_hi; ++t) {
+        auto it = ins.find(t);
+        if (it != ins.end()) { out_q += it->second; out_t.append(it->second.size(), '-'); }
+        const int idx = t - t_lo;
+        if (qbase[idx] == 0)
+            throw std::invalid_argument("merge_alignment: uncovered scaffold column (coverage gap)");
+        out_q.push_back(qbase[idx]);
+        out_t.push_back(tbase[idx]);
+        if (qbase[idx] != '-') {                     // an M: it carries a contig position
+            if (qstart < 0) qstart = qpos_at[idx];
+            qend = qpos_at[idx];
+        }
+    }
+    return {out_q, out_t, qstart, qend, t_lo, t_hi};
+}
+
 PYBIND11_MODULE(_markup, m) {
     m.doc() = "arda markup-transfer hot path (C++/pybind11)";
-    m.attr("__version__") = "0.2.0";
+    m.attr("__version__") = "0.3.0";
     m.def("project_region", &project_region,
           py::arg("qaln"), py::arg("taln"), py::arg("ref_aln_offset"),
           py::arg("qry_aln_offset"), py::arg("ref_start"), py::arg("ref_end"),
@@ -277,4 +385,12 @@ PYBIND11_MODULE(_markup, m) {
           "against a query interior. Returns (score, i_start, i_end, d_start, d_end) "
           "with 0-based inclusive offsets of the best segment in `interior` and in "
           "the D germline; (0,-1,-1,-1,-1) if none.");
+    m.def("merge_alignment", &merge_alignment,
+          py::arg("qalns"), py::arg("talns"), py::arg("qstarts"), py::arg("tstarts"),
+          py::arg("offsets"), py::arg("contig"),
+          "Stitch a contig's scaffold alignment from its reads' alignments (the "
+          "alternative to re-aligning the contig). Per-read qaln/taln, 1-based read "
+          "qstart and scaffold tstart, 0-based contig offset, plus the contig string. "
+          "Returns (qaln, taln, qstart, qend, tstart, tend). First read wins a "
+          "column; a coverage gap or out-of-range offset throws.");
 }

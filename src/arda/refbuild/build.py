@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections import Counter
 from pathlib import Path
 
 import polars as pl
@@ -151,6 +152,30 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
     return out
 
 
+def _locus_manifest(nt_all: list[dict], d_germ: list[tuple[str, str, str]]) -> list[dict]:
+    """Per-locus reference coverage for EVERY defined locus (0 where the build produced nothing).
+
+    A locus with no scaffolds cannot be annotated for this organism -- reads from it fall through
+    silently. A locus with D germlines but no scaffolds ships dead weight: runtime D lookup is keyed
+    by a hit scaffold's locus, and that scaffold does not exist. Both are invisible today; this turns
+    each into a manifest row and (in ``build_species``) a warning. ``nt_all`` mixes V-J rows (``c_call``
+    empty) and J+C rows (``c_call`` set); count them apart."""
+    vj = Counter(r["locus"] for r in nt_all if not r.get("c_call"))
+    jc = Counter(r["locus"] for r in nt_all if r.get("c_call"))
+    dc = Counter(loc for loc, _, _ in d_germ)
+    rows = []
+    for l in LOCI:
+        n_scaf = vj[l.name] + jc[l.name]
+        rows.append({
+            "locus": l.name, "group": l.group,
+            "n_vj_scaffolds": vj[l.name], "n_jc_scaffolds": jc[l.name],
+            "n_d_germlines": dc[l.name],
+            "unreachable_d_germlines": dc[l.name] if n_scaf == 0 else 0,
+            "status": "ok" if n_scaf else "EMPTY",
+        })
+    return rows
+
+
 def build_species(organism: str) -> Path:
     """Build the reference DB for one organism. Returns the output directory."""
     if organism not in IMGT_SPECIES_DIR:
@@ -221,6 +246,21 @@ def build_species(organism: str) -> Path:
         "".join(f">{loc}|{al}\n{s}\n" for loc, al, s in d_germ))
     logger.info("D germlines: %d alleles across %d loci",
                 len(d_germ), len({loc for loc, _, _ in d_germ}))
+
+    # Locus coverage manifest — makes a silently-absent locus visible (build.py used to just
+    # `continue` past a locus with no IMGT V/J, so rat/rabbit/rhesus shipped no TCR reference and
+    # nothing said so). A committed, checkable artifact plus an end-of-build warning.
+    manifest = _locus_manifest(nt_all, d_germ)
+    pl.DataFrame(manifest).write_csv(out_dir / "loci_manifest.tsv", separator="\t")
+    empty = [m["locus"] for m in manifest if m["status"] == "EMPTY"]
+    if empty:
+        logger.warning("%s: %d/%d loci have NO reference scaffolds — reads from %s will not be "
+                       "annotated (see loci_manifest.tsv)", organism, len(empty), len(LOCI),
+                       ", ".join(empty))
+    for m in manifest:
+        if m["unreachable_d_germlines"]:
+            logger.warning("%s: %s ships %d D germlines but no scaffolds — unreachable, dead weight",
+                           organism, m["locus"], m["unreachable_d_germlines"])
 
     dt = time.perf_counter() - t0
     logger.info("TOTAL: %d scaffolds across %d loci in %.1fs -> %s",

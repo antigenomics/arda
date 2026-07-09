@@ -117,6 +117,10 @@ def correct_airr(
         airr_tsv: Stage-1 mapped-reads AIRR TSV (needs ``junction``, ``sequence_id``).
         output: corrected clonotype table TSV (``junction``, ``junction_aa``,
             ``v_call``, ``j_call``, ``locus``, ``count``, ``n_reads``), sorted by count.
+            A clonotype is keyed by ``(locus, v_call, j_call, junction)``; ``count`` is the
+            number of distinct FRAGMENTS (paired mates of one molecule counted once) and
+            ``n_reads`` the number of reads.
+        ratio: parent:child count ratio; must be in ``(0, 1)`` (vdjtools default 0.05).
         require_vj: only collapse neighbours sharing ``v_call`` and ``j_call``.
         complete_only: keep only reads whose junction spans both conserved anchors, is in
             frame, and has no stop codon (see :data:`_COMPLETE`). A read that stops short of
@@ -128,6 +132,12 @@ def correct_airr(
     Returns:
         A :class:`CorrectReport`.
     """
+    if not 0.0 < ratio < 1.0:
+        # ratio == 0 -> 1/ratio divides by zero; ratio >= 1 -> a "parent" needs no more counts
+        # than its child, which breaks the strictly-increasing-count invariant `_root` relies on
+        # (mutual parents => infinite loop). vdjtools' default is 0.05.
+        raise ValueError(f"ratio must be in (0, 1), got {ratio}")
+
     output = Path(output)
     df = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
     df = df.filter(pl.col("junction").is_not_null() & (pl.col("junction") != ""))
@@ -136,13 +146,19 @@ def correct_airr(
         df = df.filter(_COMPLETE)
     n_incomplete = n_with_junction - df.height
 
-    g = df.group_by("junction").agg(
-        pl.len().alias("count"),
+    # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
+    # same nucleotide junction but a different locus/V/J are different clonotypes; grouping on the
+    # junction alone merged them and kept an arbitrary member's calls. Abundance is counted in
+    # FRAGMENTS: paired mates `<id>/1` and `<id>/2` of one molecule both carry the junction, so
+    # counting rows double-counts a fragment whenever both mates span it (insert-size dependent, so
+    # the inflation is non-uniform across clonotypes -- exactly the count vector the ratio test
+    # consumes). `read_ids` keeps every read so the read-map stays read-level.
+    df = df.with_columns(pl.col("sequence_id").str.replace(r"/[12]$", "").alias("_frag"))
+    keys = ["locus", "v_call", "j_call", "junction"]
+    g = df.group_by(keys).agg(
+        pl.col("_frag").n_unique().alias("count"),           # fragments, not reads
         pl.col("sequence_id").alias("read_ids"),
         pl.col("junction_aa").first().alias("junction_aa"),
-        pl.col("v_call").first().alias("v_call"),
-        pl.col("j_call").first().alias("j_call"),
-        pl.col("locus").first().alias("locus"),
     ).sort("count", descending=True)
 
     junctions = g["junction"].to_list()
@@ -151,9 +167,10 @@ def correct_airr(
     j = [x or "" for x in g["j_call"].to_list()]
     read_ids = g["read_ids"].to_list()
     junction_aa = g["junction_aa"].to_list()
-    locus = g["locus"].to_list()
+    locus = [x or "" for x in g["locus"].to_list()]
 
-    report = CorrectReport(clonotypes_in=len(junctions), reads=sum(counts),
+    report = CorrectReport(clonotypes_in=len(junctions),
+                           reads=sum(len(r) for r in read_ids),   # reads; `count` is fragments
                            reads_with_junction=n_with_junction,
                            reads_incomplete=n_incomplete)
     parent = _parents(junctions, counts, v, j, max_mismatches=max_mismatches,

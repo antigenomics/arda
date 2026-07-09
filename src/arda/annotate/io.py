@@ -51,26 +51,33 @@ def _read_fasta(fh) -> Iterator[tuple[str, str]]:
         yield sid, "".join(seq)
 
 
-def _read_fastq(fh) -> Iterator[tuple[str, str]]:
+def _read_fastq(fh, with_qual: bool = False) -> Iterator[tuple]:
     while True:
         header = fh.readline()
         if not header:
             break
         seq = fh.readline().rstrip("\n")
         fh.readline()  # '+'
-        fh.readline()  # quality
+        qual = fh.readline()  # quality (read either way to advance the record)
         if header.startswith("@"):
-            yield header[1:].split()[0], seq
+            hid = header[1:].split()[0]
+            yield (hid, seq, qual.rstrip("\n")) if with_qual else (hid, seq)
 
 
-def read_sequences(path: str | Path) -> Iterator[tuple[str, str]]:
-    """Yield ``(id, sequence)`` from a FASTA or FASTQ file (auto-detected)."""
+def read_sequences(path: str | Path, *, with_qual: bool = False) -> Iterator[tuple]:
+    """Yield ``(id, sequence)`` from a FASTA or FASTQ file (auto-detected).
+
+    ``with_qual=True`` yields ``(id, sequence, qual)`` instead -- the FASTQ Phred string, or
+    ``None`` for FASTA (which has no quality). The default is unchanged and pays nothing: the
+    quality line is consumed either way, only kept when asked (needed solely by the paired
+    overlap-merge, :func:`arda.rnaseq.map.merge_pair`)."""
     fmt = detect_format(path)
     with open_text(path) as fh:
         if fmt == "fasta":
-            yield from _read_fasta(fh)
+            for sid, seq in _read_fasta(fh):
+                yield (sid, seq, None) if with_qual else (sid, seq)
         else:
-            yield from _read_fastq(fh)
+            yield from _read_fastq(fh, with_qual=with_qual)
 
 
 def write_fasta(records: Iterator[tuple[str, str]], path: str | Path) -> Path:

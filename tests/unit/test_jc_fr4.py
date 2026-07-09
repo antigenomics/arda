@@ -94,9 +94,11 @@ def test_built_jc_scaffolds_carry_an_in_bounds_fr4(organism, species_dir):
     scaffolds below; this only checks the span geometry.
 
     Deliberately no amino-acid assertion. ``TRAJ35*01`` opens FR4 with a real germline **C** (not the
-    canonical [WF]), and ~24 mouse TRAJ/TRGJ alleles do not translate cleanly at frame 0 of the
-    isolated slice -- arda translates ``fwr4_aa`` from slice-frame-0, which is not the J coding frame
-    for those genes (a pre-existing property of the V-J path too; see the module task note)."""
+    canonical [WF]), and ~24 mouse TRAJ/TRGJ alleles are non-canonical J genes (ORFs) whose FR4 does
+    not form the [WF]G.GT motif at all -- e.g. mouse ``TRAJ19*01`` translates in IgBLAST's own aux
+    frame to ``...SSGIESKHNVSP``. arda's ``fwr4_aa`` faithfully reproduces that germline translation
+    (slice-frame-0 == the CDS frame == the aux frame for these in-frame scaffolds); it is not a
+    frame bug, so there is nothing to assert about the motif."""
     jc = build_jc_scaffolds(organism, species_dir)
     with_fr4 = [s for s in jc if s.fwr4_start > 0]
     assert len(with_fr4) >= 0.5 * len(jc), f"{organism}: only {len(with_fr4)}/{len(jc)} got an FR4"

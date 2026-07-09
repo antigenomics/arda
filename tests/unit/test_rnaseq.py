@@ -32,6 +32,22 @@ def test_merge_pair_no_overlap_returns_none():
     assert merge_pair(r1, r2) is None
 
 
+def test_merge_pair_quality_wins_the_overlap_mismatch():
+    """In the overlap the mates disagree at one base; the higher-Phred base wins. Without qualities
+    R2 wins the whole overlap (the historical behaviour) -- the regression this fixes."""
+    s1 = "AAAACCCCGGGGTTTTACGT"                  # R1
+    rcs2 = "AAAACCCCGGGGTTTAACGT"                # rc(R2): identical but s1[15] T -> A
+    s2 = reverse_complement(rcs2)
+    assert merge_pair(s1, s2) == rcs2            # no quality: R2 wins the overlap (== rc(R2))
+
+    hi = "I" * 20                                # Phred 40
+    q2_lowat4 = "I" * 4 + "#" + "I" * 15         # rc(R2) quality at col 15 == q2[::-1][15] == q2[4]
+    assert merge_pair(s1, s2, q1=hi, q2=q2_lowat4) == s1        # R1 higher there -> R1 base ('T')
+
+    q1_lowat15 = "I" * 15 + "#" + "I" * 4        # R1 low at the mismatch
+    assert merge_pair(s1, s2, q1=q1_lowat15, q2=hi) == rcs2     # R2 higher there -> R2 base ('A')
+
+
 def test_read_pairs_reconstruct_merges_overlap(tmp_path):
     frag = "ACGTACGTACGTTTGGCCAATTGGCCAAGGTTCCAAGGTTCCAAGATCGATCGATCG"
     r1p = _write_fastq(tmp_path / "r1.fastq", [("f", frag[:40])])
@@ -219,6 +235,62 @@ def test_correct_drops_incomplete_junctions(tmp_path):
     # ...and --all-junctions restores the old (wrong) behaviour, proving the gate is what filtered
     raw = correct_airr(airr, tmp_path / "raw.tsv", complete_only=False)
     assert raw.clonotypes_in == 4 and raw.reads_incomplete == 0
+
+
+def test_correct_keys_on_locus_v_j_not_junction_alone(tmp_path):
+    """A clonotype is (locus, v_call, j_call, junction). The SAME nucleotide junction from a
+    different V/J is a different clonotype -- grouping on the junction alone merged them and kept
+    an arbitrary member's calls."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
+    rows = []
+    for vj in [("TRBV20-1*01", "TRBJ2-1*01"), ("TRBV28*01", "TRBJ2-7*01")]:   # same junction, diff V/J
+        for k in range(4):
+            rows.append({"sequence_id": f"{vj[0]}{k}", "junction": junc, "junction_aa": aa,
+                         "v_call": vj[0], "j_call": vj[1], "locus": "TRB"})
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    correct_airr(airr, tmp_path / "clones.tsv")
+    out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0)
+    assert out.height == 2, "same junction with different V/J must stay two clonotypes"
+    assert set(out["v_call"].to_list()) == {"TRBV20-1*01", "TRBV28*01"}
+
+
+def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
+    """Paired mates `<id>/1` and `<id>/2` of one molecule both carry the junction; `count` is
+    fragments (each counted once), `n_reads` is the reads."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
+    rows = []
+    for frag in range(5):                                    # 5 fragments, both mates each
+        for mate in ("1", "2"):
+            rows.append({"sequence_id": f"read{frag}/{mate}", "junction": junc, "junction_aa": aa,
+                         "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB"})
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    correct_airr(airr, tmp_path / "clones.tsv")
+    out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
+    assert int(out["count"]) == 5, "10 mate-rows are 5 fragments"
+    assert int(out["n_reads"]) == 10
+
+
+def test_correct_rejects_invalid_ratio(tmp_path):
+    """ratio must be in (0, 1): 0 divides by zero, >=1 breaks the strictly-increasing-count
+    invariant `_root` relies on (mutual parents -> infinite loop)."""
+    from arda.rnaseq.correct import correct_airr
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame([{"sequence_id": "a", "junction": "TGTGCCAGCAGCTTAGACGGGACAGGGTTC",
+                   "junction_aa": "CASSLDGTF", "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01",
+                   "locus": "TRB"}]).write_csv(airr, separator="\t")
+    for bad in (0.0, 1.0, 1.5, -0.1):
+        with pytest.raises(ValueError, match="ratio"):
+            correct_airr(airr, tmp_path / "out.tsv", ratio=bad)
 
 
 def test_kmer_is_plumbed_to_mmseqs_and_defaults_to_12(monkeypatch):
