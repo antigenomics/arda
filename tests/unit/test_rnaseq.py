@@ -282,31 +282,28 @@ def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
     assert int(out["duplicate_count"]) == 5, "10 mate-rows are 5 fragments"
 
 
-def test_correct_reports_dominant_resolved_isotype_as_c_call(tmp_path):
-    """`c_call` is the clonotype's dominant RESOLVED isotype class (from ``c_class``): the ambiguous
-    ``IGHC`` wins only if nothing resolves, so a few ambiguous reads can't outvote the true class."""
+def test_correct_isotype_from_constant_mate(tmp_path):
+    """The isotype lives on the constant-region MATE (``c_class``, no junction), which the complete-only
+    filter drops; the junction read carries none. correct links them by fragment id and reports the
+    dominant RESOLVED class -- the ambiguous ``IGHC`` wins only if nothing resolves."""
     pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
-    # 3 resolved IGHG vs 4 ambiguous IGHC (+ one no-call) -> IGHG must win despite being fewer
-    cclasses = ["IGHG", "IGHG", "IGHG", "IGHC", "IGHC", "IGHC", "IGHC", ""]
-    rows = [{"sequence_id": f"r{i}", "junction": junc, "junction_aa": aa, "v_call": "IGHV3-23*01",
-             "j_call": "IGHJ4*02", "locus": "IGH", "c_class": cc} for i, cc in enumerate(cclasses)]
+    isos = ["IGHG", "IGHG", "IGHG", "IGHC", "IGHC", "IGHC", "IGHC", ""]   # 3 resolved vs 4 ambiguous
+    rows = []
+    for i, iso in enumerate(isos):                       # /1 = junction read (no c_class), /2 = C mate
+        rows.append({"sequence_id": f"f{i}/1", "junction": junc, "junction_aa": aa,
+                     "v_call": "IGHV3-23*01", "j_call": "IGHJ4*02", "locus": "IGH", "c_class": ""})
+        rows.append({"sequence_id": f"f{i}/2", "junction": "", "junction_aa": "",
+                     "v_call": "", "j_call": "", "locus": "", "c_class": iso})
     airr = tmp_path / "in.airr.tsv"
     pl.DataFrame(rows).write_csv(airr, separator="\t")
 
     correct_airr(airr, tmp_path / "clones.tsv")
     out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
-    assert out["c_call"] == "IGHG", "3 resolved IGHG must beat 4 ambiguous IGHC"
-    assert int(out["duplicate_count"]) == 8
-
-    # ...and IGHC is reported only when NOTHING resolves
-    rows2 = [{"sequence_id": f"r{i}", "junction": junc, "junction_aa": aa, "v_call": "IGHV3-23*01",
-              "j_call": "IGHJ4*02", "locus": "IGH", "c_class": "IGHC"} for i in range(3)]
-    pl.DataFrame(rows2).write_csv(airr, separator="\t")
-    correct_airr(airr, tmp_path / "c2.tsv")
-    assert pl.read_csv(tmp_path / "c2.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]["c_call"] == "IGHC"
+    assert out["c_call"] == "IGHG", "3 resolved IGHG (from constant mates) must beat 4 ambiguous IGHC"
+    assert int(out["duplicate_count"]) == 8, "8 fragments"
 
 
 def test_correct_rejects_invalid_ratio(tmp_path):
