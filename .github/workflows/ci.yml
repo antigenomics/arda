@@ -32,8 +32,10 @@ jobs:
       - name: Install arda (builds the C++ extension)
         # Install build deps into the runtime env and build without isolation, so
         # the editable on-import rebuild (editable.rebuild=true) can find pybind11.
+        # `airr` (a .[test] dep, sdist-only) is pre-installed here WITH isolation so the
+        # --no-build-isolation step below sees it satisfied instead of failing to build it.
         run: |
-          pip install scikit-build-core pybind11 ninja
+          pip install scikit-build-core pybind11 ninja airr
           pip install -e .[test] --no-build-isolation
 
       - name: Show environment
