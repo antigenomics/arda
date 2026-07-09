@@ -108,8 +108,8 @@ copy it to `modules/local/arda/` in an nf-core/rnaseq (or similar) checkout, fee
 per-sample FASTQ channel the aligners already use, and it publishes per-sample clonotype tables to
 `${params.outdir}/arda/`. It ships a conda `environment.yml` (works with `-profile conda` out of the
 box) and a `Dockerfile`, and emits a `versions.yml`. See its
-[README](integrations/nextflow/arda/README.md) and [`docs/pipeline_integration.rst`](docs/pipeline_integration.rst)
-for the five-line drop-in.
+[README](integrations/nextflow/arda/README.md) and the
+[pipeline-integration guide](https://docs.isalgo.dev/arda/pipeline_integration.html) for the five-line drop-in.
 
 arda is **CPU-bound and low-memory**: ~40k reads/s on 32 cores (~2.4 M reads/min, < 400 MB RAM), so a
 full-depth bulk RNA-seq sample of ~50 M read pairs finishes in ~45 min. Throughput scales with cores.
