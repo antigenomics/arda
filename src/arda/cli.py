@@ -261,6 +261,9 @@ def rnaseq_correct(
              "stop short of the anchor yield a prefix of a junction, not a clonotype."),
     read_map: Optional[Path] = typer.Option(
         None, "--read-map", help="Write sequence_id -> corrected junction map."),
+    extra_airr: Optional[Path] = typer.Option(
+        None, "--extra-airr",
+        help="Stage-3 assembled-reads AIRR (from `assemble`) to fold into the clonotype table."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Collapse CDR3 sequencing errors (parent:child ratio) into clonotypes."""
@@ -268,12 +271,36 @@ def rnaseq_correct(
 
     rep = correct_airr(input, output, max_mismatches=max_mismatches, ratio=ratio,
                        require_vj=require_vj, complete_only=complete_only,
-                       read_map=read_map, report_path=report)
+                       read_map=read_map, extra_airr=extra_airr, report_path=report)
     typer.echo(
         f"[arda] {rep.clonotypes_in} -> {rep.clonotypes_out} clonotypes "
         f"({rep.collapsed} collapsed) over {rep.reads} reads"
         + (f"; dropped {rep.reads_incomplete}/{rep.reads_with_junction} incomplete junctions"
            if rep.reads_incomplete else ""))
+
+
+@rnaseq_app.command("assemble")
+def rnaseq_assemble(
+    input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
+    output: Path = typer.Option(
+        ..., "--output", "-o",
+        help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(0, help="mmseqs threads for re-annotation (0 = all cores)."),
+    report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
+) -> None:
+    """Stage 3 — assemble long-CDR3 contigs the reads don't individually span.
+
+    Reconstructs clonotypes (V(D)J ultralong CDR3s, ~20-40 aa) that ``map`` filters but that no
+    single 100-150 bp read spans, by anchored greedy overlap-extension over the mapped reads.
+    Feed the result to ``correct --extra-airr`` (``run`` does this automatically).
+    """
+    from .rnaseq.assemble import assemble_contigs
+
+    rep = assemble_contigs(input, output, organism=organism, threads=threads, report_path=report)
+    typer.echo(
+        f"[arda] assemble: {rep.contigs_complete}/{rep.contigs} complete contigs from "
+        f"{rep.seeds} seeds; rescued {rep.reads_rescued} reads")
 
 
 @rnaseq_app.command("run")
@@ -293,21 +320,26 @@ def rnaseq_run(
     kmer: int = typer.Option(
         12, "--kmer", "-k",
         help="MMseqs2 -k (the memory knob; k=12 ~= 298 MB peak RSS). 0 = MMseqs2 default (~8 GB)."),
+    assemble: bool = typer.Option(
+        True, "--assemble/--no-assemble",
+        help="Stage 3: assemble long-CDR3 contigs the reads don't individually span (V(D)J "
+             "ultralong, ~20-40 aa) and fold them into the clonotype table. Recovers ~95%% of the "
+             "abundant long clones a filter-only pass misses; --no-assemble is faster (map+correct "
+             "only)."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions",
         help="Keep only complete junctions when forming clonotypes."),
 ) -> None:
-    """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` then ``correct``.
+    """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
-    Runs :func:`arda.rnaseq.map.map_rnaseq` then :func:`arda.rnaseq.correct.correct_airr`
-    with the shipped defaults, writing three files under ``--out-dir``:
+    Runs the three RNA-seq stages with the shipped defaults, writing under ``--out-dir``:
 
-    * ``<prefix>.airr.tsv``   -- mapped reads (AIRR Rearrangement)
-    * ``<prefix>.clones.tsv`` -- corrected clonotype table
-    * ``<prefix>.arda.json``  -- merged run report (``map`` + ``correct``)
+    * ``<prefix>.airr.tsv``            -- Stage-1 mapped reads (AIRR Rearrangement)
+    * ``<prefix>.assembled.airr.tsv``  -- Stage-3 assembled long-CDR3 reads (if ``--assemble``)
+    * ``<prefix>.clones.tsv``          -- corrected clonotype table (folds in the assembled clones)
+    * ``<prefix>.arda.json``           -- merged run report
 
-    This is exactly ``map`` piped into ``correct``; use the two commands separately when you
-    need to tune their individual knobs.
+    Use the ``map`` / ``assemble`` / ``correct`` commands separately to tune their knobs.
     """
     import json
 
@@ -325,13 +357,25 @@ def rnaseq_run(
     typer.echo(
         f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
         f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
-    crep = correct_airr(airr, clones, complete_only=complete_only)
+
+    arep = None
+    extra = None
+    if assemble:
+        from .rnaseq.assemble import assemble_contigs
+        extra = out_dir / f"{out_prefix}.assembled.airr.tsv"
+        arep = assemble_contigs(airr, extra, organism=organism, threads=threads)
+        typer.echo(
+            f"[arda] assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
+            f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
+
+    crep = correct_airr(airr, clones, complete_only=complete_only, extra_airr=extra)
     typer.echo(
         f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")
 
     report.write_text(json.dumps(
-        {"arda_version": __version__, "map": mrep.as_dict(), "correct": crep.as_dict()},
+        {"arda_version": __version__, "map": mrep.as_dict(),
+         "assemble": arep.as_dict() if arep else None, "correct": crep.as_dict()},
         indent=2) + "\n")
     typer.echo(f"[arda] wrote {airr}, {clones}, {report}")
 

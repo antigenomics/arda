@@ -436,6 +436,65 @@ def test_constant_only_predicate_uses_the_vj_end_of_the_scaffold():
     assert not _constant_only({"mmseqs2_t_vjend": "", "mmseqs2_tstart": 900})
 
 
+# --- Stage 3: contig assembly (the long-CDR3 clones no single read spans) -------------------------
+
+def test_greedy_contigs_reconstructs_a_split_cdr3():
+    """A long CDR3 lands across the read ends: V-side reads enter it but truncate, J-side reads
+    cover its 3' + J, no single read spans it. Anchored greedy overlap-extension (3' into J, then
+    5' into V) must stitch the tiling reads back into the full V(D)J sequence."""
+    from arda.rnaseq.assemble import _greedy_contigs
+
+    rng = random.Random(0)
+    true = "".join(rng.choice("ACGT") for _ in range(180))     # V(0..70) | CDR3(70..150) | J(150..180)
+    cdr3_pos = 70
+    reads = [true[o:o + 100] for o in (0, 20, 40, 60, 80, 100)]  # 100 bp reads, stride 20 -> 80 bp overlap
+    # cdr3_start within each read (None once the read starts past the CDR3 = a pure J/downstream read)
+    cs = [cdr3_pos - o if 0 <= cdr3_pos - o < 100 else None for o in (0, 20, 40, 60, 80, 100)]
+    seeds = [i for i, c in enumerate(cs) if c is not None]
+
+    contigs = _greedy_contigs(reads, seeds, cs, k=21, min_overlap=21, min_id=0.9,
+                              max_ext_past_cdr3=130, scan_cap=400, min_v=70)
+    assert contigs, "the tiling reads must assemble into at least one contig"
+    assert any(true in seq for seq, _ in contigs), "the full V(D)J sequence was not reconstructed"
+
+
+def test_assemble_rescues_incomplete_reads_via_contig(tmp_path, monkeypatch):
+    """``assemble_contigs`` attributes a contig's complete junction to its INCOMPLETE member reads
+    (a read that already spanned its junction is left for the mapped AIRR, not double-counted), and
+    carries each member's own ``c_class`` so isotype survives. The junction call itself
+    (``reannotate_contigs``) is mmseqs-backed and mocked here to keep the test pure."""
+    import arda.rnaseq.assemble as asm
+
+    rng = random.Random(1)
+    true = "".join(rng.choice("ACGT") for _ in range(180))
+    offs = (0, 20, 40, 60, 80, 100)
+    rows = []
+    for i, o in enumerate(offs):
+        cs = 70 - o
+        rows.append({
+            "sequence_id": f"f{i}/1", "sequence": true[o:o + 100], "rev_comp": "F", "locus": "IGH",
+            "v_call": "IGHV3-23*01", "j_call": "IGHJ4*02", "c_call": "",
+            "c_class": "IGHG" if o >= 80 else "",                 # the 3' reads carry the isotype
+            "cdr3_start": str(cs) if 0 <= cs < 100 else "",
+            "junction": "", "junction_aa": "",                    # every read is INCOMPLETE
+        })
+    airr = tmp_path / "mapped.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    JN, JA = "TGT" + "GCTAGA" * 12 + "TGG", "C" + "AR" * 12 + "W"   # canonical, in frame, no stop
+    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0: [
+        {"sequence_id": cid, "junction": JN, "junction_aa": JA, "v_call": "IGHV3-23*01",
+         "j_call": "IGHJ4*02", "locus": "IGH"} for cid, _ in records])
+
+    out = tmp_path / "assembled.airr.tsv"
+    rep = asm.assemble_contigs(airr, out)
+    assert rep.contigs >= 1 and rep.contigs_complete >= 1
+    df = pl.read_csv(out, separator="\t", infer_schema_length=0)
+    assert df.height >= 2, "incomplete member reads should be rescued with the contig junction"
+    assert set(df["junction_aa"].to_list()) == {JA}
+    assert "IGHG" in df["c_class"].to_list(), "the 3' member's isotype must survive onto the contig"
+
+
 def test_constant_rule_is_per_fragment_and_donates_isotype_from_a_gapped_mate():
     """Insert size exceeds 2x read length for 36 % of pairs, so the commonest informative layout is
     R1 across V/CDR3 and R2 deep in C with no J. Read-level filtering throws that R2 -- and the only

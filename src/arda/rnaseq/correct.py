@@ -119,6 +119,7 @@ def correct_airr(
     require_vj: bool = False,
     complete_only: bool = True,
     read_map: str | Path | None = None,
+    extra_airr: str | Path | None = None,
     report_path: str | Path | None = None,
 ) -> CorrectReport:
     """Aggregate mapped reads into clonotypes and collapse CDR3 sequencing errors.
@@ -140,6 +141,11 @@ def correct_airr(
             ``False`` reproduces the raw per-read behaviour and is almost never what you want.
         read_map: optional TSV ``sequence_id -> junction`` (the corrected clonotype a
             read ends up in) — the read-id → junction map after correction.
+        extra_airr: optional Stage-3 assembled-reads AIRR (from
+            :func:`~arda.rnaseq.assemble.assemble_contigs`), concatenated with ``airr_tsv``
+            before aggregation. Its rows carry a contig's complete junction for reads whose own
+            Stage-1 junction was incomplete, so a long-CDR3 clone no single read spans is counted
+            once (the read's incomplete Stage-1 row is dropped by ``complete_only``).
 
     Returns:
         A :class:`CorrectReport`.
@@ -152,6 +158,10 @@ def correct_airr(
 
     output = Path(output)
     raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
+    if extra_airr is not None:
+        extra = pl.read_csv(extra_airr, separator="\t", infer_schema_length=0)
+        if extra.height:
+            raw = pl.concat([raw, extra], how="diagonal")
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
     # complete-only filter below drops them, and the JUNCTION reads that build the clonotype carry no
     # ``c_class`` of their own. Link the two by FRAGMENT id (paired mates share ``<id>``): map each
