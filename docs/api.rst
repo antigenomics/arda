@@ -42,6 +42,24 @@ Runtime annotation
    :undoc-members:
    :show-inheritance:
 
+Bulk RNA-seq
+------------
+
+.. automodule:: arda.rnaseq.map
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.rnaseq.assemble
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.rnaseq.correct
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Reference build
 ---------------
 

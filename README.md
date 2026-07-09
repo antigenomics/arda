@@ -163,12 +163,17 @@ bulk RNA-seq, where 1–5% of reads are receptor-derived:
   isotype of a CDR3-bearing read is recovered from its constant-region mate. `--reconstruct`
   merges each overlapping mate pair into one fragment, resolving overlap mismatches by the
   higher-Phred base.
-- **`correct`** collapses CDR3 sequencing errors into clonotypes by a parent:child count
-  ratio (a vdjtools-style corrector), keeping only complete junctions by default.
+- **`assemble`** (Stage 3) reconstructs clonotypes whose CDR3 is too long for any single
+  100–150 bp read to span (V(DD)J ultralong, ~20–40 aa) by greedy overlap-extension anchored on
+  Stage-1's per-read `cdr3_start`, and folds the recovered reads back into `correct`.
+- **`correct`** aggregates reads into clonotypes and collapses sequencing-error CDR3 variants.
+  Abundance is the AIRR **`duplicate_count`** — every read that *encompasses* the junction
+  (spanning or partial), the true expression estimate — with **`consensus_count`** for distinct
+  fragments. The error model is per-base with a **length-scaled threshold** (a mismatch over a
+  longer junction is likelier an error) and is SHM-indel-tolerant, keeping only complete junctions.
 
 ```bash
-arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
-arda rnaseq correct -i mapped.airr.tsv -o clones.tsv
+arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map + assemble + correct
 ```
 
 `arda igblast -i reads.fastq -o truth.airr.tsv` runs IgBLAST across all loci as a
@@ -239,8 +244,9 @@ See [`ROADMAP.md`](ROADMAP.md). Done: V·J reference build (5 organisms), MMseqs
 mapping, C++ markup transfer, reverse-complement, all-loci querying, streaming I/O,
 out-of-frame junctions, **D-segment mapping incl. D-D fusions** (IGH/TRB/TRD),
 **constant-region `J + C` scaffolds** (`c_call`/`c_class` isotype), **bulk RNA-seq
-mode** (`rnaseq map`/`correct`), precompiled indexes, **multi-node (SLURM) sharding**.
-Next: full AIRR productivity; contig assembly (`rnaseq assemble`).
+mode** (`rnaseq map`/`assemble`/`correct`/`run`), **long-CDR3 contig assembly**,
+**coverage-based expression** (`duplicate_count`/`consensus_count`), precompiled
+indexes, **multi-node (SLURM) sharding**. Next: full-depth clonotype benchmarking.
 
 ## Development
 

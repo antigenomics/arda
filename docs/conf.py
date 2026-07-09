@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 project = "arda"
 author = "Mikhail Shugay"
 copyright = "2026, Mikhail Shugay"
-release = "2.3.2"
+release = "2.4.0"
 
 extensions = [
     "sphinx.ext.autodoc",
@@ -27,7 +27,7 @@ autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 autodoc_default_options = {"members": True, "undoc-members": True, "show-inheritance": True}
 # Heavy/optional deps that need not import at doc-build time.
-autodoc_mock_imports = ["polars", "typer", "requests", "arda._markup"]
+autodoc_mock_imports = ["typer", "requests", "arda._markup"]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
