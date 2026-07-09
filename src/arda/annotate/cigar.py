@@ -18,10 +18,12 @@ CIGAR operators follow the AIRR spec (SAM subset):
 
 Correcting cigars for CONTIGS (Stage 3). A contig is just a long query, so BOTH ways to get its
 cigars end in ``segment_cigars`` and produce the same record (see :mod:`arda.annotate.contig`):
+
   * RE-ANNOTATE the assembled contig through ``mapper.annotate_records`` -- one mmseqs alignment,
     then ``segment_cigars``. No cigar arithmetic; ``check_cigar`` validates it.
   * MERGE the reads' existing alignments column-by-column into the contig's (C++
     ``_markup.merge_alignment``), skipping the alignment pass.
+
 Both are built and proven byte-for-byte equal (``tests/unit/test_contig_merge.py`` on 29 real
 GenBank contigs). MEASURED (arda-benchmark ``scripts/bench_contig_cigars.py``): at scRNA-seq scale
 (~10^5 contigs/sample) merge is ~9x faster -- the whole gap is mmseqs; the C++ stitch is ~3 % of
