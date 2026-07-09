@@ -140,7 +140,11 @@ carries `c_call`/`c_class`; in paired mode the isotype of a CDR3-bearing read is
 recovered from its constant-region mate. `correct` then collapses CDR3 sequencing
 errors into clonotypes by a parent:child count ratio (`--max-mismatches`/`--ratio`,
 `--complete-only` by default). Contig assembly (`rnaseq assemble`) is not yet
-implemented.
+implemented, but the code to give an assembled contig its AIRR cigars is
+(`annotate.contig`): `reannotate_contigs` (re-align the contig) and `merge_contig`
+(stitch the reads' alignments via the C++ `_markup.merge_alignment`). Both produce
+the same record; merge is ~9× faster at ~10⁵ contigs/sample (scRNA-seq), so it is
+the intended default once the assembler emits read layouts.
 
 ## mmseqs2 (auto-installed)
 
