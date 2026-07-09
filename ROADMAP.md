@@ -52,6 +52,13 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
       neighbour search (`arda.rnaseq.correct`; optional dep `arda-mapper[rnaseq]`).
       `arda igblast`: all-loci gold-standard AIRR (`refbuild.gold`). Benchmarked in the
       `arda-benchmark` repo vs assembly-based extractors (speed) and IgBLAST (accuracy).
+  - [x] **Seamless pipeline integration.** A one-shot `arda rnaseq run` (map + correct
+        → `<prefix>.clones.tsv` / `.airr.tsv` / `.arda.json`), a top-level `--version`,
+        and a drop-in nf-core-style Nextflow module (`integrations/nextflow/arda/`:
+        process + conda env + Dockerfile + per-process config + README). Bulk RNA-seq
+        pipelines (nf-core/rnaseq and friends) get per-sample AIRR clonotype tables from
+        the same trimmed-FASTQ channel their aligners consume, published to
+        `${params.outdir}/arda/`. See `docs/pipeline_integration.rst`.
   - [ ] **Stage 3 — contig assembly.** Reconstruct full-length V(D)J contigs from the
         candidate reads (interface stub in `arda.rnaseq.assemble`; the role
         assembly-based extractors play). Deferred — a de-novo assembler, out of scope

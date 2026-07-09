@@ -1,0 +1,9 @@
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python >=3.10
+  - bioconda::mmseqs2 >=15
+  - pip
+  - pip:
+      - arda-mapper==2.2.0

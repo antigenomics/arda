@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+import json
 import random
 
 import polars as pl
 import pytest
+from typer.testing import CliRunner
 
-from arda import paths
+from arda import __version__, paths
+from arda.cli import app
 
 from arda.rnaseq.map import read_pairs, map_rnaseq, merge_pair
 from arda.refbuild.translate import reverse_complement
@@ -351,6 +354,40 @@ def test_default_kmer_keeps_every_receptor_read(tmp_path, human_scaffolds):
     b = pl.read_csv(tmp_path / "k15.tsv", separator="\t", infer_schema_length=0)
     assert set(b["sequence_id"]) <= set(a["sequence_id"]), "k=13 lost a read that k=15 found"
     assert default.mapped_reads >= mmseqs_default.mapped_reads == 5
+
+
+@requires_mmseqs
+@requires_human_db
+def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_scaffolds):
+    """``arda rnaseq run`` is ``map`` piped into ``correct``: three named outputs + a merged report.
+
+    The mapping and correction themselves are covered above; this pins the one-shot glue -- the
+    ``<prefix>.airr/.clones/.arda.json`` naming from ``--out-prefix``, and that the report carries
+    both stages plus the arda version the module actually ran.
+    """
+    pytest.importorskip("seqtree")
+    rng = random.Random(2)
+    pool = [s for i, s in human_scaffolds if i.startswith(("IGH_", "TRB_")) and len(s) > 150]
+    recs = [(f"rec{k}", (lambda s, p: s[p:p + 150])(rng.choice(pool), rng.randrange(50)))
+            for k in range(5)]
+    fq = _write_fastq(tmp_path / "in.fastq", recs)
+
+    res = CliRunner().invoke(
+        app, ["rnaseq", "run", "--r1", str(fq), "-p", "SAMPLE", "-d", str(tmp_path), "--threads", "2"])
+    assert res.exit_code == 0, res.output
+
+    airr, clones, rep = (tmp_path / f"SAMPLE.{ext}" for ext in ("airr.tsv", "clones.tsv", "arda.json"))
+    assert airr.exists() and clones.exists() and rep.exists()
+
+    # the clonotype table carries the correct-stage schema even when biology yields few rows
+    cols = pl.read_csv(clones, separator="\t", infer_schema_length=0).columns
+    assert cols == ["junction", "junction_aa", "v_call", "j_call", "locus", "count", "n_reads"]
+
+    # the merged report carries both stages, at the version the module used (defaults: k=12, min 75)
+    r = json.loads(rep.read_text())
+    assert r["arda_version"] == __version__
+    assert r["map"]["mapped_reads"] == 5 and r["map"]["min_score"] == 75.0
+    assert "clonotypes_out" in r["correct"]
 
 
 # --- constant region: `J + C` scaffolds, the P1 rule, and isotype from a gapped mate -------------

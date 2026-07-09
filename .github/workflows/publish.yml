@@ -125,3 +125,21 @@ jobs:
         run: ls -R dist/
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  reference-asset:
+    # A plain `pip install arda-mapper` fetches the curated VDJ reference from this release on first
+    # use, so every release must carry `arda-reference-vdj.tar.gz` or fresh installs 404. Independent
+    # of the wheel build/publish.
+    name: Attach reference DB to the release
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # required to upload a release asset
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack the curated VDJ reference
+        run: bash scripts/pack_reference.sh arda-reference-vdj.tar.gz
+      - name: Upload it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" arda-reference-vdj.tar.gz --clobber

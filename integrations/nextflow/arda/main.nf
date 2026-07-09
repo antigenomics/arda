@@ -1,0 +1,56 @@
+// arda RNA-seq -> AIRR clonotypes, as a drop-in nf-core-style local module.
+// One call to `arda rnaseq run` (map + correct) per sample; publishes to ${params.outdir}/arda/.
+// See ./README.md for how to wire this into an nf-core/rnaseq (or similar) pipeline.
+
+process ARDA {
+    tag "$meta.id"
+    label 'process_medium'
+
+    // arda is pip-installable (PyPI: arda-mapper) and needs the mmseqs2 binary.
+    //   -profile conda    -> works out of the box from environment.yml
+    //   -profile docker   -> build the image from the Dockerfile beside this module and push it to
+    //                        your registry, then point `container` at it (or override in a config).
+    conda "${moduleDir}/environment.yml"
+    container "arda-mapper:2.2.0"
+
+    input:
+    tuple val(meta), path(reads)
+
+    output:
+    tuple val(meta), path("*.clones.tsv"), emit: clones
+    tuple val(meta), path("*.airr.tsv"),   emit: airr
+    tuple val(meta), path("*.arda.json"),  emit: report
+    path "versions.yml",                   emit: versions
+
+    when:
+    task.ext.when == null || task.ext.when
+
+    script:
+    def args = task.ext.args ?: ''
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    def r2 = meta.single_end ? '' : "--r2 ${reads[1]}"
+    """
+    arda rnaseq run \\
+        --r1 ${reads[0]} ${r2} \\
+        --out-prefix ${prefix} \\
+        --out-dir . \\
+        --threads ${task.cpus} \\
+        ${args}
+
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        arda: \$(arda --version)
+        mmseqs2: \$(mmseqs version 2>/dev/null || echo unknown)
+    END_VERSIONS
+    """
+
+    stub:
+    def prefix = task.ext.prefix ?: "${meta.id}"
+    """
+    touch ${prefix}.clones.tsv ${prefix}.airr.tsv ${prefix}.arda.json
+    cat <<-END_VERSIONS > versions.yml
+    "${task.process}":
+        arda: \$(arda --version)
+    END_VERSIONS
+    """
+}

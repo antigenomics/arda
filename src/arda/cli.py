@@ -19,6 +19,21 @@ from . import __version__
 app = typer.Typer(add_completion=False, help="Antigen Receptor Domain Annotation")
 
 
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(__version__)
+        raise typer.Exit()
+
+
+@app.callback()
+def _main(
+    version: bool = typer.Option(
+        False, "--version", callback=_version_callback, is_eager=True,
+        help="Show the arda version and exit."),
+) -> None:
+    """Antigen Receptor Domain Annotation."""
+
+
 @app.command()
 def info() -> None:
     """Show resolved paths and external tool availability."""
@@ -259,6 +274,66 @@ def rnaseq_correct(
         f"({rep.collapsed} collapsed) over {rep.reads} reads"
         + (f"; dropped {rep.reads_incomplete}/{rep.reads_with_junction} incomplete junctions"
            if rep.reads_incomplete else ""))
+
+
+@rnaseq_app.command("run")
+def rnaseq_run(
+    r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
+    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
+    out_prefix: str = typer.Option(
+        ..., "--out-prefix", "-p",
+        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json."),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    reconstruct: bool = typer.Option(
+        False, "--reconstruct", help="Merge overlapping paired mates into one fragment."),
+    min_score: float = typer.Option(
+        75.0, "--min-score", help="Min MMseqs2 bit score to keep a mapped read (0 = keep all)."),
+    kmer: int = typer.Option(
+        12, "--kmer", "-k",
+        help="MMseqs2 -k (the memory knob; k=12 ~= 298 MB peak RSS). 0 = MMseqs2 default (~8 GB)."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions",
+        help="Keep only complete junctions when forming clonotypes."),
+) -> None:
+    """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` then ``correct``.
+
+    Runs :func:`arda.rnaseq.map.map_rnaseq` then :func:`arda.rnaseq.correct.correct_airr`
+    with the shipped defaults, writing three files under ``--out-dir``:
+
+    * ``<prefix>.airr.tsv``   -- mapped reads (AIRR Rearrangement)
+    * ``<prefix>.clones.tsv`` -- corrected clonotype table
+    * ``<prefix>.arda.json``  -- merged run report (``map`` + ``correct``)
+
+    This is exactly ``map`` piped into ``correct``; use the two commands separately when you
+    need to tune their individual knobs.
+    """
+    import json
+
+    from .rnaseq.correct import correct_airr
+    from .rnaseq.map import map_rnaseq
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    airr = out_dir / f"{out_prefix}.airr.tsv"
+    clones = out_dir / f"{out_prefix}.clones.tsv"
+    report = out_dir / f"{out_prefix}.arda.json"
+
+    mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
+                      reconstruct=reconstruct, min_score=min_score,
+                      kmer=(None if kmer == 0 else kmer))
+    typer.echo(
+        f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
+        f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
+    crep = correct_airr(airr, clones, complete_only=complete_only)
+    typer.echo(
+        f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
+        f"({crep.collapsed} collapsed) over {crep.reads} reads")
+
+    report.write_text(json.dumps(
+        {"arda_version": __version__, "map": mrep.as_dict(), "correct": crep.as_dict()},
+        indent=2) + "\n")
+    typer.echo(f"[arda] wrote {airr}, {clones}, {report}")
 
 
 if __name__ == "__main__":

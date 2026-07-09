@@ -73,6 +73,7 @@ arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
 arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # filter receptor reads from bulk RNA-seq
 arda rnaseq correct -i mapped.airr.tsv -o clones.tsv             # collapse CDR3 errors into clonotypes
+arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/    # one-shot map+correct for pipelines
 arda igblast -i reads.fastq -o truth.airr.tsv                    # gold-standard IgBLAST (all loci)
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
@@ -91,6 +92,21 @@ shipped one; otherwise arda transparently rebuilds a private cache on first run
 Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on
 **both strands** by default (reverse-complement reads are re-oriented and flagged
 `rev_comp=T`); a single search annotates a mixed bulk RNA-seq file across all loci.
+
+## Pipeline integration
+
+`arda rnaseq run` is a one-shot `map`+`correct` for bulk RNA-seq: given paired (or single) gzipped
+FASTQ it writes `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped reads) and
+`<prefix>.arda.json` (run report). Because it is a plain CLI over named files, it drops into any
+workflow engine with no glue code.
+
+A ready-to-use **Nextflow module** lives in [`integrations/nextflow/arda/`](integrations/nextflow/arda/):
+copy it to `modules/local/arda/` in an nf-core/rnaseq (or similar) checkout, feed it the trimmed
+per-sample FASTQ channel the aligners already use, and it publishes per-sample clonotype tables to
+`${params.outdir}/arda/`. It ships a conda `environment.yml` (works with `-profile conda` out of the
+box) and a `Dockerfile`, and emits a `versions.yml`. See its
+[README](integrations/nextflow/arda/README.md) and [`docs/pipeline_integration.rst`](docs/pipeline_integration.rst)
+for the five-line drop-in.
 
 ## Library
 

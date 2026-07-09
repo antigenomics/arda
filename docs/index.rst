@@ -12,6 +12,7 @@ in a small C++ hot path — producing AIRR-formatted output that matches IgBLAST
 
    installation
    usage
+   pipeline_integration
    reference_build
    api
 
