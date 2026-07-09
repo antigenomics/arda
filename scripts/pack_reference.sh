@@ -16,7 +16,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export COPYFILE_DISABLE=1   # macOS bsdtar: no ._AppleDouble members
 
 tar czf "$OUT" -C "$ROOT/database" --exclude='vdj/*/mmseqs' vdj
-echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); $(tar tzf "$OUT" | grep -c . ) members"
-tar tzf "$OUT" | grep -q '^vdj/human/alleles.fasta$' || { echo "ERROR: vdj/human/alleles.fasta missing"; exit 1; }
-tar tzf "$OUT" | grep -q 'mmseqs' && { echo "ERROR: mmseqs indexes leaked into the asset"; exit 1; } || true
+# Capture the listing once. Piping `tar tzf | grep -q` SIGPIPEs tar under `pipefail` (grep exits on the
+# first match, closing the pipe) -> a false failure; here-strings have no producer to break.
+members=$(tar tzf "$OUT")
+echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); $(grep -c . <<<"$members") members"
+grep -q '^vdj/human/alleles.fasta$' <<<"$members" || { echo "ERROR: vdj/human/alleles.fasta missing"; exit 1; }
+if grep -q 'mmseqs' <<<"$members"; then echo "ERROR: mmseqs indexes leaked into the asset"; exit 1; fi
 echo "OK: asset root holds vdj/, no mmseqs indexes"
