@@ -262,15 +262,16 @@ def test_correct_keys_on_locus_v_j_not_junction_alone(tmp_path):
     assert set(out["v_call"].to_list()) == {"TRBV20-1*01", "TRBV28*01"}
 
 
-def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
-    """`duplicate_count` (AIRR) counts FRAGMENTS: mates `<id>/1` and `<id>/2` of one molecule that
-    both carry the junction are one, not two -- 10 mate-rows -> 5."""
+def test_correct_read_and_consensus_counts_from_mates(tmp_path):
+    """AIRR counts: ``duplicate_count`` = READS (every mate row; matches MiXCR ``readCount`` /
+    TRUST4 ``#count``), ``consensus_count`` = distinct fragment consensuses (the two mates of one
+    molecule are one). 5 molecules x 2 spanning mates -> duplicate_count 10, consensus_count 5."""
     pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
     rows = []
-    for frag in range(5):                                    # 5 fragments, both mates each
+    for frag in range(5):                                    # 5 molecules, both mates each span
         for mate in ("1", "2"):
             rows.append({"sequence_id": f"read{frag}/{mate}", "junction": junc, "junction_aa": aa,
                          "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB"})
@@ -279,7 +280,8 @@ def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
 
     correct_airr(airr, tmp_path / "clones.tsv")
     out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
-    assert int(out["duplicate_count"]) == 5, "10 mate-rows are 5 fragments"
+    assert int(out["duplicate_count"]) == 10, "10 mate rows are 10 reads"
+    assert int(out["consensus_count"]) == 5, "5 molecules are 5 consensuses"
 
 
 def test_correct_isotype_from_constant_mate(tmp_path):
@@ -404,7 +406,8 @@ def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_sca
 
     # the clonotype table carries the correct-stage schema even when biology yields few rows
     cols = pl.read_csv(clones, separator="\t", infer_schema_length=0).columns
-    assert cols == ["junction", "junction_aa", "v_call", "j_call", "c_call", "locus", "duplicate_count"]
+    assert cols == ["junction", "junction_aa", "v_call", "j_call", "c_call", "locus",
+                    "duplicate_count", "consensus_count"]
 
     # the merged report carries both stages, at the version the module used (defaults: k=12, min 75)
     r = json.loads(rep.read_text())

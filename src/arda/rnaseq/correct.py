@@ -127,12 +127,14 @@ def correct_airr(
     Args:
         airr_tsv: Stage-1 mapped-reads AIRR TSV (needs ``junction``, ``sequence_id``).
         output: corrected clonotype table TSV (``junction``, ``junction_aa``, ``v_call``,
-            ``j_call``, ``c_call``, ``locus``, ``duplicate_count``), sorted by abundance.
-            A clonotype is keyed by ``(locus, v_call, j_call, junction)``; ``duplicate_count``
-            (AIRR) is the number of distinct FRAGMENTS -- paired mates of one molecule counted
-            once. ``c_call`` is the clonotype's dominant isotype CLASS (from ``c_class``: IGHG,
-            IGHA, ...), preferring a resolved class over the ambiguous ``IGHC``; empty when no
-            read carried a constant call.
+            ``j_call``, ``c_call``, ``locus``, ``duplicate_count``, ``consensus_count``), sorted
+            by abundance. A clonotype is keyed by ``(locus, v_call, j_call, junction)``. Per the
+            AIRR schema, ``duplicate_count`` is the number of READS supporting the clonotype (both
+            paired mates of a molecule count) -- directly comparable to MiXCR ``readCount`` /
+            TRUST4 ``#count`` -- and ``consensus_count`` is the number of distinct fragment
+            consensuses (the two mates of one molecule are one consensus). ``c_call`` is the
+            clonotype's dominant isotype CLASS (from ``c_class``: IGHG, IGHA, ...), preferring a
+            resolved class over the ambiguous ``IGHC``; empty when no read carried a constant call.
         ratio: parent:child count ratio; must be in ``(0, 1)`` (vdjtools default 0.05).
         require_vj: only collapse neighbours sharing ``v_call`` and ``j_call``.
         complete_only: keep only reads whose junction spans both conserved anchors, is in
@@ -178,16 +180,18 @@ def correct_airr(
     n_incomplete = n_with_junction - df.height
 
     # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
-    # same nucleotide junction but a different locus/V/J are different clonotypes; grouping on the
-    # junction alone merged them and kept an arbitrary member's calls. Abundance is counted in
-    # FRAGMENTS: paired mates `<id>/1` and `<id>/2` of one molecule both carry the junction, so
-    # counting rows double-counts a fragment whenever both mates span it (insert-size dependent, so
-    # the inflation is non-uniform across clonotypes -- exactly the count vector the ratio test
-    # consumes). `read_ids` keeps every read so the read-map stays read-level.
+    # same nucleotide junction but a different locus/V/J are different clonotypes. Per the AIRR schema
+    # the table reports BOTH counts (see the output DataFrame): `duplicate_count` = READS (every row,
+    # so a molecule whose two mates both span the junction counts twice) -- the same read-counting
+    # convention as MiXCR `readCount` / TRUST4 `#count`, which is what makes the abundances directly
+    # comparable across tools -- and `consensus_count` = distinct FRAGMENTS (`_frag`, the two mates of
+    # one molecule collapsed to one consensus). The error-correction ratio test runs on the fragment
+    # (consensus) count, which is insert-size-invariant (reads are inflated non-uniformly by insert
+    # size). `read_ids` keeps every read so the read-map stays read-level.
     df = df.with_columns(pl.col("sequence_id").str.replace(r"/[12]$", "").alias("_frag"))
     keys = ["locus", "v_call", "j_call", "junction"]
     g = df.group_by(keys).agg(
-        pl.col("_frag").n_unique().alias("count"),           # fragments, not reads
+        pl.col("_frag").n_unique().alias("count"),           # fragments (consensuses), not reads
         pl.col("sequence_id").alias("read_ids"),
         pl.col("junction_aa").first().alias("junction_aa"),
     ).sort("count", descending=True)
@@ -222,7 +226,8 @@ def correct_airr(
         agg_reads[i] = []
 
     roots = [i for i in range(len(junctions)) if parent[i] is None]
-    roots.sort(key=lambda i: agg_count[i], reverse=True)
+    # sort by the reported abundance (reads), fragment count as the tie-break
+    roots.sort(key=lambda i: (len(agg_reads[i]), agg_count[i]), reverse=True)
     report.clonotypes_out = len(roots)
     report.collapsed = report.clonotypes_in - report.clonotypes_out
 
@@ -245,7 +250,8 @@ def correct_airr(
         "j_call": [j[i] for i in roots],
         "c_call": [_dominant_ccall(agg_reads[i]) for i in roots],
         "locus": [locus[i] for i in roots],
-        "duplicate_count": [agg_count[i] for i in roots],
+        "duplicate_count": [len(agg_reads[i]) for i in roots],   # AIRR: reads (both mates count)
+        "consensus_count": [agg_count[i] for i in roots],        # AIRR: distinct fragment consensuses
     })
     out.write_csv(output, separator="\t")
 
