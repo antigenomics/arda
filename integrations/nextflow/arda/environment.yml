@@ -6,4 +6,4 @@ dependencies:
   - bioconda::mmseqs2 >=15
   - pip
   - pip:
-      - arda-mapper==2.3.0
+      - arda-mapper==2.3.1

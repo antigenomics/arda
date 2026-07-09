@@ -282,22 +282,31 @@ def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
     assert int(out["duplicate_count"]) == 5, "10 mate-rows are 5 fragments"
 
 
-def test_correct_reports_dominant_isotype_as_c_call(tmp_path):
-    """`c_call` is the clonotype's dominant isotype (from the constant-region mate); mixed calls
-    collapse to the most common, and reads without one are ignored."""
+def test_correct_reports_dominant_resolved_isotype_as_c_call(tmp_path):
+    """`c_call` is the clonotype's dominant RESOLVED isotype class (from ``c_class``): the ambiguous
+    ``IGHC`` wins only if nothing resolves, so a few ambiguous reads can't outvote the true class."""
     pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
-    ccalls = ["IGHG1", "IGHG1", "IGHG1", "IGHA1", ""]        # dominant = IGHG1; the empty one is ignored
+    # 3 resolved IGHG vs 4 ambiguous IGHC (+ one no-call) -> IGHG must win despite being fewer
+    cclasses = ["IGHG", "IGHG", "IGHG", "IGHC", "IGHC", "IGHC", "IGHC", ""]
     rows = [{"sequence_id": f"r{i}", "junction": junc, "junction_aa": aa, "v_call": "IGHV3-23*01",
-             "j_call": "IGHJ4*02", "locus": "IGH", "c_call": cc} for i, cc in enumerate(ccalls)]
+             "j_call": "IGHJ4*02", "locus": "IGH", "c_class": cc} for i, cc in enumerate(cclasses)]
     airr = tmp_path / "in.airr.tsv"
     pl.DataFrame(rows).write_csv(airr, separator="\t")
 
     correct_airr(airr, tmp_path / "clones.tsv")
     out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
-    assert out["c_call"] == "IGHG1" and int(out["duplicate_count"]) == 5
+    assert out["c_call"] == "IGHG", "3 resolved IGHG must beat 4 ambiguous IGHC"
+    assert int(out["duplicate_count"]) == 8
+
+    # ...and IGHC is reported only when NOTHING resolves
+    rows2 = [{"sequence_id": f"r{i}", "junction": junc, "junction_aa": aa, "v_call": "IGHV3-23*01",
+              "j_call": "IGHJ4*02", "locus": "IGH", "c_class": "IGHC"} for i in range(3)]
+    pl.DataFrame(rows2).write_csv(airr, separator="\t")
+    correct_airr(airr, tmp_path / "c2.tsv")
+    assert pl.read_csv(tmp_path / "c2.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]["c_call"] == "IGHC"
 
 
 def test_correct_rejects_invalid_ratio(tmp_path):

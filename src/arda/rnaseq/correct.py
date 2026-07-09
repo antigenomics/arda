@@ -26,6 +26,10 @@ __all__ = ["correct_airr", "CorrectReport"]
 
 _DNA = frozenset("ACGT")
 
+# The generic heavy constant `isotype_class` returns when a read's C hit spans classes (IGHG1,IGHM
+# -> IGHC): isotype unresolved. Deprioritised when aggregating a clonotype's dominant isotype.
+_GENERIC_ISOTYPE = frozenset({"IGHC"})
+
 # A clonotype requires a COMPLETE junction. Stage 1 reports a junction even when the read does
 # not span it (see ``annotate.transfer``), so a raw per-read junction is a truncated fragment
 # whenever the CDR3 runs off the end of the read. Aggregating those as clonotypes inflates the
@@ -120,8 +124,9 @@ def correct_airr(
             ``j_call``, ``c_call``, ``locus``, ``duplicate_count``), sorted by abundance.
             A clonotype is keyed by ``(locus, v_call, j_call, junction)``; ``duplicate_count``
             (AIRR) is the number of distinct FRAGMENTS -- paired mates of one molecule counted
-            once. ``c_call`` is the clonotype's dominant isotype (donated from the
-            constant-region mate; empty when no read carried one).
+            once. ``c_call`` is the clonotype's dominant isotype CLASS (from ``c_class``: IGHG,
+            IGHA, ...), preferring a resolved class over the ambiguous ``IGHC``; empty when no
+            read carried a constant call.
         ratio: parent:child count ratio; must be in ``(0, 1)`` (vdjtools default 0.05).
         require_vj: only collapse neighbours sharing ``v_call`` and ``j_call``.
         complete_only: keep only reads whose junction spans both conserved anchors, is in
@@ -170,10 +175,12 @@ def correct_airr(
     read_ids = g["read_ids"].to_list()
     junction_aa = g["junction_aa"].to_list()
     locus = [x or "" for x in g["locus"].to_list()]
-    # per-read isotype (c_call, donated from the constant-region mate on gapped pairs) -> collapsed to
-    # the clonotype's dominant call in the output. Keyed by the full sequence_id (mate suffix kept).
-    cc_map = (dict(zip(df["sequence_id"].to_list(), df["c_call"].to_list()))
-              if "c_call" in df.columns else {})
+    # per-read isotype -> collapsed to the clonotype's dominant CLASS in the output (keyed by the full
+    # sequence_id, mate suffix kept). Use ``c_class`` (the resolved class, e.g. IGHG, not the noisy
+    # subclass IGHG1 -- IGHG1-4 are ~95% identical, so a per-read dominant subclass is a coin-flip);
+    # fall back to ``c_call`` only if ``c_class`` is absent from the AIRR file.
+    _iso_col = "c_class" if "c_class" in df.columns else ("c_call" if "c_call" in df.columns else None)
+    cc_map = dict(zip(df["sequence_id"].to_list(), df[_iso_col].to_list())) if _iso_col else {}
 
     report = CorrectReport(clonotypes_in=len(junctions),
                            reads=sum(len(r) for r in read_ids),   # reads; `count` is fragments
@@ -202,8 +209,14 @@ def correct_airr(
     report.collapsed = report.clonotypes_in - report.clonotypes_out
 
     def _dominant_ccall(read_list: list[str]) -> str:
+        # Prefer a RESOLVED isotype class: `isotype_class` emits the generic `IGHC` only when a read's
+        # constant hit is ambiguous across classes (e.g. IGHG1,IGHM). Report IGHC only if NO read
+        # resolves -- otherwise a handful of ambiguous reads could outvote the true class.
         calls = [c for sid in read_list if (c := cc_map.get(sid))]
-        return Counter(calls).most_common(1)[0][0] if calls else ""
+        if not calls:
+            return ""
+        resolved = [c for c in calls if c not in _GENERIC_ISOTYPE]
+        return Counter(resolved or calls).most_common(1)[0][0]
 
     out = pl.DataFrame({
         "junction": [junctions[i] for i in roots],
