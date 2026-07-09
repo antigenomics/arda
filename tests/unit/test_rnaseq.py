@@ -190,9 +190,9 @@ def test_correct_parent_child_collapse(tmp_path):
     C1 = "TGTGACAGCAGCTTAGACGGGACAGGGTTC"   # 1 mismatch from P
     U = "TGTACCCCGGGGTTTTAAAACCCCGGGTTC"    # unrelated
     rows = []
-    for junc, n in [(P, 100), (C1, 2), (U, 5)]:   # 100 >= 2*20 -> C1 child of P
+    for tag, junc, n in [("p", P, 100), ("c", C1, 2), ("u", U, 5)]:   # 100 >= 2*20 -> C1 child of P
         for k in range(n):
-            rows.append({"sequence_id": f"{junc[:4]}{k}", "junction": junc,
+            rows.append({"sequence_id": f"{tag}{k}", "junction": junc,   # unique ids (real reads never collide)
                          "junction_aa": "CASSLDGTF", "v_call": "TRBV20-1*01",
                          "j_call": "TRBJ2-1*01", "locus": "TRB"})
     airr = tmp_path / "in.airr.tsv"

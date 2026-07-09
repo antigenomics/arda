@@ -16,11 +16,13 @@ seqtree is an optional dependency (``pip install 'arda-mapper[rnaseq]'``).
 from __future__ import annotations
 
 import json
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+
+from ..refbuild.translate import reverse_complement
 
 __all__ = ["correct_airr", "CorrectReport"]
 
@@ -110,6 +112,107 @@ def _root(i: int, parent: list[int | None]) -> int:
     return i
 
 
+def _assign_coverage(
+    raw: pl.DataFrame,
+    root_jn: list[str],
+    root_loc: list[str],
+    exact: dict[tuple[str, str, str, str], int],
+    *,
+    k: int = 12,
+    min_ov: int = 20,
+    max_mm: float = 0.12,
+    cap: int = 64,
+) -> list[list[str]]:
+    """Assign every CDR3-overlapping read to the clonotype whose junction it belongs to.
+
+    A clonotype's expression is *all* reads that encompass its junction, not only the reads that
+    span it end-to-end: a long CDR3 is covered by many partial reads (V-side, J-side) that never
+    reach both anchors. This is the read-counting the assembly tools (MiXCR/TRUST4) do, and it is
+    what makes cross-tool frequencies comparable. Returns, parallel to ``root_jn``, the list of
+    ``sequence_id`` s assigned to each clonotype. Each read is counted once.
+
+    Pass 1 -- exact: a read whose ``(locus, v_call, j_call, junction)`` key is in ``exact`` (the
+    clonotype key -> root-position map, collapsed children included) is assigned there
+    (authoritative; also the path for a read with no ``sequence`` column). The key must match on
+    V/J too, not the junction alone -- two clonotypes can share a junction nt under different V/J
+    alleles (common in IGK), and keying on the junction alone routes both to one and leaves the
+    other with zero reads.
+
+    Pass 2 -- align: a remaining read's sequence is aligned to the root junctions (a shared k-mer
+    fixes the offset; it joins the root with the longest ``>= min_ov`` overlap within the ``max_mm``
+    per-base mismatch budget, tolerating SHM). Reads overlapping no junction by ``min_ov`` (pure
+    germline V/C) stay unassigned -- ambiguous across every clonotype of that V.
+    """
+    assigned: list[list[str]] = [[] for _ in root_jn]
+    n = raw.height
+    cols = {c: raw[c].to_list() for c in raw.columns}
+
+    def col(name):
+        return cols.get(name, [None] * n)
+
+    seqc, rcc, jnc, sidc = col("sequence"), col("rev_comp"), col("junction"), col("sequence_id")
+    locc, vc, jc, cc = col("locus"), col("v_call"), col("j_call"), col("c_call")
+    done: set[str] = set()
+
+    # Pass 1: exact clonotype-key match (spanning + rescued reads; authoritative).
+    for i in range(n):
+        sid = sidc[i]
+        if sid in done:                              # a rescued read appears in mapped + assembled rows
+            continue
+        rp = exact.get(((locc[i] or ""), (vc[i] or ""), (jc[i] or ""), (jnc[i] or "")))
+        if rp is not None:
+            assigned[rp].append(sid); done.add(sid)
+
+    # Pass 2: align the rest (partial V-side / J-side reads that never reached a complete junction).
+    index: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for ri, jn in enumerate(root_jn):
+        for p in range(len(jn) - k + 1):
+            lst = index[jn[p:p + k]]
+            if len(lst) < cap:                       # bound the germline-shared k-mers
+                lst.append((ri, p))
+    for i in range(n):
+        sid = sidc[i]
+        if sid in done:
+            continue
+        seq = seqc[i]
+        if not seq or len(seq) < k:
+            continue
+        loc = (locc[i] or "")[:3] or _gene3(vc[i]) or _gene3(jc[i]) or _gene3(cc[i])
+        s = reverse_complement(seq) if str(rcc[i]).upper() in ("T", "TRUE", "1") else seq
+        best_ri, best_ov, seen = None, min_ov - 1, set()
+        L = len(s)
+        for rp in range(0, L - k + 1):
+            for (ri, jp) in index.get(s[rp:rp + k], ()):
+                if loc and root_loc[ri] != loc:
+                    continue
+                d = jp - rp
+                if (ri, d) in seen:
+                    continue
+                seen.add((ri, d))
+                jr = root_jn[ri]
+                lo, hi = (-d if d < 0 else 0), min(L, len(jr) - d)
+                ov = hi - lo
+                if ov <= best_ov:
+                    continue
+                budget = max_mm * ov
+                mm = 0
+                for kk in range(lo, hi):
+                    if s[kk] != jr[kk + d]:
+                        mm += 1
+                        if mm > budget:
+                            break
+                if mm <= budget:
+                    best_ov, best_ri = ov, ri
+        if best_ri is not None:
+            assigned[best_ri].append(sid); done.add(sid)
+    return assigned
+
+
+def _gene3(x: str | None) -> str:
+    g = (x or "").split(",")[0].split("(")[0].strip()
+    return g[:3] if g[:3] in ("IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD") else ""
+
+
 def correct_airr(
     airr_tsv: str | Path,
     output: str | Path,
@@ -118,6 +221,7 @@ def correct_airr(
     ratio: float = 0.05,
     require_vj: bool = False,
     complete_only: bool = True,
+    coverage: bool = True,
     read_map: str | Path | None = None,
     extra_airr: str | Path | None = None,
     report_path: str | Path | None = None,
@@ -141,6 +245,14 @@ def correct_airr(
             frame, and has no stop codon (see :data:`_COMPLETE`). A read that stops short of
             the [FW]118 anchor yields a *prefix* of a junction, not a clonotype. Setting this
             ``False`` reproduces the raw per-read behaviour and is almost never what you want.
+            (This governs which reads DEFINE clonotypes, not how they are counted -- see ``coverage``.)
+        coverage: count a clonotype's abundance as EVERY read that encompasses its junction
+            (aligns to it), not only the reads that span it end-to-end (default ``True``). A long
+            CDR3 is covered by many partial V-side / J-side reads that never reach both anchors;
+            counting only spanning reads under-reports it non-uniformly (the deficit scales with
+            CDR3 length), which is why a spanning count correlates poorly with the assembly tools'
+            read counts. Coverage counting (:func:`_assign_coverage`) matches MiXCR/TRUST4 and is
+            the true expression estimate. ``False`` reverts to spanning-read counts.
         read_map: optional TSV ``sequence_id -> junction`` (the corrected clonotype a
             read ends up in) — the read-id → junction map after correction.
         extra_airr: optional Stage-3 assembled-reads AIRR (from
@@ -226,10 +338,22 @@ def correct_airr(
         agg_reads[i] = []
 
     roots = [i for i in range(len(junctions)) if parent[i] is None]
-    # sort by the reported abundance (reads), fragment count as the tie-break
-    roots.sort(key=lambda i: (len(agg_reads[i]), agg_count[i]), reverse=True)
     report.clonotypes_out = len(roots)
     report.collapsed = report.clonotypes_in - report.clonotypes_out
+
+    # Per-clonotype read set. Coverage (default): every read that ENCOMPASSES the junction, assigned
+    # by alignment to the final (post-collapse) root junctions -- the true expression. Spanning:
+    # the reads that reached a complete junction, accumulated along parent pointers.
+    if coverage:
+        pos = {ri: p for p, ri in enumerate(roots)}                    # global root index -> roots position
+        exact = {}                                                     # clonotype key (child too) -> root position
+        for i in range(len(junctions)):
+            exact.setdefault((locus[i], v[i], j[i], junctions[i]), pos[_root(i, parent)])
+        read_sets = _assign_coverage(raw, [junctions[i] for i in roots], [locus[i] for i in roots], exact)
+    else:
+        read_sets = [agg_reads[i] for i in roots]
+    dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads
+    cons = [len({_strip_mate(x) for x in rs}) for rs in read_sets]      # AIRR consensus_count: fragments
 
     def _dominant_ccall(read_list: list[str]) -> str:
         # A clonotype's isotype = the dominant RESOLVED class over its fragments' constant mates.
@@ -243,20 +367,21 @@ def correct_airr(
         resolved = [c for c in calls if c not in _GENERIC_ISOTYPE]
         return Counter(resolved or calls).most_common(1)[0][0]
 
+    order = sorted(range(len(roots)), key=lambda r: (dup[r], cons[r]), reverse=True)
     out = pl.DataFrame({
-        "junction": [junctions[i] for i in roots],
-        "junction_aa": [junction_aa[i] for i in roots],
-        "v_call": [v[i] for i in roots],
-        "j_call": [j[i] for i in roots],
-        "c_call": [_dominant_ccall(agg_reads[i]) for i in roots],
-        "locus": [locus[i] for i in roots],
-        "duplicate_count": [len(agg_reads[i]) for i in roots],   # AIRR: reads (both mates count)
-        "consensus_count": [agg_count[i] for i in roots],        # AIRR: distinct fragment consensuses
+        "junction": [junctions[roots[r]] for r in order],
+        "junction_aa": [junction_aa[roots[r]] for r in order],
+        "v_call": [v[roots[r]] for r in order],
+        "j_call": [j[roots[r]] for r in order],
+        "c_call": [_dominant_ccall(read_sets[r]) for r in order],
+        "locus": [locus[roots[r]] for r in order],
+        "duplicate_count": [dup[r] for r in order],              # reads encompassing the junction
+        "consensus_count": [cons[r] for r in order],             # distinct fragment consensuses
     })
     out.write_csv(output, separator="\t")
 
     if read_map is not None:
-        rows = [(rid, junctions[i]) for i in roots for rid in agg_reads[i]]
+        rows = [(rid, junctions[roots[r]]) for r in range(len(roots)) for rid in read_sets[r]]
         pl.DataFrame(rows, schema=["sequence_id", "junction"], orient="row").write_csv(
             read_map, separator="\t")
     if report_path is not None:
