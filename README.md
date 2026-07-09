@@ -76,7 +76,7 @@ arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
 arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # filter receptor reads from bulk RNA-seq
 arda rnaseq correct -i mapped.airr.tsv -o clones.tsv             # collapse CDR3 errors into clonotypes
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/    # one-shot map+correct for pipelines
+arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/    # one-shot map+assemble+correct for pipelines
 arda igblast -i reads.fastq -o truth.airr.tsv                    # gold-standard IgBLAST (all loci)
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
@@ -98,10 +98,10 @@ Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on
 
 ## Pipeline integration
 
-`arda rnaseq run` is a one-shot `map`+`correct` for bulk RNA-seq: given paired (or single) gzipped
-FASTQ it writes `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped reads) and
-`<prefix>.arda.json` (run report). Because it is a plain CLI over named files, it drops into any
-workflow engine with no glue code.
+`arda rnaseq run` is a one-shot `map`+`assemble`+`correct` for bulk RNA-seq: given paired (or single)
+gzipped FASTQ it writes `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped reads),
+`<prefix>.assembled.airr.tsv` (assembled long-CDR3 reads) and `<prefix>.arda.json` (run report).
+Because it is a plain CLI over named files, it drops into any workflow engine with no glue code.
 
 A ready-to-use **Nextflow module** lives in [`integrations/nextflow/arda/`](integrations/nextflow/arda/):
 copy it to `modules/local/arda/` in an nf-core/rnaseq (or similar) checkout, feed it the trimmed

@@ -52,7 +52,8 @@ else
 fi
 
 # --- 2. IgBLAST release ----------------------------------------------------
-"$PY" "$ROOT/scripts/fetch_igblast.py" --dest "$ROOT/bin"
+# shellcheck disable=SC2086 — $PY is "conda run -n <env> python", must word-split (as elsewhere)
+$PY "$ROOT/scripts/fetch_igblast.py" --dest "$ROOT/bin"
 
 # --- 3. editable install (builds the C++ extension) ------------------------
 log "pip install -e . (builds _markup)"
