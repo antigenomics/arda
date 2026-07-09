@@ -23,9 +23,9 @@ RNA-seq** — for nucleotide *and* amino-acid input, across all loci at once.
 reference database of every in-frame V·J germline scaffold with FR1–4 / CDR1–3
 markup — then at runtime maps your sequences to that database with **MMseqs2** and
 transfers the markup through the alignment in a small **C++** hot path. The result
-is an [AIRR](https://docs.airr-community.org/)-formatted annotation that matches
-IgBLAST (≈97% region concordance on real GenBank mRNA), from a plain CLI + Python
-library — no Docker, no workflow engine.
+is a **spec-valid [AIRR](https://docs.airr-community.org/) Rearrangement** annotation
+that matches IgBLAST (≈97% region concordance on real GenBank mRNA), from a plain CLI
++ Python library — no Docker, no workflow engine.
 
 ## Why
 
@@ -103,7 +103,8 @@ records = arda.annotate_sequences(
 )
 # -> list of AIRR record dicts: v_call, d_call/d2_call, j_call, c_call/c_class,
 #    fwr1..fwr4, cdr1..cdr3, *_start/*_end (1-based closed), *_aa, junction(_aa),
-#    np1/np2/np3, v_sequence_end, j_sequence_start, productive, rev_comp, ...
+#    np1/np2/np3, {v,j,c,d}_cigar, sequence_alignment, germline_alignment, productive, ...
+# The TSV is a spec-valid AIRR Rearrangement file (passes airr.schema validation).
 ```
 
 ### Annotating bare germline segments

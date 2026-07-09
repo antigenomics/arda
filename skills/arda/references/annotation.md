@@ -58,25 +58,36 @@ for arbitrarily large inputs and read parsing overlaps compute.
 
 ## AIRR output fields
 
-Column order (`arda.annotate.transfer.AIRR_COLUMNS`):
+The output is a **spec-valid AIRR Rearrangement** file: every record passes
+`airr.schema.RearrangementSchema.validate_row` (all 14 required fields present and
+typed). Column order (`arda.annotate.transfer.AIRR_COLUMNS`):
 
 ```
 sequence_id, sequence, locus, v_call, d_call, d2_call, j_call, c_call, c_class,
 mmseqs2_score, mmseqs2_evalue, mmseqs2_identity,
 mmseqs2_{qstart,qend,qlen,tstart,tend,tlen,t_vend,t_jstart,t_vjend},
-rev_comp, productive,
+rev_comp, productive, stop_codon, vj_in_frame, v_identity,
+sequence_alignment, germline_alignment,
+v_cigar, j_cigar, c_cigar,
+v_germline_start, v_germline_end, j_germline_start, j_germline_end,
 v_sequence_start, v_sequence_end,
 d_sequence_start, d_sequence_end, d2_sequence_start, d2_sequence_end,
+d_germline_start, d_germline_end, d_cigar, d2_germline_start, d2_germline_end, d2_cigar,
 j_sequence_start, np1, np2, np3, junction, junction_aa,
 <for each region in fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4>:
   {region}_start, {region}_end, {region}, {region}_aa
 ```
 
-- All coordinates are **1-based closed**, in query space.
+- All coordinates are **1-based closed**. `*_sequence_start/end` are in query space;
+  `*_germline_start/end` are in the germline allele; `{region}_*` are in query space.
+- `sequence_alignment`/`germline_alignment` are the aligned query / germline strings
+  (the scaffold's non-templated stretch reads as `N`, per AIRR).
+- `v_cigar`/`j_cigar`/`c_cigar`/`d_cigar` follow the AIRR CIGAR spec: leading `S`
+  (query 5′ offset) then `N` (germline 5′ offset), an `M`/`I`/`D` body, a trailing `S`.
 - `{region}` is the nucleotide (or aa, for aa input) slice; `{region}_aa` is the
   amino-acid translation (V-side regions read in the V frame; FR4 in the J frame).
-- `v_sequence_end` = CDR3 start − 3 nt; `j_sequence_start` = CDR3 end + 1 (FR4 start).
-- `productive` = "T" only when in-frame and free of stop codons / N-bridge.
+- `productive` = "T" only when in-frame and free of stop codons / N-bridge;
+  `stop_codon` and `vj_in_frame` surface the two facts it collapses.
 - The `mmseqs2_*` columns carry the scaffold hit's alignment score and geometry;
   `t_vend`/`t_jstart`/`t_vjend` are the scaffold's V-end / J-start / V-J-end, which
   tell V-J hits from `J + C` constant-region hits (`tstart ≥ t_vjend` ⇒ wholly in C).

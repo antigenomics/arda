@@ -19,6 +19,7 @@ import pytest
 
 from arda import paths
 from arda.annotate.mapper import annotate_records
+from arda.annotate.transfer import AIRR_COLUMNS
 
 from tests.conftest import requires_mmseqs, requires_human_db
 
@@ -121,11 +122,46 @@ def test_human_fr4_agrees_between_vj_and_jc_scaffolds(human):
     assert recovered >= 3, "expected the XhoI-bearing IGH records to show FR4 recovery"
 
 
+def test_airr_alignment_fields_are_populated_and_consistent(human_annot):
+    """The AIRR alignment fields added in Phase B: aligned strings are equal length; V-germline
+    coords start at 1 and V identity is a fraction on a V-covered read; vj_in_frame agrees with
+    productive; a real V-less truncation (BC100294.1) has J-germline coords but no V-side fields."""
+    for acc, r in human_annot.items():
+        sa, ga = r.get("sequence_alignment") or "", r.get("germline_alignment") or ""
+        assert sa and ga and len(sa) == len(ga), f"{acc}: alignment strings absent/unequal"
+        if r["v_call"]:
+            assert int(r["v_germline_start"]) == 1, f"{acc}: V germline should start at 1"
+            vid = float(r["v_identity"])
+            assert 0.5 < vid <= 1.0, f"{acc}: implausible v_identity {vid}"
+            # productive requires an in-frame V/J; the frameshifted PQ879427.1 must read F/F.
+            assert (r["vj_in_frame"] == "T") == (r["productive"] == "T")
+    v_less = human_annot["BC100294.1"]
+    assert not v_less["v_germline_start"] and not v_less["v_identity"]
+    assert int(v_less["j_germline_start"]) >= 1     # J coverage recorded even without V
+
+
+def test_records_pass_the_airr_rearrangement_schema(human_annot):
+    """The payoff of the whole phase: every emitted record validates against the official AIRR
+    Rearrangement schema -- all 14 required fields present and correctly typed -- including the
+    V-less truncation and the out-of-frame record. arda's TSV is a real AIRR file, not a subset."""
+    pytest.importorskip("airr")
+    from airr.schema import RearrangementSchema
+
+    missing = [f for f in RearrangementSchema.required if f not in AIRR_COLUMNS]
+    assert not missing, f"AIRR_COLUMNS is missing required fields: {missing}"
+    for acc, r in human_annot.items():
+        RearrangementSchema.validate_row(r)          # raises on any schema violation
+
+
 def test_reverse_complemented_input_yields_the_same_junction(human, human_annot):
     """arda searches both strands, so an antisense molecule must give the same junction as its
-    sense form -- the exact property a stranded library's R2 reads depend on."""
-    rc = [(acc, seq.translate(_RC)[::-1]) for acc, seq in human]
-    rc_annot = {r["sequence_id"]: r for r in annotate_records(rc, "human", "nt", threads=8)}
+    sense form -- the exact property a stranded library's R2 reads depend on.
+
+    Per AIRR, ``sequence`` keeps the read AS SUBMITTED and ``rev_comp=T`` signals that the output
+    data are on its reverse complement. So for an antisense input, ``sequence`` is the (antisense)
+    submitted read, while ``sequence_alignment`` and the junction are on the coding strand."""
+    rc_in = {acc: seq.translate(_RC)[::-1] for acc, seq in human}
+    rc_annot = {r["sequence_id"]: r for r in annotate_records(list(rc_in.items()), "human", "nt", threads=8)}
     compared = 0
     for acc, fwd in human_annot.items():
         if not fwd["junction_aa"]:
@@ -133,6 +169,9 @@ def test_reverse_complemented_input_yields_the_same_junction(human, human_annot)
         rev = rc_annot[acc]
         assert rev["junction_aa"] == fwd["junction_aa"], f"{acc}: RC junction differs"
         assert rev["rev_comp"] == "T" and fwd["rev_comp"] == "F"
+        assert rev["sequence"] == rc_in[acc], f"{acc}: sequence is not the submitted read"
+        # the coding-strand alignment is the reverse complement of the submitted sequence
+        assert rev["sequence_alignment"] == fwd["sequence_alignment"]
         compared += 1
     assert compared >= 20
 

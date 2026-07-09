@@ -10,10 +10,12 @@ Command line
    arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
    arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 
-The output is an AIRR rearrangement TSV with 1-based, closed region coordinates
-(``fwr1_start``/``fwr1_end`` … ``cdr3_start``/``cdr3_end``), region nucleotide and
-amino-acid sequences, ``v_call``/``d_call``/``j_call``, the constant-region
-``c_call``/``c_class`` (isotype), ``junction``, and ``productive``.
+The output is a **spec-valid AIRR Rearrangement** TSV (it passes ``airr.schema``
+validation) with 1-based, closed region coordinates (``fwr1_start``/``fwr1_end`` …
+``cdr3_start``/``cdr3_end``), region nucleotide and amino-acid sequences,
+``v_call``/``d_call``/``j_call``, the constant-region ``c_call``/``c_class``
+(isotype), per-segment CIGARs, ``sequence_alignment`` / ``germline_alignment``,
+``junction``, and ``productive``.
 
 Python library
 --------------

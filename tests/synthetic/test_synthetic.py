@@ -277,7 +277,7 @@ def test_d_call_reports_every_tied_allele(human_d_germlines):
     assert twins, "expected identical-sequence IGH D germlines in the reference"
 
     dseq, alleles = max(twins, key=lambda t: len(t[0]))     # longest, to clear min_score
-    score, _, called, _, _ = _best_d(dseq, human_d_germlines["IGH"], _D_MIN_SCORE)
+    score, _, called, _, _, _, _ = _best_d(dseq, human_d_germlines["IGH"], _D_MIN_SCORE)
     assert score == len(dseq)                               # exact, full-length match
     # Every twin is reported; the winner is not one arbitrary member of the tie.
     assert set(alleles) <= set(called), f"{called} dropped a tied allele from {alleles}"
@@ -308,6 +308,39 @@ def test_double_d_in_trb(human_d_germlines):
     assert _gene(rec["d_call"]) == _gene(a1) and _gene(rec["d2_call"]) == _gene(a2)
     assert int(rec["d_sequence_end"]) < int(rec["d2_sequence_start"])
     assert rec["np1"] == np1 and rec["np2"] == np2 and rec["np3"] == np3
+
+
+def test_d_germline_coords_and_cigar_for_an_unambiguous_call(human_d_germlines):
+    """A single-allele D call carries d_germline_start/end + a gapless d_cigar; an ambiguity
+    list (byte-identical D genes) carries none, because there is no one germline to anchor to."""
+    from arda.annotate.transfer import _map_d
+
+    igh = dict(human_d_germlines["IGH"])
+    # Unambiguous: a full germline D whose sequence is unique to one allele.
+    by_seq = {}
+    for a, s in igh.items():
+        by_seq.setdefault(s, []).append(a)
+    a_uni, d_uni = next((al[0], sq) for sq, al in by_seq.items() if len(al) == 1)
+    vpref, jsuf = "ACGT" * 6, "TGCA" * 6
+    query = vpref + "CAGAT" + d_uni + "ACTGG" + jsuf
+    rec = {}
+    _map_d(rec, query, len(vpref), len(query) - len(jsuf) + 1, human_d_germlines["IGH"])
+    assert "," not in rec["d_call"]                              # single allele
+    # Full-length germline match from position 1 (no leading N), one M run over the whole D, with
+    # query soft-clips for the flanks (AIRR: {q5'}S {L}M {q3'}S).
+    assert rec.get("d_germline_start") == 1 and rec.get("d_germline_end") == len(d_uni)
+    import re
+    m = re.fullmatch(r"(\d+)S(\d+)M(\d+)S", rec["d_cigar"])
+    assert m and int(m.group(2)) == len(d_uni), rec["d_cigar"]
+    assert int(m.group(1)) == len(vpref) + len("CAGAT")          # query bases 5' of the D
+
+    # Ambiguous: a sequence shared by >=2 different genes -> a comma list, no germline anchor.
+    d_amb, genes = next(((sq, al) for sq, al in by_seq.items() if len(al) > 1))
+    query2 = vpref + "CAGAT" + d_amb + "ACTGG" + jsuf
+    rec2 = {}
+    _map_d(rec2, query2, len(vpref), len(query2) - len(jsuf) + 1, human_d_germlines["IGH"])
+    assert "," in rec2["d_call"]                                 # ambiguity list
+    assert not rec2.get("d_germline_start") and not rec2.get("d_cigar")
 
 
 def test_d_call_is_the_5prime_segment_not_the_higher_scoring_one(human_d_germlines):

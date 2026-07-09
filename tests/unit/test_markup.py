@@ -45,21 +45,24 @@ def test_project_region_primitive():
 
 
 def test_d_local_align_exact():
-    # D found exactly within the interior (0-based inclusive offsets).
+    # Whole D found within the interior: interior offsets 4.., D offsets 0..len-1.
     d = "AGGATATTGTAGT"
     interior = "CCCC" + d + "GGGG"
-    score, s, e = _markup.d_local_align(interior, d)
+    score, s, e, ds, de = _markup.d_local_align(interior, d)
     assert (score, s, e) == (len(d), 4, 4 + len(d) - 1)
-    assert interior[s : e + 1] == d
+    assert (ds, de) == (0, len(d) - 1)                # full-length D -> spans all of it
+    assert interior[s : e + 1] == d == d[ds : de + 1]
 
 
-def test_d_local_align_trimmed_and_case_insensitive():
-    # Only a trimmed 3' substring of D survives; matching ignores case.
+def test_d_local_align_trimmed_reports_the_d_side_span():
+    # Only a trimmed 3' substring of D survives; the D offsets locate it within the germline.
     d = "GGGACAGGGGGC"
-    interior = "ttttGGGGGCtt"           # 6-nt match GGGGGC
-    score, s, e = _markup.d_local_align(interior, d)
+    interior = "ttttGGGGGCtt"           # 6-nt match GGGGGC, which is d[6:12]
+    score, s, e, ds, de = _markup.d_local_align(interior, d)
     assert score == 6 and interior[s : e + 1].upper() == "GGGGGC"
+    assert d[ds : de + 1] == "GGGGGC" and (ds, de) == (6, 11)
+    assert (e - s) == (de - ds)                       # gapless -> equal-length spans
 
 
 def test_d_local_align_no_match():
-    assert _markup.d_local_align("AAAAAAAA", "GGGGGGGG") == (0, -1, -1)
+    assert _markup.d_local_align("AAAAAAAA", "GGGGGGGG") == (0, -1, -1, -1, -1)

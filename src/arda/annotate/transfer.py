@@ -18,6 +18,7 @@ from __future__ import annotations
 from .. import _markup
 from ..refbuild.constant import isotype_class
 from ..refbuild.translate import translate, aa_coords_from_nt, detect_coding_frame
+from .cigar import build_cigar, segment_cigars
 from .reference import RefEntry, REGIONS
 
 __all__ = ["transfer_hit", "AIRR_COLUMNS"]
@@ -50,8 +51,26 @@ AIRR_COLUMNS = (
      # region -- real receptor mRNA, but with no V(D)J and therefore no clonotype.
      "mmseqs2_t_vjend",
      "rev_comp", "productive",
+     # AIRR alignment fields. `sequence_alignment`/`germline_alignment` are the mmseqs aligned
+     # query and scaffold strings (coding strand) -- the scaffold IS `V + N*pad + J [+ C]`, so its
+     # non-templated stretch reads as N, exactly what AIRR's germline_alignment expects. The flags
+     # and identity are computed during translation and were previously discarded into `productive`.
+     "stop_codon", "vj_in_frame", "v_identity",
+     "sequence_alignment", "germline_alignment",
+     # Per-segment CIGARs. Each is the sub-walk of the one query->scaffold alignment whose target
+     # falls in that segment's germline range, with the rest of the read soft-clipped (see cigar.py).
+     "v_cigar", "j_cigar", "c_cigar",
+     # Germline coordinates (1-based, in the V or J allele). The scaffold's V part is the V germline
+     # verbatim (target pos == V-germline pos) and its J part is the full J allele, so these fall
+     # straight out of the target span with a constant offset -- no separate lookup.
+     "v_germline_start", "v_germline_end", "j_germline_start", "j_germline_end",
      "v_sequence_start", "v_sequence_end",
      "d_sequence_start", "d_sequence_end", "d2_sequence_start", "d2_sequence_end",
+     # D germline coordinates (1-based, in the D allele) and CIGAR, emitted only when the D
+     # call is a single allele -- a byte-identical-gene ambiguity list has no one germline to
+     # anchor to. The D alignment is gapless, so the cigar is a single M run.
+     "d_germline_start", "d_germline_end", "d_cigar",
+     "d2_germline_start", "d2_germline_end", "d2_cigar",
      "j_sequence_start", "np1", "np2", "np3", "junction", "junction_aa"]
     + [c for r in REGIONS for c in (f"{r}_start", f"{r}_end", r, f"{r}_aa")]
 )
@@ -87,6 +106,24 @@ def _empty_record(query_id: str, query_seq: str) -> dict:
     rec["sequence_id"] = query_id
     rec["sequence"] = query_seq
     return rec
+
+
+def _aln_identity(qaln: str, taln: str, tstart: int, t_lo: int, t_hi: int):
+    """Fractional identity over the germline positions in target range [t_lo, t_hi].
+
+    Walks the aligned strings tracking the target (scaffold) position; counts each
+    target-consuming column in range (a germline position covered), and how many are an
+    exact base match. Returns matches / covered as a 0-1 fraction, or "" if none covered.
+    """
+    t, covered, ident = tstart, 0, 0
+    for qa, ta in zip(qaln, taln):
+        if ta != "-":                                # target-consuming column
+            if t_lo <= t <= t_hi:
+                covered += 1
+                if qa != "-" and qa.upper() == ta.upper():
+                    ident += 1
+            t += 1
+    return round(ident / covered, 4) if covered else ""
 
 
 def _project_point(hit: dict, ref_pos: int) -> int:
@@ -154,26 +191,28 @@ def _best_d(interior, d_germlines, min_score, exclude=None):
     span is chosen deterministically (highest score, then longest, then 5'-most) and only
     the alleles sharing *that* span are reported.
     """
-    best = None                              # (rank, [alleles], s, e)
+    best = None                              # (rank, [alleles], s, e, ds, de)
     for allele, dseq in d_germlines:
-        score, s, e = _markup.d_local_align(interior, dseq)
+        score, s, e, ds, de = _markup.d_local_align(interior, dseq)
         if score < min_score or s < 0:
             continue
         if exclude is not None:
             xs, xe = exclude
             if not (e < xs or s > xe):       # overlaps the excluded span
                 continue
-        # Rank only on the ALIGNMENT, never on the allele name: equal rank means an
-        # identical span, hence genuine ambiguity rather than a winner to be broken.
+        # Rank only on the query-side ALIGNMENT, never on the allele name: equal rank means
+        # an identical query span, hence genuine ambiguity rather than a winner to be broken.
+        # The D-germline offsets (ds, de) are the rank-winner's; they belong to a single
+        # allele, so _map_d only emits d_germline_*/d_cigar when the call is unambiguous.
         rank = (score, e - s + 1, -s)
         if best is None or rank > best[0]:
-            best = (rank, [allele], s, e)
+            best = (rank, [allele], s, e, ds, de)
         elif rank == best[0]:
             best[1].append(allele)
     if best is None:
         return None
-    (score, length, _), alleles, s, e = best
-    return score, length, tuple(sorted(alleles)), s, e
+    (score, length, _), alleles, s, e, ds, de = best
+    return score, length, tuple(sorted(alleles)), s, e, ds, de
 
 
 def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines):
@@ -206,13 +245,25 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines):
     def q(off):                                   # interior 0-based offset -> query 1-based
         return i_lo + off
 
-    _, _, a1, s1, e1 = segs[0]
+    qlen = len(query_seq)
+
+    def germline(rec, pfx, alleles, ds, de, qs, qe):
+        # D germline coords + AIRR cigar, only when the call is a single allele -- an ambiguity
+        # list (byte-identical D genes) has no one germline to anchor to. Gapless (one M run), with
+        # the query 5' offset as leading S and the D-germline 5' offset as leading N (AIRR spec).
+        if len(alleles) == 1 and ds >= 0:
+            rec[f"{pfx}_germline_start"], rec[f"{pfx}_germline_end"] = ds + 1, de + 1
+            rec[f"{pfx}_cigar"] = build_cigar(qs - 1, ds, ["M"] * (de - ds + 1), qlen - qe)
+
+    _, _, a1, s1, e1, ds1, de1 = segs[0]
     rec["d_call"] = ",".join(a1)
     rec["d_sequence_start"], rec["d_sequence_end"] = q(s1), q(e1)
+    germline(rec, "d", a1, ds1, de1, q(s1), q(e1))
     if len(segs) == 2:
-        _, _, a2, s2, e2 = segs[1]
+        _, _, a2, s2, e2, ds2, de2 = segs[1]
         rec["d2_call"] = ",".join(a2)
         rec["d2_sequence_start"], rec["d2_sequence_end"] = q(s2), q(e2)
+        germline(rec, "d2", a2, ds2, de2, q(s2), q(e2))
         rec["np1"] = query_seq[v_end_q : q(s1) - 1]
         rec["np2"] = query_seq[q(e1) : q(s2) - 1]
         rec["np3"] = query_seq[q(e2) : j_start_q - 1]
@@ -229,13 +280,21 @@ def transfer_hit(
     seqtype: str = "nt",
     rev_comp: bool = False,
     d_germlines: list[tuple[str, str]] | None = None,
+    submitted_seq: str | None = None,
 ) -> dict:
-    """Build an AIRR record by projecting ``ref`` region coords onto the query."""
+    """Build an AIRR record by projecting ``ref`` region coords onto the query.
+
+    ``query_seq`` is the coding-strand sequence all markup/coords/CIGARs are computed on.
+    ``submitted_seq`` is the read AS SUBMITTED, stored verbatim in the AIRR ``sequence`` field;
+    for a reverse-strand hit it is the reverse complement of ``query_seq`` and ``rev_comp`` is set,
+    per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
+    ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
+    """
     coords = _markup.transfer_regions(
         hit["qaln"], hit["taln"], int(hit["qstart"]), int(hit["tstart"]),
         ref.starts, ref.ends)
 
-    rec = _empty_record(query_id, query_seq)
+    rec = _empty_record(query_id, query_seq if submitted_seq is None else submitted_seq)
     rec.update(locus=ref.locus, v_call=ref.v_call, j_call=ref.j_call,
                c_call=ref.c_call, c_class=isotype_class(ref.c_call),
                rev_comp="T" if rev_comp else "F", productive="")
@@ -255,6 +314,25 @@ def transfer_hit(
     rec["mmseqs2_t_vend"] = ref.v_sequence_end or ""
     rec["mmseqs2_t_jstart"] = ref.j_sequence_start or ""
     rec["mmseqs2_t_vjend"] = ref.vj_end or ""
+
+    # AIRR alignment strings + germline coordinates. The scaffold is `V + N*pad + J [+ C]`, so the
+    # target (scaffold) span maps to germline coords directly: V germline pos == target pos; J
+    # germline pos == target pos - t_jstart + 1. C is not part of a germline V/J alignment.
+    rec["sequence_alignment"] = hit.get("qaln") or ""
+    rec["germline_alignment"] = hit.get("taln") or ""
+    ts, te = int(hit["tstart"]), int(hit["tend"])
+    t_vend = int(ref.v_sequence_end) if ref.v_sequence_end else 0
+    t_jstart = int(ref.j_sequence_start) if ref.j_sequence_start else 0
+    t_vjend = int(ref.vj_end) if ref.vj_end else 0
+    if t_vend and ts <= t_vend:                      # alignment covers some V germline
+        rec["v_germline_start"], rec["v_germline_end"] = ts, min(te, t_vend)
+        rec["v_identity"] = _aln_identity(hit["qaln"], hit["taln"], ts, ts, t_vend)
+    if t_jstart and t_vjend and te >= t_jstart:      # alignment reaches the J germline
+        rec["j_germline_start"] = max(ts, t_jstart) - t_jstart + 1
+        rec["j_germline_end"] = min(te, t_vjend) - t_jstart + 1
+    # Per-segment CIGARs (v/j/c) in a single walk of the same aligned strings.
+    rec.update(segment_cigars(hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
+                              len(query_seq), t_vend, t_jstart, t_vjend))
 
     region_q: dict[str, tuple[int, int]] = {}
     for name, (qs, qe) in zip(REGIONS, coords):
@@ -320,6 +398,11 @@ def transfer_hit(
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
             rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
+            # Surface the two facts `productive` collapses. stop_codon is specifically about `*`
+            # (the `_` frameshift marker is not a stop); vj_in_frame is the V/J frame agreement.
+            j_stop = "*" in rec.get("junction_aa", "")
+            rec["stop_codon"] = "F" if (vclean and not j_stop) else "T"
+            rec["vj_in_frame"] = "T" if phase == 0 else "F"
         # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines)

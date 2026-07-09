@@ -228,7 +228,10 @@ def _annotate_chunk(
             continue
         # mmseqs reports reverse-strand nt hits with qstart > qend and aligned
         # strings already on the coding strand. Re-orient: work on the revcomp,
-        # remap the alignment start to forward coords on it.
+        # remap the alignment start to forward coords on it. All markup, coords and
+        # CIGARs are computed on ``work`` (the coding strand); the AIRR ``sequence``
+        # field keeps the read AS SUBMITTED (``qseq``), with rev_comp=T signalling that
+        # the output data are on its reverse complement -- per the AIRR spec.
         qs, qe = int(hit["qstart"]), int(hit["qend"])
         rev = qs > qe
         work = qseq
@@ -239,7 +242,7 @@ def _annotate_chunk(
             hit["qstart"], hit["qend"] = qlen - qs + 1, qlen - qe + 1
         dg = ref.d_germlines.get(entry.locus) if (seqtype == "nt" and map_d) else None
         out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
-                                d_germlines=dg))
+                                d_germlines=dg, submitted_seq=qseq))
     return out
 
 
