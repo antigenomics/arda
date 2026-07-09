@@ -7,6 +7,11 @@ the role assembly-based extractors play with de-novo assembly. Not implemented y
 
 # ponytail: interface only until Stage 1+2 + the benchmark validate; assembly is a much
 # larger build (a de-novo assembler), explicitly out of scope for the filter-first goal.
+#
+# When implemented, it should emit each contig with its read layout (per-read scaffold
+# alignment + contig offset) and annotate via ``annotate.contig.merge_contigs`` -- ~9x
+# faster than re-annotating at scRNA-seq scale (see that module). ``reannotate_contigs``
+# is the fallback when no layout is available.
 """
 
 from __future__ import annotations

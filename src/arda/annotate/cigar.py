@@ -16,17 +16,17 @@ CIGAR operators follow the AIRR spec (SAM subset):
 
 ``segment_cigars`` builds all three in a SINGLE pass over the aligned strings.
 
-Correcting cigars for CONTIGS (Stage 3). A contig is just a long query, so the SIMPLE, correct way
-to get its cigars is to RE-ANNOTATE the assembled contig through ``mapper.annotate_records`` -- one
-mmseqs alignment, then ``segment_cigars`` -- exactly as for a read. No cigar arithmetic, no new C++;
-``check_cigar`` validates the result. (Verified: the full-length GenBank receptor mRNAs are contigs,
-and their re-annotated cigars pass ``check_cigar``.)
-# ponytail: re-annotate, don't merge. The alternative -- building a contig's cigar by MERGING its
-# reads' per-read cigars against the germline column-by-column (a consensus at the alignment level,
-# avoiding the second alignment pass and preserving per-read coverage) -- is a genuine per-column
-# reduction over N reads and is where careful C++ (alongside src/_markup/markup.cpp) would pay off.
-# It is a Stage-3 optimisation, gated on the assembler existing and on re-annotation being too slow
-# (it is not, at a few thousand contigs/sample). Deferred; see the arda-benchmark Phase-D plan.
+Correcting cigars for CONTIGS (Stage 3). A contig is just a long query, so BOTH ways to get its
+cigars end in ``segment_cigars`` and produce the same record (see :mod:`arda.annotate.contig`):
+  * RE-ANNOTATE the assembled contig through ``mapper.annotate_records`` -- one mmseqs alignment,
+    then ``segment_cigars``. No cigar arithmetic; ``check_cigar`` validates it.
+  * MERGE the reads' existing alignments column-by-column into the contig's (C++
+    ``_markup.merge_alignment``), skipping the alignment pass.
+Both are built and proven byte-for-byte equal (``tests/unit/test_contig_merge.py`` on 29 real
+GenBank contigs). MEASURED (arda-benchmark ``scripts/bench_contig_cigars.py``): at scRNA-seq scale
+(~10^5 contigs/sample) merge is ~9x faster -- the whole gap is mmseqs; the C++ stitch is ~3 % of
+merge's wall and barely grows with read depth. Prefer merge when the assembly layout is available
+(the reads carry their scaffold + offset); re-annotate is the fallback when it is not.
 """
 
 from __future__ import annotations
