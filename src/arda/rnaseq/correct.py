@@ -1,14 +1,20 @@
-"""Stage 2 — CDR3 error correction (parent:child count ratio).
+"""Stage 2 — CDR3 error correction (sequencing-error model).
 
-Collapses sequencing-error CDR3 variants onto their parent clonotype, a Python port
-of vdjtools' ``Corrector`` (``com.antigenomics.vdjtools.preprocess.Corrector``) on top
-of :mod:`seqtree` neighbour search (the fast substitution-bounded index that plays the
-role of milib's ``SequenceTreeMap``). Rule (vdjtools defaults ``maxMismatches=2``,
-``ratio=0.05``): a clonotype ``C`` is a **child** of a neighbour ``P`` that differs by
-``m`` substitutions iff ``count[P] >= count[C] * (1/ratio)**m`` (i.e. the parent is at
-least ``20**m`` times more abundant). Children route their reads to the parent; chains
-(``C -> B -> A``) collapse to the ultimate ancestor. Counts strictly increase along
-parent pointers, so there are no cycles.
+Collapses sequencing-error CDR3 variants onto their parent clonotype, using :mod:`seqtree`
+neighbour search (a fast edit-bounded index) to find substitution/indel neighbours. A clonotype
+``C`` is an error **child** of a more-abundant neighbour ``P`` (differing by ``n_subs``
+substitutions and ``n_indel`` inserted/deleted bases) iff the expected number of such misread
+parent reads -- ``count[P] * p_sub**n_subs * p_ind**n_indel`` -- is at least ``count[C]``. The rates
+are PER BASE and the per-mismatch probability is length-scaled (``p_sub = error_rate * L``): a single
+mismatch over a longer junction sheds proportionally more error mass, so the default
+``error_rate = 0.001`` reproduces vdjtools' ~1/20 at a 45 nt (15 aa) junction and scales elsewhere. A
+multi-base (in-frame SHM) indel costs ``p_ind**len`` and is kept as a real clonotype. The count is
+the SPANNING read depth -- reads that fully observe the
+junction -- so the test is over the reads that actually saw the discriminating base (``"2/2, not
+2/200"``); ``error_method`` in {binom, betabinom} instead piles up partial reads per position for
+extra depth at very low coverage. Children route to the parent; chains collapse to the ultimate
+ancestor; ``count[parent] * p_err >= count[child]`` with ``p_err < 1`` gives strictly increasing
+counts along parent pointers, so there are no cycles.
 
 seqtree is an optional dependency (``pip install 'arda-mapper[rnaseq]'``).
 """
@@ -75,8 +81,27 @@ class CorrectReport:
 
 
 def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str],
-             *, max_mismatches: int, ratio: float, require_vj: bool) -> list[int | None]:
-    """For each clonotype, the strongest neighbour that is its parent (or None)."""
+             *, max_subs: int, max_indel: int, error_rate: float, indel_rate: float,
+             require_vj: bool) -> list[int | None]:
+    """For each clonotype, the strongest neighbour that is its sequencing-error parent (or None).
+
+    ``counts`` is the SPANNING read count -- reads that fully observe the junction -- so the test is
+    made only over reads that actually saw the discriminating position. A clonotype seen 2 times out
+    of the 2 reads that reached its position is 100 % there (real), not a 1 % error of an abundant
+    neighbour whose reads never covered that position ("2/2, not 2/200").
+
+    A neighbour ``C`` is an error child of ``P`` (differing by ``n_subs`` substitutions and
+    ``n_indel`` inserted/deleted bases) iff the expected number of such error reads,
+    ``count[P] * p_sub**n_subs * p_ind**n_indel``, is at least ``count[C]``. ``error_rate`` and
+    ``indel_rate`` are PER-BASE rates, and the per-substitution collapse probability scales with the
+    junction length -- ``p_sub = error_rate * L`` -- because a single mismatch over a longer junction
+    sheds proportionally more error mass (this is why vdjtools' 1/20 is calibrated for a 45 nt / 15 aa
+    junction; ``error_rate = 0.001`` reproduces it there and scales for other lengths). Because a
+    multi-base indel costs ``p_ind**len``, a 3-9 bp (in-frame SHM) indel is vanishingly unlikely as an
+    error and kept as a real clonotype, while a 1 bp (instrument) indel collapses. Children route to
+    the parent; chains collapse to the ancestor. ``count[parent] * p_err >= count[child]`` with
+    ``p_err < 1`` makes counts strictly increase along parent pointers -> no cycles.
+    """
     import seqtree
 
     n = len(junctions)
@@ -85,19 +110,21 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
     if not safe:
         return parent
     index = seqtree.Index.build([junctions[i] for i in safe], alphabet="nt")
-    params = seqtree.SearchParams(
-        max_subs=max_mismatches, max_total_edits=max_mismatches, engine="seqtm")
-    inv_ratio = 1.0 / ratio
-    for local_q, ci in enumerate(safe):
+    params = seqtree.SearchParams(max_subs=max_subs, max_ins=max_indel, max_dels=max_indel,
+                                  max_total_edits=max_subs + max_indel, engine="seqtm")
+    for ci in safe:
+        L = len(junctions[ci])
+        p_sub = min(0.5, error_rate * L)          # per-substitution collapse prob, scaled by length
+        p_ind = min(0.5, indel_rate * L)
         best, best_count = None, -1
         for hit in index.search(junctions[ci], params):
             nj = safe[hit.ref_id]
-            m = hit.n_subs
-            if nj == ci or m == 0:
+            if nj == ci or (hit.n_subs + hit.n_ins + hit.n_dels) == 0:
                 continue
             if require_vj and (v[nj] != v[ci] or j[nj] != j[ci]):
                 continue
-            if counts[nj] >= counts[ci] * (inv_ratio ** m):
+            p_err = p_sub ** hit.n_subs * p_ind ** (hit.n_ins + hit.n_dels)
+            if counts[nj] * p_err >= counts[ci]:
                 # Strongest qualifying neighbour is the parent (deterministic tie-break).
                 if counts[nj] > best_count or (counts[nj] == best_count
                                                and best is not None and junctions[nj] < junctions[best]):
@@ -110,6 +137,138 @@ def _root(i: int, parent: list[int | None]) -> int:
     while parent[i] is not None:
         i = parent[i]  # type: ignore[assignment]
     return i
+
+
+def _binom_sf(k: int, n: int, p: float) -> float:
+    """P(X >= k) for X ~ Binomial(n, p), summed as 1 - CDF(k-1) (k terms; k is a small error count)."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    from math import comb
+    cdf = sum(comb(n, i) * p ** i * (1.0 - p) ** (n - i) for i in range(k))
+    return max(0.0, 1.0 - cdf)
+
+
+def _betabinom_sf(k: int, n: int, p: float, rho: float = 0.1) -> float:
+    """P(X >= k) for a Beta-Binomial with mean ``p`` and overdispersion ``rho`` -- fatter tail than
+    the binomial, so at very low depth a couple of correlated miscalls are not over-called as real."""
+    if k <= 0:
+        return 1.0
+    if k > n:
+        return 0.0
+    from math import lgamma
+    s = (1.0 - rho) / rho if 0 < rho < 1 else 1e9
+    a, b = p * s, (1.0 - p) * s
+    lb = lgamma(a + b) - lgamma(a) - lgamma(b)
+    cdf = 0.0
+    for i in range(k):
+        lcomb = lgamma(n + 1) - lgamma(i + 1) - lgamma(n - i + 1)
+        cdf += (2.718281828459045 ** (lcomb + lgamma(i + a) + lgamma(n - i + b)
+                                      - lgamma(n + a + b) + lb))
+    return max(0.0, 1.0 - cdf)
+
+
+def _error_pileup(
+    raw: pl.DataFrame,
+    junctions: list[str],
+    v: list[str],
+    j: list[str],
+    locus: list[str],
+    parent_simple: list[int | None],
+    span_counts: list[int],
+    *,
+    error_rate: float,
+    indel_rate: float,
+    method: str,
+    alpha: float = 1e-3,
+    k: int = 12,
+    cap: int = 64,
+) -> list[int | None]:
+    """Re-decide parentage from per-position read DEPTH -- the deep, low-coverage path.
+
+    The simple test only counts reads that span the whole junction; at very low coverage there may be
+    only one or two. Here every read (partial included) is aligned to the raw clonotype junctions and
+    piled up per position, so a substitution difference is judged on the reads that actually covered
+    THAT base. For candidate parent P of child C differing at substitution positions D, C is an error
+    child iff at every ``d in D`` the child-allele depth is consistent with sequencing error of the
+    parent-allele depth -- ``sf(child_depth; child_depth + parent_depth, error_rate) > alpha`` (a
+    binomial tail, ``betabinom`` for an overdispersed one). Indel candidates (gapped, no fixed
+    positions) keep the simple decision.
+    """
+    sf = _betabinom_sf if method == "betabinom" else _binom_sf
+    index: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for ri, jn in enumerate(junctions):
+        for p in range(len(jn) - k + 1):
+            lst = index[jn[p:p + k]]
+            if len(lst) < cap:
+                lst.append((ri, p))
+    depth = [[0] * len(jn) for jn in junctions]                       # per clonotype, per-position read depth
+    cols = {c: raw[c].to_list() for c in raw.columns}
+    n = raw.height
+
+    def col(name):
+        return cols.get(name, [None] * n)
+
+    seqc, rcc, locc, vc, jc, cc = (col("sequence"), col("rev_comp"), col("locus"),
+                                   col("v_call"), col("j_call"), col("c_call"))
+    for i in range(n):
+        seq = seqc[i]
+        if not seq or len(seq) < k:
+            continue
+        loc = (locc[i] or "")[:3] or _gene3(vc[i]) or _gene3(jc[i]) or _gene3(cc[i])
+        s = reverse_complement(seq) if str(rcc[i]).upper() in ("T", "TRUE", "1") else seq
+        best_ri, best_ov, best_lo, best_hi, seen = None, 19, 0, 0, set()
+        L = len(s)
+        for rp in range(0, L - k + 1):
+            for (ri, jp) in index.get(s[rp:rp + k], ()):
+                if loc and locus[ri][:3] != loc:
+                    continue
+                d = jp - rp
+                if (ri, d) in seen:
+                    continue
+                seen.add((ri, d))
+                jr = junctions[ri]
+                lo, hi = (-d if d < 0 else 0), min(L, len(jr) - d)
+                ov = hi - lo
+                if ov <= best_ov:
+                    continue
+                if sum(1 for kk in range(lo, hi) if s[kk] != jr[kk + d]) <= 0.12 * ov:
+                    best_ri, best_ov, best_lo, best_hi = ri, ov, lo + d, hi + d
+        if best_ri is not None:
+            dep = depth[best_ri]
+            for p in range(best_lo, best_hi):
+                dep[p] += 1
+
+    parent = list(parent_simple)
+    import seqtree
+    safe = [i for i, s in enumerate(junctions) if s and set(s) <= _DNA]
+    idx = seqtree.Index.build([junctions[i] for i in safe], alphabet="nt")
+    params = seqtree.SearchParams(max_subs=2, max_ins=0, max_dels=0, max_total_edits=2, engine="seqtm")
+    for ci in safe:
+        jc_str = junctions[ci]
+        best, best_count = None, -1
+        for hit in idx.search(jc_str, params):
+            nj = safe[hit.ref_id]
+            if nj == ci or hit.n_subs == 0 or hit.n_ins or hit.n_dels:
+                continue
+            if v[nj] != v[ci] or j[nj] != j[ci] or len(junctions[nj]) != len(jc_str):
+                continue
+            disc = [p for p in range(len(jc_str)) if jc_str[p] != junctions[nj][p]]
+            if not disc:
+                continue
+            ok = True
+            for d in disc:
+                cd, pd = depth[ci][d], depth[nj][d]
+                if cd == 0:
+                    ok = False; break
+                if sf(cd, cd + pd, error_rate) <= alpha:    # child allele too deep to be error
+                    ok = False; break
+            if ok and span_counts[nj] > best_count:
+                best, best_count = nj, span_counts[nj]
+        if best is not None:
+            parent[ci] = best
+    return parent
 
 
 def _assign_coverage(
@@ -127,9 +286,9 @@ def _assign_coverage(
 
     A clonotype's expression is *all* reads that encompass its junction, not only the reads that
     span it end-to-end: a long CDR3 is covered by many partial reads (V-side, J-side) that never
-    reach both anchors. This is the read-counting the assembly tools (MiXCR/TRUST4) do, and it is
-    what makes cross-tool frequencies comparable. Returns, parallel to ``root_jn``, the list of
-    ``sequence_id`` s assigned to each clonotype. Each read is counted once.
+    reach both anchors. This is the coverage read-counting an assembly-based extractor does, and it
+    is the true expression estimate. Returns, parallel to ``root_jn``, the list of ``sequence_id`` s
+    assigned to each clonotype. Each read is counted once.
 
     Pass 1 -- exact: a read whose ``(locus, v_call, j_call, junction)`` key is in ``exact`` (the
     clonotype key -> root-position map, collapsed children included) is assigned there
@@ -217,9 +376,12 @@ def correct_airr(
     airr_tsv: str | Path,
     output: str | Path,
     *,
-    max_mismatches: int = 2,
-    ratio: float = 0.05,
-    require_vj: bool = False,
+    max_subs: int = 2,
+    max_indel: int = 0,
+    error_rate: float = 0.001,
+    indel_rate: float = 0.001,
+    require_vj: bool = True,
+    error_method: str = "simple",
     complete_only: bool = True,
     coverage: bool = True,
     read_map: str | Path | None = None,
@@ -234,13 +396,25 @@ def correct_airr(
             ``j_call``, ``c_call``, ``locus``, ``duplicate_count``, ``consensus_count``), sorted
             by abundance. A clonotype is keyed by ``(locus, v_call, j_call, junction)``. Per the
             AIRR schema, ``duplicate_count`` is the number of READS supporting the clonotype (both
-            paired mates of a molecule count) -- directly comparable to MiXCR ``readCount`` /
-            TRUST4 ``#count`` -- and ``consensus_count`` is the number of distinct fragment
-            consensuses (the two mates of one molecule are one consensus). ``c_call`` is the
+            paired mates of a molecule count) and ``consensus_count`` is the number of distinct
+            fragment consensuses (the two mates of one molecule are one consensus). ``c_call`` is the
             clonotype's dominant isotype CLASS (from ``c_class``: IGHG, IGHA, ...), preferring a
             resolved class over the ambiguous ``IGHC``; empty when no read carried a constant call.
-        ratio: parent:child count ratio; must be in ``(0, 1)`` (vdjtools default 0.05).
-        require_vj: only collapse neighbours sharing ``v_call`` and ``j_call``.
+        max_subs: max substitutions between an error child and its parent (seqtree neighbour search).
+        max_indel: max inserted/deleted bases searched for indel error children (default 0). A 1-2 bp
+            instrument indel is a frameshift and is already dropped by ``complete_only``, so on
+            complete junctions the indel search only costs time (~160x slower) and collapses nothing;
+            a multi-base in-frame SHM indel costs ``(indel_rate*L)**len`` and is kept as a real
+            clonotype either way. Set it > 0 only with ``--all-junctions`` (frameshift indels kept).
+        error_rate: per-BASE substitution error rate (~Phred 30 = 0.001). The per-substitution
+            collapse probability is length-scaled, ``error_rate * junction_len``, so the default
+            reproduces vdjtools' ~1/20 at a 45 nt (15 aa) junction and scales for other lengths.
+        indel_rate: per-BASE indel error rate (instrument-dependent; default 0.001, length-scaled).
+        error_method: ``"simple"`` (default) tests on spanning read counts; ``"binom"`` /
+            ``"betabinom"`` pile up partial reads per discriminating position for extra depth at
+            very low coverage (:func:`_error_pileup`).
+        require_vj: only collapse neighbours sharing ``v_call`` and ``j_call`` (default ``True`` -- a
+            true sequencing error does not change the germline-anchored V/J call).
         complete_only: keep only reads whose junction spans both conserved anchors, is in
             frame, and has no stop codon (see :data:`_COMPLETE`). A read that stops short of
             the [FW]118 anchor yields a *prefix* of a junction, not a clonotype. Setting this
@@ -250,9 +424,8 @@ def correct_airr(
             (aligns to it), not only the reads that span it end-to-end (default ``True``). A long
             CDR3 is covered by many partial V-side / J-side reads that never reach both anchors;
             counting only spanning reads under-reports it non-uniformly (the deficit scales with
-            CDR3 length), which is why a spanning count correlates poorly with the assembly tools'
-            read counts. Coverage counting (:func:`_assign_coverage`) matches MiXCR/TRUST4 and is
-            the true expression estimate. ``False`` reverts to spanning-read counts.
+            CDR3 length). Coverage counting (:func:`_assign_coverage`) is the true expression
+            estimate. ``False`` reverts to spanning-read counts.
         read_map: optional TSV ``sequence_id -> junction`` (the corrected clonotype a
             read ends up in) — the read-id → junction map after correction.
         extra_airr: optional Stage-3 assembled-reads AIRR (from
@@ -264,11 +437,13 @@ def correct_airr(
     Returns:
         A :class:`CorrectReport`.
     """
-    if not 0.0 < ratio < 1.0:
-        # ratio == 0 -> 1/ratio divides by zero; ratio >= 1 -> a "parent" needs no more counts
-        # than its child, which breaks the strictly-increasing-count invariant `_root` relies on
-        # (mutual parents => infinite loop). vdjtools' default is 0.05.
-        raise ValueError(f"ratio must be in (0, 1), got {ratio}")
+    for name, val in (("error_rate", error_rate), ("indel_rate", indel_rate)):
+        # p_err < 1 keeps counts strictly increasing along parent pointers (no cycles); p_err == 0
+        # would make a single mismatch collapse anything, p_err >= 1 never collapses.
+        if not 0.0 < val < 1.0:
+            raise ValueError(f"{name} must be in (0, 1), got {val}")
+    if error_method not in ("simple", "binom", "betabinom"):
+        raise ValueError(f"error_method must be simple|binom|betabinom, got {error_method!r}")
 
     output = Path(output)
     raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
@@ -292,14 +467,11 @@ def correct_airr(
     n_incomplete = n_with_junction - df.height
 
     # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
-    # same nucleotide junction but a different locus/V/J are different clonotypes. Per the AIRR schema
-    # the table reports BOTH counts (see the output DataFrame): `duplicate_count` = READS (every row,
-    # so a molecule whose two mates both span the junction counts twice) -- the same read-counting
-    # convention as MiXCR `readCount` / TRUST4 `#count`, which is what makes the abundances directly
-    # comparable across tools -- and `consensus_count` = distinct FRAGMENTS (`_frag`, the two mates of
-    # one molecule collapsed to one consensus). The error-correction ratio test runs on the fragment
-    # (consensus) count, which is insert-size-invariant (reads are inflated non-uniformly by insert
-    # size). `read_ids` keeps every read so the read-map stays read-level.
+    # same nucleotide junction but a different locus/V/J are different clonotypes. `read_ids` keeps
+    # every SPANNING read (a complete-junction read fully observes the junction); its length is the
+    # spanning read count the error-correction test runs on, and it also keeps the read-map read-level.
+    # `count` is distinct fragments (`_frag`, the two mates of one molecule collapsed to one consensus),
+    # reported as `consensus_count` when abundance is spanning (`coverage=False`).
     df = df.with_columns(pl.col("sequence_id").str.replace(r"/[12]$", "").alias("_frag"))
     keys = ["locus", "v_call", "j_call", "junction"]
     g = df.group_by(keys).agg(
@@ -315,18 +487,22 @@ def correct_airr(
     read_ids = g["read_ids"].to_list()
     junction_aa = g["junction_aa"].to_list()
     locus = [x or "" for x in g["locus"].to_list()]
+    span_counts = [len(r) for r in read_ids]                 # spanning reads: the error-test count
 
     report = CorrectReport(clonotypes_in=len(junctions),
-                           reads=sum(len(r) for r in read_ids),   # reads; `count` is fragments
+                           reads=sum(span_counts),
                            reads_with_junction=n_with_junction,
                            reads_incomplete=n_incomplete)
-    parent = _parents(junctions, counts, v, j, max_mismatches=max_mismatches,
-                      ratio=ratio, require_vj=require_vj)
+    parent = _parents(junctions, span_counts, v, j, max_subs=max_subs, max_indel=max_indel,
+                      error_rate=error_rate, indel_rate=indel_rate, require_vj=require_vj)
+    if error_method != "simple":
+        parent = _error_pileup(raw, junctions, v, j, locus, parent, span_counts,
+                               error_rate=error_rate, indel_rate=indel_rate, method=error_method)
 
     # Accumulate each clonotype's count + reads into its ultimate ancestor.
     agg_count = counts[:]
     agg_reads: list[list[str]] = [list(r) for r in read_ids]
-    order = sorted(range(len(junctions)), key=lambda i: counts[i])  # children first
+    order = sorted(range(len(junctions)), key=lambda i: span_counts[i])  # children first
     for i in order:
         p = parent[i]
         if p is None:

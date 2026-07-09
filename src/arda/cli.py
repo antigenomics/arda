@@ -251,10 +251,22 @@ def rnaseq_map(
 def rnaseq_correct(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(..., "--output", "-o", help="Corrected clonotype table TSV."),
-    max_mismatches: int = typer.Option(2, help="Max CDR3 substitutions to collapse."),
-    ratio: float = typer.Option(0.05, help="Parent:child count ratio (0.05 = 20x per mismatch)."),
+    max_subs: int = typer.Option(2, help="Max substitutions between an error child and its parent."),
+    max_indel: int = typer.Option(
+        0, help="Max indel bases searched (default 0). 1-2 bp indel errors are frameshifts already "
+                "dropped by --complete-only, so this only helps with --all-junctions; multi-bp SHM "
+                "indels are kept regardless."),
+    error_rate: float = typer.Option(
+        0.001, help="Per-BASE substitution error rate (~Phred 30). Length-scaled: the per-sub "
+                    "collapse prob is error_rate*junction_len, ~1/20 at a 45 nt (15 aa) junction."),
+    indel_rate: float = typer.Option(
+        0.001, help="Per-BASE indel error rate (length-scaled). Multi-bp (SHM) indels are kept."),
     require_vj: bool = typer.Option(
-        False, "--require-vj", help="Only collapse neighbours sharing V and J calls."),
+        True, "--require-vj/--no-require-vj",
+        help="Only collapse neighbours sharing V and J (a true error keeps the germline V/J call)."),
+    error_method: str = typer.Option(
+        "simple", help="simple = spanning-read counts; binom|betabinom = per-position read-depth "
+                       "pileup for very low coverage."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions",
         help="Keep only complete junctions (span C104..[FW]118, in frame, no stop). Reads that "
@@ -266,12 +278,13 @@ def rnaseq_correct(
         help="Stage-3 assembled-reads AIRR (from `assemble`) to fold into the clonotype table."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
-    """Collapse CDR3 sequencing errors (parent:child ratio) into clonotypes."""
+    """Collapse CDR3 sequencing errors into clonotypes (per-substitution/indel error model)."""
     from .rnaseq.correct import correct_airr
 
-    rep = correct_airr(input, output, max_mismatches=max_mismatches, ratio=ratio,
-                       require_vj=require_vj, complete_only=complete_only,
-                       read_map=read_map, extra_airr=extra_airr, report_path=report)
+    rep = correct_airr(input, output, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
+                       indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
+                       complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
+                       report_path=report)
     typer.echo(
         f"[arda] {rep.clonotypes_in} -> {rep.clonotypes_out} clonotypes "
         f"({rep.collapsed} collapsed) over {rep.reads} reads"

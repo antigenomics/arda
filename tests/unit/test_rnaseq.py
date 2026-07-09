@@ -235,10 +235,11 @@ def test_correct_parent_child_collapse(tmp_path):
     # 30 nt (in frame) and a canonical C...F junction_aa — `correct` keeps only complete
     # junctions by default, so the fixture has to be a biologically valid one.
     P = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC"
-    C1 = "TGTGACAGCAGCTTAGACGGGACAGGGTTC"   # 1 mismatch from P
+    C1 = "TGTGACAGCAGCTTAGACGGGACAGGGTTC"   # 1 substitution from P, same V/J
     U = "TGTACCCCGGGGTTTTAAAACCCCGGGTTC"    # unrelated
     rows = []
-    for tag, junc, n in [("p", P, 100), ("c", C1, 2), ("u", U, 5)]:   # 100 >= 2*20 -> C1 child of P
+    # error_rate 0.01 => a 1-sub child collapses once the parent is >=100x deeper: 500*0.01=5 >= 2.
+    for tag, junc, n in [("p", P, 500), ("c", C1, 2), ("u", U, 5)]:
         for k in range(n):
             rows.append({"sequence_id": f"{tag}{k}", "junction": junc,   # unique ids (real reads never collide)
                          "junction_aa": "CASSLDGTF", "v_call": "TRBV20-1*01",
@@ -251,10 +252,10 @@ def test_correct_parent_child_collapse(tmp_path):
     counts = {r["junction"]: int(r["duplicate_count"]) for r in out.iter_rows(named=True)}
 
     assert rep.clonotypes_in == 3 and rep.clonotypes_out == 2
-    assert counts[P] == 102 and counts[U] == 5   # C1 absorbed into P, read count conserved
+    assert counts[P] == 502 and counts[U] == 5   # C1 absorbed into P, read count conserved
     assert C1 not in counts
     rm = pl.read_csv(tmp_path / "map.tsv", separator="\t", infer_schema_length=0)
-    assert rm.height == 107 and set(rm["junction"].unique().to_list()) == {P, U}
+    assert rm.height == 507 and set(rm["junction"].unique().to_list()) == {P, U}
 
 
 def test_correct_drops_incomplete_junctions(tmp_path):
@@ -311,9 +312,9 @@ def test_correct_keys_on_locus_v_j_not_junction_alone(tmp_path):
 
 
 def test_correct_read_and_consensus_counts_from_mates(tmp_path):
-    """AIRR counts: ``duplicate_count`` = READS (every mate row; matches MiXCR ``readCount`` /
-    TRUST4 ``#count``), ``consensus_count`` = distinct fragment consensuses (the two mates of one
-    molecule are one). 5 molecules x 2 spanning mates -> duplicate_count 10, consensus_count 5."""
+    """AIRR counts: ``duplicate_count`` = READS (every mate row; the standard read-counting
+    convention), ``consensus_count`` = distinct fragment consensuses (the two mates of one molecule
+    are one). 5 molecules x 2 spanning mates -> duplicate_count 10, consensus_count 5."""
     pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
@@ -356,17 +357,62 @@ def test_correct_isotype_from_constant_mate(tmp_path):
     assert int(out["duplicate_count"]) == 8, "8 fragments"
 
 
-def test_correct_rejects_invalid_ratio(tmp_path):
-    """ratio must be in (0, 1): 0 divides by zero, >=1 breaks the strictly-increasing-count
-    invariant `_root` relies on (mutual parents -> infinite loop)."""
+def test_correct_keeps_inframe_indel_variant(tmp_path):
+    """A 3 bp (in-frame SHM) indel costs indel_rate**3 and must NOT collapse even onto a very deep
+    parent -- three coincident indel errors are ~1e-6, so it is a real clonotype, not an error."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    P = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC"                 # CASSLDGTF (30 nt, in frame)
+    V3 = "TGTGCCAGCAGCGACGGGACAGGGTTC"                   # P minus codon 'TTA' -> CASSDGTF (27 nt)
+    rows = []
+    for tag, junc, aa, n in [("p", P, "CASSLDGTF", 500), ("v", V3, "CASSDGTF", 5)]:
+        for k in range(n):
+            rows.append({"sequence_id": f"{tag}{k}", "junction": junc, "junction_aa": aa,
+                         "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB"})
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    rep = correct_airr(airr, tmp_path / "clones.tsv", max_indel=3)   # search 3 bp indels: found but not collapsed
+    junctions = set(pl.read_csv(tmp_path / "clones.tsv", separator="\t",
+                                infer_schema_length=0)["junction"].to_list())
+    assert rep.clonotypes_out == 2 and V3 in junctions, "in-frame 3 bp indel must survive"
+
+
+def test_correct_pileup_binom_collapses_low_freq_variant(tmp_path):
+    """The binom pileup path piles reads up per position and collapses a low-frequency 1-sub variant
+    onto a deep parent (child allele depth is consistent with sequencing error of the parent depth)."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    P = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC"
+    C1 = "TGTGACAGCAGCTTAGACGGGACAGGGTTC"                # 1 substitution from P
+    rows = []
+    for tag, junc, n in [("p", P, 500), ("c", C1, 2)]:
+        for m in range(n):                              # full-span reads: sequence == junction
+            rows.append({"sequence_id": f"{tag}{m}", "sequence": junc, "rev_comp": "F",
+                         "junction": junc, "junction_aa": "CASSLDGTF", "v_call": "TRBV20-1*01",
+                         "j_call": "TRBJ2-1*01", "locus": "TRB"})
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    rep = correct_airr(airr, tmp_path / "clones.tsv", error_method="binom")
+    assert rep.clonotypes_out == 1, "C1 (2 reads) is a sequencing error of P (500) at its position"
+
+
+def test_correct_rejects_invalid_error_rates(tmp_path):
+    """error_rate/indel_rate must be in (0, 1): p_err < 1 keeps counts strictly increasing along
+    parent pointers (no cycles); 0 collapses everything, >=1 collapses nothing."""
     from arda.rnaseq.correct import correct_airr
     airr = tmp_path / "in.airr.tsv"
     pl.DataFrame([{"sequence_id": "a", "junction": "TGTGCCAGCAGCTTAGACGGGACAGGGTTC",
                    "junction_aa": "CASSLDGTF", "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01",
                    "locus": "TRB"}]).write_csv(airr, separator="\t")
     for bad in (0.0, 1.0, 1.5, -0.1):
-        with pytest.raises(ValueError, match="ratio"):
-            correct_airr(airr, tmp_path / "out.tsv", ratio=bad)
+        with pytest.raises(ValueError, match="error_rate"):
+            correct_airr(airr, tmp_path / "out.tsv", error_rate=bad)
+        with pytest.raises(ValueError, match="indel_rate"):
+            correct_airr(airr, tmp_path / "out.tsv", indel_rate=bad)
 
 
 def test_kmer_is_plumbed_to_mmseqs_and_defaults_to_12(monkeypatch):

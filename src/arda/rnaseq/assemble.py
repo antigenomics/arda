@@ -2,8 +2,8 @@
 
 Reconstruct the clonotypes that Stage 1 maps but cannot *call*: a long CDR3 (V(DD)J
 ultralong, ~20-40 aa) does not fit in one 100-150 bp read, so no read spans the junction
-and :mod:`~arda.rnaseq.correct`'s complete-junction filter drops every read of it. TRUST4
-recovers these by assembly; this module does the same on the reads Stage 1 already mapped.
+and :mod:`~arda.rnaseq.correct`'s complete-junction filter drops every read of it. Assembly-based
+extractors recover these by assembly; this module does the same on the reads Stage 1 already mapped.
 
 Why overlap-extension and not a de Bruijn graph: every clonotype sharing a germline V/J
 contributes identical k-mers, so a dBG collapses distinct clones exactly across the CDR3

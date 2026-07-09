@@ -172,8 +172,8 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         ValueError: if the two files disagree on read names or record count. This is not paranoia:
             a truncated R2 makes ``zip`` stop early and silently analyse a prefix, and a shuffled R2
             pairs mate 1 of one fragment with mate 2 of another. Both were observed in this project's
-            own data and produced a *published* false discovery (a "TRUST4 R2 blind spot") that had to
-            be retracted. A pair of FASTQs is an assertion; check it.
+            own data and produced a *published* false discovery (a spurious R2-only blind spot) that
+            had to be retracted. A pair of FASTQs is an assertion; check it.
     """
     if r2 is None:
         yield from seqio.read_sequences(r1)
