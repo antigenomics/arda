@@ -4,7 +4,9 @@
 
 process ARDA {
     tag "$meta.id"
-    label 'process_medium'
+    // arda is CPU-bound (the MMseqs2 search dominates) but very low-memory (<400 MB, independent of
+    // depth) -- give it cores, not RAM. ~40k reads/s on 32 cores; a full-depth ~100M-read sample ~45 min.
+    label 'process_high'
 
     // arda is pip-installable (PyPI: arda-mapper) and needs the mmseqs2 binary.
     //   -profile conda    -> works out of the box from environment.yml

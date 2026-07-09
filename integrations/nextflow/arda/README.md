@@ -13,6 +13,19 @@ pipeline the same way STAR/Salmon/fastp do.
 | `<id>.airr.tsv` | mapped reads, AIRR Rearrangement schema |
 | `<id>.arda.json` | run report (reads mapped, per-locus counts, isotype/constant, timing, peak RSS) |
 
+## Runtime & resources
+
+arda is **CPU-bound** (the MMseqs2 search dominates) and **very low-memory** (< 400 MB peak RSS,
+independent of read depth) — so give the process cores, not RAM. Measured on bulk tumor RNA-seq,
+32 cores:
+
+| reads | cores | wall time | throughput | peak RSS |
+|---|---|---|---|---|
+| 104.9 M (52.4 M pairs, 2×150) | 32 | 44 min | ~39,600 reads/s (~2.4 M/min) | 371 MB |
+
+Throughput scales roughly linearly with cores. The module is labelled `process_high`; for full-depth
+samples give it 16–32 cpus (`withName: 'ARDA' { cpus = 32 }`). `--threads` follows `task.cpus`.
+
 ## Requirements
 
 arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.

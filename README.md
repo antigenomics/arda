@@ -111,6 +111,9 @@ box) and a `Dockerfile`, and emits a `versions.yml`. See its
 [README](integrations/nextflow/arda/README.md) and [`docs/pipeline_integration.rst`](docs/pipeline_integration.rst)
 for the five-line drop-in.
 
+arda is **CPU-bound and low-memory**: ~40k reads/s on 32 cores (~2.4 M reads/min, < 400 MB RAM), so a
+full-depth bulk RNA-seq sample of ~50 M read pairs finishes in ~45 min. Throughput scales with cores.
+
 ## Library
 
 ```python
