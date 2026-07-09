@@ -155,9 +155,13 @@ def test_records_pass_the_airr_rearrangement_schema(human_annot):
 
 def test_reverse_complemented_input_yields_the_same_junction(human, human_annot):
     """arda searches both strands, so an antisense molecule must give the same junction as its
-    sense form -- the exact property a stranded library's R2 reads depend on."""
-    rc = [(acc, seq.translate(_RC)[::-1]) for acc, seq in human]
-    rc_annot = {r["sequence_id"]: r for r in annotate_records(rc, "human", "nt", threads=8)}
+    sense form -- the exact property a stranded library's R2 reads depend on.
+
+    Per AIRR, ``sequence`` keeps the read AS SUBMITTED and ``rev_comp=T`` signals that the output
+    data are on its reverse complement. So for an antisense input, ``sequence`` is the (antisense)
+    submitted read, while ``sequence_alignment`` and the junction are on the coding strand."""
+    rc_in = {acc: seq.translate(_RC)[::-1] for acc, seq in human}
+    rc_annot = {r["sequence_id"]: r for r in annotate_records(list(rc_in.items()), "human", "nt", threads=8)}
     compared = 0
     for acc, fwd in human_annot.items():
         if not fwd["junction_aa"]:
@@ -165,6 +169,9 @@ def test_reverse_complemented_input_yields_the_same_junction(human, human_annot)
         rev = rc_annot[acc]
         assert rev["junction_aa"] == fwd["junction_aa"], f"{acc}: RC junction differs"
         assert rev["rev_comp"] == "T" and fwd["rev_comp"] == "F"
+        assert rev["sequence"] == rc_in[acc], f"{acc}: sequence is not the submitted read"
+        # the coding-strand alignment is the reverse complement of the submitted sequence
+        assert rev["sequence_alignment"] == fwd["sequence_alignment"]
         compared += 1
     assert compared >= 20
 

@@ -280,13 +280,21 @@ def transfer_hit(
     seqtype: str = "nt",
     rev_comp: bool = False,
     d_germlines: list[tuple[str, str]] | None = None,
+    submitted_seq: str | None = None,
 ) -> dict:
-    """Build an AIRR record by projecting ``ref`` region coords onto the query."""
+    """Build an AIRR record by projecting ``ref`` region coords onto the query.
+
+    ``query_seq`` is the coding-strand sequence all markup/coords/CIGARs are computed on.
+    ``submitted_seq`` is the read AS SUBMITTED, stored verbatim in the AIRR ``sequence`` field;
+    for a reverse-strand hit it is the reverse complement of ``query_seq`` and ``rev_comp`` is set,
+    per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
+    ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
+    """
     coords = _markup.transfer_regions(
         hit["qaln"], hit["taln"], int(hit["qstart"]), int(hit["tstart"]),
         ref.starts, ref.ends)
 
-    rec = _empty_record(query_id, query_seq)
+    rec = _empty_record(query_id, query_seq if submitted_seq is None else submitted_seq)
     rec.update(locus=ref.locus, v_call=ref.v_call, j_call=ref.j_call,
                c_call=ref.c_call, c_class=isotype_class(ref.c_call),
                rev_comp="T" if rev_comp else "F", productive="")
