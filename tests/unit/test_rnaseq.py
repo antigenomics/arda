@@ -221,6 +221,62 @@ def test_correct_drops_incomplete_junctions(tmp_path):
     assert raw.clonotypes_in == 4 and raw.reads_incomplete == 0
 
 
+def test_correct_keys_on_locus_v_j_not_junction_alone(tmp_path):
+    """A clonotype is (locus, v_call, j_call, junction). The SAME nucleotide junction from a
+    different V/J is a different clonotype -- grouping on the junction alone merged them and kept
+    an arbitrary member's calls."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
+    rows = []
+    for vj in [("TRBV20-1*01", "TRBJ2-1*01"), ("TRBV28*01", "TRBJ2-7*01")]:   # same junction, diff V/J
+        for k in range(4):
+            rows.append({"sequence_id": f"{vj[0]}{k}", "junction": junc, "junction_aa": aa,
+                         "v_call": vj[0], "j_call": vj[1], "locus": "TRB"})
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    correct_airr(airr, tmp_path / "clones.tsv")
+    out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0)
+    assert out.height == 2, "same junction with different V/J must stay two clonotypes"
+    assert set(out["v_call"].to_list()) == {"TRBV20-1*01", "TRBV28*01"}
+
+
+def test_correct_counts_fragments_not_double_counted_mates(tmp_path):
+    """Paired mates `<id>/1` and `<id>/2` of one molecule both carry the junction; `count` is
+    fragments (each counted once), `n_reads` is the reads."""
+    pytest.importorskip("seqtree")
+    from arda.rnaseq.correct import correct_airr
+
+    junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
+    rows = []
+    for frag in range(5):                                    # 5 fragments, both mates each
+        for mate in ("1", "2"):
+            rows.append({"sequence_id": f"read{frag}/{mate}", "junction": junc, "junction_aa": aa,
+                         "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB"})
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame(rows).write_csv(airr, separator="\t")
+
+    correct_airr(airr, tmp_path / "clones.tsv")
+    out = pl.read_csv(tmp_path / "clones.tsv", separator="\t", infer_schema_length=0).to_dicts()[0]
+    assert int(out["count"]) == 5, "10 mate-rows are 5 fragments"
+    assert int(out["n_reads"]) == 10
+
+
+def test_correct_rejects_invalid_ratio(tmp_path):
+    """ratio must be in (0, 1): 0 divides by zero, >=1 breaks the strictly-increasing-count
+    invariant `_root` relies on (mutual parents -> infinite loop)."""
+    from arda.rnaseq.correct import correct_airr
+    airr = tmp_path / "in.airr.tsv"
+    pl.DataFrame([{"sequence_id": "a", "junction": "TGTGCCAGCAGCTTAGACGGGACAGGGTTC",
+                   "junction_aa": "CASSLDGTF", "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01",
+                   "locus": "TRB"}]).write_csv(airr, separator="\t")
+    for bad in (0.0, 1.0, 1.5, -0.1):
+        with pytest.raises(ValueError, match="ratio"):
+            correct_airr(airr, tmp_path / "out.tsv", ratio=bad)
+
+
 def test_kmer_is_plumbed_to_mmseqs_and_defaults_to_12(monkeypatch):
     """``-k`` sizes MMseqs2's 4**k prefilter table, so it must actually reach MMseqs2.
 
