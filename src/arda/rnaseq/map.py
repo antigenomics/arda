@@ -113,16 +113,26 @@ def _apply_constant_rule(records: list[dict]) -> tuple[list[dict], int, int]:
 _MIN_SCORE = 75.0
 
 
-def merge_pair(s1: str, s2: str, *, min_overlap: int = 12,
-               max_mismatch_rate: float = 0.1) -> str | None:
+def _overlap_consensus(a: str, qa: str, b: str, qb: str) -> str:
+    """Per-base consensus of two aligned overlap strings: keep the higher-Phred base on a mismatch
+    (R1 wins a tie). Phred+33 is monotonic in the quality char, so compare the chars directly."""
+    return "".join(a[i] if (a[i] == b[i] or qa[i] >= qb[i]) else b[i] for i in range(len(a)))
+
+
+def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
+               min_overlap: int = 12, max_mismatch_rate: float = 0.1) -> str | None:
     """Overlap-merge a read pair into one fragment, or ``None`` if they don't overlap.
 
     Aligns ``s1`` (R1) with ``reverse_complement(s2)`` (R2 flipped to the same strand)
     by finding an exact ``_MERGE_ANCHOR``-mer from the flipped R2's 5' end inside R1
     (C-level ``str.find`` → O(len), so non-overlapping pairs — the common RNA-seq case —
-    cost almost nothing), then verifying the implied overlap. On success returns the
-    merged fragment ``s1[:pos] + rc(R2)``; the mate provides the V/J context a short read
-    lacks.
+    cost almost nothing), then verifying the implied overlap; the mate provides the V/J
+    context a short read lacks.
+
+    In the overlap the two mates may disagree. Given Phred qualities ``q1``/``q2`` the base
+    with the higher quality wins per position (``rc(R2)``'s quality is ``q2`` reversed, not
+    complemented); without them R2 wins the whole overlap (the historical behaviour). Outside
+    the overlap, R1 supplies its 5' part and R2 its 3' tail.
     """
     r2 = reverse_complement(s2)
     if len(s1) < min_overlap or len(r2) < min_overlap:
@@ -133,10 +143,15 @@ def merge_pair(s1: str, s2: str, *, min_overlap: int = 12,
     ov = min(len(s1) - pos, len(r2))
     if ov < min_overlap:
         return None
-    mism = sum(1 for a, b in zip(s1[pos:pos + ov], r2[:ov]) if a != b)
+    a, b = s1[pos:pos + ov], r2[:ov]
+    mism = sum(1 for x, y in zip(a, b) if x != y)
     if mism > max_mismatch_rate * ov:
         return None
-    return s1[:pos] + r2
+    if q1 is None or q2 is None:
+        overlap = b                                   # no quality: R2 wins the overlap (legacy)
+    else:
+        overlap = _overlap_consensus(a, q1[pos:pos + ov], b, q2[::-1][:ov])
+    return s1[:pos] + overlap + r2[ov:]
 
 # RNA-seq is mostly non-receptor, so larger chunks amortise mmseqs' fixed per-call
 # cost (~0.8 s startup) over more reads; memory stays bounded (one chunk at a time).
@@ -171,18 +186,25 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
 
     # zip_longest, not zip: plain zip stops at the shorter file AND consumes one extra record from the
     # longer one, so a truncated mate file is invisible both during and after the loop.
+    # Quality is read only when reconstructing (merge_pair's tie-break needs it) -- the default path
+    # keeps discarding it, so it costs nothing.
+    wq = reconstruct
     n = 0
-    for n, (a, b) in enumerate(zip_longest(seqio.read_sequences(r1), seqio.read_sequences(r2))):
+    for n, (a, b) in enumerate(zip_longest(seqio.read_sequences(r1, with_qual=wq),
+                                           seqio.read_sequences(r2, with_qual=wq))):
         if a is None or b is None:
             raise ValueError(
                 f"R1 and R2 differ in length (diverge at record {n}); one file is truncated.")
-        (i1, s1), (i2, s2) = a, b
+        if reconstruct:
+            (i1, s1, q1), (i2, s2, q2) = a, b
+        else:
+            (i1, s1), (i2, s2) = a, b
         if _stem(i1) != _stem(i2):
             raise ValueError(
                 f"R1/R2 mate mismatch at record {n}: {i1!r} vs {i2!r}. "
                 f"The FASTQs are not in the same order.")
         if reconstruct:
-            merged = merge_pair(s1, s2)
+            merged = merge_pair(s1, s2, q1=q1, q2=q2)
             if merged is not None:
                 yield i1, merged
                 continue

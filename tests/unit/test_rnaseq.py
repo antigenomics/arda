@@ -32,6 +32,22 @@ def test_merge_pair_no_overlap_returns_none():
     assert merge_pair(r1, r2) is None
 
 
+def test_merge_pair_quality_wins_the_overlap_mismatch():
+    """In the overlap the mates disagree at one base; the higher-Phred base wins. Without qualities
+    R2 wins the whole overlap (the historical behaviour) -- the regression this fixes."""
+    s1 = "AAAACCCCGGGGTTTTACGT"                  # R1
+    rcs2 = "AAAACCCCGGGGTTTAACGT"                # rc(R2): identical but s1[15] T -> A
+    s2 = reverse_complement(rcs2)
+    assert merge_pair(s1, s2) == rcs2            # no quality: R2 wins the overlap (== rc(R2))
+
+    hi = "I" * 20                                # Phred 40
+    q2_lowat4 = "I" * 4 + "#" + "I" * 15         # rc(R2) quality at col 15 == q2[::-1][15] == q2[4]
+    assert merge_pair(s1, s2, q1=hi, q2=q2_lowat4) == s1        # R1 higher there -> R1 base ('T')
+
+    q1_lowat15 = "I" * 15 + "#" + "I" * 4        # R1 low at the mismatch
+    assert merge_pair(s1, s2, q1=q1_lowat15, q2=hi) == rcs2     # R2 higher there -> R2 base ('A')
+
+
 def test_read_pairs_reconstruct_merges_overlap(tmp_path):
     frag = "ACGTACGTACGTTTGGCCAATTGGCCAAGGTTCCAAGGTTCCAAGATCGATCGATCG"
     r1p = _write_fastq(tmp_path / "r1.fastq", [("f", frag[:40])])
