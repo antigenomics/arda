@@ -15,9 +15,51 @@ CIGAR operators follow the AIRR spec (SAM subset):
     C-region CH1 exon is longer than the shipped stub).
 
 ``segment_cigars`` builds all three in a SINGLE pass over the aligned strings.
+
+Correcting cigars for CONTIGS (Stage 3). A contig is just a long query, so the SIMPLE, correct way
+to get its cigars is to RE-ANNOTATE the assembled contig through ``mapper.annotate_records`` -- one
+mmseqs alignment, then ``segment_cigars`` -- exactly as for a read. No cigar arithmetic, no new C++;
+``check_cigar`` validates the result. (Verified: the full-length GenBank receptor mRNAs are contigs,
+and their re-annotated cigars pass ``check_cigar``.)
+# ponytail: re-annotate, don't merge. The alternative -- building a contig's cigar by MERGING its
+# reads' per-read cigars against the germline column-by-column (a consensus at the alignment level,
+# avoiding the second alignment pass and preserving per-read coverage) -- is a genuine per-column
+# reduction over N reads and is where careful C++ (alongside src/_markup/markup.cpp) would pay off.
+# It is a Stage-3 optimisation, gated on the assembler existing and on re-annotation being too slow
+# (it is not, at a few thousand contigs/sample). Deferred; see the arda-benchmark Phase-D plan.
 """
 
 from __future__ import annotations
+
+import re
+
+_CIGAR_RE = re.compile(r"(\d+)([MIDNS=X])")
+
+
+def parse_cigar(cigar: str) -> list[tuple[int, str]]:
+    """``"57S291M1054S"`` -> ``[(57,"S"), (291,"M"), (1054,"S")]``. Inverse of :func:`build_cigar`."""
+    return [(int(n), op) for n, op in _CIGAR_RE.findall(cigar)]
+
+
+def cigar_query_length(cigar: str) -> int:
+    """Query (read/contig) bases the CIGAR spans -- M/I/S/=/X; D and N are reference-side."""
+    return sum(n for n, op in parse_cigar(cigar) if op in "MIS=X")
+
+
+def cigar_reference_length(cigar: str) -> int:
+    """Reference (germline) bases the CIGAR spans -- M/D/N/=/X; I and S are query-side."""
+    return sum(n for n, op in parse_cigar(cigar) if op in "MDN=X")
+
+
+def check_cigar(cigar: str, query_len: int) -> bool:
+    """A CIGAR is consistent with a query of ``query_len`` iff its query-side ops sum to it.
+
+    This is the invariant a corrected/re-annotated sequence (a read OR an assembled contig -- a
+    contig is just a long query) must satisfy: ``v_cigar``/``j_cigar``/``c_cigar`` each lay over the
+    WHOLE sequence, soft-clipping the parts outside their own segment. Use it to validate a cigar
+    after correcting or re-deriving it.
+    """
+    return cigar_query_length(cigar) == query_len
 
 
 def _classify(tpos: int, t_vend: int, t_jstart: int, t_vjend: int) -> str | None:

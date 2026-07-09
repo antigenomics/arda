@@ -6,7 +6,9 @@ The reference is the AIRR spec's CIGAR rules: a leading ``S`` (query 5' offset) 
 
 import re
 
-from arda.annotate.cigar import segment_cigars, build_cigar, _classify
+from arda.annotate.cigar import (segment_cigars, build_cigar, _classify,
+                                  parse_cigar, cigar_query_length, cigar_reference_length,
+                                  check_cigar)
 
 
 def _query_len_from_cigar(cig: str) -> int:
@@ -73,3 +75,20 @@ def test_cigar_accounts_for_the_whole_read():
     assert out
     for cig in out.values():
         assert _query_len_from_cigar(cig) == len(q), f"{cig} does not cover all {len(q)} query nt"
+
+
+def test_parse_and_lengths():
+    """parse_cigar is the inverse of build_cigar; the length helpers split query vs reference ops
+    (so a cigar can be inspected/verified/corrected). N is reference-side, S is query-side."""
+    cig = "57S4N291M1054S"
+    assert parse_cigar(cig) == [(57, "S"), (4, "N"), (291, "M"), (1054, "S")]
+    assert cigar_query_length(cig) == 57 + 291 + 1054      # S and M consume query; N does not
+    assert cigar_reference_length(cig) == 4 + 291          # N and M consume reference; S does not
+    assert check_cigar(cig, 1402) and not check_cigar(cig, 1401)
+
+
+def test_build_parse_round_trip():
+    cig = build_cigar(q_lead=100, g_lead=4, ops=["M"] * 20 + ["I"] + ["M"] * 5, q_trail=30)
+    assert cig == "100S4N20M1I5M30S"
+    assert parse_cigar(cig) == [(100, "S"), (4, "N"), (20, "M"), (1, "I"), (5, "M"), (30, "S")]
+    assert check_cigar(cig, 100 + 20 + 1 + 5 + 30)         # query-side ops sum to the read length

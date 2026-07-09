@@ -140,6 +140,25 @@ def test_airr_alignment_fields_are_populated_and_consistent(human_annot):
     assert int(v_less["j_germline_start"]) >= 1     # J coverage recorded even without V
 
 
+def test_contig_cigars_are_valid(human_annot):
+    """A full-length receptor mRNA IS a contig (Stage-3 output shape), and re-annotating it produces
+    per-segment cigars that lay over the whole contig -- so "correcting cigar strings in contigs" is
+    just re-annotation + check_cigar, no cigar arithmetic. Each present v/j/c cigar must query-cover
+    the contig and its reference span must be positive."""
+    from arda.annotate.cigar import check_cigar, cigar_reference_length
+    checked = 0
+    for acc, r in human_annot.items():
+        qlen = int(float(r["mmseqs2_qlen"]))
+        for seg in ("v_cigar", "j_cigar", "c_cigar", "d_cigar"):
+            cig = r.get(seg)
+            if not cig:
+                continue
+            assert check_cigar(cig, qlen), f"{acc}/{seg}={cig} does not cover the {qlen}-nt contig"
+            assert cigar_reference_length(cig) > 0
+            checked += 1
+    assert checked >= 40                                     # ~2-3 cigars over 29 contigs
+
+
 def test_records_pass_the_airr_rearrangement_schema(human_annot):
     """The payoff of the whole phase: every emitted record validates against the official AIRR
     Rearrangement schema -- all 14 required fields present and correctly typed -- including the
