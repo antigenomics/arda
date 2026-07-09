@@ -1,7 +1,10 @@
 <p align="center">
   <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/arda_dark.svg">
     <source media="(prefers-color-scheme: light)" srcset="assets/arda_light.svg">
-    <img alt="arda" src="assets/arda_dark.svg" width="340">
+    <!-- Absolute PNG fallback: PyPI strips <picture>/<source> and cannot render a relative or
+         raw-served SVG, so the logo must be an absolute-URL raster here. GitHub uses the SVG sources. -->
+    <img alt="arda" src="https://raw.githubusercontent.com/antigenomics/arda/master/assets/arda_dark.png" width="340">
   </picture>
 </p>
 
