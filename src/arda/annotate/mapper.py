@@ -314,11 +314,18 @@ def annotate_file(
         organism, seqtype, threads, sensitivity, strand)
 
     chunks: queue.Queue = queue.Queue(maxsize=2)
+    # The reader runs in a daemon thread; anything it raises -- a missing file, a truncated gzip --
+    # would otherwise die there unheard while `finally` still posts the sentinel, so the main loop
+    # sees a clean end-of-stream and writes partial output with exit 0 (silent truncation). Capture
+    # it and re-raise on the consumer side. Same guard as `rnaseq.map.map_rnaseq`.
+    reader_exc: list[BaseException] = []
 
     def reader():
         try:
             for chunk in seqio.chunked(seqio.read_sequences(input), chunk_size):
                 chunks.put(chunk)
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
+            reader_exc.append(exc)
         finally:
             chunks.put(None)  # sentinel
 
@@ -329,6 +336,8 @@ def annotate_file(
         while True:
             chunk = chunks.get()
             if chunk is None:
+                if reader_exc:
+                    raise reader_exc[0]
                 break
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
                                    threads=threads, sensitivity=sensitivity,

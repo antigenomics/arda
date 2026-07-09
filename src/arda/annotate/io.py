@@ -71,13 +71,20 @@ def read_sequences(path: str | Path, *, with_qual: bool = False) -> Iterator[tup
     ``None`` for FASTA (which has no quality). The default is unchanged and pays nothing: the
     quality line is consumed either way, only kept when asked (needed solely by the paired
     overlap-merge, :func:`arda.rnaseq.map.merge_pair`)."""
-    fmt = detect_format(path)
-    with open_text(path) as fh:
-        if fmt == "fasta":
-            for sid, seq in _read_fasta(fh):
-                yield (sid, seq, None) if with_qual else (sid, seq)
-        else:
-            yield from _read_fastq(fh, with_qual=with_qual)
+    try:
+        fmt = detect_format(path)
+        with open_text(path) as fh:
+            if fmt == "fasta":
+                for sid, seq in _read_fasta(fh):
+                    yield (sid, seq, None) if with_qual else (sid, seq)
+            else:
+                yield from _read_fastq(fh, with_qual=with_qual)
+    except (EOFError, gzip.BadGzipFile) as exc:
+        # A truncated/corrupt .gz raises deep in the gzip layer mid-stream (EOFError:
+        # "Compressed file ended before the end-of-stream marker"). Surface it as a clear
+        # input error: a bare EOFError reaching Typer/Click is mistaken for a Ctrl-D and
+        # printed as "Aborted." with no cause.
+        raise ValueError(f"truncated or corrupt gzip input: {path}") from exc
 
 
 def write_fasta(records: Iterator[tuple[str, str]], path: str | Path) -> Path:

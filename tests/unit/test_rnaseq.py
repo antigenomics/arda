@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import random
 
@@ -63,6 +64,53 @@ def _write_fastq(path, records):
         for sid, seq in records:
             fh.write(f"@{sid}\n{seq}\n+\n{'I' * len(seq)}\n")
     return path
+
+
+def _truncated_gzip_fastq(path, n_reads=200, chop=100):
+    """A valid-prefix, truncated gzip: write ``n_reads``, then chop the last ``chop``
+    compressed bytes so the stream ends before its gzip end-of-stream marker."""
+    with gzip.open(path, "wt") as fh:
+        for i in range(n_reads):
+            seq = "ACGT" * 30
+            fh.write(f"@read{i}\n{seq}\n+\n{'I' * len(seq)}\n")
+    path.write_bytes(path.read_bytes()[:-chop])
+    return path
+
+
+def test_read_sequences_truncated_gzip_raises_valueerror(tmp_path):
+    """A truncated .gz must surface as a clear ValueError, not a bare EOFError.
+
+    A bare EOFError from the gzip layer reaches Typer/Click, which mistakes it for a Ctrl-D
+    and prints "Aborted." with no cause -- a truncated FASTQ then looks like a user interrupt
+    instead of corrupt input (release blocker, arda 2.3.2)."""
+    fq = _truncated_gzip_fastq(tmp_path / "trunc.fq.gz")
+    with pytest.raises(ValueError, match="truncated or corrupt"):
+        list(read_pairs(fq))  # single-end -> read_sequences
+
+
+@requires_mmseqs
+@requires_human_db
+def test_map_rnaseq_truncated_gzip_raises_not_aborts(tmp_path):
+    """map_rnaseq must reject a truncated gzip with a ValueError, not die as "Aborted.".
+
+    The reader runs in a daemon thread; its exception is captured and re-raised on the
+    consumer side (map.py). This locks the end-to-end contract for the reported blocker."""
+    fq = _truncated_gzip_fastq(tmp_path / "trunc.fq.gz")
+    with pytest.raises(ValueError, match="truncated or corrupt"):
+        map_rnaseq(fq, tmp_path / "out.tsv", threads=1)
+
+
+@requires_mmseqs
+@requires_human_db
+def test_annotate_file_truncated_gzip_raises_not_silent(tmp_path):
+    """annotate_file shares map's daemon-reader design and must have the same guard.
+
+    Without it, a truncated gzip dies unheard in the reader thread while the sentinel is
+    still posted, so annotate_file returns partial output with exit 0 -- silent truncation."""
+    from arda.annotate.mapper import annotate_file
+    fq = _truncated_gzip_fastq(tmp_path / "trunc.fq.gz")
+    with pytest.raises(ValueError, match="truncated or corrupt"):
+        annotate_file(fq, tmp_path / "out.tsv", threads=1)
 
 
 def test_read_pairs_single(tmp_path):
