@@ -24,6 +24,8 @@ compatibility: >
   `vdj/` reference auto-fetches into `~/.cache/arda` on first use
   (set `ARDA_NO_AUTO_FETCH` for air-gapped runs), and the `mmseqs` binary auto-fetches a
   static build into the cache if missing — so a bare `pip install` annotates out of the box.
+  Bulk RNA-seq needs the extra: `pip install 'arda-mapper[rnaseq]'` (>=2.5.1) — without
+  `seqtree`, `arda rnaseq run` maps and assembles, then dies before writing any clonotype table.
   A source checkout / `$ARDA_HOME` still uses the committed `database/`. Shell is fish — use
   fish syntax in terminal commands.
 metadata:
