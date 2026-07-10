@@ -99,7 +99,9 @@ def annotate(
         50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
-        help="Map D segments (d_call/d2_call/np*) for VDJ loci; nt input only."),
+        help="Map D segments (d_call/d2_call/d_support/np*) for VDJ loci. Works on aa input "
+             "too, against the D germlines' three translated frames -- informative for IGH, "
+             "mostly silent for the TR loci, whose D is too short to survive in protein."),
 ) -> None:
     """Annotate FR/CDR regions and write an AIRR TSV (streamed, memory-bounded)."""
     from .annotate.mapper import annotate_file
@@ -346,12 +348,18 @@ def rnaseq_correct(
     extra_airr: Optional[Path] = typer.Option(
         None, "--extra-airr",
         help="Stage-3 assembled-reads AIRR (from `assemble`) to fold into the clonotype table."),
+    organism: str = typer.Option("human", help="Reference organism (used only to map D)."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Add d_call/d2_call/d_support to each clonotype, mapped into its error-corrected "
+             "junction (once per clonotype, not per read)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Collapse CDR3 sequencing errors into clonotypes (per-substitution/indel error model)."""
     from .rnaseq.correct import correct_airr
 
-    rep = correct_airr(input, output, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
+    rep = correct_airr(input, output, organism=organism, map_d=map_d,
+                       max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
@@ -370,6 +378,10 @@ def rnaseq_assemble(
         help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads for re-annotation (0 = all cores)."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Call D (and tandem D-D) on each assembled contig and carry it onto its member "
+             "reads. An ultralong CDR3 is where a D-D is most likely and least visible."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Stage 3 — assemble long-CDR3 contigs the reads don't individually span.
@@ -380,7 +392,8 @@ def rnaseq_assemble(
     """
     from .rnaseq.assemble import assemble_contigs
 
-    rep = assemble_contigs(input, output, organism=organism, threads=threads, report_path=report)
+    rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d,
+                           report_path=report)
     typer.echo(
         f"[arda] assemble: {rep.contigs_complete}/{rep.contigs} complete contigs from "
         f"{rep.seeds} seeds; rescued {rep.reads_rescued} reads")
@@ -412,6 +425,10 @@ def rnaseq_run(
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions",
         help="Keep only complete junctions when forming clonotypes."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Map D segments. Off skips D in all three stages; the clonotype table then carries "
+             "no d_call/d2_call."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
@@ -435,7 +452,7 @@ def rnaseq_run(
     report = out_dir / f"{out_prefix}.arda.json"
 
     mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
-                      reconstruct=reconstruct, min_score=min_score,
+                      reconstruct=reconstruct, min_score=min_score, map_d=map_d,
                       kmer=(None if kmer == 0 else kmer))
     typer.echo(
         f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
@@ -446,12 +463,13 @@ def rnaseq_run(
     if assemble:
         from .rnaseq.assemble import assemble_contigs
         extra = out_dir / f"{out_prefix}.assembled.airr.tsv"
-        arep = assemble_contigs(airr, extra, organism=organism, threads=threads)
+        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d)
         typer.echo(
             f"[arda] assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
-    crep = correct_airr(airr, clones, complete_only=complete_only, extra_airr=extra)
+    crep = correct_airr(airr, clones, organism=organism, map_d=map_d,
+                        complete_only=complete_only, extra_airr=extra)
     typer.echo(
         f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")

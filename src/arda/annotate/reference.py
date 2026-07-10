@@ -52,7 +52,9 @@ class Reference:
     seqtype: str
     target_fasta: Path
     entries: dict[str, RefEntry]
-    d_germlines: dict[str, list[tuple[str, str]]]  # locus -> [(allele, nt_seq)]
+    # locus -> [(allele, seq)] in THIS reference's alphabet: one nt entry per allele, or three
+    # translated-frame entries per allele when seqtype == "aa" (a trimmed D has no known frame).
+    d_germlines: dict[str, list[tuple[str, str]]]
     anchors: dict = field(default_factory=dict)    # (segment, allele) -> cdr3fix.Anchor
 
     def get(self, scaffold_id: str) -> RefEntry | None:
@@ -75,6 +77,26 @@ def _load_d_germlines(base: Path) -> dict[str, list[tuple[str, str]]]:
         locus, _, allele = header.partition("|")
         if allele and seq:
             out.setdefault(locus, []).append((allele, seq.upper()))
+    return out
+
+
+def _load_d_germlines_aa(base: Path) -> dict[str, list[tuple[str, str]]]:
+    """The same D set translated in all three reading frames, for aa annotation.
+
+    A D segment is trimmed at both ends before joining, so its reading frame in the junction
+    is not knowable from the germline: all three must be searched. Each allele therefore
+    contributes three entries under one name, and ``transfer._best_d`` de-duplicates the
+    allele list when two frames tie.
+    """
+    from ..refbuild.translate import translate
+
+    out: dict[str, list[tuple[str, str]]] = {}
+    for locus, alleles in _load_d_germlines(base).items():
+        for allele, seq in alleles:
+            for frame in (0, 1, 2):
+                aa = translate(seq[frame:], 0)
+                if aa:
+                    out.setdefault(locus, []).append((allele, aa))
     return out
 
 
@@ -117,11 +139,10 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
             c_call=row.get("c_call") or "",
             vj_end=_int(row.get("vj_end")),
         )
-    d_germlines = _load_d_germlines(base) if seqtype == "nt" else {}
+    d_germlines = _load_d_germlines_aa(base) if seqtype == "aa" else _load_d_germlines(base)
     # Per-allele junction germlines: they pin `v_sequence_end` / `j_sequence_start` far
     # better than projecting the scaffold's N-pad boundaries (see transfer._anchored_vj_bounds).
-    anchors: dict = {}
-    if seqtype == "nt":
-        from ..cdr3fix import load_anchors
-        anchors = load_anchors(organism)
+    # Both alphabets need the anchors: nt reads them as `germline_nt`, aa as `templated_aa`.
+    from ..cdr3fix import load_anchors
+    anchors = load_anchors(organism)
     return Reference(organism, seqtype, target_fasta, entries, d_germlines, anchors)

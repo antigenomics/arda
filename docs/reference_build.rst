@@ -23,6 +23,16 @@ Outputs (per organism)
 * ``alleles.fasta`` / ``alleles.aa.fasta`` — scaffold nucleotide / protein seqs.
 * ``markup.tsv`` / ``markup.aa.tsv`` — region coordinates + sequences.
 * ``combinations.tsv`` — scaffold → contributing (V, J) allele pairs.
+* ``d_germlines.fasta`` — per-locus D germlines (VDJ loci only), for runtime D mapping.
+* ``cdr3_anchors.tsv`` — **per allele**, the conserved Cys104 (V) or Phe/Trp118 (J)
+  position, the residues that allele templates into the junction, and a ``status``
+  (``ok`` / ``truncated`` / ``no_anchor`` — flagged, never guessed). This is what lets
+  :mod:`arda.cdr3fix` mark up a junction with no read behind it, and what pins the
+  V..J interior for D mapping.
+* ``d_prior.tsv`` — generative-model summaries used by :mod:`arda.dpost`
+  (``insVD``/``insDJ`` insert lengths, surviving-D length, ``P(D | J)``). Derived, not
+  measured; shipped only for the (organism, locus) pairs with a published model.
+  See ``SOURCES.md`` and ``scripts/build_d_priors.py``.
 * ``loci_manifest.tsv`` — one row per defined locus: V·J and J+C scaffold
   counts, D-germline count, unreachable-D count, and ``ok`` / ``EMPTY`` status.
 * ``build.log`` — per-locus counts and dropped/incomplete summaries.

@@ -121,14 +121,56 @@ _VSIDE = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3")
 # K is a literature constant -- but it is monotone in S and it is what collapses four
 # per-locus thresholds into one. Treat it as an m*n-corrected score, and the 0.2 as an
 # empirical operating point (5 % false calls), not as a p-value.
-_D_LAMBDA = math.log(3.0)
+#
+# AMINO-ACID INPUT uses the same machinery over a different alphabet: `d_local_align` is a
+# plain character comparison, so a D germline translated in its three frames aligns against
+# an aa interior unchanged. Only lambda moves. In general lambda = ln((1-p)/p) where p is the
+# chance two residues match -- p = 1/4 recovers ln 3 above. For amino acids p is NOT 1/20:
+# N-region inserts and D germlines are both G/S/Y-rich, and the measured p over real middles
+# x real D frames is 0.0613, giving lambda = 2.7285 (uniform would say 2.9444).
+#
+# The aa gate is stricter (E <= 0.05) because a 20-letter alphabet with a ~20-40 aa database
+# leaves the E-value badly under-calibrated at small n -- at E <= 0.2 the measured false-call
+# rate on a composition-preserving shuffled null reaches 13 % for IGH. At E <= 0.05 with the
+# floor below (null = shuffled middle; positives = D surviving >= 6 nt):
+#
+#     locus         call rate   D-gene accuracy   false call on null   ambiguous
+#     human IGH        69 %          99 %                2.0 %            5 %
+#     human TRB         8 %         100 %                0.3 %            0 %
+#     human TRD        12 %         100 %                0.0 %            0 %
+#     mouse TRB        11 %         100 %                0.7 %           58 %
+#
+# Only IGH carries enough surviving D to see in protein. The TR loci fire on ~1 record in 10
+# and are right when they do; mouse TRBD1/TRBD2 translate to near-identical poly-glycine, so
+# most of those calls are honestly reported as a two-gene ambiguity list rather than a guess.
+#
+# Out of model, on the real GenBank fixtures (protein reconstructed from each read, compared
+# with that same read's nucleotide D call): human IGH calls a D on 36 % of records where the
+# nucleotide caller manages 68 %, and agrees with it on 98 % of those, 5 % ambiguous. Somatic
+# hypermutation and codon degeneracy cost about half the recall and almost none of the
+# precision -- which is the trade an aa-only consumer should expect.
+_D_LAMBDA = math.log(3.0)                  # nt: p = 1/4
+_D_AA_LAMBDA = 2.7285                      # aa: p = 0.0613, measured (see above)
 _D_K = 0.33
 _D_MAX_EVALUE = 0.2
+_D_AA_MAX_EVALUE = 0.05
 _D_SCORE_FLOOR = 4      # three exact bases is never evidence, whatever the arithmetic says
+_D_AA_SCORE_FLOOR = 4   # governs only the TR loci, whose aa D database is 22-38 residues
+
+
+def _d_gate(seqtype: str) -> tuple[float, float, int]:
+    """``(lambda, default max E-value, score floor)`` for this alphabet."""
+    if seqtype == "aa":
+        return _D_AA_LAMBDA, _D_AA_MAX_EVALUE, _D_AA_SCORE_FLOOR
+    return _D_LAMBDA, _D_MAX_EVALUE, _D_SCORE_FLOOR
 
 
 def _d_db_nt(d_germlines) -> int:
-    """Total nucleotides in a locus D germline set (the `n` of the E-value)."""
+    """Total residues in a locus D germline set (the `n` of the E-value).
+
+    For an aa reference the set holds three translated frames per allele, so `n` counts all
+    three: three frames really are three chances to match.
+    """
     return sum(len(seq) for _, seq in d_germlines)
 
 
@@ -152,21 +194,24 @@ def _allowed_d(d_germlines, j_call: str):
     return [(a, s) for a, s in d_germlines if not a.startswith("TRBD2")]
 
 
-def _d_min_score(interior_len: int, db_nt: int, max_evalue: float | None = None) -> int:
+def _d_min_score(interior_len: int, db_nt: int, max_evalue: float | None = None,
+                 seqtype: str = "nt") -> int:
     """Smallest net score whose E-value clears ``max_evalue`` for this interior."""
-    if max_evalue is None:              # read at call time so the gate stays tunable
-        max_evalue = _D_MAX_EVALUE
+    lam, default_e, floor = _d_gate(seqtype)   # read at call time so the gate stays tunable
+    if max_evalue is None:
+        max_evalue = default_e
     if interior_len <= 0 or db_nt <= 0 or max_evalue <= 0:
         return 1 << 30
-    raw = math.log(_D_K * interior_len * db_nt / max_evalue) / _D_LAMBDA
-    return max(_D_SCORE_FLOOR, math.ceil(raw))
+    raw = math.log(_D_K * interior_len * db_nt / max_evalue) / lam
+    return max(floor, math.ceil(raw))
 
 
-def _d_evalue(score: int, interior_len: int, db_nt: int) -> float:
+def _d_evalue(score: int, interior_len: int, db_nt: int, seqtype: str = "nt") -> float:
     """Expected number of chance matches scoring at least ``score``."""
+    lam, _, _ = _d_gate(seqtype)
     if score <= 0 or interior_len <= 0 or db_nt <= 0:
         return float("inf")
-    return _D_K * interior_len * db_nt * math.exp(-_D_LAMBDA * score)
+    return _D_K * interior_len * db_nt * math.exp(-lam * score)
 
 # A tandem D-D fusion is sought in EVERY locus that has D germlines -- IGH, TRB and TRD.
 # There used to be a ``_DD_LOCI = {"IGH", "TRD"}`` here, which made a TRBD1->TRBD2 tandem
@@ -288,7 +333,9 @@ def _best_d(interior, d_germlines, min_score, exclude=None):
     if best is None:
         return None
     (score, length, _), alleles, s, e, ds, de = best
-    return score, length, tuple(sorted(alleles)), s, e, ds, de
+    # `set`: an aa reference lists one entry per (allele, reading frame), so two frames of the
+    # same allele can tie at one span. That is one allele, not an ambiguity between two.
+    return score, length, tuple(sorted(set(alleles))), s, e, ds, de
 
 
 def _common_prefix(a: str, b: str) -> int:
@@ -305,7 +352,7 @@ def _common_suffix(a: str, b: str) -> int:
     return n
 
 
-def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors):
+def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"):
     """``(v_end_q, j_start_q)`` from the germline junction anchors, or ``(0, 0)``.
 
     The scaffold projection cannot locate these. A scaffold is ``V + 9 nt N-pad + J``,
@@ -325,10 +372,17 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors):
 
     Somatic hypermutation truncates the exact match early, which *widens* the interior --
     the safe direction: a D is never clipped, only surrounded by a little more sequence.
+
+    For ``seqtype="aa"`` the same argument runs one residue at a time against the anchors'
+    ``templated_aa`` instead of ``germline_nt``, and the junction runs Cys104..[FW]118 in
+    residues rather than codons.
     """
     if not anchors or cs is None or f4 is None:
         return 0, 0
-    js0, je = cs - 3, f4 + 2                      # junction = Cys104 codon .. [FW]118 codon
+    if seqtype == "aa":
+        js0, je, field = cs - 1, f4, "templated_aa"   # junction = Cys104 .. [FW]118 residues
+    else:
+        js0, je, field = cs - 3, f4 + 2, "germline_nt"  # .. the same, as codons
     if js0 < 1 or je > len(query_seq):
         return 0, 0
     junction = query_seq[js0 - 1 : je]
@@ -339,8 +393,9 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors):
         best_n = 0
         for allele in (calls or "").split(","):
             a = anchors.get((segment, allele.strip()))
-            if a and a.status == "ok" and a.germline_nt:
-                best_n = max(best_n, fn(junction, a.germline_nt))
+            g = getattr(a, field, "") if a else ""
+            if a and a.status == "ok" and g:
+                best_n = max(best_n, fn(junction, g))
         return best_n
 
     p = best(v_call, "V", _common_prefix)
@@ -350,7 +405,8 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors):
     return js0 + p - 1, je - s + 1
 
 
-def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = ""):
+def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
+           seqtype: str = "nt"):
     """Map D segment(s) into the V..J interior and populate d_call/np regions.
 
     Coordinates emitted are AIRR (1-based closed, query space). A second, non-overlapping
@@ -363,6 +419,12 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = ""):
     ``_allowed_d``); pass it whenever the J is known.
 
     ``d_call`` and ``d2_call`` are comma-separated allele ambiguity lists (see ``_best_d``).
+
+    For ``seqtype="aa"`` the interior, the D set (three translated frames per allele) and the
+    emitted coordinates are all residues, following this module's convention that an aa record
+    reuses the nt column names in aa space. ``d_germline_*``/``d_cigar`` are NOT emitted there:
+    the alignment offsets index a translated reading frame, not the D germline, and reporting
+    them as germline coordinates would be a lie.
     """
     if not d_germlines or not v_end_q or not j_start_q:
         return
@@ -379,7 +441,7 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = ""):
     d_germlines = _allowed_d(d_germlines, j_call)
     if not d_germlines:
         return
-    min_score = _d_min_score(len(interior), db_nt)
+    min_score = _d_min_score(len(interior), db_nt, seqtype=seqtype)
     d1 = _best_d(interior, d_germlines, min_score)
     if d1 is None:
         return
@@ -401,20 +463,20 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = ""):
         # D germline coords + AIRR cigar, only when the call is a single allele -- an ambiguity
         # list (byte-identical D genes) has no one germline to anchor to. Gapless (one M run), with
         # the query 5' offset as leading S and the D-germline 5' offset as leading N (AIRR spec).
-        if len(alleles) == 1 and ds >= 0:
+        if seqtype == "nt" and len(alleles) == 1 and ds >= 0:
             rec[f"{pfx}_germline_start"], rec[f"{pfx}_germline_end"] = ds + 1, de + 1
             rec[f"{pfx}_cigar"] = build_cigar(qs - 1, ds, ["M"] * (de - ds + 1), qlen - qe)
 
     sc1, _, a1, s1, e1, ds1, de1 = segs[0]
     rec["d_call"] = ",".join(a1)
     rec["d_sequence_start"], rec["d_sequence_end"] = q(s1), q(e1)
-    rec["d_support"] = f"{_d_evalue(sc1, len(interior), db_nt):.3g}"
+    rec["d_support"] = f"{_d_evalue(sc1, len(interior), db_nt, seqtype):.3g}"
     germline(rec, "d", a1, ds1, de1, q(s1), q(e1))
     if len(segs) == 2:
         sc2, _, a2, s2, e2, ds2, de2 = segs[1]
         rec["d2_call"] = ",".join(a2)
         rec["d2_sequence_start"], rec["d2_sequence_end"] = q(s2), q(e2)
-        rec["d2_support"] = f"{_d_evalue(sc2, len(interior), db_nt):.3g}"
+        rec["d2_support"] = f"{_d_evalue(sc2, len(interior), db_nt, seqtype):.3g}"
         germline(rec, "d2", a2, ds2, de2, q(s2), q(e2))
         rec["np1"] = query_seq[v_end_q : q(s1) - 1]
         rec["np2"] = query_seq[q(e1) : q(s2) - 1]
@@ -507,9 +569,9 @@ def transfer_hit(
     # collapses the V..J interior (see `_anchored_vj_bounds`).
     v_end_q = _project_point(hit, ref.v_sequence_end)
     j_start_q = _project_point(hit, ref.j_sequence_start)
-    if seqtype == "nt" and "cdr3" in region_q and "fwr4" in region_q:
+    if "cdr3" in region_q and "fwr4" in region_q:
         av, aj = _anchored_vj_bounds(query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
-                                     ref.v_call, ref.j_call, anchors)
+                                     ref.v_call, ref.j_call, anchors, seqtype)
         if av and aj and aj > av:
             v_end_q, j_start_q = av, aj
     if "fwr1" in region_q:
@@ -578,4 +640,8 @@ def transfer_hit(
         if "fwr1" in region_q and "fwr4" in region_q:
             span = query_seq[region_q["fwr1"][0] - 1 : region_q["fwr4"][1]]
             rec["productive"] = "T" if "*" not in span else "F"
+        # D (and tandem D-D) against the three translated frames of each D germline. Only IGH
+        # keeps enough surviving D to see in protein; the TR loci mostly stay silent, which is
+        # the honest answer. Same call, same columns, aa coordinates.
+        _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call, seqtype="aa")
     return rec

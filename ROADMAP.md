@@ -61,6 +61,43 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
       Note a scenario is not unique — several `(delV, insVD, ...)` explain one junction —
       so the E-step must sum over scenarios, not take the MAP.
 
+- [ ] **`arda.hmm` — a hidden semi-Markov model of V→N1→D→N2→J.** The E-step above *is*
+      a forward-backward pass, so this is the same project, not a second one. Semi-Markov
+      because insert lengths and germline deletions have explicit non-geometric durations —
+      exactly the shape of what `d_prior.tsv` already ships. Condition on the mmseqs V/J
+      call so the DP sums only over `(delV, insVD, D, delDl, delDr, insDJ, delJ)`: an
+      O(L²·|D|) recursion on a ~60 nt junction, cheap per clonotype (post-`correct`), not
+      per read. Prior art: **partis** (Ralph & Matsen, arXiv:1503.04224; GPL-3.0, so
+      compatible), which pairs a Smith-Waterman stage with the HMM exactly as arda pairs
+      mmseqs with `_map_d`, and whose central finding is that *per-allele categorical*
+      transitions and *per-allele-per-position* mutation probabilities beat parametric ones.
+
+      Three things arda hand-rolls become HMM primitives, which is the real argument:
+      `_allowed_d` (TRBD2×TRBJ1 = 0) is a transition-probability zero, currently enforced
+      in three separate places; `_D_MAX_EVALUE` stands in for a likelihood ratio; and
+      `dpost`'s `beta` exists *only* because it multiplies a raw aa score rather than a
+      log-likelihood. `_anchored_vj_bounds`' longest-common-prefix is Viterbi with the
+      insert-length prior pinned to a point mass at 0 — which is why it overshoots 1–2 nt
+      when the first N base happens to match germline.
+
+      **Two measured negatives, so nobody re-runs them.** (i) Re-ranking nt D candidates by
+      `λ·S + log P(insVD) + log P(dlen) + log P(insDJ) + log P(D|J)` changes *nothing*:
+      gene accuracy 98.9→97.8 % (IGH), 94.2→94.5 % (huTRB), flat elsewhere, identical call
+      rate and `d_start` error. With 10–18 matched nt, `λ·S` is 11–20 nats and the prior
+      moves ±3. (ii) Replacing the E-value gate with a present/absent Bayes factor buys
+      IGH ~+3 pp recall at matched FP (93.6 % vs 90.7 % @ ~2 % FP) and nothing for TRD —
+      but needs a *per-locus* threshold (BF>6 for IGH, BF>10 for TRD at the same FP),
+      reintroducing the four knobs the E-value removed, and only exists for 4 of the 15
+      (organism, D-locus) pairs arda ships. So: the HMM's value is posteriors, uncertainty,
+      one home for the constraint, and the EM E-step — **not** D-call accuracy.
+
+      Prerequisite for IGH: a per-allele-per-position SHM model. Without one the HMM will
+      explain mutated germline as N-region and do *worse* than the current exact-match
+      anchors, which at least fail safely (SHM truncates the match, widening the interior,
+      never clipping the D). Also fix `_map_d`'s aa path while there: it searches the three
+      translated D frames as independent database entries, tripling `n`, when the prior over
+      `insVD` induces a prior over frame (as `dpost` already knows).
+
 - [ ] **Full AIRR productivity.** `productive` is currently a heuristic (in-frame
       + stop-free V..J span); align it with the complete AIRR productivity rules
       (start codon, stop-codon scan over the whole VDJ, frame of the junction).

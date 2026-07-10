@@ -372,10 +372,38 @@ def _gene3(x: str | None) -> str:
     return g[:3] if g[:3] in ("IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD") else ""
 
 
+def _clonotype_d(out: pl.DataFrame, organism: str) -> list[pl.Series]:
+    """D (and tandem D-D) per clonotype, mapped into its error-corrected junction.
+
+    Reads carry their own ``d_call``, but a read's D is called on a sequencing-error copy of
+    the junction and, for a long CDR3, on a read that does not span the D at all. The clonotype
+    is the first place the junction is both complete and corrected, and D is a deterministic
+    function of ``(junction, v_call, j_call)`` -- so call it once here rather than voting over
+    reads. Costs one gapless alignment per clonotype, not per read.
+
+    VJ loci and organisms without D germlines come back empty, as does an unresolvable V/J.
+    """
+    from ..annotate.dmap import map_d_junction
+
+    cols = {c: [] for c in ("d_call", "d2_call", "d_support", "d2_support")}
+    for jn, vc, jc in zip(out["junction"], out["v_call"], out["j_call"]):
+        try:
+            call = map_d_junction(jn or "", vc or "", jc or "", organism)
+        except (KeyError, ValueError):        # unknown allele / organism without anchors
+            call = None
+        cols["d_call"].append(call.d_call if call else "")
+        cols["d2_call"].append(call.d2_call if call else "")
+        cols["d_support"].append(call.d_support if call else "")
+        cols["d2_support"].append(call.d2_support if call else "")
+    return [pl.Series(k, v, dtype=pl.Utf8) for k, v in cols.items()]
+
+
 def correct_airr(
     airr_tsv: str | Path,
     output: str | Path,
     *,
+    organism: str = "human",
+    map_d: bool = True,
     max_subs: int = 2,
     max_indel: int = 0,
     error_rate: float = 0.001,
@@ -392,8 +420,12 @@ def correct_airr(
 
     Args:
         airr_tsv: Stage-1 mapped-reads AIRR TSV (needs ``junction``, ``sequence_id``).
+        organism: reference organism, used only to map D into each clonotype's junction.
+        map_d: append ``d_call``/``d2_call``/``d_support``/``d2_support``, called once per
+            clonotype on its corrected junction (see :func:`_clonotype_d`). Default ``True``.
         output: corrected clonotype table TSV (``junction``, ``junction_aa``, ``v_call``,
-            ``j_call``, ``c_call``, ``locus``, ``duplicate_count``, ``consensus_count``), sorted
+            ``j_call``, ``c_call``, ``locus``, ``duplicate_count``, ``consensus_count``, and
+            with ``map_d`` the four D columns), sorted
             by abundance. A clonotype is keyed by ``(locus, v_call, j_call, junction)``. Per the
             AIRR schema, ``duplicate_count`` is the number of READS supporting the clonotype (both
             paired mates of a molecule count) and ``consensus_count`` is the number of distinct
@@ -554,6 +586,8 @@ def correct_airr(
         "duplicate_count": [dup[r] for r in order],              # reads encompassing the junction
         "consensus_count": [cons[r] for r in order],             # distinct fragment consensuses
     })
+    if map_d:
+        out = out.with_columns(_clonotype_d(out, organism))
     out.write_csv(output, separator="\t")
 
     if read_map is not None:

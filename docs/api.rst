@@ -37,7 +37,28 @@ Runtime annotation
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: arda.annotate.dmap
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: arda.annotate.contig
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Junction markup and repair
+--------------------------
+
+Working from a bare ``(junction_aa, v_call, j_call, species)`` record — a VDJdb row, with no
+read to align — rather than from a sequenced fragment.
+
+.. automodule:: arda.cdr3fix
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.dpost
    :members:
    :undoc-members:
    :show-inheritance:
