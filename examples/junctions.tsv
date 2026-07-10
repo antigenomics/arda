@@ -4,4 +4,5 @@ v-anchor-sub	FLVGPQGSSASKIIF	TRAV4*01	TRAJ3*01	HomoSapiens
 j-anchor-missing-F	CAIRDDKII	TRAV12-3*01	TRAJ30*01	HomoSapiens
 j-anchor-extra-G	CATSSPGLASDEQFFG	TRBV15*01	TRBJ2-1*01	HomoSapiens
 reported-not-repaired	CASSSPLLSSDTQYFG	TRBV7-2*01	TRBJ2-3*01	HomoSapiens
-flanking-fr3-refused	YFCASPGGIQYFGAG	TRBV14*01	TRBJ2-4*01	HomoSapiens
+flanking-fr3-trimmed	YFCASPGGIQYFGAG	TRBV14*01	TRBJ2-4*01	HomoSapiens
+bad-segment-refused	CAVRSMDSNYQLIW	TRAV1-2*02	TRAJ33*01	HomoSapiens

@@ -47,7 +47,8 @@ def test_every_documented_repair_outcome_is_present(marked):
     """examples/README.md tabulates one record per outcome. Keep them all reachable."""
     by_id = {m.sequence_id: m for m in marked}
     assert set(by_id) == {"clean-trb", "v-anchor-sub", "j-anchor-missing-F",
-                          "j-anchor-extra-G", "reported-not-repaired", "flanking-fr3-refused"}
+                          "j-anchor-extra-G", "reported-not-repaired",
+                          "flanking-fr3-trimmed", "bad-segment-refused"}
 
     assert (by_id["clean-trb"].v_fix, by_id["clean-trb"].j_fix) == ("NoFixNeeded", "NoFixNeeded")
     assert by_id["clean-trb"].good and not by_id["clean-trb"].errors
@@ -60,6 +61,21 @@ def test_every_documented_repair_outcome_is_present(marked):
 
     m = by_id["j-anchor-extra-G"]                   # a residue past Phe118 trimmed
     assert m.cdr3_repaired == "CATSSPGLASDEQFF" and m.j_fix == "FixTrim"
+
+    m = by_id["flanking-fr3-trimmed"]               # framework on BOTH flanks, both trimmed
+    assert m.cdr3_repaired == "CASPGGIQYF"          # exactly what VDJdb's own fixer emits
+    assert (m.v_fix, m.j_fix) == ("FixTrim", "FixTrim") and m.good
+    assert {(e.side, e.frm) for e in m.errors if e.applied} == {("V", "YF"), ("J", "GAG")}
+
+
+def test_every_repair_lands_on_a_canonical_junction(marked):
+    """A repair exists to restore the anchors. `good` implies both are there."""
+    for m in marked:
+        if m.good:
+            assert m.cdr3_repaired.startswith("C"), m.sequence_id
+            assert m.cdr3_repaired.endswith(("F", "W")), m.sequence_id
+        assert m.v_canonical == m.cdr3_repaired.startswith("C")
+        assert m.j_canonical == m.cdr3_repaired.endswith(("F", "W"))
 
 
 def test_the_deep_error_is_reported_and_not_repaired(marked):
@@ -75,12 +91,13 @@ def test_the_deep_error_is_reported_and_not_repaired(marked):
     assert m.cdr3_repaired == "CASSSPLLSSDTQYFG"[:-1]
 
 
-def test_a_failed_side_repairs_nothing_and_says_so(marked):
-    """`applied` means "written to the output", not "eligible". A Failed* side writes nothing."""
-    m = next(x for x in marked if x.sequence_id == "flanking-fr3-refused")
-    assert m.cdr3_repaired == "YFCASPGGIQYFGAG", "a refused record must come back untouched"
-    assert not m.good and m.v_fix.startswith("Failed") and m.j_fix.startswith("Failed")
-    assert m.errors and not any(e.applied for e in m.errors)
+def test_a_bad_segment_is_flagged_never_guessed(marked):
+    """TRAV1-2*02 is a real IMGT allele arda ships with no usable anchor."""
+    m = next(x for x in marked if x.sequence_id == "bad-segment-refused")
+    assert m.cdr3_repaired == "CAVRSMDSNYQLIW", "a refused record must come back untouched"
+    assert not m.good and m.v_fix == "FailedBadSegment" and m.v_end == -1
+    assert m.j_fix == "NoFixNeeded", "the J side is fine; only the V allele has no anchor"
+    assert not any(e.applied for e in m.errors)
 
 
 def test_applied_edits_exist_exactly_when_the_junction_changed(marked):

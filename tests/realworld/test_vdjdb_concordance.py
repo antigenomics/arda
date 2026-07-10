@@ -83,9 +83,36 @@ def test_repair_reproduces_vdjdb_fix(vdjdb):
                 if r.cdr3_repaired not in (f["cdr3"], f["cdr3_old"]))
     n = len(need)
     print(f"\n[vdjdb] repair reproduced {exact}/{n} = {exact/n:.1%}; novel rewrites {third}")
-    assert exact / n >= 0.95, "98/100 on this fixture; the 2 misses submit flanking FR residues"
+    assert exact == n, "arda reproduces VDJdb's repair on every record it flags, on this fixture"
     # A novel rewrite -- neither the submission nor VDJdb's repair -- is data corruption.
     assert third == 0
+
+
+def test_cdr3fix_json_agrees_with_vdjdb_on_every_verdict(vdjdb):
+    """`good`, `vCanonical` and `jCanonical` are VDJdb's own booleans, and they mean the same.
+
+    They describe the junction *as repaired*. Reading them off the submission instead put
+    `jCanonical` at odds with VDJdb on 76 of these 250 rows -- every record whose terminal
+    Phe118 arda had just restored.
+    """
+    df, ref = vdjdb
+    recs = markup_records(df, cdr3="cdr3_old", v="v.segm", j="j.segm", species="species")
+    for key, attr in (("good", "good"), ("vCanonical", "v_canonical"), ("jCanonical", "j_canonical")):
+        mismatch = sum(getattr(r, attr) != f[key] for r, f in zip(recs, ref))
+        assert mismatch == 0, f"{key}: {mismatch}/{len(ref)} disagree with VDJdb"
+
+
+def test_a_repaired_junction_is_always_canonical(vdjdb):
+    """The rule the whole repair exists to serve, on both the submitted and fixed columns."""
+    df, _ = vdjdb
+    for col in ("cdr3", "cdr3_old"):
+        for r in markup_records(df, cdr3=col, v="v.segm", j="j.segm", species="species"):
+            if r.good:
+                assert r.cdr3_repaired.startswith("C"), (col, r.cdr3)
+                assert r.cdr3_repaired.endswith(("F", "W")), (col, r.cdr3)
+            # v_end/j_start index cdr3_repaired, not the submission
+            if r.v_end >= 0 and r.j_start >= 0:
+                assert 0 <= r.v_end <= r.j_start <= len(r.cdr3_repaired), (col, r.cdr3)
 
 
 def test_arda_reports_mismatches_vdjdb_cannot_see(vdjdb):

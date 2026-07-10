@@ -98,19 +98,18 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
       translated D frames as independent database entries, tripling `n`, when the prior over
       `insVD` induces a prior over frame (as `dpost` already knows).
 
-- [ ] **`cdr3fix` loose ends** (found while building `examples/`; none is urgent).
-      *(a)* A submission carrying flanking framework residues is trimmed (`FixTrim`) only when
-      the V's last templated residue happens to match: `YFCASSLGGNEQFF` + `TRBV11-1*01` trims,
-      but `YFCASSSRGRGETQYF` + `TRBV11-3*01` returns `FailedNoAlignment`, because the 2-residue
-      prefix costs −4 and the 5th templated residue (exonuclease-trimmed) mismatches, dropping
-      the score to −1. Two of the 250 fixture records land here; VDJdb trims both. Fixing it
-      means a relative score gate, which risks reintroducing over-repair — measure first.
-      *(b)* `_fix_type`'s `FailedReplace` branch is unreachable through `markup_cdr3` at any
-      `max_replace`: the `_MAX_FIX = 2` query window caps the applied-edit total at 2, so
-      `sum(length) > _MAX_FIX` never fires. Kept for VDJdb `_RANK` parity.
-      *(c)* The allele ladder's `family*01` rung is dead for all five shipped organisms — no
-      gene lacks a `*01` while its `family*01` exists. The `first-allele` rung below it is
-      live (`IGLV3-4` → `IGLV3-4*02`).
+- [x] **`cdr3fix` repairs to canonical, always.** `cdr3_repaired` is accepted only when it
+      opens with Cys104 and closes with Phe/Trp118 (`_canonicalise`); otherwise the submission
+      comes back untouched. `good` implies canonical by rule. Trimming flanking framework
+      (`_MAX_TRIM = 3`) is budgeted separately from inventing germline (`_MAX_FIX = 2`) —
+      removing residues the germline never explained is a much smaller risk than adding ones
+      never observed. Each trimmed residue costs `_TRIM`: a *free* trim could tie the untrimmed
+      alignment, win the tie-break, and eat the conserved Phe of clean short IGK junctions.
+      Result on the 250-row fixture: VDJdb's repair reproduced 100/100 (was 98), zero novel
+      rewrites, and `good`/`vCanonical`/`jCanonical` agree with VDJdb on every row. OLGA false
+      repairs unchanged at 0.35 %. `family*01` was dropped from the allele ladder: dead for all
+      five shipped organisms. `FailedReplace` turned out to be reachable after all (three
+      substitutions beside a long J anchor, `max_replace >= 3`), and is now tested.
 
 - [ ] **Full AIRR productivity.** `productive` is currently a heuristic (in-frame
       + stop-free V..J span); align it with the complete AIRR productivity rules

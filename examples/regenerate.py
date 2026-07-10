@@ -54,7 +54,11 @@ JUNCTIONS = [
     ("j-anchor-missing-F",   "CAIRDDKII",         "TRAV12-3*01", "TRAJ30*01",   "HomoSapiens"),
     ("j-anchor-extra-G",     "CATSSPGLASDEQFFG",  "TRBV15*01",   "TRBJ2-1*01",  "HomoSapiens"),
     ("reported-not-repaired", "CASSSPLLSSDTQYFG", "TRBV7-2*01",  "TRBJ2-3*01",  "HomoSapiens"),
-    ("flanking-fr3-refused", "YFCASPGGIQYFGAG",   "TRBV14*01",   "TRBJ2-4*01",  "HomoSapiens"),
+    # Framework context on both flanks: `YF` before Cys104, `GAG` past Phe118. Both trimmed.
+    ("flanking-fr3-trimmed", "YFCASPGGIQYFGAG",   "TRBV14*01",   "TRBJ2-4*01",  "HomoSapiens"),
+    # A real IMGT allele that arda ships with no usable anchor (`status = no_anchor`). The
+    # gene's *01 marks this junction up cleanly; the *02 is flagged, never guessed.
+    ("bad-segment-refused",  "CAVRSMDSNYQLIW",    "TRAV1-2*02",  "TRAJ33*01",   "HomoSapiens"),
 ]
 
 # rnaseq: tile 150 bp windows across real mRNA. Deterministic -- no RNG, fixed stride, and

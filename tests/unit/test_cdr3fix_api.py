@@ -75,7 +75,9 @@ def test_v_side_missing_cys_is_added():
     """The mirror of the J-side missing-F case, which was the only one covered."""
     mk = markup_cdr3("ASSARSGELFF", V, J, "human")
     assert mk.cdr3_repaired == CLEAN
-    assert mk.v_fix == "FixAdd" and mk.v_canonical is False
+    assert mk.v_fix == "FixAdd"
+    assert not mk.cdr3.startswith("C"), "the submission had no Cys104..."
+    assert mk.v_canonical, "...and the repair restored it"
     assert [(e.side, e.kind, e.to) for e in mk.errors if e.applied] == [("V", "del", "C")]
 
 
@@ -88,6 +90,36 @@ def test_extra_residue_at_an_anchor_is_trimmed(cdr3, side, fix):
     assert mk.cdr3_repaired == CLEAN
     assert getattr(mk, fix) == "FixTrim"
     assert [(e.side, e.kind) for e in mk.errors if e.applied] == [(side, "ins")]
+
+
+@pytest.mark.parametrize("flank,expect", [
+    ("YF", "FixTrim"),                 # 2 flanking residues: trimmed
+    ("YFY", "FixTrim"),                # 3 == _MAX_TRIM: trimmed
+    ("YFYF", "FailedNoAlignment"),     # 4 > _MAX_TRIM: refused, never silently swallowed
+])
+def test_a_flank_is_trimmed_only_up_to_max_trim(flank, expect):
+    """Framework context before Cys104. Removing residues the germline never explained is a
+    smaller risk than inventing ones, so it gets its own, larger budget."""
+    mk = markup_cdr3(flank + "CASSLGGNEQFF", "TRBV11-1*01", "TRBJ2-1*01", "human")
+    assert mk.v_fix == expect
+    assert mk.cdr3_repaired == ("CASSLGGNEQFF" if expect == "FixTrim" else flank + "CASSLGGNEQFF")
+
+
+def test_a_trim_must_pay_for_itself_and_never_eats_an_anchor():
+    """Free flanking gaps let a trim *tie* the untrimmed alignment and win the tie-break,
+    which ate the conserved Phe118 of clean short IGK junctions."""
+    mk = markup_cdr3("CQQYYSYPF", "IGKV1-8*01", "IGKJ1*01", "human")
+    assert mk.cdr3_repaired.endswith(("F", "W")), "a repair may never remove Phe/Trp118"
+    assert mk.j_canonical
+
+
+def test_too_many_invented_residues_is_a_failed_replace():
+    """`_MAX_FIX` guards residues we never observed. Three substitutions is a wrong allele,
+    not three typos -- reachable only when `max_replace` reaches that deep."""
+    mk = markup_cdr3("CAVRDSNNNAQQQF", "TRAV1-1*01", "TRAJ31*01", "human", max_replace=3)
+    assert mk.j_fix == "FailedReplace"
+    assert mk.cdr3_repaired == "CAVRDSNNNAQQQF", "a FailedReplace writes nothing"
+    assert mk.errors and not any(e.applied for e in mk.errors)
 
 
 @pytest.mark.parametrize("cdr3,which", [("C", "j_fix"), ("F", "v_fix")])

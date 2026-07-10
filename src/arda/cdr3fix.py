@@ -27,8 +27,16 @@ Detection and repair are deliberately separate: every germline disagreement is
 reported (with its position, extent and distance from the anchor), but only edits
 adjacent to the conserved anchor are applied. See ``_MAX_REPLACE`` for why.
 
+**Repair always targets a canonical junction.** ``cdr3_repaired`` is only accepted when
+it opens with Cys104 and closes with Phe/Trp118 (``_canonicalise``); a repair that would
+hand back a junction missing either anchor is refused and the submission returned
+untouched. A repair exists to restore the anchors, and downstream every consumer trusts
+``cdr3_repaired``. So ``good`` implies canonical, by construction rather than by luck.
+
 Fix-type names mirror VDJdb's ``Cdr3Fixer`` so its ``cdr3fix`` JSON is directly
-comparable; the per-position ``errors`` list is arda's addition.
+comparable — on the committed 250-row fixture arda now reproduces VDJdb's repair on all
+100 records it flags, and agrees with its ``good``/``vCanonical``/``jCanonical`` verdicts
+on every row. The per-position ``errors`` list is arda's addition.
 """
 
 from __future__ import annotations
@@ -62,9 +70,22 @@ __all__ = [
 # `CGGS` case stop at the Cys instead of forcing a 2-substitution alignment.
 _MATCH, _MISMATCH, _GAP = 1, -1, -2
 
-# Beyond this many edits in one germline run we refuse to repair: the record is
-# more likely mis-assigned to the wrong allele than to hold that many typos.
+# What one flanking residue costs to trim (see `_align`). Cheaper than `_GAP`, because a
+# flank is not an indel inside a germline run -- but never zero, or a trim that gains
+# nothing still wins the tie-break.
+_TRIM = -1
+
+# Beyond this many INVENTED residues in one germline run we refuse to repair: the
+# record is more likely mis-assigned to the wrong allele than to hold that many typos.
+# "Invented" means substituted or restored from germline -- residues we did not observe.
 _MAX_FIX = 2
+
+# Removing flanking residues is a different risk, and a much smaller one: they are
+# residues the germline never explained, sitting outside the junction. A submission that
+# carries framework context (`YFCASSLGGNEQFF`, `CASPGGIQYF` + `GAG`) needs up to three
+# trimmed away, which is what VDJdb's own fixer does. Bounding trims by `_MAX_FIX` made
+# the outcome depend on an accident of the V's last templated residue.
+_MAX_TRIM = 3
 
 # How far from the conserved anchor (Cys104 for V, [FW]118 for J) a mismatch may
 # sit and still be *repaired*. This is the crux of the whole module.
@@ -129,9 +150,10 @@ class Cdr3Error:
     ``applied`` is true only when this edit was actually written into
     ``Cdr3Markup.cdr3_repaired``. Being within ``_MAX_REPLACE`` of the anchor makes an
     edit *eligible*; the whole side's repair is still discarded if its fix type comes
-    back ``Failed*`` (no alignment, or more than ``_MAX_FIX`` residues of edit). An
-    error can therefore be reported with ``applied=False`` and the junction left alone
-    — which is the point: detection and repair are separate decisions.
+    back ``Failed*`` — no alignment, more than ``_MAX_FIX`` invented residues, more than
+    ``_MAX_TRIM`` trimmed ones, or a result that would not be canonical. An error can
+    therefore be reported with ``applied=False`` and the junction left alone — which is
+    the point: detection and repair are separate decisions.
     """
 
     side: str      # "V" | "J"
@@ -173,15 +195,29 @@ class Cdr3Markup:
 
     @property
     def v_canonical(self) -> bool:
-        return self.cdr3.startswith("C")
+        """Does the junction *as repaired* open with the conserved Cys104?
+
+        Read off ``cdr3_repaired``, not the submission -- restoring the anchor is the whole
+        point of the repair, and VDJdb's ``vCanonical``/``jCanonical`` mean the same thing.
+        Reading the submission instead disagreed with VDJdb on 76 of 250 fixture rows.
+        """
+        return self.cdr3_repaired.startswith("C")
 
     @property
     def j_canonical(self) -> bool:
-        return self.cdr3.endswith(("F", "W"))
+        """Does the junction *as repaired* close with the conserved Phe/Trp118?"""
+        return self.cdr3_repaired.endswith(("F", "W"))
 
     @property
     def good(self) -> bool:
-        return self.v_fix in _GOOD and self.j_fix in _GOOD
+        """Both sides repaired, and the result carries both conserved anchors.
+
+        A repair exists to produce a canonical junction. One that ends up without its
+        Cys104 or its Phe/Trp118 has not repaired the record, it has invented a junction
+        nobody submitted -- so it can never be ``good`` (see ``_canonicalise``).
+        """
+        return (self.v_fix in _GOOD and self.j_fix in _GOOD
+                and self.v_canonical and self.j_canonical)
 
     @property
     def fix_needed(self) -> bool:
@@ -262,7 +298,13 @@ def resolve_locus(v_call: str, j_call: str = "") -> str:
 
 
 def resolve_allele(call: str, segment: str, anchors: dict) -> str:
-    """VDJdb's ``get_closest_id`` ladder: exact -> gene*01 -> family*01 -> any allele.
+    """VDJdb's ``get_closest_id`` ladder: exact -> ``gene*01`` -> first allele of the gene.
+
+    VDJdb has a ``family*01`` rung between the last two. It is dead: for a dashless gene
+    (``TRBV9``) the family *is* the gene, so the rung above already fired; for a dashed one
+    (``IGHV3-23``) it would need an allele literally named ``IGHV3*01``, which IMGT does not
+    mint. Measured over all five shipped organisms it is reachable for **0** genes, so it is
+    not carried here. The rung below it is live: ``IGLV3-4`` -> ``IGLV3-4*02``.
 
     Returns ``""`` when nothing resolves.
     """
@@ -274,9 +316,6 @@ def resolve_allele(call: str, segment: str, anchors: dict) -> str:
     gene = call.split("*")[0]
     if (segment, f"{gene}*01") in anchors:
         return f"{gene}*01"
-    family = gene.split("-")[0]
-    if (segment, f"{family}*01") in anchors:
-        return f"{family}*01"
     for (seg, allele) in anchors:
         if seg == segment and allele.split("*")[0] == gene:
             return allele
@@ -300,12 +339,24 @@ def _align(germline: str, query: str) -> tuple[int, list[tuple[str, int, int]]]:
     s = [[0] * (m + 1) for _ in range(n + 1)]
     # Germline residues nearest the anchor may be genuinely ABSENT from a truncated
     # submission (`CASSRGSVRLGTTDPQ` has lost its `YF`; `ASEGGNTIY` has lost its
-    # Cys104), so those leading gaps are free -- charging for them made the whole
-    # alignment score 0 and the record was silently left unrepaired. Query residues
-    # sitting before the germline starts are still charged: those are extra
-    # residues to trim, not missing ones to restore.
+    # Cys104), so those leading gaps are free (`s[i][0]` stays 0) -- charging for them
+    # made the whole alignment score 0 and the record was silently left unrepaired.
+    #
+    # A submission may equally carry EXTRA residues before the anchor -- framework that
+    # should not be in the junction (`YFCASSLGGNEQFF`). Up to `_MAX_TRIM` of those cost
+    # `_TRIM` each rather than the full `_GAP`; beyond that the full charge resumes, so a
+    # long flank still fails rather than being silently swallowed.
+    #
+    # At the full `_GAP` the trim depended on an accident: `YFCASSLGGNEQFF` trimmed (its
+    # 5 exact matches beat the -4) while `YFCASSSRGRGETQYF` did not, because the V's 5th
+    # templated residue had been exonuclease-trimmed and the score fell to -1.
+    #
+    # `_TRIM` must stay STRICTLY negative. Free leading gaps let a trim *tie* the
+    # untrimmed alignment, and the tie-break below prefers consuming more query -- so it
+    # took the trim, and clean IGK junctions lost their conserved Phe118 (`CQQYYSYPF` ->
+    # `CQQYYSY`). Costing the trim forces it to pay for itself in matches it unlocks.
     for j in range(1, m + 1):
-        s[0][j] = s[0][j - 1] + _GAP
+        s[0][j] = s[0][j - 1] + (_TRIM if j <= _MAX_TRIM else _GAP)
     for i in range(1, n + 1):
         gi = germline[i - 1]
         for j in range(1, m + 1):
@@ -350,10 +401,20 @@ def _repair(germline: str, query: str, ops, max_replace: int) -> str:
 
     ``qj`` counts residues from the conserved anchor (both alignments start there),
     so ``qj <= max_replace`` is exactly "adjacent to the anchor".
+
+    The one exception is a *leading* run of extra residues -- those before the germline
+    starts matching at all. They are flanking framework, not an insertion inside the
+    templated run, and the whole run goes, bounded by ``_MAX_TRIM`` rather than by
+    ``max_replace``. Applying ``max_replace`` per-op there would drop the first two
+    residues of ``GAG`` and keep the third, which is not a junction anyone submitted.
     """
     out: list[str] = []
+    started = False                      # has the germline begun to match?
     for kind, gi, qj in ops:
         near = qj <= max_replace
+        if kind == "I" and not started:
+            continue                     # flanking framework: trim the whole run
+        started = True
         if kind == "M":
             out.append(query[qj])
         elif kind == "X":
@@ -399,6 +460,24 @@ def _errors(ops, germline: str, query: str, side: str, rev: bool,
     return out
 
 
+def _canonicalise(candidate: str, side: str) -> bool:
+    """May this repaired junction be accepted for ``side``?
+
+    A repair exists to restore the conserved anchor. One that hands back a junction with no
+    Cys104, or no Phe/Trp118, has not repaired anything -- it has produced a string nobody
+    submitted, and downstream that string will be trusted. So a candidate is only accepted
+    when its own anchor is canonical.
+
+    This is a rule, not a safety net. It was an accident before: with a *free* leading gap,
+    the J-side trim could tie the untrimmed alignment, win on the tie-break, and eat the
+    conserved Phe -- ``CQQYYSYPF`` came back as ``CQQYYSY``. Costing the trim (``_TRIM``)
+    stops that particular route; this stops all of them.
+    """
+    if not candidate:
+        return False
+    return candidate.startswith("C") if side == "V" else candidate.endswith(("F", "W"))
+
+
 def _reported_only(errs: list[Cdr3Error]) -> list[Cdr3Error]:
     """Clear ``applied`` on a side whose repair was discarded (``Failed*`` fix type).
 
@@ -417,7 +496,12 @@ def _fix_type(errs: list[Cdr3Error], aligned: bool) -> str:
     applied = [e for e in errs if e.applied]
     if not applied:
         return "NoFixNeeded"
-    if sum(e.length for e in applied) > _MAX_FIX:
+    # Two budgets, because the two operations carry different risk. Substituting or
+    # restoring germline INVENTS residues we never observed; trimming only removes ones
+    # the germline never explained.
+    invented = sum(e.length for e in applied if e.kind in ("sub", "del"))
+    trimmed = sum(e.length for e in applied if e.kind == "ins")
+    if invented > _MAX_FIX or trimmed > _MAX_TRIM:
         return "FailedReplace"
     kinds = {e.kind for e in applied}
     if "sub" in kinds:
@@ -462,14 +546,24 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
         rec.v_fix, rec.v_end = "FailedBadSegment", -1
     else:
         g = v_anchor.templated_aa
-        q = cdr3[: len(g) + _MAX_FIX]
+        q = cdr3[: len(g) + _MAX_TRIM]      # room for a flank to be seen and trimmed
         score, ops = _align(g, q)
         consumed = sum(1 for k, _, _ in ops if k in "MXI")
         errs = _errors(ops, g, q, "V", False, len(cdr3), max_replace)
         rec.v_end = consumed if score > 0 else -1
         rec.v_fix = _fix_type(errs, score > 0)
         if rec.v_fix in _GOOD and any(e.applied for e in errs):
-            repaired = _repair(g, q, ops, max_replace) + cdr3[consumed:]
+            prefix = _repair(g, q, ops, max_replace)
+            candidate = prefix + cdr3[consumed:]
+            if _canonicalise(candidate, "V"):
+                repaired = candidate
+                # `consumed` counts residues of the SUBMITTED junction. A repair that trims
+                # or inserts changes the length, so v_end must be re-read off the repaired
+                # prefix or it no longer indexes `cdr3_repaired` -- and `dpost` slices the
+                # non-templated middle with exactly these two coordinates.
+                rec.v_end = len(prefix)
+            else:
+                rec.v_fix, errs = "FailedReplace", _reported_only(errs)
         else:
             errs = _reported_only(errs)      # a Failed* side repairs nothing
         rec.errors.extend(errs)
@@ -480,14 +574,20 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
     else:
         g = j_anchor.templated_aa[::-1]
         base = repaired
-        q = base[::-1][: len(g) + _MAX_FIX]
+        q = base[::-1][: len(g) + _MAX_TRIM]
         score, ops = _align(g, q)
         consumed = sum(1 for k, _, _ in ops if k in "MXI")
         errs = _errors(ops, g, q, "J", True, len(base), max_replace)
         rec.j_start = (len(base) - consumed) if score > 0 else -1
         rec.j_fix = _fix_type(errs, score > 0)
         if rec.j_fix in _GOOD and any(e.applied for e in errs):
-            repaired = base[: len(base) - consumed] + _repair(g, q, ops, max_replace)[::-1]
+            suffix = _repair(g, q, ops, max_replace)[::-1]
+            candidate = base[: len(base) - consumed] + suffix
+            if _canonicalise(candidate, "J"):
+                repaired = candidate
+                rec.j_start = len(candidate) - len(suffix)
+            else:
+                rec.j_fix, errs = "FailedReplace", _reported_only(errs)
         else:
             errs = _reported_only(errs)      # a Failed* side repairs nothing
         rec.errors.extend(errs)

@@ -34,6 +34,36 @@ Three rules that look right and are wrong:
 
 V-anchor-not-Cys after all this: **0 / 3448**.
 
+## 2b. Repair always targets a canonical junction
+
+`cdr3_repaired` is accepted only if it opens with Cys104 and closes with Phe/Trp118
+(`_canonicalise`). A repair exists to restore the anchors, and everything downstream trusts
+the result — so `good` implies canonical **by rule**. It used to hold by luck.
+
+Three constants, three different risks. Do not collapse them:
+
+* `_MAX_FIX = 2` — residues the repair may **invent** (substitute or restore from germline).
+  Three of those is a wrong allele, not three typos.
+* `_MAX_TRIM = 3` — flanking framework residues it may **remove**. Much smaller risk: those
+  residues were never explained by the germline. VDJdb trims up to 3 (`GAG`). Bounding trims
+  by `_MAX_FIX` made the outcome depend on an accident — `YFCASSLGGNEQFF` trimmed but
+  `YFCASSSRGRGETQYF` did not, because the V's 5th templated residue had been exonuclease-
+  trimmed and the score fell to −1.
+* `_TRIM = -1` — what one trimmed residue costs. **Never zero.** A free trim can *tie* the
+  untrimmed alignment, and the tie-break prefers consuming more query, so it takes the trim:
+  clean short IGK junctions came back as `CQQYYSYPF` → `CQQYYSY`, minus their Phe118. Costing
+  the trim forces it to pay for itself in matches it unlocks. Free-gap OLGA false repairs:
+  0.85 %; costed: 0.35 % (the pre-change baseline).
+
+`v_end` / `j_start` index **`cdr3_repaired`**, not the submission. `v_end` used to be the count
+of *consumed input* residues, so any V-side trim or insert shifted it — and `dpost` slices the
+non-templated middle with exactly these two coordinates, so a repaired record got its D placed
+3 nt off.
+
+`v_canonical` / `j_canonical` likewise describe the **repaired** junction, which is what
+VDJdb's `vCanonical`/`jCanonical` mean. Reading them off the submission disagreed with VDJdb on
+76 of 250 fixture rows — every record whose terminal Phe arda had just restored.
+
 ## 3. Detection and repair are different decisions
 
 A mismatch inside the templated window is either a curation error or simply the V/N boundary
@@ -44,8 +74,9 @@ flanking matches to outscore stopping (~1/400 by chance), so `CASSPRRY-N-L-QFF` 
 to `…NEQFF` against TRBJ2-1's `SYNEQFF`. Fix: `_MAX_REPLACE = 1` — only anchor-adjacent edits
 are **applied**; everything deeper is **reported** with `Cdr3Error.applied = False`.
 
-Measured on 102,990 VDJdb records: `v_end` 98.66 %, `j_start` 96.52 %, idempotent 99.99 %,
-reproduces VDJdb's own repair on 96.4 % of the 5,029 it flags. ~33k rec/s, pure Python.
+Measured on 102,990 VDJdb records: `v_end` 98.66 %, `j_start` 96.52 %, idempotent 99.99 %.
+~33k rec/s, pure Python. On the committed 250-row fixture, VDJdb's repair is reproduced on
+**100/100** records it flags, with zero novel rewrites.
 
 ## 4. The aligner
 

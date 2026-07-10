@@ -89,7 +89,7 @@ arda markup -i examples/junctions.tsv -o examples/junctions.markup.tsv \
             --id-col id --d-posterior --report examples/junctions.report.txt --show-ok
 ```
 
-[`junctions.tsv`](junctions.tsv) holds six real VDJdb records, one per repair outcome. All
+[`junctions.tsv`](junctions.tsv) holds seven real VDJdb records, one per repair outcome. All
 coordinates are **junction space** (Cys104 … Phe/Trp118, both anchors *included*) — the
 convention VDJdb's `cdr3` column uses, which is *not* arda's `cdr3` field.
 
@@ -100,20 +100,31 @@ convention VDJdb's `cdr3` column uses, which is *not* arda's `cdr3` field.
 | j-anchor-missing-F | CAIRDDKII | CAIRDDKII**F** | NoFixNeeded | FixAdd | `J del@8 missing 'F' d=0` |
 | j-anchor-extra-G | CATSSPGLASDEQFFG | CATSSPGLASDEQFF | NoFixNeeded | FixTrim | `J ins@15 extra 'G' d=0` |
 | reported-not-repaired | CASSSPLLSSDTQYFG | CASSSPLLSSDTQYF | NoFixNeeded | FixTrim | `J sub@9 S>T d=6 (reported, not repaired)`; `J ins@15 extra 'G' d=0` |
-| flanking-fr3-refused | YFCASPGGIQYFGAG | *(unchanged)* | FailedNoAlignment | FailedNoAlignment | both reported, neither repaired |
+| flanking-fr3-trimmed | YFCASPGGIQYFGAG | CASPGGIQYF | FixTrim | FixTrim | `V ins@0 extra 'YF' d=0`; `J ins@10 extra 'GAG' d=0` |
+| bad-segment-refused | CAVRSMDSNYQLIW | *(unchanged)* | FailedBadSegment | NoFixNeeded | – |
 
 **`reported-not-repaired` is the one to study.** Two errors are *detected*; only the one
 adjacent to the anchor is *applied*. The substitution six residues deep is reported and the
 junction left alone, because at that depth a mismatch is as likely to be the real V/N boundary
 as a curation error. Detection and repair are separate decisions — see `--max-replace`.
 
-**`flanking-fr3-refused`** is a submission that includes framework residues either side of the
-junction. arda declines to guess and marks it failed; VDJdb's own fixer trims it to
-`CASPGGIQYF`. Two of the 250 fixture records fall in this class. (Handed the *correct* V, arda
-does trim a flanking prefix: `YFCASSLGGNEQFF` → `CASSLGGNEQFF`, `FixTrim`.)
+**`flanking-fr3-trimmed`** is a submission that carries framework residues on both flanks —
+`YF` before Cys104, `GAG` past Phe118. Both go. arda trims up to `_MAX_TRIM = 3` residues per
+flank; a longer one is refused rather than silently swallowed (`YFYFCASSLGGNEQFF` →
+`FailedNoAlignment`). Removing residues the germline never explained is a much smaller risk
+than *inventing* residues, which is capped separately at `_MAX_FIX = 2`.
 
-On the full 250-row fixture arda reproduces VDJdb's own repair on **98 of the 100 records
-VDJdb marks as needing one**, and rewrites nothing it should not.
+**`bad-segment-refused`** cites `TRAV1-2*02`, a real IMGT allele arda ships with no usable
+anchor (`status = no_anchor` in `cdr3_anchors.tsv`). The junction comes back untouched and the
+record is flagged. The gene's `*01` marks the same junction up cleanly. Flag, never guess.
+
+**Every repair lands on a canonical junction.** `cdr3_repaired` is accepted only if it opens
+with Cys104 and closes with Phe/Trp118 — a repair exists to restore the anchors, and everything
+downstream trusts the result. So `good` implies canonical, by rule rather than by luck.
+
+On the full 250-row fixture arda reproduces VDJdb's own repair on **all 100 records VDJdb marks
+as needing one**, agrees with its `good` / `vCanonical` / `jCanonical` verdict on every row, and
+rewrites nothing it should not.
 
 [`junctions.report.txt`](junctions.report.txt) is the human-readable log (`--report`), with a
 fix-type cross-tab and a per-record line.
