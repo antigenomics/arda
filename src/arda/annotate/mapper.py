@@ -240,9 +240,9 @@ def _annotate_chunk(
             qlen = len(qseq)
             hit = dict(hit)
             hit["qstart"], hit["qend"] = qlen - qs + 1, qlen - qe + 1
-        dg = ref.d_germlines.get(entry.locus) if (seqtype == "nt" and map_d) else None
+        dg = ref.d_germlines.get(entry.locus) if map_d else None
         out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
-                                d_germlines=dg, submitted_seq=qseq))
+                                d_germlines=dg, submitted_seq=qseq, anchors=ref.anchors))
     return out
 
 

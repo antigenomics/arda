@@ -7,26 +7,30 @@ This page covers the one-shot RNA-seq command and the ready-made Nextflow module
 One-shot command
 ----------------
 
-``arda rnaseq run`` runs ``map`` then ``correct`` in a single call — the two steps a bulk RNA-seq
-pipeline almost always wants together:
+``arda rnaseq run`` runs ``map``, ``assemble`` and ``correct`` in a single call — the three steps
+a bulk RNA-seq pipeline almost always wants together:
 
 .. code-block:: bash
 
    arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz --out-prefix SAMPLE --out-dir results/
 
-It writes three files under ``--out-dir``:
+It writes four files under ``--out-dir``:
 
-============================  ===============================================================
-``SAMPLE.clones.tsv``         corrected clonotype table
-                              (``junction, junction_aa, v_call, j_call, locus, count, n_reads``)
-``SAMPLE.airr.tsv``           mapped reads, AIRR Rearrangement schema
-``SAMPLE.arda.json``          merged run report (map + correct: reads mapped, per-locus counts,
-                              isotype/constant fragments, timing, peak RSS)
-============================  ===============================================================
+===============================  ============================================================
+``SAMPLE.clones.tsv``            corrected clonotype table (``junction, junction_aa, v_call,
+                                 j_call, c_call, locus, duplicate_count, consensus_count``,
+                                 plus ``d_call, d2_call, d_support, d2_support``)
+``SAMPLE.airr.tsv``              mapped reads, AIRR Rearrangement schema
+``SAMPLE.assembled.airr.tsv``    Stage-3 long-CDR3 reads rescued by contig assembly
+                                 (omitted with ``--no-assemble``)
+``SAMPLE.arda.json``             merged run report (map + assemble + correct: reads mapped,
+                                 per-locus counts, isotype/constant fragments, timing, peak RSS)
+===============================  ============================================================
 
 Single-end input drops ``--r2``. The defaults match the individual commands (``--min-score 75``,
-``--kmer 12`` for ~300 MB peak RSS, complete-junction clonotypes); use ``map`` and ``correct``
-separately when you need to tune their individual knobs.
+``--kmer 12`` for ~300 MB peak RSS, complete-junction clonotypes, D mapping on); use ``map``,
+``assemble`` and ``correct`` separately when you need to tune their individual knobs, and
+``--no-map-d`` to skip D in all three stages.
 
 Nextflow module
 ---------------
@@ -56,7 +60,7 @@ unchanged. Five edits, each mirroring how an existing tool is wired:
    ``workflows/rnaseq/nextflow.config`` (sets ``ext.args`` and the publishDir).
 #. Register a ``run_arda = false`` param in ``nextflow.config`` and ``nextflow_schema.json`` (strict
    schema validation).
-#. For container profiles, pin ``withName: 'ARDA' { container = '<registry>/arda-mapper:2.4.0' }``
+#. For container profiles, pin ``withName: 'ARDA' { container = '<registry>/arda-mapper:2.5.0' }``
    in your deployment config.
 
 Then run with ``--run_arda``. The module's ``README.md`` has copy-paste snippets and a standalone

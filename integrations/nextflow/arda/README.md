@@ -2,15 +2,16 @@
 
 A drop-in, nf-core-style local module that runs arda's RNA-seq mode on each sample and publishes
 per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a single
-`arda rnaseq run` call (map + correct) and emits a `versions.yml`, so it composes with any DSL2
+`arda rnaseq run` call (map + assemble + correct) and emits a `versions.yml`, so it composes with any DSL2
 pipeline the same way STAR/Salmon/fastp do.
 
 ## What it produces (per sample `<id>`)
 
 | file | contents |
 |---|---|
-| `<id>.clones.tsv` | corrected clonotype table: `junction, junction_aa, v_call, j_call, locus, count, n_reads` |
+| `<id>.clones.tsv` | corrected clonotype table: `junction, junction_aa, v_call, j_call, c_call, locus, duplicate_count, consensus_count, d_call, d2_call, d_support, d2_support` |
 | `<id>.airr.tsv` | mapped reads, AIRR Rearrangement schema |
+| `<id>.assembled.airr.tsv` | Stage-3 long-CDR3 reads rescued by contig assembly |
 | `<id>.arda.json` | run report (reads mapped, per-locus counts, isotype/constant, timing, peak RSS) |
 
 ## Runtime & resources
@@ -89,7 +90,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (copy any existing `skip_*`/`run_*` boolean entry as a template).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.4.0' }` to your deployment config
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.5.0' }` to your deployment config
    (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:

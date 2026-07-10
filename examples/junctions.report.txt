@@ -1,0 +1,28 @@
+cdr3fix report: 7 records
+  correct (no fix needed) : 1
+  repaired                : 5
+  failed                  : 1
+
+  vFixType             jFixType               count
+  NoFixNeeded          FixTrim                    2
+  FailedBadSegment     NoFixNeeded                1
+  FixReplace           NoFixNeeded                1
+  FixTrim              FixTrim                    1
+  NoFixNeeded          FixAdd                     1
+  NoFixNeeded          NoFixNeeded                1
+
+  errors by side/kind:
+    J del            1
+    J ins            3
+    J sub            1
+    V ins            1
+    V sub            1
+
+  --- records ---
+  [OK] clean-trb | V=TRBV5-1*01 vEnd=4 NoFixNeeded | J=TRBJ2-7*01 jStart=9 NoFixNeeded
+  [FIXED] v-anchor-sub | V=TRAV4*01 vEnd=4 FixReplace | J=TRAJ3*01 jStart=7 NoFixNeeded | FLVGPQGSSASKIIF -> CLVGPQGSSASKIIF | V sub@0 F>C d=0
+  [FIXED] j-anchor-missing-F | V=TRAV12-3*01 vEnd=2 NoFixNeeded | J=TRAJ30*01 jStart=3 FixAdd | CAIRDDKII -> CAIRDDKIIF | J del@8 missing 'F' d=0
+  [FIXED] j-anchor-extra-G | V=TRBV15*01 vEnd=4 NoFixNeeded | J=TRBJ2-1*01 jStart=11 FixTrim | CATSSPGLASDEQFFG -> CATSSPGLASDEQFF | J ins@15 extra 'G' d=0
+  [FIXED] reported-not-repaired | V=TRBV7-2*01 vEnd=4 NoFixNeeded | J=TRBJ2-3*01 jStart=8 FixTrim | CASSSPLLSSDTQYFG -> CASSSPLLSSDTQYF | J sub@9 S>T d=6 (reported, not repaired); J ins@15 extra 'G' d=0
+  [FIXED] flanking-fr3-trimmed | V=TRBV14*01 vEnd=3 FixTrim | J=TRBJ2-4*01 jStart=6 FixTrim | YFCASPGGIQYFGAG -> CASPGGIQYF | J ins@10 extra 'GAG' d=0; V ins@0 extra 'YF' d=0
+  [FAILED] bad-segment-refused | V=TRAV1-2*02 vEnd=-1 FailedBadSegment | J=TRAJ33*01 jStart=6 NoFixNeeded

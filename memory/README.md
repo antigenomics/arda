@@ -10,3 +10,5 @@ Running notes on non-obvious design decisions and gotchas, so future work
 - [mmseqs-params.md](mmseqs-params.md) — tuned nt/aa params, all-loci single DB, caching, speedup.
 - [discordance-and-scaling.md](discordance-and-scaling.md) — why arda≈IgBLAST, alignment-phase frame fix, bulk RNA-seq prefilter speed, 30M-read estimate.
 - [cluster-slurm.md](cluster-slurm.md) — split/merge/slurm sharding design + how it's tested without a cluster.
+- [d-mapping.md](d-mapping.md) — anchored interior, one E-value not four floors, TRBD2×TRBJ1 is impossible, aa D, D-D, dead ends.
+- [junction-markup.md](junction-markup.md) — junction≠CDR3, per-allele anchors, detect-vs-repair, the aligner tie-break bug.

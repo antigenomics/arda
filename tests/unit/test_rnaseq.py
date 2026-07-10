@@ -498,10 +498,13 @@ def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_sca
     airr, clones, rep = (tmp_path / f"SAMPLE.{ext}" for ext in ("airr.tsv", "clones.tsv", "arda.json"))
     assert airr.exists() and clones.exists() and rep.exists()
 
-    # the clonotype table carries the correct-stage schema even when biology yields few rows
+    # the clonotype table carries the correct-stage schema even when biology yields few rows.
+    # The four D columns are appended by `correct --map-d` (on by default): D is a function of
+    # the corrected junction, so it is called once per clonotype rather than voted over reads.
     cols = pl.read_csv(clones, separator="\t", infer_schema_length=0).columns
     assert cols == ["junction", "junction_aa", "v_call", "j_call", "c_call", "locus",
-                    "duplicate_count", "consensus_count"]
+                    "duplicate_count", "consensus_count",
+                    "d_call", "d2_call", "d_support", "d2_support"]
 
     # the merged report carries both stages, at the version the module used (defaults: k=12, min 75)
     r = json.loads(rep.read_text())
@@ -579,9 +582,10 @@ def test_assemble_rescues_incomplete_reads_via_contig(tmp_path, monkeypatch):
     pl.DataFrame(rows).write_csv(airr, separator="\t")
 
     JN, JA = "TGT" + "GCTAGA" * 12 + "TGG", "C" + "AR" * 12 + "W"   # canonical, in frame, no stop
-    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0: [
+    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0, map_d=True: [
         {"sequence_id": cid, "junction": JN, "junction_aa": JA, "v_call": "IGHV3-23*01",
-         "j_call": "IGHJ4*02", "locus": "IGH"} for cid, _ in records])
+         "j_call": "IGHJ4*02", "locus": "IGH", "d_call": "IGHD3-10*01", "d_support": "0.01",
+         "np1": "GG", "np2": "TT"} for cid, _ in records])
 
     out = tmp_path / "assembled.airr.tsv"
     rep = asm.assemble_contigs(airr, out)
@@ -590,6 +594,10 @@ def test_assemble_rescues_incomplete_reads_via_contig(tmp_path, monkeypatch):
     assert df.height >= 2, "incomplete member reads should be rescued with the contig junction"
     assert set(df["junction_aa"].to_list()) == {JA}
     assert "IGHG" in df["c_class"].to_list(), "the 3' member's isotype must survive onto the contig"
+    # The contig is the only thing that spans a long CDR3, so its D must travel to the reads.
+    assert set(df["d_call"].to_list()) == {"IGHD3-10*01"}
+    assert set(df["np1"].to_list()) == {"GG"}
+    assert "d_sequence_start" not in df.columns, "contig coords are meaningless on a member read"
 
 
 def test_constant_rule_is_per_fragment_and_donates_isotype_from_a_gapped_mate():
@@ -757,3 +765,37 @@ def test_jc_scaffolds_read_through_the_splice_for_every_functional_c_gene():
 
     # no gene-wide boundary defect may appear in human, the reference species
     assert not any(org == "human" for org, _ in seen_bad), sorted(seen_bad)
+
+
+def test_clonotype_row_order_is_deterministic_under_tied_abundance(tmp_path):
+    """Tied clonotypes must not reorder between runs.
+
+    Ranking on `(duplicate_count, consensus_count)` alone left ties in *read* order, and read
+    order comes out of a threaded mmseqs search -- so the same FASTQ produced the same rows in
+    a different sequence each run, and `examples/rnaseq/clones.tsv` was not byte-reproducible.
+    Shuffling the input reads must not move a single output row.
+    """
+    import random
+
+    pytest.importorskip("seqtree")  # optional dep gate, as every other `correct` test uses
+    from arda.rnaseq.correct import correct_airr
+
+    # Three distinct clonotypes with identical read support: every pairwise tie is live.
+    juncs = ["TGTGCCAGCAGCTTAGACGGGACAGGGTTC",
+             "TGTGCCAGCAGCTTAGACGGGACAGGTTTC",
+             "TGTGCCAGCAGCTTAGACGGGACAGGCTTC"]
+    rows = [{"sequence_id": f"r{i}_{k}", "junction": jn, "junction_aa": "CASSLDGTF",
+             "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB"}
+            for i, jn in enumerate(juncs) for k in range(6)]
+
+    outs = []
+    for seed in (0, 1, 2):
+        shuffled = rows[:]
+        random.Random(seed).shuffle(shuffled)
+        airr, clones = tmp_path / f"in{seed}.tsv", tmp_path / f"out{seed}.tsv"
+        pl.DataFrame(shuffled).write_csv(airr, separator="\t")
+        correct_airr(airr, clones, map_d=False)
+        outs.append(clones.read_text())
+
+    assert outs[0] == outs[1] == outs[2], "clonotype table must be byte-stable under read order"
+    assert len(pl.read_csv(outs[0].encode(), separator="\t", infer_schema_length=0)) == 3

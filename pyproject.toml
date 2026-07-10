@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.4.0"
+version = "2.5.0"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,9 @@ docs = ["sphinx", "pydata-sphinx-theme", "nbsphinx"]
 test = ["pytest", "pytest-cov", "airr>=1.4"]  # airr: validate the AIRR Rearrangement schema
 dev = ["ruff", "pytest", "pybind11"]
 rnaseq = ["seqtree>=0.2"]  # `arda rnaseq correct` — CDR3 error correction (neighbour search)
+# Tests only: OLGA's generative model supplies ground-truth V/J trims (and D spans) for
+# `arda.cdr3fix`. Kept out of `test`/`dev` so the normal suite never imports it.
+groundtruth = ["olga"]
 
 [project.scripts]
 arda = "arda.cli:app"

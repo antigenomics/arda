@@ -99,7 +99,7 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
 - Round-trip invariant: `query[{r}_start-1 : {r}_end] == record[{r}]` for every
   covered region.
 
-## D-segment mapping (VDJ loci, nt only)
+## D-segment mapping (VDJ loci)
 
 D germlines are short and trimmed, so they are mapped by a gapless C++ local
 alignment of every locus D allele against the V..J junction interior (not via the
@@ -107,6 +107,28 @@ scaffold DB). For IGH/TRB/TRD a second non-overlapping D is sought; the two are
 ordered 5'→3' as `d_call`/`d2_call` with `np1`/`np2`/`np3` between V, the D(s), and
 J. `d_call`/`d2_call` are comma-joined lists when alleles tie (7 pairs of human IGH
 D germlines are byte-identical across different genes).
+
+Three things constrain the call:
+
+- **The interior comes from the anchors, not the projection.** A scaffold has a 9 nt
+  N-pad where a read has 20–40 nt of N-D-N, so mmseqs parks those bases against the
+  flanking V/J and the projected interior collapses (real IGH: 37 nt of truth, 11 nt
+  projected). `transfer._anchored_vj_bounds` recovers the bounds from the per-allele
+  germlines in `cdr3_anchors.tsv` — longest common prefix/suffix of the junction.
+- **The gate is a Karlin–Altschul E-value**, `_D_MAX_EVALUE = 0.2` (`d_support` in the
+  output), replacing four hand-tuned per-locus score floors. λ = ln((1−p)/p) with p the
+  chance two residues match: 1/4 → ln 3 for nt; a *measured* 0.0613 → 2.7285 for aa.
+- **Genomic order forbids some (D, J) pairs.** TRBD2 lies 3′ of the whole TRBJ1 cluster
+  and V(D)J joining deletes the intervening DNA, so TRBD2 × TRBJ1 cannot be produced.
+  Unenforced, TRBD2 (16 nt) outscored TRBD1 (12 nt) on noise and took 17 % of real human
+  TRB J1-cluster D calls. `transfer._allowed_d` masks the candidate set while holding the
+  E-value's `n` at the full locus size, so a J1 record can lose an impossible call but
+  never gain a weak one. IGH and TRD put every D 5′ of every J: nothing is masked there.
+
+**aa input** gets the same call against each D germline's three translated frames (a
+trimmed D has no knowable frame). Informative for IGH — a D on ~36 % of real records,
+98 % gene agreement with the nt call — and mostly silent for the TR loci. `d_germline_*`
+and `d_cigar` are withheld there: the offsets index a reading frame, not the germline.
 
 ## Constant region & isotype
 
@@ -132,8 +154,26 @@ synthetic `hit` into `transfer_hit`, so output is field-for-field comparable):
   `_markup.merge_alignment`, skipping the alignment pass; wins at ~10⁵ contigs/sample
   (scRNA-seq).
 
-arda does not yet assemble contigs de-novo — these paths only re-annotate contigs the
-caller already assembled.
+De-novo assembly lives in `arda.rnaseq.assemble` (Stage 3, anchored greedy
+overlap-extension); it calls `reannotate_contigs` and carries the contig's D call onto
+every member read. The two paths above only *annotate* a contig, whoever assembled it.
+
+## Bare records: junction markup, repair, and D without a read
+
+`arda.cdr3fix` marks up a `(junction_aa, v_call, j_call, species)` record — a VDJdb row —
+against `cdr3_anchors.tsv`: which residues each germline templates, where the submitted
+junction disagrees, and how far. Everything is **junction space** (Cys104..Phe/Trp118,
+both anchors included), which is what VDJdb's `cdr3` column holds and is *not* arda's
+`cdr3` field. Repair applies only anchor-adjacent edits (`_MAX_REPLACE`) and reports the
+rest; on 102,990 VDJdb records it reproduces VDJdb's own repair on 96.4 % of those it
+flags. CLI: `arda markup`.
+
+`arda.annotate.dmap.map_d_junction` maps D (and D-D) into a bare nucleotide junction with
+no mmseqs pass — the anchors give the interior directly. `arda.dpost.posterior_d` infers
+the D gene and its position from the junction *length*: the length pins
+`insVD + |D surviving| + insDJ`, so the D is placed to a median 1–3 nt even when the
+protein shows none of it. Priors ship in `d_prior.tsv` for human IGH/TRB/TRD and mouse
+TRB only; other pairs return `None` rather than guessing.
 
 ## Performance
 

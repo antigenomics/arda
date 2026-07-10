@@ -268,7 +268,7 @@ def test_d_call_reports_every_tied_allele(human_d_germlines):
     (IGHD4-11*01/IGHD4-4*01, IGHD5-18*01/IGHD5-5*01, five IGHD*/OR15-*a/*b pairs). A read
     matching one matches the other at every score, always -- so a single-valued `d_call`
     is an arbitrary gene call made 100 % of the time for those reads."""
-    from arda.annotate.transfer import _best_d, _D_MIN_SCORE
+    from arda.annotate.transfer import _best_d, _d_db_nt, _d_min_score
 
     by_seq = {}
     for allele, dseq in human_d_germlines["IGH"]:
@@ -277,7 +277,9 @@ def test_d_call_reports_every_tied_allele(human_d_germlines):
     assert twins, "expected identical-sequence IGH D germlines in the reference"
 
     dseq, alleles = max(twins, key=lambda t: len(t[0]))     # longest, to clear min_score
-    score, _, called, _, _, _, _ = _best_d(dseq, human_d_germlines["IGH"], _D_MIN_SCORE)
+    germ = human_d_germlines["IGH"]
+    min_score = _d_min_score(len(dseq), _d_db_nt(germ))
+    score, _, called, _, _, _, _ = _best_d(dseq, germ, min_score)
     assert score == len(dseq)                               # exact, full-length match
     # Every twin is reported; the winner is not one arbitrary member of the tie.
     assert set(alleles) <= set(called), f"{called} dropped a tied allele from {alleles}"

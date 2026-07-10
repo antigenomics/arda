@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from collections import Counter
 from pathlib import Path
@@ -152,6 +153,186 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
     return out
 
 
+# --------------------------------------------------------------------------
+# CDR3 junction anchors (per V/J allele).
+#
+# These let us mark up a bare (junction_aa, V, J) record -- the VDJdb case --
+# without any alignment: we ship the residues each germline templates into the
+# junction. Coordinates are JUNCTION space (Cys104..Phe/Trp118 inclusive), which
+# is what VDJdb's `cdr3` column actually holds -- NOT the IMGT CDR3 (105..117).
+#
+# V anchor: IgBLAST's `.ndm.imgt` FWR3 stop (FR3-IMGT ends at 104 = the 2nd-CYS),
+# so the Cys104 codon starts at `fwr3_stop - 3`. IgBLAST ships only a subset of
+# IMGT alleles, so the rest fall back to the conserved FR3 motif (below).
+#
+# NOTE: the tempting shortcut "IMGT position 104 == gapped nt 310..312" is WRONG.
+# It holds for human and rabbit but not for mouse/rhesus, whose V-QUEST gapped
+# FASTAs carry insertion positions that break the linear slot arithmetic (rhesus
+# IGHV1-111*01 has its Cys at gapped slot 106). It silently produced 671 wrong
+# rhesus anchors before being caught by the Cys check. Do not reintroduce it.
+#
+# J anchor: IgBLAST's aux `cdr3_stop` is the last nt of position 117, so the
+# [FW]118 codon starts at cdr3_stop + 1.
+# --------------------------------------------------------------------------
+
+# Conserved FR3 3' motif: the 2nd-CYS is preceded two residues back by an aromatic
+# ("YYC", "YFC", "YHC"...). Used when IgBLAST has no entry for an allele. The
+# 5'-most such Cys is taken because the V's CDR3 tail can hold a *second* Cys
+# (`YYC-AC-DT` in TRDV2*01, `YYCC...` in IGLV2-11*01). Verified against every
+# allele IgBLAST does annotate: 1183 agree, 0 disagree.
+_FR3_AROMATIC = frozenset("YFHW")
+_V_TAIL_MIN, _V_TAIL_MAX = 1, 14   # residues the V templates into the junction after Cys104
+
+# Conserved J FR4 motif [FW]-G-X-G at IMGT 118..121. Used only when the aux file
+# has no entry for an allele (rat/rhesus ship no TR aux). Verified against the
+# human aux: 117 alleles anchored, 0 disagreements. It does not fire for the
+# non-canonical J alleles (TRAJ35*01 has Cys118, TRBJ2-7*02 has Val118,
+# TRAJ16*01 is FARG, TRAJ61*01 is FGAN) -- those are flagged `no_anchor` rather
+# than guessed, because a wrong anchor silently corrupts every emitted coordinate.
+_J_FR4_MOTIF = re.compile(r"[FW]G.G")
+
+_ANCHOR_COLUMNS = ["locus", "segment", "allele", "functionality", "anchor_nt",
+                   "partial_nt", "templated_aa", "germline_nt", "status", "source"]
+
+
+def _gapped_alleles(species_dir: str, group: str, stem: str) -> list[tuple[str, str, str]]:
+    """``(allele, functionality, gapped_seq)`` from an IMGT V-QUEST gene file.
+
+    Keeps every allele regardless of functionality: VDJdb cites pseudogene and
+    ORF alleles, and ``markup.tsv`` (which is scaffold-gated and deduped) is not
+    a valid substitute.
+    """
+    out: list[tuple[str, str, str]] = []
+    for header, seq in imgt.read_fasta(imgt.gene_fasta_path(species_dir, group, stem)):
+        fields = header.split("|")
+        if len(fields) < 4 or not seq:
+            continue
+        allele = fields[1].strip()
+        func = fields[3].strip().strip("()[]").split("/")[0].split()[0] or "?"
+        out.append((allele, func, seq.upper()))
+    return out
+
+
+def _v_anchor(ungapped: str, fwr3_stop: int | None) -> tuple[int, str]:
+    """``(anchor_nt, source)`` of the Cys104 codon in an ungapped V germline.
+
+    ``source`` is ``ndm`` (IgBLAST), ``motif`` (conserved FR3 aromatic), or
+    ``no_anchor``. Every returned anchor is verified to be a Cys codon -- an
+    anchor that is off by one codon silently corrupts every coordinate we emit,
+    so we would rather refuse than guess.
+    """
+    if fwr3_stop:
+        a = fwr3_stop - 3
+        if a >= 0 and translate(ungapped[a : a + 3], 0) == "C":
+            return a, "ndm"
+    prot = translate(ungapped, 0)
+    for i, res in enumerate(prot):       # 5'-most qualifying Cys
+        if res != "C" or i < 60 or i < 2:
+            continue
+        if not (_V_TAIL_MIN <= len(prot) - 1 - i <= _V_TAIL_MAX):
+            continue
+        if prot[i - 2] in _FR3_AROMATIC:
+            return 3 * i, "motif"
+    return -1, "no_anchor"
+
+
+def _j_anchor_from_motif(seq: str) -> int:
+    """0-based nt offset of the [FW]118 codon via the FR4 motif, or ``-1``.
+
+    Picks the frame with the fewest stop codons; only the first motif hit in a
+    frame is considered.
+    """
+    best: tuple[int, int, int] | None = None
+    for frame in (0, 1, 2):
+        aa = translate(seq[frame:], 0)
+        hit = _J_FR4_MOTIF.search(aa)
+        if hit is None:
+            continue
+        cand = (aa.count("*"), frame, frame + 3 * hit.start())
+        if best is None or cand < best:
+            best = cand
+    return best[2] if best else -1
+
+
+def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]:
+    """Per-allele junction anchors for every V and J of every locus.
+
+    Independent of the scaffold build: a locus with no scaffolds still gets
+    anchors (they are all a bare-junction markup needs). Loci with no IMGT file
+    for this species (e.g. rat TR) are skipped.
+    """
+    fr4_offsets = combinations.load_j_fr4_offsets(organism)
+    fwr3_stops = combinations.load_v_fwr3_stops(organism)
+    if not fr4_offsets:
+        logger.warning("no IgBLAST aux for %s — J anchors fall back to the FR4 motif", organism)
+    if not fwr3_stops:
+        logger.warning("no IgBLAST ndm for %s — V anchors fall back to the FR3 motif", organism)
+
+    rows: list[dict] = []
+    counts: Counter = Counter()
+
+    for locus in LOCI:
+        # ---- V: Cys104 from IgBLAST's FWR3 stop, else the conserved FR3 motif.
+        try:
+            v_alleles = _gapped_alleles(species_dir, locus.group, locus.v)
+        except FileNotFoundError:
+            logger.info("%s: no IMGT V file (%s) for %s — no anchors",
+                        locus.name, locus.v, species_dir)
+            v_alleles = []
+        for allele, func, gapped in v_alleles:
+            ungapped = gapped.replace(".", "")
+            anchor, source = _v_anchor(ungapped, fwr3_stops.get(allele))
+            status = "ok" if anchor >= 0 else "no_anchor"
+            tail = ungapped[anchor:] if anchor >= 0 else ""
+            whole = len(tail) // 3 * 3
+            rows.append({
+                "locus": locus.name, "segment": "V", "allele": allele,
+                "functionality": func, "anchor_nt": anchor,
+                "partial_nt": len(tail) - whole,          # V ends mid-codon
+                "templated_aa": translate(tail[:whole], 0),
+                "germline_nt": tail, "status": status, "source": source,
+            })
+            counts[f"V:{status}"] += 1
+
+        # ---- J: [FW]118 from the aux `cdr3_stop`, else the FR4 motif.
+        try:
+            j_alleles = _gapped_alleles(species_dir, locus.group, locus.j)
+        except FileNotFoundError:
+            logger.info("%s: no IMGT J file (%s) for %s — no anchors",
+                        locus.name, locus.j, species_dir)
+            j_alleles = []
+        for allele, func, gapped in j_alleles:
+            seq = gapped.replace(".", "")
+            if allele in fr4_offsets:
+                anchor, source = fr4_offsets[allele][0] + 1, "aux"
+            else:
+                anchor = _j_anchor_from_motif(seq)
+                source = "motif" if anchor >= 0 else "no_anchor"
+            if anchor < 0 or anchor + 3 > len(seq):
+                anchor, source = -1, "no_anchor"
+            # The anchor pins the [FW]118 codon, so every junction codon sits at
+            # anchor - 3k and the J's 5' partial run is exactly `anchor % 3`. Do NOT
+            # use the aux frame column: for TRAJ31*01 it disagrees with its own
+            # cdr3_stop ((anchor - frame) % 3 == 1) and yields a garbage translation.
+            frame = anchor % 3 if anchor >= 0 else 0
+            status = "ok" if anchor >= 0 else "no_anchor"
+            slice_nt = seq[: anchor + 3] if anchor >= 0 else ""
+            rows.append({
+                "locus": locus.name, "segment": "J", "allele": allele,
+                "functionality": func, "anchor_nt": anchor,
+                "partial_nt": frame,                       # J starts mid-codon
+                "templated_aa": translate(slice_nt[frame:], 0) if slice_nt else "",
+                "germline_nt": slice_nt, "status": status, "source": source,
+            })
+            counts[f"J:{status}"] += 1
+
+    bad = {k: v for k, v in counts.items() if not k.endswith(":ok")}
+    if bad:
+        logger.warning("cdr3 anchors: %d unanchored alleles %s", sum(bad.values()), dict(bad))
+    logger.info("cdr3 anchors: %d alleles (%s)", len(rows), dict(counts))
+    return rows
+
+
 def _locus_manifest(nt_all: list[dict], d_germ: list[tuple[str, str, str]]) -> list[dict]:
     """Per-locus reference coverage for EVERY defined locus (0 where the build produced nothing).
 
@@ -246,6 +427,12 @@ def build_species(organism: str) -> Path:
         "".join(f">{loc}|{al}\n{s}\n" for loc, al, s in d_germ))
     logger.info("D germlines: %d alleles across %d loci",
                 len(d_germ), len({loc for loc, _, _ in d_germ}))
+
+    # Per-allele junction anchors for bare (junction_aa, V, J) markup — see `arda.cdr3fix`.
+    anchors = _collect_cdr3_anchors(organism, species_dir, logger)
+    pl.DataFrame(anchors, schema={c: pl.Utf8 if c not in ("anchor_nt", "partial_nt") else pl.Int64
+                                  for c in _ANCHOR_COLUMNS}).write_csv(
+        out_dir / "cdr3_anchors.tsv", separator="\t")
 
     # Locus coverage manifest — makes a silently-absent locus visible (build.py used to just
     # `continue` past a locus with no IMGT V/J, so rat/rabbit/rhesus shipped no TCR reference and

@@ -14,6 +14,7 @@ __all__ = [
     "VJ_LOCI",
     "VDJ_LOCI",
     "IMGT_SPECIES_DIR",
+    "VDJDB_SPECIES",
     "RECEPTOR_GROUP",
 ]
 
@@ -24,6 +25,14 @@ IMGT_SPECIES_DIR = {
     "rat": "Rattus_norvegicus",
     "rabbit": "Oryctolagus_cuniculus",
     "rhesus_monkey": "Macaca_mulatta",
+}
+
+# VDJdb `species` column -> arda organism (lowercased key; VDJdb writes "HomoSapiens").
+VDJDB_SPECIES = {
+    "homosapiens": "human",
+    "musmusculus": "mouse",
+    "macacamulatta": "rhesus_monkey",
+    "rattusnorvegicus": "rat",
 }
 
 # IMGT splits files under IG/ and TR/ subfolders.

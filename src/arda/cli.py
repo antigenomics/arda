@@ -99,13 +99,85 @@ def annotate(
         50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
-        help="Map D segments (d_call/d2_call/np*) for VDJ loci; nt input only."),
+        help="Map D segments (d_call/d2_call/d_support/np*) for VDJ loci. Works on aa input "
+             "too, against the D germlines' three translated frames -- informative for IGH, "
+             "mostly silent for the TR loci, whose D is too short to survive in protein."),
 ) -> None:
     """Annotate FR/CDR regions and write an AIRR TSV (streamed, memory-bounded)."""
     from .annotate.mapper import annotate_file
 
     annotate_file(input, output, organism=organism, seqtype=seqtype,
                   threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d)
+
+
+@app.command()
+def markup(
+    input: Path = typer.Option(..., "--input", "-i", help="Input TSV of CDR3/V/J records."),
+    output: Path = typer.Option(..., "--output", "-o", help="Output TSV with markup + repair."),
+    organism: str = typer.Option(
+        "", help="Force one organism; default reads the species column."),
+    cdr3_col: str = typer.Option("cdr3", help="Junction amino-acid column (C..[FW])."),
+    v_col: str = typer.Option("v", help="V gene column."),
+    j_col: str = typer.Option("j", help="J gene column."),
+    species_col: str = typer.Option("species", help="Species column."),
+    id_col: str = typer.Option("", help="Optional record-id column, used in the report."),
+    vdjdb: bool = typer.Option(
+        False, "--vdjdb", help="Read VDJdb column names (cdr3/v.segm/j.segm/species)."),
+    max_replace: int = typer.Option(
+        1, help="Repair edits at most this far from the conserved anchor; "
+                "edits further in are reported but not applied."),
+    d_posterior: bool = typer.Option(
+        False, "--d-posterior",
+        help="Also infer the D gene and its position from the junction length prior "
+             "and the amino-acid match (human IGH/TRB/TRD, mouse TRB)."),
+    report: Path = typer.Option(
+        None, "--report", help="Write a human-readable fix log here ('-' for stdout)."),
+    show_ok: bool = typer.Option(
+        False, "--show-ok", help="List correct records in the report too, not just fixed/failed."),
+) -> None:
+    """Mark up and repair bare (junction_aa, V, J) records; emit vdjdb-style cdr3fix.
+
+    The CDR3 column is the *junction*: Cys104 through Phe/Trp118, both included --
+    the convention VDJdb's `cdr3` column uses.
+    """
+    import polars as pl
+
+    from .cdr3fix import format_report, markup_records, to_frame
+
+    if vdjdb:
+        cdr3_col, v_col, j_col, species_col = "cdr3", "v.segm", "j.segm", "species"
+
+    df = pl.read_csv(input, separator="\t", infer_schema_length=0)
+    records = markup_records(df, cdr3=cdr3_col, v=v_col, j=j_col, species=species_col,
+                             sequence_id=id_col or None, organism=organism or None,
+                             max_replace=max_replace)
+    out = to_frame(records)
+    if d_posterior:
+        from .dpost import posterior_d
+
+        posts = [posterior_d(r.cdr3_repaired, r.v_call, r.j_call, r.species)
+                 for r in records]
+        out = out.with_columns([
+            pl.Series("d_call", [p.d_call if p else "" for p in posts]),
+            pl.Series("d_posterior", [round(p.posterior, 4) if p else None for p in posts]),
+            pl.Series("d_entropy", [round(p.entropy, 3) if p else None for p in posts]),
+            pl.Series("d_support_aa", [p.support_aa if p else None for p in posts]),
+            pl.Series("d_start", [p.d_start if p else None for p in posts]),
+            pl.Series("d_start_ci90",
+                      [f"{p.d_start_ci90[0]}-{p.d_start_ci90[1]}" if p else "" for p in posts]),
+        ])
+    out.write_csv(output, separator="\t")
+
+    if report is not None:
+        text = format_report(records, show_ok=show_ok)
+        if str(report) == "-":
+            typer.echo(text)
+        else:
+            Path(report).write_text(text)
+
+    n_fixed = sum(r.fix_needed for r in records)
+    n_bad = sum(not r.good for r in records)
+    typer.echo(f"{len(records)} records -> {output}  ({n_fixed} repaired, {n_bad} failed)")
 
 
 @app.command()
@@ -276,12 +348,18 @@ def rnaseq_correct(
     extra_airr: Optional[Path] = typer.Option(
         None, "--extra-airr",
         help="Stage-3 assembled-reads AIRR (from `assemble`) to fold into the clonotype table."),
+    organism: str = typer.Option("human", help="Reference organism (used only to map D)."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Add d_call/d2_call/d_support to each clonotype, mapped into its error-corrected "
+             "junction (once per clonotype, not per read)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Collapse CDR3 sequencing errors into clonotypes (per-substitution/indel error model)."""
     from .rnaseq.correct import correct_airr
 
-    rep = correct_airr(input, output, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
+    rep = correct_airr(input, output, organism=organism, map_d=map_d,
+                       max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
@@ -300,6 +378,10 @@ def rnaseq_assemble(
         help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads for re-annotation (0 = all cores)."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Call D (and tandem D-D) on each assembled contig and carry it onto its member "
+             "reads. An ultralong CDR3 is where a D-D is most likely and least visible."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Stage 3 — assemble long-CDR3 contigs the reads don't individually span.
@@ -310,7 +392,8 @@ def rnaseq_assemble(
     """
     from .rnaseq.assemble import assemble_contigs
 
-    rep = assemble_contigs(input, output, organism=organism, threads=threads, report_path=report)
+    rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d,
+                           report_path=report)
     typer.echo(
         f"[arda] assemble: {rep.contigs_complete}/{rep.contigs} complete contigs from "
         f"{rep.seeds} seeds; rescued {rep.reads_rescued} reads")
@@ -342,6 +425,10 @@ def rnaseq_run(
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions",
         help="Keep only complete junctions when forming clonotypes."),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Map D segments. Off skips D in all three stages; the clonotype table then carries "
+             "no d_call/d2_call."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
@@ -365,7 +452,7 @@ def rnaseq_run(
     report = out_dir / f"{out_prefix}.arda.json"
 
     mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
-                      reconstruct=reconstruct, min_score=min_score,
+                      reconstruct=reconstruct, min_score=min_score, map_d=map_d,
                       kmer=(None if kmer == 0 else kmer))
     typer.echo(
         f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
@@ -376,12 +463,13 @@ def rnaseq_run(
     if assemble:
         from .rnaseq.assemble import assemble_contigs
         extra = out_dir / f"{out_prefix}.assembled.airr.tsv"
-        arep = assemble_contigs(airr, extra, organism=organism, threads=threads)
+        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d)
         typer.echo(
             f"[arda] assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
-    crep = correct_airr(airr, clones, complete_only=complete_only, extra_airr=extra)
+    crep = correct_airr(airr, clones, organism=organism, map_d=map_d,
+                        complete_only=complete_only, extra_airr=extra)
     typer.echo(
         f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")

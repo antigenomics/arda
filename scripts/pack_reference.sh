@@ -20,6 +20,18 @@ tar czf "$OUT" -C "$ROOT/database" --exclude='vdj/*/mmseqs' vdj
 # first match, closing the pipe) -> a false failure; here-strings have no producer to break.
 members=$(tar tzf "$OUT")
 echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); $(grep -c . <<<"$members") members"
-grep -q '^vdj/human/alleles.fasta$' <<<"$members" || { echo "ERROR: vdj/human/alleles.fasta missing"; exit 1; }
+# Every file a pip user needs at runtime must be in here, per organism. `arda markup`,
+# `arda.dpost` and D mapping all read these, and a missing one is a 404-shaped failure that
+# only shows up on someone else's machine.
+for org in human mouse rat rabbit rhesus_monkey; do
+  for f in alleles.fasta alleles.aa.fasta markup.tsv markup.aa.tsv cdr3_anchors.tsv; do
+    grep -q "^vdj/$org/$f\$" <<<"$members" || { echo "ERROR: vdj/$org/$f missing"; exit 1; }
+  done
+done
+# D germlines exist only for organisms with a D locus; d_prior only where a model was published.
+for org in human mouse; do
+  grep -q "^vdj/$org/d_germlines.fasta\$" <<<"$members" || { echo "ERROR: vdj/$org/d_germlines.fasta missing"; exit 1; }
+  grep -q "^vdj/$org/d_prior.tsv\$" <<<"$members" || { echo "ERROR: vdj/$org/d_prior.tsv missing"; exit 1; }
+done
 if grep -q 'mmseqs' <<<"$members"; then echo "ERROR: mmseqs indexes leaked into the asset"; exit 1; fi
-echo "OK: asset root holds vdj/, no mmseqs indexes"
+echo "OK: asset root holds vdj/ (markup + anchors + D priors), no mmseqs indexes"
