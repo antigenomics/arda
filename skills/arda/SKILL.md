@@ -143,13 +143,16 @@ disagree in the overlap the higher-Phred base wins (FASTQ quality is read only o
 path, so the default stays fast). `correct` then collapses CDR3 sequencing errors into
 clonotypes — keyed by `(locus, v_call, j_call, junction)`, `count` = distinct fragments
 (paired mates of one molecule counted once) — by a parent:child count ratio
-(`--max-mismatches`/`--ratio` in `(0,1)`, `--complete-only` by default). Contig
-assembly (`rnaseq assemble`) is not yet
-implemented, but the code to give an assembled contig its AIRR cigars is
-(`annotate.contig`): `reannotate_contigs` (re-align the contig) and `merge_contig`
-(stitch the reads' alignments via the C++ `_markup.merge_alignment`). Both produce
-the same record; merge is ~9× faster at ~10⁵ contigs/sample (scRNA-seq), so it is
-the intended default once the assembler emits read layouts.
+(`--max-mismatches`/`--ratio` in `(0,1)`, `--complete-only` by default), and maps each
+clonotype's D into its corrected junction (`d_call`/`d2_call`/`d_support`, once per
+clonotype rather than voted over reads). Contig assembly (`rnaseq assemble`, Stage 3)
+is implemented — anchored greedy overlap-extension over Stage-1's per-read `cdr3_start`
+— and is on by default in `rnaseq run`. The code to give an assembled contig its AIRR
+cigars lives in `annotate.contig`: `reannotate_contigs` (re-align the contig, what
+`assemble` uses) and `merge_contig` (stitch the reads' alignments via the C++
+`_markup.merge_alignment`). Both produce the same record; merge is ~9× faster at ~10⁵
+contigs/sample (scRNA-seq), so it is the intended default once the assembler emits read
+layouts.
 
 ## mmseqs2 (auto-installed)
 

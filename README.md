@@ -74,6 +74,7 @@ arda info                                   # resolved paths + tool availability
 arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
+arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report -        # mark up + repair bare (CDR3aa, V, J) records
 arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # filter receptor reads from bulk RNA-seq
 arda rnaseq correct -i mapped.airr.tsv -o clones.tsv             # collapse CDR3 errors into clonotypes
 arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/    # one-shot map+assemble+correct for pipelines
@@ -186,7 +187,8 @@ gold-standard reference for benchmarking (see the `arda-benchmark` project).
    interior, so it isn't enumerated) plus **`J + C` constant-region scaffolds** (the
    CH1 exon spliced onto each J, so J→C reads have somewhere to land) → annotate with
    `igblastn -outfmt 19` → translate → write `database/vdj/<organism>/{alleles.fasta,
-   alleles.aa.fasta, markup.tsv, markup.aa.tsv, combinations.tsv, build.log}`.
+   alleles.aa.fasta, markup.tsv, markup.aa.tsv, combinations.tsv, d_germlines.fasta,
+   cdr3_anchors.tsv, d_prior.tsv, build.log}`.
 2. **Runtime** (`arda.annotate`): MMseqs2 search query→scaffolds → best hit →
    C++ `transfer_regions` projects scaffold region coordinates onto the query
    (handling indels, truncation, mid-codon alignment starts, reverse strand) → for
@@ -195,6 +197,19 @@ gold-standard reference for benchmarking (see the `arda-benchmark` project).
    `c_call`/`c_class` → AIRR TSV. Ambiguous D and C calls are comma-joined allele
    lists, as V/J already are. Out-of-frame junctions are reported with an N-bridge
    (`_`) so FR4 still reads.
+
+   The V..J interior is bounded by the **per-allele junction anchors** in
+   `cdr3_anchors.tsv`, not by the scaffold projection — a scaffold has a 9 nt N-pad
+   where a read has a 20–40 nt N-D-N region, so the projection collapses the very window
+   the D lives in. The D call is then accepted on a Karlin–Altschul E-value (`d_support`)
+   rather than a per-locus score floor, and is constrained by germline geometry: TRBD2
+   lies 3′ of the entire TRBJ1 cluster, so a TRBJ1 rearrangement can never be assigned
+   TRBD2. D mapping also runs on `--seqtype aa`, against each D germline's three
+   translated frames.
+3. **Bare records** (`arda.cdr3fix`, `arda.dpost`): a VDJdb-style row — CDR3 amino acid,
+   V, J, species, and no read — is marked up against the same anchors (`arda markup`),
+   its errors located and conservatively repaired, and optionally given a D gene inferred
+   from the junction *length* (`--d-posterior`).
 
 See [`memory/`](memory/) for design rationale and gotchas. Fast sequence
 primitives (`translate`, `detect_coding_frame`, `reverse_complement`,

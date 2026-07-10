@@ -38,6 +38,12 @@ from ..annotate.contig import reannotate_contigs
 
 __all__ = ["assemble_contigs", "AssembleReport"]
 
+# D columns carried from the contig annotation onto each member read. Coordinates are omitted
+# on purpose: they index the contig, and these rows carry only the junction.
+_D_COLUMNS = ("d_call", "d2_call", "d_support", "d2_support", "np1", "np2", "np3")
+_OUT_COLUMNS = ("sequence_id", "locus", "v_call", "j_call", "c_call", "c_class",
+                "junction", "junction_aa", *_D_COLUMNS)
+
 _COMP = str.maketrans("ACGTN", "TGCAN")
 _LOCI = ("IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD")
 # A complete junction spans both conserved anchors, in frame, no stop -- same rule as
@@ -187,6 +193,7 @@ def assemble_contigs(
     max_ext_past_cdr3: int = 130,
     scan_cap: int = 400,
     threads: int = 0,
+    map_d: bool = True,
     report_path: str | Path | None = None,
 ) -> AssembleReport:
     """Assemble long-CDR3 contigs from Stage-1 mapped reads and attribute their junctions.
@@ -199,9 +206,14 @@ def assemble_contigs(
     ``correct`` once: the read's incomplete Stage-1 row is dropped and this complete row kept,
     so each fragment is counted exactly once.
 
+    The contig's D call travels with the junction (``d_call``, ``d2_call``, ``d_support``,
+    ``d2_support``, ``np1``-``np3``). An ultralong CDR3 is the one place a tandem D-D is both
+    most likely and least visible to a single read, so the contig is where it must be called.
+
     Args:
         airr_tsv: Stage-1 mapped-reads AIRR TSV.
         output: assembled-reads AIRR TSV (header only if nothing assembles).
+        map_d: map D segments on the assembled contig (default ``True``).
         max_ext_past_cdr3: stop extending a contig once it reaches this many nt past the CDR3
             start -- enough to cross the junction into J without running into the shared C region.
         scan_cap: per-step cap on candidate reads examined for a (germline-frequent) k-mer.
@@ -266,7 +278,7 @@ def assemble_contigs(
             Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
         return report
 
-    ann = reannotate_contigs(contig_records, organism, threads=threads)
+    ann = reannotate_contigs(contig_records, organism, threads=threads, map_d=map_d)
     ann_by_id = {a.get("sequence_id"): a for a in ann}
 
     rows: list[dict] = []
@@ -278,17 +290,24 @@ def assemble_contigs(
         jn, ja = a["junction"], a["junction_aa"]
         vc, jc = a.get("v_call") or "", a.get("j_call") or ""
         lc = (a.get("locus") or "")[:3] or _locus_of(a)
+        # The contig is the only place a long CDR3's D is visible at all -- no single read spans
+        # it. Carry the contig's D across to every member read. Calls, E-values and the np
+        # stretches are junction-scoped facts and stay true on a row that carries only the
+        # junction; d_sequence_start/end are CONTIG coordinates and would be meaningless here,
+        # so they are not propagated.
+        d = {c: a.get(c) or "" for c in _D_COLUMNS}
         for mi in members:
             if complete[mi]:          # already counted via the mapped AIRR; don't double-attribute
                 continue
             rows.append({
                 "sequence_id": sid_c[mi], "locus": lc, "v_call": vc, "j_call": jc,
                 "c_call": "", "c_class": cclass_c[mi] or "", "junction": jn, "junction_aa": ja,
+                **d,
             })
     report.reads_rescued = len(rows)
 
     if rows:
-        pl.DataFrame(rows).write_csv(output, separator="\t")
+        pl.DataFrame(rows).select(_OUT_COLUMNS).write_csv(output, separator="\t")
     else:
         _write_empty(output)
     if report_path:
@@ -297,6 +316,4 @@ def assemble_contigs(
 
 
 def _write_empty(output: Path) -> None:
-    pl.DataFrame(schema={c: pl.Utf8 for c in
-                 ("sequence_id", "locus", "v_call", "j_call", "c_call", "c_class",
-                  "junction", "junction_aa")}).write_csv(output, separator="\t")
+    pl.DataFrame(schema={c: pl.Utf8 for c in _OUT_COLUMNS}).write_csv(output, separator="\t")
