@@ -66,7 +66,7 @@ def test_clean_records_are_left_alone(vdjdb):
     same = sum(r.cdr3_repaired == f["cdr3"] for r, f in pairs)
     n = len(pairs)
     print(f"\n[vdjdb] unchanged {same}/{n} = {same/n:.1%}")
-    assert same / n >= 0.98
+    assert same == n, "idempotence is exact on this fixture; any drift is a regression"
 
 
 def test_repair_reproduces_vdjdb_fix(vdjdb):
@@ -83,8 +83,9 @@ def test_repair_reproduces_vdjdb_fix(vdjdb):
                 if r.cdr3_repaired not in (f["cdr3"], f["cdr3_old"]))
     n = len(need)
     print(f"\n[vdjdb] repair reproduced {exact}/{n} = {exact/n:.1%}; novel rewrites {third}")
-    assert exact / n >= 0.90
-    assert third / n <= 0.05
+    assert exact / n >= 0.95, "98/100 on this fixture; the 2 misses submit flanking FR residues"
+    # A novel rewrite -- neither the submission nor VDJdb's repair -- is data corruption.
+    assert third == 0
 
 
 def test_arda_reports_mismatches_vdjdb_cannot_see(vdjdb):

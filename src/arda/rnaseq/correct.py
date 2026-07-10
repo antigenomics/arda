@@ -575,7 +575,12 @@ def correct_airr(
         resolved = [c for c in calls if c not in _GENERIC_ISOTYPE]
         return Counter(resolved or calls).most_common(1)[0][0]
 
-    order = sorted(range(len(roots)), key=lambda r: (dup[r], cons[r]), reverse=True)
+    # Sort by abundance, then break every tie deterministically. Ranking on counts alone left
+    # tied clonotypes in read order, and read order comes from a threaded mmseqs search -- so
+    # the same input produced the same rows in a different sequence from run to run.
+    order = sorted(range(len(roots)),
+                   key=lambda r: (-dup[r], -cons[r], junctions[roots[r]],
+                                  v[roots[r]], j[roots[r]]))
     out = pl.DataFrame({
         "junction": [junctions[roots[r]] for r in order],
         "junction_aa": [junction_aa[roots[r]] for r in order],

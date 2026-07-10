@@ -765,3 +765,36 @@ def test_jc_scaffolds_read_through_the_splice_for_every_functional_c_gene():
 
     # no gene-wide boundary defect may appear in human, the reference species
     assert not any(org == "human" for org, _ in seen_bad), sorted(seen_bad)
+
+
+def test_clonotype_row_order_is_deterministic_under_tied_abundance(tmp_path):
+    """Tied clonotypes must not reorder between runs.
+
+    Ranking on `(duplicate_count, consensus_count)` alone left ties in *read* order, and read
+    order comes out of a threaded mmseqs search -- so the same FASTQ produced the same rows in
+    a different sequence each run, and `examples/rnaseq/clones.tsv` was not byte-reproducible.
+    Shuffling the input reads must not move a single output row.
+    """
+    import random
+
+    from arda.rnaseq.correct import correct_airr
+
+    # Three distinct clonotypes with identical read support: every pairwise tie is live.
+    juncs = ["TGTGCCAGCAGCTTAGACGGGACAGGGTTC",
+             "TGTGCCAGCAGCTTAGACGGGACAGGTTTC",
+             "TGTGCCAGCAGCTTAGACGGGACAGGCTTC"]
+    rows = [{"sequence_id": f"r{i}_{k}", "junction": jn, "junction_aa": "CASSLDGTF",
+             "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB"}
+            for i, jn in enumerate(juncs) for k in range(6)]
+
+    outs = []
+    for seed in (0, 1, 2):
+        shuffled = rows[:]
+        random.Random(seed).shuffle(shuffled)
+        airr, clones = tmp_path / f"in{seed}.tsv", tmp_path / f"out{seed}.tsv"
+        pl.DataFrame(shuffled).write_csv(airr, separator="\t")
+        correct_airr(airr, clones, map_d=False)
+        outs.append(clones.read_text())
+
+    assert outs[0] == outs[1] == outs[2], "clonotype table must be byte-stable under read order"
+    assert len(pl.read_csv(outs[0].encode(), separator="\t", infer_schema_length=0)) == 3

@@ -34,7 +34,7 @@ comparable; the per-position ``errors`` list is arda's addition.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
@@ -124,8 +124,14 @@ class Cdr3Error:
 
     ``pos`` indexes the *observed* junction and ``length`` is how far the error
     extends. ``frm`` is what the record has, ``to`` what the germline says.
-    ``dist`` is the distance from the conserved anchor, and ``applied`` says
-    whether the repair was actually made (see ``_MAX_REPLACE``).
+    ``dist`` is the distance from the conserved anchor.
+
+    ``applied`` is true only when this edit was actually written into
+    ``Cdr3Markup.cdr3_repaired``. Being within ``_MAX_REPLACE`` of the anchor makes an
+    edit *eligible*; the whole side's repair is still discarded if its fix type comes
+    back ``Failed*`` (no alignment, or more than ``_MAX_FIX`` residues of edit). An
+    error can therefore be reported with ``applied=False`` and the junction left alone
+    — which is the point: detection and repair are separate decisions.
     """
 
     side: str      # "V" | "J"
@@ -393,6 +399,17 @@ def _errors(ops, germline: str, query: str, side: str, rev: bool,
     return out
 
 
+def _reported_only(errs: list[Cdr3Error]) -> list[Cdr3Error]:
+    """Clear ``applied`` on a side whose repair was discarded (``Failed*`` fix type).
+
+    ``_errors`` sets ``applied`` from proximity to the anchor alone -- that is
+    *eligibility*. Whether the edit reaches the output depends on the fix type, decided
+    afterwards. Without this, a ``FailedReplace`` record reports edits as applied while
+    ``cdr3_repaired`` is byte-identical to the input.
+    """
+    return [replace(e, applied=False) if e.applied else e for e in errs]
+
+
 def _fix_type(errs: list[Cdr3Error], aligned: bool) -> str:
     """Fix type reflects what was *applied*; reported-only errors leave it clean."""
     if not aligned:
@@ -451,9 +468,11 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
         errs = _errors(ops, g, q, "V", False, len(cdr3), max_replace)
         rec.v_end = consumed if score > 0 else -1
         rec.v_fix = _fix_type(errs, score > 0)
-        rec.errors.extend(errs)
         if rec.v_fix in _GOOD and any(e.applied for e in errs):
             repaired = _repair(g, q, ops, max_replace) + cdr3[consumed:]
+        else:
+            errs = _reported_only(errs)      # a Failed* side repairs nothing
+        rec.errors.extend(errs)
 
     # ---- J side: anchored at [FW]118 (last index), free gap toward the N region.
     if j_anchor is None or j_anchor.status != "ok" or not j_anchor.templated_aa:
@@ -467,9 +486,11 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
         errs = _errors(ops, g, q, "J", True, len(base), max_replace)
         rec.j_start = (len(base) - consumed) if score > 0 else -1
         rec.j_fix = _fix_type(errs, score > 0)
-        rec.errors.extend(errs)
         if rec.j_fix in _GOOD and any(e.applied for e in errs):
             repaired = base[: len(base) - consumed] + _repair(g, q, ops, max_replace)[::-1]
+        else:
+            errs = _reported_only(errs)      # a Failed* side repairs nothing
+        rec.errors.extend(errs)
 
     rec.cdr3_repaired = repaired
     rec.errors.sort(key=lambda e: (e.side, e.pos))

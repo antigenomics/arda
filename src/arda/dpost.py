@@ -263,7 +263,8 @@ def posterior_d(junction_aa: str, v_call: str, j_call: str,
     z = _logsumexp(list(gene_log.values()))
     by_gene = {g: math.exp(lp - z) for g, lp in gene_log.items()}
     best_gene = max(by_gene, key=by_gene.get)
-    entropy = -sum(p * math.log2(p) for p in by_gene.values() if p > 0)
+    # `+ 0.0` so a degenerate posterior reports 0.0 rather than -0.0.
+    entropy = -sum(p * math.log2(p) for p in by_gene.values() if p > 0) + 0.0
 
     # Where: d_start = (nt templated by V) + insVD, marginalising D and its trimming.
     pa_norm = [p / total for p in pa]
