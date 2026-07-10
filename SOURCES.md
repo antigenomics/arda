@@ -27,6 +27,8 @@ Every dataset arda ships or consumes, where it came from, and how to regenerate 
 | `tests/assets/realworld/<org>.fasta.gz` + `<org>.igblast.airr.tsv.gz` | experimental (GenBank) + derived (IgBLAST) | ~7.3k balanced GenBank mRNA across 5 organisms with an IgBLAST AIRR reference. Rebuild: `scripts/build_test_fixtures.py`. |
 | `tests/assets/vdjdb/sample.tsv.gz` | derived, sampled from VDJdb | 250 rows (100 with `fixNeeded=true`, 150 clean) sampled with `random.Random(0)` from `vdjdb-db/database/vdjdb.txt`. Columns: `complex.id, gene, cdr3, cdr3_old, v.segm, j.segm, species, cdr3fix`. Used as ground truth for `arda.cdr3fix` (VDJdb's own `cdr3fix` JSON carries `vEnd/jStart/vFixType/jFixType`). Upstream: https://github.com/antigenomics/vdjdb-db (**AGPL-3.0**; records carry per-study attribution). Committed here with the explicit permission of the copyright holder (M. Shugay). Regenerate: sample from a local `vdjdb-db` checkout. |
 
+| `database/vdj/<org>/d_prior.tsv` | derived, computed | Per-locus `insVD`/`insDJ`, `dlen` (surviving D nt \| allele), `d_given_j`, `d_marginal`, `beta`. Computed from the OLGA + vdjrearm generative models below; pairs forbidden by genomic order (TRBD2 × TRBJ1) are zeroed and each J column renormalised. Consumed by `arda.dpost` at runtime, so OLGA is **not** a runtime dependency. Regenerate: `env ARDA_VDJREARM=… python scripts/build_d_priors.py`. |
+
 ## External models (not vendored; tests skip when absent)
 
 | Dataset | Origin | Notes |

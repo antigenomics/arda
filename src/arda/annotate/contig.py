@@ -96,7 +96,8 @@ def merge_contig(contig: Contig, reference: Reference, *, map_d: bool = True) ->
            "tlen": "", "bits": "", "evalue": "", "pident": "", "target": contig.target}
     dg = reference.d_germlines.get(entry.locus) if (reference.seqtype == "nt" and map_d) else None
     return transfer_hit(contig.sequence_id, contig.sequence, hit, entry, reference.seqtype,
-                        d_germlines=dg, submitted_seq=contig.sequence)
+                        d_germlines=dg, submitted_seq=contig.sequence,
+                        anchors=reference.anchors)
 
 
 def merge_contigs(

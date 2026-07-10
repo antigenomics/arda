@@ -8,7 +8,7 @@ projection code is identical.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import polars as pl
@@ -53,6 +53,7 @@ class Reference:
     target_fasta: Path
     entries: dict[str, RefEntry]
     d_germlines: dict[str, list[tuple[str, str]]]  # locus -> [(allele, nt_seq)]
+    anchors: dict = field(default_factory=dict)    # (segment, allele) -> cdr3fix.Anchor
 
     def get(self, scaffold_id: str) -> RefEntry | None:
         return self.entries.get(scaffold_id)
@@ -117,4 +118,10 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
             vj_end=_int(row.get("vj_end")),
         )
     d_germlines = _load_d_germlines(base) if seqtype == "nt" else {}
-    return Reference(organism, seqtype, target_fasta, entries, d_germlines)
+    # Per-allele junction germlines: they pin `v_sequence_end` / `j_sequence_start` far
+    # better than projecting the scaffold's N-pad boundaries (see transfer._anchored_vj_bounds).
+    anchors: dict = {}
+    if seqtype == "nt":
+        from ..cdr3fix import load_anchors
+        anchors = load_anchors(organism)
+    return Reference(organism, seqtype, target_fasta, entries, d_germlines, anchors)

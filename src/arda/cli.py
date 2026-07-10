@@ -124,6 +124,10 @@ def markup(
     max_replace: int = typer.Option(
         1, help="Repair edits at most this far from the conserved anchor; "
                 "edits further in are reported but not applied."),
+    d_posterior: bool = typer.Option(
+        False, "--d-posterior",
+        help="Also infer the D gene and its position from the junction length prior "
+             "and the amino-acid match (human IGH/TRB/TRD, mouse TRB)."),
     report: Path = typer.Option(
         None, "--report", help="Write a human-readable fix log here ('-' for stdout)."),
     show_ok: bool = typer.Option(
@@ -145,7 +149,22 @@ def markup(
     records = markup_records(df, cdr3=cdr3_col, v=v_col, j=j_col, species=species_col,
                              sequence_id=id_col or None, organism=organism or None,
                              max_replace=max_replace)
-    to_frame(records).write_csv(output, separator="\t")
+    out = to_frame(records)
+    if d_posterior:
+        from .dpost import posterior_d
+
+        posts = [posterior_d(r.cdr3_repaired, r.v_call, r.j_call, r.species)
+                 for r in records]
+        out = out.with_columns([
+            pl.Series("d_call", [p.d_call if p else "" for p in posts]),
+            pl.Series("d_posterior", [round(p.posterior, 4) if p else None for p in posts]),
+            pl.Series("d_entropy", [round(p.entropy, 3) if p else None for p in posts]),
+            pl.Series("d_support_aa", [p.support_aa if p else None for p in posts]),
+            pl.Series("d_start", [p.d_start if p else None for p in posts]),
+            pl.Series("d_start_ci90",
+                      [f"{p.d_start_ci90[0]}-{p.d_start_ci90[1]}" if p else "" for p in posts]),
+        ])
+    out.write_csv(output, separator="\t")
 
     if report is not None:
         text = format_report(records, show_ok=show_ok)
