@@ -13,7 +13,7 @@ process ARDA {
     //   -profile docker   -> build the image from the Dockerfile beside this module and push it to
     //                        your registry, then point `container` at it (or override in a config).
     conda "${moduleDir}/environment.yml"
-    container "arda-mapper:2.4.0"
+    container "arda-mapper:2.5.0"
 
     input:
     tuple val(meta), path(reads)
