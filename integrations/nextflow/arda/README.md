@@ -9,8 +9,9 @@ pipeline the same way STAR/Salmon/fastp do.
 
 | file | contents |
 |---|---|
-| `<id>.clones.tsv` | corrected clonotype table: `junction, junction_aa, v_call, j_call, locus, count, n_reads` |
+| `<id>.clones.tsv` | corrected clonotype table: `junction, junction_aa, v_call, j_call, c_call, locus, duplicate_count, consensus_count, d_call, d2_call, d_support, d2_support` |
 | `<id>.airr.tsv` | mapped reads, AIRR Rearrangement schema |
+| `<id>.assembled.airr.tsv` | Stage-3 long-CDR3 reads rescued by contig assembly |
 | `<id>.arda.json` | run report (reads mapped, per-locus counts, isotype/constant, timing, peak RSS) |
 
 ## Runtime & resources
