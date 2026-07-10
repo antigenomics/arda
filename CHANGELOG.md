@@ -3,6 +3,33 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.1
+
+Packaging and integration fixes. No change to mapping, assembly, correction or any output
+column — 2.5.0 results reproduce exactly.
+
+### Fixed
+
+* **`pip install arda-mapper` could not run `arda rnaseq`.** `arda rnaseq correct` imports
+  `seqtree`, which ships only in the optional `rnaseq` extra, so a plain install mapped and
+  assembled and then died with a bare `ModuleNotFoundError` — after the expensive stages, and
+  before writing any clonotype table. The extra is now documented in the README and in
+  `docs/installation.rst`, and `correct` raises a `ModuleNotFoundError` that names the fix
+  (`pip install 'arda-mapper[rnaseq]'`). A genuinely broken `seqtree` build still surfaces its
+  own `ImportError` rather than being misreported as "not installed".
+
+* **The Nextflow module never installed that extra**, so `-profile conda` — the path its own
+  comments advertise as "works out of the box" — could not produce a clonotype table.
+  `integrations/nextflow/arda/environment.yml` now pins `arda-mapper[rnaseq]`. The `Dockerfile`
+  smoke test gained `python -c "import seqtree"`; `arda --version` succeeds without it, so the
+  image built green and failed mid-pipeline.
+
+* **The module's `airr` output channel emitted two files.** `path("*.airr.tsv")` also matches
+  `<prefix>.assembled.airr.tsv`, which `rnaseq run` has written since 2.4.0, so `ARDA.out.airr`
+  carried a 2-element list and the assembled AIRR was silently mislabelled as the mapped one.
+  The mapped AIRR is now matched by exact name, and the contigs get their own
+  `assembled_airr` channel (`optional: true`, for `--no-assemble`).
+
 ## 2.5.0
 
 ### Behaviour changes for existing users
