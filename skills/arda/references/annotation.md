@@ -27,7 +27,7 @@ annotate_records(
     threads=0,               # 0 = all cores
     sensitivity=None,        # None -> tuned default (7.0)
     strand="both",           # nt only: "both" (search + re-orient) | "forward"
-    map_d=True,              # map D segments (VDJ loci, nt only)
+    map_d=True,              # map D segments (VDJ loci; works on aa input too)
 ) -> list[dict]
 
 annotate_file(

@@ -1,7 +1,8 @@
 """Auto-fetch the curated arda reference database (a GitHub release asset).
 
-The wheel ships code only; the ~50 MB curated ``vdj/`` reference (allele FASTAs + region
-markup, per species, AA + NT) is published as the ``arda-reference-vdj.tar.gz`` asset on the
+The wheel ships code only; the curated ``vdj/`` reference (allele FASTAs + region markup, per
+species, AA + NT; ~50 MB on disk, ~3 MB compressed) is published as the
+``arda-reference-vdj.tar.gz`` asset on the
 matching ``vX.Y.Z`` GitHub release and downloaded once into the per-user cache on first use.
 Version-sensitive precompiled mmseqs DBs are *not* shipped — they are built on demand from
 the fetched FASTAs into ``<cache>/data``.

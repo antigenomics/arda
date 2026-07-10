@@ -52,3 +52,7 @@ it **auto-fetches** the curated ``vdj/`` references (the ``arda-reference-vdj.ta
 asset, ~3 MB) into ``$XDG_CACHE_HOME/arda`` (default ``~/.cache/arda``) and builds the MMseqs2
 index there — **no ``$ARDA_HOME`` and no reference build required**. Set
 ``ARDA_NO_AUTO_FETCH`` to disable the download (air-gapped runs with a pre-populated cache).
+
+**Bulk RNA-seq mode needs the ``rnaseq`` extra**: ``pip install 'arda-mapper[rnaseq]'``. It pulls
+``seqtree``, which ``arda rnaseq correct`` uses for the clonotype neighbour search. Without it
+``arda rnaseq run`` maps and assembles, then fails before writing any clonotype table.

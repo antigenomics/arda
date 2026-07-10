@@ -799,3 +799,41 @@ def test_clonotype_row_order_is_deterministic_under_tied_abundance(tmp_path):
 
     assert outs[0] == outs[1] == outs[2], "clonotype table must be byte-stable under read order"
     assert len(pl.read_csv(outs[0].encode(), separator="\t", infer_schema_length=0)) == 3
+
+
+def test_missing_seqtree_is_actionable_but_a_broken_one_is_not_disguised():
+    """`arda rnaseq correct` needs the optional `rnaseq` extra, and says so -- once.
+
+    Only ModuleNotFoundError means "not installed". A stale compiled `_core` (an editable
+    seqtree checkout rebuilt against another Python) raises a plain ImportError from inside
+    seqtree's own `__init__`. Telling that user to `pip install 'arda-mapper[rnaseq]'` sends
+    them in a circle, so the real message must survive.
+    """
+    import builtins
+
+    from arda.rnaseq.correct import _seqtree
+
+    real = builtins.__import__
+
+    def absent(name, *a, **k):
+        if name == "seqtree":
+            raise ModuleNotFoundError("No module named 'seqtree'")
+        return real(name, *a, **k)
+
+    def broken(name, *a, **k):
+        if name == "seqtree":
+            raise ImportError("cannot import name 'ScoreMatrix' from 'seqtree._core'")
+        return real(name, *a, **k)
+
+    try:
+        builtins.__import__ = absent
+        with pytest.raises(ModuleNotFoundError, match=r"arda-mapper\[rnaseq\]"):
+            _seqtree()
+
+        builtins.__import__ = broken
+        with pytest.raises(ImportError, match="ScoreMatrix") as exc:
+            _seqtree()
+        assert not isinstance(exc.value, ModuleNotFoundError), "a broken build is not a missing one"
+        assert "rnaseq" not in str(exc.value), "do not send a broken install to reinstall the extra"
+    finally:
+        builtins.__import__ = real
