@@ -27,6 +27,7 @@ __all__ = [
     "DEFAULT_D_SPACER_NT",
     "load_j_frames",
     "load_j_fr4_offsets",
+    "load_v_fwr3_stops",
     "build_locus_scaffolds",
 ]
 
@@ -73,6 +74,36 @@ def load_j_frames(organism: str) -> dict[str, int]:
                 except ValueError:
                     continue
     return frames
+
+
+def load_v_fwr3_stops(organism: str) -> dict[str, int]:
+    """Parse ``bin/internal_data/<organism>/<organism>.ndm.imgt`` -> {V allele: FWR3 stop}.
+
+    IgBLAST's own IMGT annotation of its V germlines. Column 11 is the 1-based FWR3
+    stop, and FR3-IMGT ends at position 104 -- the conserved 2nd-CYS -- so the Cys104
+    codon starts at ``fwr3_stop - 3`` (0-based). This is the authoritative V junction
+    anchor, and it is the same IgBLAST metadata the rest of the build already trusts.
+
+    It does NOT cover every IMGT allele (IgBLAST ships a subset), hence the motif
+    fallback in ``refbuild.build._v_anchor``.
+    """
+    ndm = bin_dir() / "internal_data" / organism / f"{organism}.ndm.imgt"
+    out: dict[str, int] = {}
+    if not ndm.exists():
+        return out
+    with open(ndm) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 11:
+                continue
+            try:
+                out[parts[0]] = int(parts[10])
+            except ValueError:
+                continue
+    return out
 
 
 def load_j_fr4_offsets(organism: str) -> dict[str, tuple[int, int]]:

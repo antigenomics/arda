@@ -109,6 +109,57 @@ def annotate(
 
 
 @app.command()
+def markup(
+    input: Path = typer.Option(..., "--input", "-i", help="Input TSV of CDR3/V/J records."),
+    output: Path = typer.Option(..., "--output", "-o", help="Output TSV with markup + repair."),
+    organism: str = typer.Option(
+        "", help="Force one organism; default reads the species column."),
+    cdr3_col: str = typer.Option("cdr3", help="Junction amino-acid column (C..[FW])."),
+    v_col: str = typer.Option("v", help="V gene column."),
+    j_col: str = typer.Option("j", help="J gene column."),
+    species_col: str = typer.Option("species", help="Species column."),
+    id_col: str = typer.Option("", help="Optional record-id column, used in the report."),
+    vdjdb: bool = typer.Option(
+        False, "--vdjdb", help="Read VDJdb column names (cdr3/v.segm/j.segm/species)."),
+    max_replace: int = typer.Option(
+        1, help="Repair edits at most this far from the conserved anchor; "
+                "edits further in are reported but not applied."),
+    report: Path = typer.Option(
+        None, "--report", help="Write a human-readable fix log here ('-' for stdout)."),
+    show_ok: bool = typer.Option(
+        False, "--show-ok", help="List correct records in the report too, not just fixed/failed."),
+) -> None:
+    """Mark up and repair bare (junction_aa, V, J) records; emit vdjdb-style cdr3fix.
+
+    The CDR3 column is the *junction*: Cys104 through Phe/Trp118, both included --
+    the convention VDJdb's `cdr3` column uses.
+    """
+    import polars as pl
+
+    from .cdr3fix import format_report, markup_records, to_frame
+
+    if vdjdb:
+        cdr3_col, v_col, j_col, species_col = "cdr3", "v.segm", "j.segm", "species"
+
+    df = pl.read_csv(input, separator="\t", infer_schema_length=0)
+    records = markup_records(df, cdr3=cdr3_col, v=v_col, j=j_col, species=species_col,
+                             sequence_id=id_col or None, organism=organism or None,
+                             max_replace=max_replace)
+    to_frame(records).write_csv(output, separator="\t")
+
+    if report is not None:
+        text = format_report(records, show_ok=show_ok)
+        if str(report) == "-":
+            typer.echo(text)
+        else:
+            Path(report).write_text(text)
+
+    n_fixed = sum(r.fix_needed for r in records)
+    n_bad = sum(not r.good for r in records)
+    typer.echo(f"{len(records)} records -> {output}  ({n_fixed} repaired, {n_bad} failed)")
+
+
+@app.command()
 def split(
     input: Path = typer.Argument(..., help="Input FASTA/FASTQ."),
     out_dir: Path = typer.Argument(..., help="Directory for shard FASTA files."),

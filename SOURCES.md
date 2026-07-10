@@ -1,0 +1,35 @@
+# Data sources
+
+Every dataset arda ships or consumes, where it came from, and how to regenerate it.
+"Experimental" = measured; "derived" = computed by us from something else.
+
+## Committed reference (`database/`)
+
+| Dataset | Origin | Provenance |
+|---|---|---|
+| `database/vdj/<org>/alleles{,.aa}.fasta`, `markup{,.aa}.tsv`, `combinations.tsv` | derived | V·J scaffolds enumerated from IMGT V-QUEST germlines, annotated with IgBLAST. Regenerate: `arda build-db --organism <org>`. |
+| `database/vdj/<org>/d_germlines.fasta` | derived | Ungapped IMGT D germlines (`>locus\|allele`), VDJ loci only. Written by `refbuild.build._collect_d_germlines`. |
+| `database/vdj/<org>/cdr3_anchors.tsv` | derived | Per-allele junction anchors. **V**: Cys104 from IgBLAST `bin/internal_data/<org>/<org>.ndm.imgt` (FWR3 stop − 3), falling back to the conserved FR3 aromatic motif. **J**: [FW]118 from IgBLAST `bin/optional_file/<org>_gl.aux` (`cdr3_stop` + 1), falling back to the `[FW]G.G` FR4 motif. Written by `refbuild.build._collect_cdr3_anchors`. Every emitted anchor is verified to be a Cys (V) codon. |
+| `database/c_genes/<org>.fasta` | derived | CH1 exons lifted from genome assemblies. See `database/c_genes/README.md`. |
+| `database/germline/rat/TR{A,B}J.fasta` | derived | Rat TR J supplement — IMGT V-QUEST ships no TR directory for rat. |
+
+## Upstream germline
+
+| Dataset | Origin | Notes |
+|---|---|---|
+| IMGT/V-QUEST reference directory | https://www.imgt.org/download/V-QUEST/IMGT_V-QUEST_reference_directory.zip | Fetched into `data/imgt/` (gitignored) by `refbuild.imgt.download_reference()`. **Licence: CC BY-NC-ND 4.0** — academic/non-profit use. |
+| IgBLAST 1.22.0 (`bin/`) | NCBI release | Fetched by `scripts/fetch_igblast.py`. Supplies `internal_data/*.ndm.imgt` and `optional_file/*_gl.aux`, both used for anchor derivation. |
+
+## Test fixtures
+
+| Dataset | Origin | Notes |
+|---|---|---|
+| `tests/assets/realworld/<org>.fasta.gz` + `<org>.igblast.airr.tsv.gz` | experimental (GenBank) + derived (IgBLAST) | ~7.3k balanced GenBank mRNA across 5 organisms with an IgBLAST AIRR reference. Rebuild: `scripts/build_test_fixtures.py`. |
+| `tests/assets/vdjdb/sample.tsv.gz` | derived, sampled from VDJdb | 250 rows (100 with `fixNeeded=true`, 150 clean) sampled with `random.Random(0)` from `vdjdb-db/database/vdjdb.txt`. Columns: `complex.id, gene, cdr3, cdr3_old, v.segm, j.segm, species, cdr3fix`. Used as ground truth for `arda.cdr3fix` (VDJdb's own `cdr3fix` JSON carries `vEnd/jStart/vFixType/jFixType`). Upstream: https://github.com/antigenomics/vdjdb-db (**AGPL-3.0**; records carry per-study attribution). Committed here with the explicit permission of the copyright holder (M. Shugay). Regenerate: sample from a local `vdjdb-db` checkout. |
+
+## External models (not vendored; tests skip when absent)
+
+| Dataset | Origin | Notes |
+|---|---|---|
+| OLGA default models | `olga` package (GPL-3.0) | `human_T_alpha/beta`, `human_B_heavy/kappa/lambda`, `mouse_T_alpha/beta`. Only `human_T_beta`, `mouse_T_beta`, `human_B_heavy` carry a D gene. |
+| vdjrearm models | `$ARDA_VDJREARM` → `/Users/mikesh/vcs/code/vdjrearm/model/Homo+sapiens/` | Adds human **TRD** (with D) and **TRG**, which OLGA lacks. OLGA-format (`model_params.txt`, `model_marginals.txt`, `{V,J}_gene_CDR3_anchors.csv`); verified to load via `olga.load_model`. No LICENSE file upstream. |
