@@ -49,6 +49,20 @@ requires_imgt = pytest.mark.skipif(
 )
 
 
+def olga_available() -> bool:
+    """OLGA supplies generative ground truth for ``arda.cdr3fix`` (optional extra)."""
+    try:
+        import olga  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+requires_olga = pytest.mark.skipif(
+    not olga_available(), reason="olga not installed (pip install -e '.[groundtruth]')"
+)
+
+
 @pytest.fixture(scope="session")
 def human_scaffolds():
     """A handful of (id, nt_seq) reference scaffolds for integration tests."""

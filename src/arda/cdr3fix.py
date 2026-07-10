@@ -113,6 +113,9 @@ class Anchor:
     functionality: str
     status: str           # "ok" | "no_anchor"
     source: str           # "ndm" | "aux" | "motif" | "no_anchor"
+    anchor_nt: int = -1   # 0-based offset of the anchor codon in the germline
+    partial_nt: int = 0   # V: dangling 3' nt; J: dangling 5' nt (mid-codon)
+    germline_nt: str = ""  # V: Cys104 -> 3' end. J: 5' end -> [FW]118 codon end.
 
 
 @dataclass(frozen=True)
@@ -231,7 +234,9 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
     for r in df.iter_rows(named=True):
         out[(r["segment"], r["allele"])] = Anchor(
             locus=r["locus"], segment=r["segment"], templated_aa=r["templated_aa"] or "",
-            functionality=r["functionality"], status=r["status"], source=r["source"])
+            functionality=r["functionality"], status=r["status"], source=r["source"],
+            anchor_nt=int(r["anchor_nt"]), partial_nt=int(r["partial_nt"]),
+            germline_nt=r["germline_nt"] or "")
     return out
 
 
@@ -301,10 +306,16 @@ def _align(germline: str, query: str) -> tuple[int, list[tuple[str, int, int]]]:
             diag = s[i - 1][j - 1] + (_MATCH if gi == query[j - 1] else _MISMATCH)
             s[i][j] = max(diag, s[i - 1][j] + _GAP, s[i][j - 1] + _GAP)
 
-    # Free end gaps: stop at the best-scoring cell. Ties go to the furthest cell,
-    # so germline agreement is credited as far as it genuinely extends.
-    score, _, bi, bj = max((s[i][j], i + j, i, j)
-                           for i in range(n + 1) for j in range(m + 1))
+    # Free end gaps: stop at the best-scoring cell. Ties prefer (a) consuming more
+    # query, so germline agreement is credited as far as it genuinely extends, then
+    # (b) consuming LESS germline, so we never invent residues we did not have to.
+    #
+    # Tie-breaking on `i + j` instead is a trap: for `CYVPGDRGGYTDKLIF` against
+    # TRDV2*03 (`CACDT`) it scores "skip the germline CA, then match the C" equal to
+    # "match the C", picks the skip, and prepends `CA` to a junction that already
+    # begins with the conserved Cys.
+    score, bj, neg_i = max((s[i][j], j, -i) for i in range(n + 1) for j in range(m + 1))
+    bi = -neg_i
     ops: list[tuple[str, int, int]] = []
     i, j = bi, bj
     while i > 0 and j > 0:
