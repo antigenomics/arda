@@ -777,6 +777,7 @@ def test_clonotype_row_order_is_deterministic_under_tied_abundance(tmp_path):
     """
     import random
 
+    pytest.importorskip("seqtree")  # optional dep gate, as every other `correct` test uses
     from arda.rnaseq.correct import correct_airr
 
     # Three distinct clonotypes with identical read support: every pairwise tie is live.

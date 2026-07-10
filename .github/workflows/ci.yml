@@ -34,9 +34,12 @@ jobs:
         # the editable on-import rebuild (editable.rebuild=true) can find pybind11.
         # `airr` (a .[test] dep, sdist-only) is pre-installed here WITH isolation so the
         # --no-build-isolation step below sees it satisfied instead of failing to build it.
+        # `rnaseq` (seqtree) too: without it every `arda rnaseq correct` test silently
+        # skips, so CI never exercised the clonotype error model or its deterministic
+        # row ordering. Nine tests were being skipped, not passing.
         run: |
           pip install scikit-build-core pybind11 ninja airr
-          pip install -e .[test] --no-build-isolation
+          pip install -e .[test,rnaseq] --no-build-isolation
 
       - name: Show environment
         run: |

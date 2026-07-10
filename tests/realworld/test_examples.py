@@ -111,6 +111,7 @@ def test_committed_rnaseq_clonotypes_still_reproduce(tmp_path):
     Row order ties on (duplicate_count, consensus_count), so compare as a sorted set of the
     columns the README quotes rather than row-for-row.
     """
+    pytest.importorskip("seqtree")  # `correct` needs the optional rnaseq extra
     from arda.rnaseq.assemble import assemble_contigs
     from arda.rnaseq.correct import correct_airr
     from arda.rnaseq.map import map_rnaseq
