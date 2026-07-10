@@ -176,6 +176,26 @@ def test_cdr3fix_json_matches_vdjdb_key_set():
     assert m.to_cdr3fix()["vEnd"] == 4 and m.to_cdr3fix()["jStart"] == 7
 
 
-def test_non_canonical_junction_is_reported_not_hidden():
+def test_a_non_canonical_submission_is_repaired_to_canonical_and_the_edits_reported():
+    """Both anchors wrong. Repair restores them; the substitutions are still reported.
+
+    ``v_canonical``/``j_canonical`` describe the junction *as repaired* -- restoring the
+    anchors is the point of the repair, and it is what VDJdb's ``vCanonical``/``jCanonical``
+    mean too.
+    """
     m = markup_cdr3("XASSARSGELFX", "TRBV9*01", "TRBJ2-2*01", HS)
-    assert not m.v_canonical and not m.j_canonical
+    assert m.cdr3 == "XASSARSGELFX" and m.cdr3_repaired == "CASSARSGELFF"
+    assert m.v_canonical and m.j_canonical and m.good
+    assert {(e.side, e.kind, e.frm, e.to) for e in m.errors if e.applied} == \
+        {("V", "sub", "X", "C"), ("J", "sub", "X", "F")}
+
+
+def test_a_repair_that_would_destroy_an_anchor_is_refused():
+    """`good` implies canonical, by rule. A junction is never handed back without its anchors."""
+    for cdr3, v, j in (("XASSARSGELFX", "TRBV9*01", "TRBJ2-2*01"),
+                       ("ASSARSGELF", "TRBV9*01", "TRBJ2-2*01"),
+                       ("CQQYYSYPF", "IGKV1-8*01", "IGKJ1*01")):
+        m = markup_cdr3(cdr3, v, j, HS)
+        if m.good:
+            assert m.cdr3_repaired.startswith("C"), (cdr3, m.cdr3_repaired)
+            assert m.cdr3_repaired.endswith(("F", "W")), (cdr3, m.cdr3_repaired)

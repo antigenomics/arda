@@ -93,6 +93,43 @@ def test_marginal_backoff_also_forbids_trbd2():
     assert _mask_forbidden(prior.d_marginal, J2) is prior.d_marginal
 
 
+def test_map_d_junction_partitions_the_interior_exactly():
+    """``np1 + D + np2`` must reconstruct the V..J interior, byte for byte."""
+    junction = _junction("human", "TRBD1*01", J2)
+    call = map_d_junction(junction, V["human"], J2, "human")
+    assert call.called and not call.is_dd
+    d = junction[call.d_sequence_start - 1 : call.d_sequence_end]
+    interior = junction[call.v_sequence_end : call.j_sequence_start - 1]
+    assert call.np1 + d + call.np2 == interior
+    assert call.np1 == NP1 and call.np2 == NP2
+    assert float(call.d_support) < 0.2, "d_support is the E-value the call was gated on"
+    # A single-allele call anchors to one germline, so the AIRR extras come with it.
+    assert call.extra["d_germline_start"] == 1
+    assert call.extra["d_cigar"].endswith("S")
+
+
+def test_map_d_junction_is_empty_on_a_vj_locus():
+    """TRA has no D gene. Not a miss -- there is nothing to find."""
+    call = map_d_junction("TGTGCTGTGAGAGATAGCAACTATCAGTTAATCTGG",
+                          "TRAV1-1*01", "TRAJ33*01", "human")
+    assert call.locus == "TRA"
+    assert not call.called and not call.is_dd
+    assert call.d_call == "" and call.v_sequence_end == -1
+
+
+def test_map_d_junction_refuses_an_unresolvable_allele():
+    call = map_d_junction(_junction("human", "TRBD1*01", J2), "NOSUCHV*01", J2, "human")
+    assert not call.called and call.v_sequence_end == -1
+
+
+def test_map_d_junction_needs_an_interior_to_search():
+    """V germline abutting J germline: no room for a D, so no call and no coordinates."""
+    anc = load_anchors("human")
+    junction = (anc[("V", V["human"])].germline_nt + anc[("J", J2)].germline_nt).upper()
+    call = map_d_junction(junction, V["human"], J2, "human")
+    assert not call.called and call.v_sequence_end == -1
+
+
 @pytest.mark.parametrize("j_call", [J1, "TRBJ1-6*01"])
 def test_posterior_never_calls_trbd2_on_a_j1(j_call):
     """A junction whose middle *is* TRBD2 still posteriors onto TRBD1, with no entropy left."""

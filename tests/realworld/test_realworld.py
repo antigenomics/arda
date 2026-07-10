@@ -157,17 +157,21 @@ def test_d_call_concordance(org):
 
     clean_tot, clean_co, clean_ag = stats["clean"]
     igh_tot, igh_co, igh_ag = stats["igh"]
-    # TRB/TRD: distinct germlines, expect strong agreement where both call a D.
+    # TRB/TRD: distinct germlines, strong agreement where both call a D. Achieved 97-98 %.
     if clean_co >= 30:
-        assert clean_ag / clean_co >= 0.80
-    # IGH: paralogous germlines + SHM; only loose inter-tool agreement expected.
+        assert clean_ag / clean_co >= 0.90
+    # IGH used to sit at 0.35 -- a floor set when the scaffold projection was collapsing the
+    # V..J interior to 11 nt and D was being matched inside a window too small to hold it.
+    # `_anchored_vj_bounds` fixed that; the worst organism is now rabbit at 86 %, human 97 %.
+    # This is NOT "paralogous germlines + SHM", which is what the old comment claimed.
     if igh_co >= 30:
-        assert igh_ag / igh_co >= 0.35
-    # arda should still call a D for a non-trivial share of IgBLAST-D records.
+        assert igh_ag / igh_co >= 0.80
+    # arda should still call a D for a non-trivial share of IgBLAST-D records. Achieved
+    # 57-63 % (clean) and 67-76 % (IGH); the E-value gate deliberately declines the rest.
     if clean_tot >= 50:
-        assert clean_co / clean_tot >= 0.30
+        assert clean_co / clean_tot >= 0.45
     if igh_tot >= 50:
-        assert igh_co / igh_tot >= 0.30
+        assert igh_co / igh_tot >= 0.45
 
 
 def test_trimmed_inputs():

@@ -98,6 +98,19 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
       translated D frames as independent database entries, tripling `n`, when the prior over
       `insVD` induces a prior over frame (as `dpost` already knows).
 
+- [x] **`cdr3fix` repairs to canonical, always.** `cdr3_repaired` is accepted only when it
+      opens with Cys104 and closes with Phe/Trp118 (`_canonicalise`); otherwise the submission
+      comes back untouched. `good` implies canonical by rule. Trimming flanking framework
+      (`_MAX_TRIM = 3`) is budgeted separately from inventing germline (`_MAX_FIX = 2`) —
+      removing residues the germline never explained is a much smaller risk than adding ones
+      never observed. Each trimmed residue costs `_TRIM`: a *free* trim could tie the untrimmed
+      alignment, win the tie-break, and eat the conserved Phe of clean short IGK junctions.
+      Result on the 250-row fixture: VDJdb's repair reproduced 100/100 (was 98), zero novel
+      rewrites, and `good`/`vCanonical`/`jCanonical` agree with VDJdb on every row. OLGA false
+      repairs unchanged at 0.35 %. `family*01` was dropped from the allele ladder: dead for all
+      five shipped organisms. `FailedReplace` turned out to be reachable after all (three
+      substitutions beside a long J anchor, `max_replace >= 3`), and is now tested.
+
 - [ ] **Full AIRR productivity.** `productive` is currently a heuristic (in-frame
       + stop-free V..J span); align it with the complete AIRR productivity rules
       (start codon, stop-codon scan over the whole VDJ, frame of the junction).

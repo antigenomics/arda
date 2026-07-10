@@ -57,6 +57,38 @@ def test_aa_evalue_and_min_score_are_alphabet_aware():
     assert _d_min_score(30, 100, 0.05, "aa") <= _d_min_score(30, 100, 0.05, "nt")
 
 
+@pytest.mark.parametrize("seqtype", ["nt", "aa"])
+def test_the_gate_is_monotone_in_both_directions(seqtype):
+    """A better score is rarer; a tighter E-value demands a better score. The gate rests on it."""
+    evalues = [_d_evalue(s, 30, 300, seqtype) for s in range(4, 11)]
+    assert evalues == sorted(evalues, reverse=True) and len(set(evalues)) == len(evalues)
+    thresholds = [_d_min_score(30, 300, e, seqtype) for e in (0.5, 0.2, 0.1, 0.05, 0.01)]
+    assert thresholds == sorted(thresholds)
+
+
+def test_the_gate_refuses_a_degenerate_search_rather_than_dividing_by_zero():
+    huge = 1 << 30
+    assert _d_min_score(0, 300) == huge          # no interior to search
+    assert _d_min_score(30, 0) == huge           # no database
+    assert _d_min_score(30, 300, 0.0) == huge    # an E-value of zero is unreachable
+    assert _d_evalue(0, 30, 300) == float("inf")
+    assert _d_evalue(6, 0, 300) == float("inf")
+
+
+@pytest.mark.parametrize("seqtype", ["nt", "aa"])
+def test_d_support_lets_a_consumer_reproduce_the_gate(seqtype):
+    """``d_support`` is the E-value at the called score, so re-thresholding on it is exact.
+
+    A consumer who keeps rows with ``d_support <= _D_MAX_EVALUE`` must keep exactly the rows
+    arda called. That only holds if the emitted number is the same quantity the gate used.
+    """
+    m, n = 30, 300
+    _, max_e, _ = _d_gate(seqtype)
+    min_score = _d_min_score(m, n, seqtype=seqtype)
+    assert _d_evalue(min_score, m, n, seqtype) <= max_e, "the accepted score clears the gate"
+    assert _d_evalue(min_score - 1, m, n, seqtype) > max_e, "one point less would not have"
+
+
 def test_a_planted_d_frame_is_found_in_an_aa_interior(igh_aa):
     """Plant one translated D germline verbatim; the caller must recover its gene and span."""
     nt = dict(_load_d_germlines(vdj_dir("human"))["IGH"])

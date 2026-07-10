@@ -77,3 +77,34 @@ def test_a_trbj2_junction_leaves_both_d_genes_live():
     assert set(post.by_gene) == {"TRBD1", "TRBD2"}
     assert all(p > 0.0 for p in post.by_gene.values())
     assert post.entropy > 0.0
+
+
+def test_a_junction_the_model_cannot_explain_returns_none():
+    """``insVD + |D| + insDJ`` is bounded. A 180 nt middle is outside the model's support."""
+    assert posterior_d("CASS" + "G" * 60 + "YEQYF", "TRBV5-1*01", "TRBJ2-7*01", "human") is None
+
+
+def test_overlapping_v_and_j_templates_return_none():
+    """When the germlines explain more than the junction holds, there is no middle to place."""
+    assert posterior_d("CASSLF", "TRBV5-1*01", "TRBJ1-4*01", "human") is None
+
+
+def test_an_empty_middle_is_prior_only_and_says_so():
+    """V and J templates abut: nothing of the D survives, so nothing identifies it.
+
+    The posterior is then the prior alone. For a TRBJ1 that is still a certainty -- genomic
+    order leaves only TRBD1 -- but for IGH, with 35 D genes and no such constraint, the
+    posterior stays diffuse and ``confident`` is False. ``n_middle_nt`` and ``support_aa``
+    are the honest signals that no sequence evidence was used.
+    """
+    trb = posterior_d("CASSF", "TRBV5-1*01", "TRBJ1-4*01", "human")
+    assert trb is not None
+    assert trb.n_middle_nt == 0 and trb.support_aa == 0
+    assert trb.d_call == "TRBD1" and trb.posterior == pytest.approx(1.0)
+    assert trb.entropy == 0.0 and not repr(trb.entropy).startswith("-")
+
+    igh = posterior_d("CARW", "IGHV1-18*01", "IGHJ4*02", "human")
+    assert igh is not None
+    assert igh.n_middle_nt == 0 and igh.support_aa == 0
+    assert not igh.confident, "35 D genes, no constraint: an empty middle proves nothing"
+    assert igh.entropy > 1.0
