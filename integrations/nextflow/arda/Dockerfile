@@ -10,5 +10,7 @@ FROM mambaorg/micromamba:1.5.8
 COPY --chown=$MAMBA_USER:$MAMBA_USER environment.yml /tmp/environment.yml
 RUN micromamba install -y -n base -f /tmp/environment.yml && micromamba clean --all --yes
 ARG MAMBA_DOCKERFILE_ACTIVATE=1
-# fail the build early if arda or mmseqs did not install
-RUN arda --version && mmseqs version
+# fail the build early if arda or mmseqs did not install. `import seqtree` too: it comes from the
+# `[rnaseq]` extra, and `arda --version` happily succeeds without it -- the failure would only
+# surface mid-pipeline, in `arda rnaseq correct`.
+RUN arda --version && mmseqs version && python -c "import seqtree"
