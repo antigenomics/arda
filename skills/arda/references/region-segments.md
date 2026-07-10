@@ -51,6 +51,13 @@ library; see `tests/synthetic/test_germline_segments.py`.
   `junction_aa` starts with C and ends with F/W for a canonical rearrangement.
 - `cdr3` is **J-anchored**: from the V-anchored CDR3 start up to just before the
   [FW] that opens FR4 (so somatic length is query-specific).
+- `cdr3_aa == junction_aa[1:-1]` **always**, by construction: the junction includes both
+  conserved anchors, the CDR3 excludes both. So `junction_aa` is two residues longer.
+- **VDJdb's `cdr3` column is arda's `junction`, not arda's `cdr3`.** It runs Cys104 →
+  Phe/Trp118 with both anchors *included*. Everything in `arda.cdr3fix`,
+  `arda.annotate.dmap` and `arda.dpost` therefore works in **junction space**. Feeding an
+  arda `cdr3_aa` to `markup_cdr3` (or a VDJdb `cdr3` to something expecting arda's) shifts
+  every coordinate by one residue and silently corrupts Pgen, clustering and matching.
 - Out-of-frame junctions (V and J in different frames): 1–2 N bases are inserted
   after the V germline end to restore the J frame; the codon holding an inserted N
   is rendered `_`. FR4 still reads.

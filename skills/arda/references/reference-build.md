@@ -19,6 +19,15 @@ an organism. Requires IgBLAST (fetched into `bin/` by `setup.sh`).
    - `markup.tsv`, `markup.aa.tsv` — per-scaffold region coordinates + sequences
    - `combinations.tsv` — scaffold → (V, J) allele pairs, padding
    - `d_germlines.fasta` — D germlines for VDJ loci
+   - `cdr3_anchors.tsv` — **per allele**: the conserved Cys104 (V) or Phe/Trp118 (J)
+     position, the residues that allele templates into the junction, and a `status`
+     (`ok` / `no_anchor` — flagged, never guessed). This is what lets `arda.cdr3fix`
+     mark up a junction with no read behind it, and what bounds the V..J interior for
+     D mapping instead of the scaffold projection, which collapses it.
+   - `d_prior.tsv` — generative-model summaries used by `arda.dpost` (`insVD`/`insDJ`
+     insert lengths, surviving-D length, `P(D | J)`). **Derived, not measured**; shipped
+     only for the (organism, locus) pairs with a published model. See `SOURCES.md` and
+     `scripts/build_d_priors.py`.
    - `loci_manifest.tsv` — per-locus reference coverage, one row per defined locus
    - `build.log`
    - `mmseqs/<nt|aa>/` — precompiled MMseqs2 indexes (+ `VERSION`)
