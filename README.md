@@ -52,7 +52,8 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
 ## Install
 
 ```bash
-pip install arda-mapper   # from PyPI (imports as `arda`); binary wheels ship the C++ extension
+pip install arda-mapper             # from PyPI (imports as `arda`); binary wheels ship the C++ extension
+pip install 'arda-mapper[rnaseq]'   # + seqtree, required by `arda rnaseq correct`
 ```
 
 `mmseqs2` (the search backend) is fetched/managed by arda at runtime. For development — and to
