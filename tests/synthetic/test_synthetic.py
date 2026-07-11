@@ -74,15 +74,17 @@ def test_insertion_in_cdr3_shifts_fr4(human_ref):
     sid = next(i for i in ids if ref[i]["cdr3_start"] and ref[i]["fwr4_start"])
     s = fa[sid]
     c3s = int(ref[sid]["cdr3_start"])
-    fr4s_ref = int(ref[sid]["fwr4_start"])
     mut = s[: c3s + 2] + "AAA" + s[c3s + 2 :]  # +3 nt inside CDR3
+    rec0 = annotate_records([("orig", s)], "human", "nt", threads=4)[0]
     rec = annotate_records([("mut", mut)], "human", "nt", threads=4)[0]
     assert _round_trip_ok(mut, rec)
     assert rec["cdr3"] and rec["fwr4"]
-    # FR4 should shift downstream by exactly 3 nt.
-    assert int(rec["fwr4_start"]) == fr4s_ref + 3
-    # FR4 protein still starts with the conserved [FW]GXG motif.
-    assert re.match(r"[FW]G.G", rec["fwr4_aa"])
+    # The +3 nt CDR3 insertion shifts FR4 downstream by exactly 3 nt and leaves FR4 itself unchanged.
+    # (Assert the invariant against the scaffold's own annotation, not a fixed [FW]GXG motif — the
+    # scaffold is drawn by a seeded shuffle over the whole reference, and a few J alleles annotate a
+    # non-canonical FR4 start, e.g. TRBJ2-7*02 -> VGPGTRLTVT.)
+    assert int(rec["fwr4_start"]) == int(rec0["fwr4_start"]) + 3
+    assert rec["fwr4_aa"] == rec0["fwr4_aa"]
 
 
 def test_mmseqs2_score_exposed(human_ref):
