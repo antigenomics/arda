@@ -21,7 +21,7 @@ import resource
 import sys
 import threading
 import time
-from itertools import zip_longest
+from itertools import islice, zip_longest
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -159,7 +159,7 @@ _RNASEQ_CHUNK = 200_000
 
 
 def read_pairs(r1: str | Path, r2: str | Path | None = None,
-               *, reconstruct: bool = False) -> Iterator[tuple[str, str]]:
+               *, reconstruct: bool = False, limit: int | None = None) -> Iterator[tuple[str, str]]:
     """Stream ``(id, sequence)`` reads for single-end (``r1`` only) or paired input.
 
     For paired input the two mates carry the same id, so they are tagged ``<id>/1`` and
@@ -167,6 +167,13 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
     ``reconstruct``, overlapping mates are merged into one fragment (:func:`merge_pair`)
     keyed by the bare id — giving a short read the mate's V/J context; non-overlapping
     mates fall back to the tagged-independent form.
+
+    Args:
+        limit: analyse only the first ``limit`` input records — reads (single-end) or read
+            pairs (paired) — then stop, without decompressing the rest of the file. ``None``
+            reads everything. The mate-order / truncation checks below still run on every
+            record actually read; a truncation *beyond* ``limit`` is simply never reached —
+            that is the intent of a head-style limit, not a hole in the check.
 
     Raises:
         ValueError: if the two files disagree on read names or record count. This is not paranoia:
@@ -176,7 +183,8 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
             had to be retracted. A pair of FASTQs is an assertion; check it.
     """
     if r2 is None:
-        yield from seqio.read_sequences(r1)
+        it = seqio.read_sequences(r1)
+        yield from islice(it, limit) if limit is not None else it
         return
 
     def _stem(i: str) -> str:
@@ -192,6 +200,8 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
     n = 0
     for n, (a, b) in enumerate(zip_longest(seqio.read_sequences(r1, with_qual=wq),
                                            seqio.read_sequences(r2, with_qual=wq))):
+        if limit is not None and n >= limit:
+            break
         if a is None or b is None:
             raise ValueError(
                 f"R1 and R2 differ in length (diverge at record {n}); one file is truncated.")
@@ -271,6 +281,7 @@ def map_rnaseq(
     max_seqs: int = mapper._MAX_SEQS,
     kmer: int | None = -1,
     drop_constant_only: bool = True,
+    limit: int | None = None,
     emit_reads: str | Path | None = None,
     report_path: str | Path | None = None,
 ) -> RnaseqReport:
@@ -287,6 +298,9 @@ def map_rnaseq(
             arda defaults to 13 (~0.7 GB, and never slower). ``None`` = MMseqs2's default.
         max_seqs: MMseqs2 target hits per read. Does not change which reads are kept, only
             which V/J scaffold wins. See :data:`arda.annotate.mapper._MAX_SEQS`.
+        limit: analyse only the first ``limit`` reads (single-end) / read pairs (paired), then
+            stop — a native head, so a subsample no longer needs an external ``zcat | head |
+            gzip`` round-trip. ``None`` maps the whole file.
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
@@ -307,7 +321,7 @@ def map_rnaseq(
 
     def reader():
         try:
-            pairs = read_pairs(r1, r2, reconstruct=reconstruct)
+            pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit)
             for chunk in seqio.chunked(pairs, chunk_size):
                 chunks.put(chunk)
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer

@@ -300,6 +300,11 @@ def rnaseq_map(
         help="Drop reads whose alignment lies wholly inside the constant region (tstart >= t_vjend). "
              "They are real receptor mRNA but carry no V(D)J, hence no clonotype. Dropping them takes "
              "precision 0.756 -> 0.968 at unchanged recall. Keep them if you are assembling contigs."),
+    limit: int = typer.Option(
+        0, "--limit", "-n",
+        help="Analyse only the first N reads (single-end) / read pairs (paired), then stop — a "
+             "native head, so subsampling no longer needs an external `zcat | head | gzip`. "
+             "0 = whole file."),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -312,6 +317,7 @@ def rnaseq_map(
                      map_d=map_d, reconstruct=reconstruct, min_score=min_score,
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
+                     limit=(limit or None),
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
@@ -429,6 +435,10 @@ def rnaseq_run(
         True, "--map-d/--no-map-d",
         help="Map D segments. Off skips D in all three stages; the clonotype table then carries "
              "no d_call/d2_call."),
+    limit: int = typer.Option(
+        0, "--limit", "-n",
+        help="Analyse only the first N reads (single-end) / read pairs (paired), then stop. "
+             "0 = whole file."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
@@ -453,7 +463,7 @@ def rnaseq_run(
 
     mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
                       reconstruct=reconstruct, min_score=min_score, map_d=map_d,
-                      kmer=(None if kmer == 0 else kmer))
+                      kmer=(None if kmer == 0 else kmer), limit=(limit or None))
     typer.echo(
         f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
         f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")

@@ -128,6 +128,28 @@ def test_read_pairs_paired_tags_mates(tmp_path):
     ]
 
 
+def test_read_pairs_limit_single(tmp_path):
+    fq = _write_fastq(tmp_path / "s.fastq", [("a", "ACGT"), ("b", "TTTT"), ("c", "GGGG")])
+    assert list(read_pairs(fq, limit=2)) == [("a", "ACGT"), ("b", "TTTT")]
+    assert list(read_pairs(fq, limit=None)) == [("a", "ACGT"), ("b", "TTTT"), ("c", "GGGG")]
+
+
+def test_read_pairs_limit_counts_input_pairs_not_emitted_mates(tmp_path):
+    # limit is in INPUT records: for paired input limit=2 means 2 pairs -> 4 tagged reads.
+    r1 = _write_fastq(tmp_path / "r1.fastq", [("a", "AAAA"), ("b", "CCCC"), ("c", "GGGG")])
+    r2 = _write_fastq(tmp_path / "r2.fastq", [("a", "TTTT"), ("b", "GGGG"), ("c", "TATA")])
+    assert [i for i, _ in read_pairs(r1, r2, limit=2)] == ["a/1", "a/2", "b/1", "b/2"]
+
+
+def test_read_pairs_limit_stops_before_a_later_truncation(tmp_path):
+    # A truncation BEYOND the limit is never reached (head semantics); without a limit it still fires.
+    r1 = _write_fastq(tmp_path / "r1.fastq", [("a", "AAAA"), ("b", "CCCC"), ("c", "GGGG")])
+    r2 = _write_fastq(tmp_path / "r2.fastq", [("a", "TTTT"), ("b", "GGGG")])  # missing c
+    assert [i for i, _ in read_pairs(r1, r2, limit=2)] == ["a/1", "a/2", "b/1", "b/2"]
+    with pytest.raises(ValueError):
+        list(read_pairs(r1, r2))
+
+
 @requires_mmseqs
 @requires_human_db
 def test_map_rnaseq_filters_and_keys_by_read_id(tmp_path, human_scaffolds):
