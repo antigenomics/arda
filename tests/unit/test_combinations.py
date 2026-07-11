@@ -33,6 +33,20 @@ def test_vdj_gets_d_spacer_vj_does_not():
     assert vdj.n_pad - vj.n_pad == combinations.DEFAULT_D_SPACER_NT
 
 
+def test_trd_configured_to_share_trav_dv_v_genes():
+    # Regression guard (DB-free, so it runs in CI unlike test_locus_disambiguation which needs a DB):
+    # TRA and TRD share V genes filed under TRAV as ".../DV..."; without them a δ rearrangement on a
+    # shared V gene has no TRD scaffold and is miscalled TRA. The locus follows J, so a TRAV/DV + TRDJ
+    # scaffold must exist and be labelled TRD.
+    trd = _locus("TRD")
+    assert trd.v_shared == ("TRAV", "/DV")
+    v = {"TRAV14/DV4*01": "ATG" * 10}
+    j = {"TRDJ1*01": "TGGGGGCAGGGG"}
+    sc = combinations.build_locus_scaffolds(trd, v, j, {"TRDJ1*01": 0})
+    assert len(sc) == 1 and sc[0].locus == "TRD"
+    assert sc[0].v_calls == ["TRAV14/DV4*01"]
+
+
 def test_dedup_collapses_identical_scaffolds():
     # Two V alleles with identical sequence collapse to one scaffold.
     v = {"V1": "ATG" * 10, "V2": "ATG" * 10}

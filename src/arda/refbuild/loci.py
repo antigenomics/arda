@@ -50,6 +50,11 @@ class Locus:
         j: J gene-type file stem.
         d: D gene-type file stem, or ``None`` for VJ loci.
         ig_seqtype: Value for IgBLAST ``-ig_seqtype`` (``"Ig"`` or ``"TCR"``).
+        v_shared: Optional ``(gene_stem, name_substring)`` — also pull V alleles from another gene
+            file whose name contains ``name_substring``. TRA and TRD share V genes (the loci are
+            interleaved on chr14): IMGT files them under ``TRAV`` with a ``.../DV...`` designation
+            (e.g. ``TRAV14/DV4``). Without this, a δ rearrangement on such a V gene has no TRD scaffold
+            to match and is miscalled TRA (the locus is set by J/D/C, never the V).
     """
 
     name: str
@@ -58,6 +63,7 @@ class Locus:
     j: str
     d: str | None
     ig_seqtype: str
+    v_shared: tuple[str, str] | None = None
 
     @property
     def has_d(self) -> bool:
@@ -78,7 +84,7 @@ LOCI: tuple[Locus, ...] = (
     # VDJ loci
     Locus("IGH", "IG", "IGHV", "IGHJ", "IGHD", "Ig"),
     Locus("TRB", "TR", "TRBV", "TRBJ", "TRBD", "TCR"),
-    Locus("TRD", "TR", "TRDV", "TRDJ", "TRDD", "TCR"),
+    Locus("TRD", "TR", "TRDV", "TRDJ", "TRDD", "TCR", v_shared=("TRAV", "/DV")),
 )
 
 VJ_LOCI = tuple(l for l in LOCI if not l.has_d)

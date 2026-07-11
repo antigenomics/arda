@@ -54,6 +54,15 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
         return [], [], [], [], []
 
     v = imgt.load_functional_alleles(species_dir, locus.group, locus.v)
+    if locus.v_shared:
+        # TRD shares V genes with TRA (chr14 interleaved locus): the shared genes are filed under TRAV
+        # with a ".../DV..." designation. Add them so TRAV/DV δ rearrangements match a TRD scaffold
+        # instead of being miscalled TRA. Safe: the J region (TRDJ vs TRAJ) disambiguates at runtime.
+        stem, needle = locus.v_shared
+        shared = imgt.load_functional_alleles(species_dir, locus.group, stem)
+        added = {a: s for a, s in shared.items() if needle in a}
+        v.update(added)
+        logger.info("%s: +%d shared V alleles from %s (%s)", locus.name, len(added), stem, needle)
     j = imgt.load_functional_alleles(species_dir, locus.group, locus.j)
     if not v or not j:
         logger.warning("%s: missing V (%d) or J (%d) alleles — skipped",
