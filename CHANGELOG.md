@@ -3,6 +3,50 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.5
+
+Two ways a correct arda install could still fail to work. Both hit the delivery path.
+
+### Fixed — concurrent runs corrupted the mmseqs index
+
+**arda is routinely run concurrently against the same reference** — the Nextflow module launches one
+process *per sample*, a SLURM array one per task — and the index build was not safe against that.
+
+`mmseqs createdb` creates its `db` file the instant it starts writing. Every *other* arda process
+therefore saw `db.exists() == True`, skipped building, and searched a **half-written database**. The
+failure was silent and total: **`0/200000 reads mapped, loci={}`**, no error, clean exit code. A whole
+27-dataset benchmark run came back as zeros. (`build_index` was worse: it unlinked the files a
+concurrent reader was mid-search on, and mmseqs died with `Cannot open index file db_h.index.1`.)
+
+The build now holds a lock, writes into a private temp dir, and moves the finished files into place
+with `db` **last** — readers test `db.exists()`, so it must not appear until its siblings are all
+there. A killed builder leaves a temp dir, never a half-built DB that looks complete.
+
+*Shipping a prebuilt index would not have fixed this*: the index is keyed to the mmseqs **version**,
+and arda uses whatever `mmseqs` is on `PATH`. Any user with their own build (as on a cluster) rebuilds
+locally and races anyway.
+
+### Changed — `seqtree` is now a core dependency, not an optional extra
+
+`pip install arda-mapper` is all the bulk RNA-seq pipeline needs.
+
+As an extra it produced this package's worst failure mode: a plain install would map and assemble a
+100 M-read sample for 45 minutes and *then* die on a bare `ModuleNotFoundError` — after all the
+expensive work, before writing a single clonotype. It slipped past every smoke test because
+`arda --version` succeeds without it, and it shipped to a collaborator's Nextflow module, whose own
+comments called `-profile conda` "works out of the box" while it could never emit a clonotype table.
+Patching the error message (2.5.1) treated the symptom; the dependency should simply not have been
+optional.
+
+`seqtree` ships the same 12 wheels on the same platforms as arda (py3.10–3.13, linux/mac/win) and
+pulls no runtime dependencies of its own, so requiring it costs nothing.
+
+* `[rnaseq]` survives as an **empty alias**, so existing `arda-mapper[rnaseq]` pins (the Nextflow
+  module, collaborator instructions, older docs) keep resolving without a warning.
+* **Removed every `pytest.importorskip("seqtree")` gate** (10 of them). With seqtree required, a skip
+  there can only *hide* a failure — and a skipped test is exactly how two reference bugs shipped.
+* The Dockerfile keeps its `import seqtree` build check.
+
 ## 2.5.4
 
 **Completes the 2.5.3 reference fix.** 2.5.3 dropped germlines that are *truncated* into the

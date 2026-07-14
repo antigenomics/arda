@@ -6,6 +6,5 @@ dependencies:
   - bioconda::mmseqs2 >=15
   - pip
   - pip:
-      # [rnaseq] pulls seqtree, which `arda rnaseq correct` needs. Without it the run dies
-      # after writing the AIRR, before any clonotype table is produced.
-      - arda-mapper[rnaseq]==2.5.4
+      # seqtree (needed by `arda rnaseq correct`) is a core dependency since 2.5.5 -- no extra.
+      - arda-mapper==2.5.5
