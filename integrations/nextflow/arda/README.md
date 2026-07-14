@@ -16,16 +16,24 @@ pipeline the same way STAR/Salmon/fastp do.
 
 ## Runtime & resources
 
-arda is **CPU-bound** (the MMseqs2 search dominates) and **very low-memory** (< 400 MB peak RSS,
-independent of read depth) — so give the process cores, not RAM. Measured on bulk tumor RNA-seq,
-32 cores:
+arda is **CPU-bound** — the MMseqs2 search dominates — so give the process cores. Measured on bulk
+tumor RNA-seq, 32 cores, `arda rnaseq run --assemble` (map + assemble + correct):
 
-| reads | cores | wall time | throughput | peak RSS |
-|---|---|---|---|---|
-| 104.9 M (52.4 M pairs, 2×150) | 32 | 44 min | ~39,600 reads/s (~2.4 M/min) | 371 MB |
+| reads | cores | wall time | throughput | peak RSS | clonotypes |
+|---|---|---|---|---|---|
+| 104.9 M (2×150) | 32 | 46 min | ~38,300 reads/s | 2,707 MB | 28,444 |
+| 153.9 M (2×100) | 32 | 51 min | ~50,300 reads/s | 511 MB | 1,519 |
+| 138.5 M (2×100) | 32 | 45 min | ~51,900 reads/s | 314 MB | 30 |
 
 Throughput scales roughly linearly with cores. The module is labelled `process_high`; for full-depth
 samples give it 16–32 cpus (`withName: 'ARDA' { cpus = 32 }`). `--threads` follows `task.cpus`.
+
+**Peak memory tracks repertoire richness, not read depth.** The third sample above has *more* reads
+than the first yet uses 9× less RAM — it has 30 clonotypes against 28,444. Mapping alone is flat and
+small (~300–400 MB at any depth); it is Stage 3 (assembly + error correction) that holds the clone set
+in memory. Budget **~4 GB** for a lymphocyte-rich or B-cell-rich sample and ~1 GB for a cold one; if
+you must cap tightly, `--no-assemble` returns to the flat mapping-only profile at the cost of the long
+CDR3s no single read spans.
 
 ## Requirements
 
