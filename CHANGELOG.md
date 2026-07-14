@@ -5,7 +5,28 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## 2.5.5
 
-**`seqtree` is now a core dependency, not an optional extra.** `pip install arda-mapper` is all the
+Two ways a correct arda install could still fail to work. Both hit the delivery path.
+
+### Fixed — concurrent runs corrupted the mmseqs index
+
+**arda is routinely run concurrently against the same reference** — the Nextflow module launches one
+process *per sample*, a SLURM array one per task — and the index build was not safe against that.
+
+`mmseqs createdb` creates its `db` file the instant it starts writing. Every *other* arda process
+therefore saw `db.exists() == True`, skipped building, and searched a **half-written database**. The
+failure was silent and total: **`0/200000 reads mapped, loci={}`**, no error, clean exit code. A whole
+27-dataset benchmark run came back as zeros. (`build_index` was worse: it unlinked the files a
+concurrent reader was mid-search on, and mmseqs died with `Cannot open index file db_h.index.1`.)
+
+The build now holds a lock, writes into a private temp dir, and moves the finished files into place
+with `db` **last** — readers test `db.exists()`, so it must not appear until its siblings are all
+there. A killed builder leaves a temp dir, never a half-built DB that looks complete.
+
+*Shipping a prebuilt index would not have fixed this*: the index is keyed to the mmseqs **version**,
+and arda uses whatever `mmseqs` is on `PATH`. Any user with their own build (as on a cluster) rebuilds
+locally and races anyway.
+
+### Changed — `seqtree` is now a core dependency, not an optional extra `pip install arda-mapper` is all the
 bulk RNA-seq pipeline needs.
 
 As an extra it produced this package's worst failure mode: a plain install would map and assemble a
