@@ -69,8 +69,8 @@ one-process test harness.
 Runtime & resources
 ~~~~~~~~~~~~~~~~~~~~~
 
-arda is **CPU-bound** (the MMseqs2 search dominates) and **very low-memory** (< 400 MB peak RSS,
-independent of read depth). Give it cores, not RAM. Measured on bulk tumor RNA-seq at 32 cores:
+arda is **CPU-bound** — the MMseqs2 search dominates — so give it cores. Measured on bulk tumor
+RNA-seq at 32 cores, ``arda rnaseq run --assemble`` (map + assemble + correct):
 
 .. list-table::
    :header-rows: 1
@@ -80,15 +80,36 @@ independent of read depth). Give it cores, not RAM. Measured on bulk tumor RNA-s
      - wall time
      - throughput
      - peak RSS
-   * - 104.9 M (52.4 M pairs, 2×150)
+     - clonotypes
+   * - 104.9 M (2×150)
      - 32
-     - 44 min
-     - ~39,600 reads/s (2.4 M/min)
-     - 371 MB
+     - 46 min
+     - ~38,300 reads/s
+     - 2,707 MB
+     - 28,444
+   * - 153.9 M (2×100)
+     - 32
+     - 51 min
+     - ~50,300 reads/s
+     - 511 MB
+     - 1,519
+   * - 138.5 M (2×100)
+     - 32
+     - 45 min
+     - ~51,900 reads/s
+     - 314 MB
+     - 30
 
-Throughput scales roughly linearly with cores; a typical full-depth bulk RNA-seq sample (~50 M read
-pairs) takes ~45 min on 32 cores. The Nextflow module is labelled ``process_high``; raise it with
+Throughput scales roughly linearly with cores; a typical full-depth bulk RNA-seq sample takes ~45 min
+on 32 cores. The Nextflow module is labelled ``process_high``; raise it with
 ``withName: 'ARDA' { cpus = 32 }`` for full-depth data. ``--threads`` follows ``task.cpus``.
+
+**Peak memory tracks repertoire richness, not read depth.** The third sample above has *more* reads
+than the first yet uses 9× less RAM — it carries 30 clonotypes against 28,444. Mapping alone is flat
+and small (~300–400 MB at any depth); it is Stage 3 (assembly + error correction) that holds the clone
+set in memory. Budget **~4 GB** for a lymphocyte- or B-cell-rich sample and ~1 GB for a cold one. Under
+a hard memory cap, ``--no-assemble`` restores the flat mapping-only profile — at the cost of the long
+CDR3s that no single read spans.
 
 Tuning
 ~~~~~~~

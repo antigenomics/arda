@@ -127,8 +127,11 @@ box) and a `Dockerfile`, and emits a `versions.yml`. See its
 [README](integrations/nextflow/arda/README.md) and the
 [pipeline-integration guide](https://docs.isalgo.dev/arda/pipeline_integration.html) for the five-line drop-in.
 
-arda is **CPU-bound and low-memory**: ~40k reads/s on 32 cores (~2.4 M reads/min, < 400 MB RAM), so a
-full-depth bulk RNA-seq sample of ~50 M read pairs finishes in ~45 min. Throughput scales with cores.
+arda is **CPU-bound**: ~40–50k reads/s on 32 cores, so a full-depth bulk RNA-seq sample (~50 M read
+pairs) finishes in ~45 min. Throughput scales with cores. Peak memory tracks **repertoire richness**,
+not read depth — mapping is flat (~300–400 MB at any depth), while Stage 3 holds the clone set, so a
+B-cell-rich tumour peaked at 2.7 GB (28k clonotypes) and a colder sample with *more* reads used 314 MB.
+Budget ~4 GB.
 
 ## Library
 
