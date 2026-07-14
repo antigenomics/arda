@@ -65,11 +65,16 @@ def build_db(
     organism: str = typer.Option(
         "all", help="Organism to build (or 'all' for every supported organism)."
     ),
+    one_allele_per_gene: bool = typer.Option(
+        False, "--one-allele-per-gene",
+        help="Build scaffolds from one allele per gene (*01 where it exists, else the lowest). "
+             "~4x smaller reference, no allele-level ambiguity.",
+    ),
 ) -> None:
     """Build the curated reference database (Phase 1)."""
     from .refbuild.build import build
 
-    build(organism)
+    build(organism, one_allele_per_gene=one_allele_per_gene)
 
 
 @app.command("build-index")

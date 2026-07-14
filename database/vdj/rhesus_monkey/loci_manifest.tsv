@@ -1,0 +1,8 @@
+locus	group	n_vj_scaffolds	n_jc_scaffolds	n_d_germlines	unreachable_d_germlines	status
+TRA	TR	0	74	0	0	ok
+TRG	TR	0	0	0	0	EMPTY
+IGK	IG	675	0	0	0	ok
+IGL	IG	999	0	0	0	ok
+IGH	IG	1260	60	49	0	ok
+TRB	TR	0	19	2	0	ok
+TRD	TR	0	0	4	4	EMPTY

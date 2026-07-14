@@ -1,17 +1,30 @@
-2026-07-08 22:54:34,293 INFO === arda reference build: mouse (Mus_musculus) ===
-2026-07-08 22:54:56,702 INFO TRA: V=282 J=61 raw_combos=17202 unique_scaffolds=15128 annotated=15128
-2026-07-08 22:54:56,873 INFO TRA: dropped 788 scaffolds with incomplete markup
-2026-07-08 22:55:00,587 INFO TRG: V=28 J=4 raw_combos=112 unique_scaffolds=112 annotated=112
-2026-07-08 22:55:00,591 INFO TRG: dropped 12 scaffolds with incomplete markup
-2026-07-08 22:55:05,944 INFO IGK: V=142 J=10 raw_combos=1420 unique_scaffolds=1400 annotated=1400
-2026-07-08 22:55:05,962 INFO IGK: dropped 20 scaffolds with incomplete markup
-2026-07-08 22:55:09,696 INFO IGL: V=14 J=5 raw_combos=70 unique_scaffolds=70 annotated=70
-2026-07-08 22:55:09,698 INFO IGL: dropped 50 scaffolds with incomplete markup
-2026-07-08 22:55:23,450 INFO IGH: V=544 J=8 raw_combos=4352 unique_scaffolds=4224 annotated=4224
-2026-07-08 22:55:23,501 INFO IGH: dropped 361 scaffolds with incomplete markup
-2026-07-08 22:55:28,836 INFO TRB: V=48 J=18 raw_combos=864 unique_scaffolds=864 annotated=864
-2026-07-08 22:55:33,759 INFO TRD: V=53 J=3 raw_combos=159 unique_scaffolds=159 annotated=159
-2026-07-08 22:55:33,763 INFO TRD: dropped 3 scaffolds with incomplete markup
-2026-07-08 22:55:33,881 INFO constant region: 210 J+C scaffolds across 7 loci (+1.0% over 20723 V-J scaffolds)
-2026-07-08 22:55:34,049 INFO D germlines: 66 alleles across 3 loci
-2026-07-08 22:55:34,052 INFO TOTAL: 20933 scaffolds across 7 loci in 59.8s -> /Users/mikesh/vcs/code/arda/database/vdj/mouse
+2026-07-14 17:09:48,166 INFO === arda reference build: mouse (Mus_musculus) ===
+2026-07-14 17:09:48,340 INFO TRA: dropped 20 truncated V allele(s): TRAV13-2*02(6nt), TRAV13-3*02(8nt), TRAV13D-1*02(6nt), TRAV13D-2*02(9nt), TRAV14D-3/DV8*05(10nt), TRAV15D-1/DV6D-1*03(15nt) …
+2026-07-14 17:09:48,340 INFO TRA: dropped 2 truncated J allele(s): TRAJ2*02(32nt), TRAJ42*02(30nt)
+2026-07-14 17:10:08,229 INFO TRA: V=262 J=59 raw_combos=15458 unique_scaffolds=13452 annotated=13452
+2026-07-14 17:10:08,387 INFO TRA: dropped 531 scaffolds with incomplete markup
+2026-07-14 17:10:08,424 INFO TRG: dropped 4 truncated V allele(s): TRGV1*03(15nt), TRGV1*06(15nt), TRGV1*07(15nt), TRGV1*08(14nt)
+2026-07-14 17:10:12,299 INFO TRG: V=24 J=4 raw_combos=96 unique_scaffolds=96 annotated=96
+2026-07-14 17:10:12,302 INFO TRG: dropped 12 scaffolds with incomplete markup
+2026-07-14 17:10:12,408 INFO IGK: dropped 1 truncated V allele(s): IGKV8-28*02(23nt)
+2026-07-14 17:10:17,913 INFO IGK: V=141 J=10 raw_combos=1410 unique_scaffolds=1390 annotated=1390
+2026-07-14 17:10:17,933 INFO IGK: dropped 20 scaffolds with incomplete markup
+2026-07-14 17:10:17,933 INFO IGK: 20 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 17:10:21,819 INFO IGL: V=14 J=5 raw_combos=70 unique_scaffolds=70 annotated=70
+2026-07-14 17:10:21,821 INFO IGL: dropped 50 scaffolds with incomplete markup
+2026-07-14 17:10:22,163 INFO IGH: dropped 5 truncated V allele(s): IGHV1-18-17*02(9nt), IGHV5-15*03(9nt), IGHV5-17*01(9nt), IGHV5-17*02(9nt), IGHV5-17*04(9nt)
+2026-07-14 17:10:35,688 INFO IGH: V=539 J=8 raw_combos=4312 unique_scaffolds=4184 annotated=4184
+2026-07-14 17:10:35,737 INFO IGH: dropped 361 scaffolds with incomplete markup
+2026-07-14 17:10:35,737 INFO IGH: 159 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 17:10:35,789 INFO TRB: dropped 16 truncated V allele(s): TRBV12-1*02(12nt), TRBV12-2*02(12nt), TRBV13-2*02(13nt), TRBV13-2*03(12nt), TRBV16*02(12nt), TRBV16*03(12nt) …
+2026-07-14 17:10:41,212 INFO TRB: V=32 J=18 raw_combos=576 unique_scaffolds=576 annotated=576
+2026-07-14 17:10:41,391 INFO TRD: +42 shared V alleles from TRAV (/DV)
+2026-07-14 17:10:41,400 INFO TRD: dropped 5 truncated V allele(s): TRAV14D-3/DV8*05(10nt), TRAV15D-1/DV6D-1*03(15nt), TRAV15D-2/DV6D-2*02(16nt), TRAV6-7/DV9*02(11nt), TRDV2-2*02(15nt)
+2026-07-14 17:10:46,482 INFO TRD: V=48 J=3 raw_combos=144 unique_scaffolds=144 annotated=144
+2026-07-14 17:10:46,486 INFO TRD: dropped 3 scaffolds with incomplete markup
+2026-07-14 17:10:46,606 INFO constant region: 205/210 J+C scaffolds carry an FR4 (rest have no aux entry)
+2026-07-14 17:10:46,607 INFO constant region: 210 J+C scaffolds across 7 loci (+1.1% over 18935 V-J scaffolds)
+2026-07-14 17:10:46,769 INFO D germlines: 66 alleles across 3 loci
+2026-07-14 17:10:46,787 WARNING cdr3 anchors: 216 allele(s) not clean {'V:no_anchor': 156, 'J:no_anchor': 5, 'V:truncated': 53, 'J:truncated': 2}
+2026-07-14 17:10:46,787 INFO cdr3 anchors: 1417 alleles ({'V:ok': 1085, 'V:no_anchor': 156, 'J:ok': 116, 'J:no_anchor': 5, 'V:truncated': 53, 'J:truncated': 2})
+2026-07-14 17:10:46,799 INFO TOTAL: 19145 scaffolds across 7 loci in 58.6s -> /Users/mikesh/vcs/code/arda/database/vdj/mouse

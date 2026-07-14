@@ -3,6 +3,74 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.3
+
+**Reference fix — germlines that are truncated INTO the junction no longer build scaffolds.**
+Clonotype output changes; mapping does not. Re-run rather than diff against 2.5.2 clonotypes.
+
+### Fixed
+
+* **3'-truncated V alleles produced junctions that were short but looked canonical.** Some IMGT V
+  records stop before the canonical 3' end, so the `V + pad + J` scaffold built from them **lacks
+  nucleotides a real rearrangement has** — and every read projected onto such a scaffold came out
+  with a junction short by exactly that much. `TRAV20*03` templates 3 nt into the junction where its
+  siblings template 13, so every clonotype built on it was **3 aa short**. On a real tumour it took
+  1,039 reads (48 % of all TRA reads) across 33 clonotypes, and arda's TRA CDR3-length distribution
+  peaked 3 aa below every other tool's.
+
+  Nothing downstream could catch it: the junction still starts with Cys and ends with [FW], so it
+  looks canonical and `correct --complete-only` passes it. The build's completeness gate only checks
+  that region *coordinates* exist, which they do.
+
+  An allele is now dropped from the **scaffold set** if its germline reaches at least one codon less
+  far into the junction than the longest allele of its own gene. Orphan-safe by construction — the
+  threshold is relative to the gene's own best allele, so that allele always survives and no gene can
+  lose all of its alleles. 63 human V alleles, 53 mouse (`TRAV20*03/*04`, `TRBV4-3*02/*03/*04`,
+  `IGKV3-20*02`, …). They remain in `cdr3_anchors.tsv`, now flagged **`status=truncated`** — a status
+  `docs/reference_build.rst` has documented from the start and which was never implemented.
+
+* **Scaffolds whose V has no findable Cys104 claimed to be productive.** 570 human and 179 mouse V-J
+  scaffolds emitted a `junction_aa` that does not begin at Cys104 — i.e. not a junction at all — and
+  549 of the human ones were flagged `productive=T`. Such a scaffold now **keeps its place in the
+  reference** (the read still maps, so filter recall is untouched) but carries **no junction** and
+  `productive=F`, so `correct --complete-only` drops it instead of minting a bogus clonotype.
+
+  Dropping those alleles outright was considered and rejected: it would delete **41 *functional*
+  mouse IGHV/IGLV genes**, and arda is the only tool in the benchmark that runs on mouse.
+
+* Effect on the shipped example: mapping is **bit-identical** (925/1035 reads, same per-locus
+  counts); clonotypes go 21 → 20 because reads on a dropped allele reassign to a surviving sibling of
+  the same gene, merging rows that shared a junction and differed only in `v_call`.
+
+### Added
+
+* **`arda build-db --one-allele-per-gene`** — build scaffolds from one representative allele per gene
+  (`*01` where it exists, else the lowest-numbered). Human: **16,035 → 4,443 scaffolds (3.6x smaller)**
+  with **all 290 V genes retained**. Deliberately not a literal `*01` filter: 19 human V genes
+  (`IGHV2-70D`, `IGHV3-25`, `IGHV3-43D`, `IGHV3-62`, `IGHV3-64D`, …) have no `*01` record and would
+  vanish silently. Off by default.
+
+* **Reference invariants now run in CI**, without a built DB (`tests/unit/test_reference_invariants.py`):
+  every scaffold junction starts at Cys104; no scaffold is built from a truncated allele; no gene loses
+  every allele; TRD still carries the shared `TRAV*/DV*` genes; human still has its 345 `J+C` scaffolds.
+  Both reference bugs found so far were invisible to CI because the only tests covering them needed a
+  built database and were skipped — that is exactly how the 2.5.2 defect regressed.
+
+## 2.5.2
+
+**Annotation fix (γδ / δ chains).** TRA and TRD are interleaved on chr14 and share V genes filed under
+`TRAV` as `.../DV...` (e.g. `TRAV14/DV4`). Whether those landed in the TRD scaffold set silently
+depended on IMGT functionality flags in the `TRDV` file — a clean `arda build-db` could produce TRD
+scaffolds with **no** `/DV` genes, so a δ rearrangement on such a V gene had no TRD scaffold to match
+and was **miscalled TRA** (the locus follows the J/D/C gene, never the shared V).
+
+* `refbuild`: `Locus.v_shared=("TRAV", "/DV")` now pulls the shared genes into TRD deterministically.
+* Added a DB-free regression test — the existing `test_locus_disambiguation` needs a built DB, so it
+  was skipped in CI, which is how this regressed.
+* Human reference rebuilt; TRD scaffolds now carry `TRAV/DV`. No API change.
+
+On real δ amplicon data each library now maps ~99.6–99.9 % to TRD.
+
 ## 2.5.1
 
 Packaging and integration fixes. No change to mapping, assembly, correction or any output
