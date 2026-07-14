@@ -45,13 +45,17 @@ def _setup_logger(out_dir: Path) -> logging.Logger:
     return logger
 
 
-def _process_locus(organism, species_dir, locus, j_frames, logger):
+def _process_locus(organism, species_dir, locus, j_frames, logger,
+                   fwr3_stops=None, fr4_offsets=None, one_allele_per_gene=False):
     """Return (nt_rows, aa_rows, combo_rows, fasta_nt, fasta_aa) lists for a locus."""
     from ..igblast import has_internal_annotation
     if not has_internal_annotation(organism, locus.group):
         logger.info("%s: no IgBLAST %s internal annotation for %s — skipped",
                     locus.name, locus.group, organism)
         return [], [], [], [], []
+
+    fwr3_stops = combinations.load_v_fwr3_stops(organism) if fwr3_stops is None else fwr3_stops
+    fr4_offsets = combinations.load_j_fr4_offsets(organism) if fr4_offsets is None else fr4_offsets
 
     v = imgt.load_functional_alleles(species_dir, locus.group, locus.v)
     if locus.v_shared:
@@ -69,6 +73,16 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
                        locus.name, len(v), len(j))
         return [], [], [], [], []
 
+    # Drop germlines that are truncated INTO the junction. Must run after the v_shared merge (the
+    # TRAV/DV alleles are subject to it too) and before the scaffold cross-product.
+    v = drop_truncated(v, {a: v_cys_tail(s, fwr3_stops.get(a)) for a, s in v.items()},
+                       logger=logger, locus=locus.name, segment="V")
+    j = drop_truncated(j, {a: j_junction_tail(s, fr4_offsets.get(a)) for a, s in j.items()},
+                       logger=logger, locus=locus.name, segment="J")
+    if one_allele_per_gene:
+        v = select_one_allele_per_gene(v, logger=logger, locus=locus.name, segment="V")
+        j = select_one_allele_per_gene(j, logger=logger, locus=locus.name, segment="J")
+
     scaffolds = combinations.build_locus_scaffolds(locus, v, j, j_frames)
     if not scaffolds:
         logger.warning("%s: no scaffolds produced — skipped", locus.name)
@@ -85,7 +99,7 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
                 locus.name, len(v), len(j), raw, len(scaffolds), df.height)
 
     nt_rows, aa_rows, combo_rows, fasta_nt, fasta_aa = [], [], [], [], []
-    incomplete = 0
+    incomplete = unanchored = 0
     coord_cols = [f"{r}_start" for r in REGION_NAMES] + [f"{r}_end" for r in REGION_NAMES]
 
     for rec in df.iter_rows(named=True):
@@ -103,6 +117,22 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
         v_call = ",".join(sc.v_calls)
         j_call = ",".join(sc.j_calls)
 
+        junction = rec.get("junction") or ""
+        junction_aa = rec.get("junction_aa") or ""
+        productive = rec.get("productive")
+        if not junction_aa.startswith("C"):
+            # A junction that does not begin at Cys104 is not a junction. It happens when the V
+            # germline has no findable anchor: IgBLAST ships no `ndm` entry for the allele and the
+            # FR3-motif fallback fails (9% of functional mouse V alleles, 5% of human). Such a
+            # scaffold used to emit a garbage junction AND claim productive=T.
+            #
+            # Keep the scaffold -- the read still MAPS, so filter recall is untouched -- but emit no
+            # junction and do not claim it is productive, so `correct --complete-only` drops it
+            # instead of minting a bogus clonotype. Dropping the allele outright would delete 41
+            # *functional* mouse IGHV/IGLV genes.
+            junction, junction_aa, productive = "", "", "F"
+            unanchored += 1
+
         combo_rows.append({
             "scaffold_id": sid, "locus": locus.name,
             "v_calls": v_call, "j_calls": j_call, "n_pad": sc.n_pad,
@@ -112,16 +142,16 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
 
         nt_row = {"scaffold_id": sid, "locus": locus.name,
                   "v_call": v_call, "j_call": j_call,
-                  "productive": rec.get("productive"),
+                  "productive": productive,
                   # Extended markup: scaffold nt positions of the V germline end and
                   # J germline start, transferred to queries to locate the V/J split
                   # inside the junction (and to bridge frame for out-of-frame calls).
                   "v_sequence_end": rec.get("v_sequence_end") or "",
                   "j_sequence_start": rec.get("j_sequence_start") or "",
-                  "junction": rec.get("junction"), "junction_aa": rec.get("junction_aa")}
+                  "junction": junction, "junction_aa": junction_aa}
         aa_row = {"scaffold_id": sid, "locus": locus.name,
                   "v_call": v_call, "j_call": j_call, "coding_start": coding_start,
-                  "junction_aa": rec.get("junction_aa")}
+                  "junction_aa": junction_aa}
         for r in REGION_NAMES:
             ns, ne = int(rec[f"{r}_start"]), int(rec[f"{r}_end"])
             nt_row[f"{r}_start"], nt_row[f"{r}_end"] = ns, ne
@@ -136,6 +166,9 @@ def _process_locus(organism, species_dir, locus, j_frames, logger):
 
     if incomplete:
         logger.info("%s: dropped %d scaffolds with incomplete markup", locus.name, incomplete)
+    if unanchored:
+        logger.info("%s: %d scaffolds have no Cys104 anchor — kept for mapping, junction suppressed",
+                    locus.name, unanchored)
     return nt_rows, aa_rows, combo_rows, fasta_nt, fasta_aa
 
 
@@ -263,6 +296,82 @@ def _j_anchor_from_motif(seq: str) -> int:
     return best[2] if best else -1
 
 
+_TAIL_SLACK_NT = 3   # one codon
+
+
+def v_cys_tail(ungapped: str, fwr3_stop: int | None) -> int:
+    """nt this V templates INTO the junction (Cys104 -> its 3' end); ``-1`` if the anchor is unfindable."""
+    anchor, _ = _v_anchor(ungapped, fwr3_stop)
+    return len(ungapped) - anchor if anchor >= 0 else -1
+
+
+def j_junction_tail(seq: str, fr4_offset=None) -> int:
+    """nt this J templates INTO the junction (its 5' end -> [FW]118); ``-1`` if unfindable.
+
+    Mirror of :func:`v_cys_tail`: the V reaches into the junction from the left, the J from the right.
+    """
+    anchor = fr4_offset[0] + 1 if fr4_offset else _j_anchor_from_motif(seq)
+    return anchor + 3 if 0 <= anchor and anchor + 3 <= len(seq) else -1
+
+
+def drop_truncated(alleles: dict[str, str], tails: dict[str, int], *,
+                   logger, locus: str, segment: str) -> dict[str, str]:
+    """Drop alleles whose germline is truncated INTO the junction, relative to their own gene.
+
+    A 3'-truncated V (or 5'-truncated J) builds a scaffold that **lacks nucleotides a real
+    rearrangement has**, so every read projected onto it yields a junction short by exactly that
+    much -- and the junction still starts with Cys and ends with [FW], so it looks canonical and
+    nothing downstream catches it. ``TRAV20*03`` templates 3 nt where its siblings template 13:
+    every clonotype built on it came out 3 aa short, which is why arda's TRA CDR3 length peaked
+    3 aa below every other tool's.
+
+    Orphan-safe by construction: the threshold is relative to the gene's own longest allele, so that
+    allele always survives -- no gene can lose all of its alleles.
+
+    Alleles with no anchor at all (``tail < 0``) are deliberately NOT dropped here. They keep their
+    scaffold so the read still maps; :func:`_process_locus` suppresses their junction instead.
+    Dropping them would delete 41 *functional* mouse IGHV/IGLV genes.
+    """
+    by_gene: dict[str, list[str]] = {}
+    for a, t in tails.items():
+        if t >= 0:
+            by_gene.setdefault(a.split("*")[0], []).append(a)
+    drop = {a for al in by_gene.values()
+            for a in al if max(tails[x] for x in al) - tails[a] >= _TAIL_SLACK_NT}
+    if drop:
+        shown = ", ".join(f"{a}({tails[a]}nt)" for a in sorted(drop)[:6])
+        logger.info("%s: dropped %d truncated %s allele(s): %s%s", locus, len(drop), segment,
+                    shown, " …" if len(drop) > 6 else "")
+    return {a: s for a, s in alleles.items() if a not in drop}
+
+
+def select_one_allele_per_gene(alleles: dict[str, str], *, logger, locus: str,
+                               segment: str) -> dict[str, str]:
+    """Keep one representative allele per gene: ``*01`` where it exists, else the lowest-numbered.
+
+    Shrinks the scaffold set ~4x and removes allele-level ambiguity. Deliberately NOT a literal
+    ``*01`` filter -- 19 human V genes (IGHV2-70D, IGHV3-25, IGHV3-43D, …) have no ``*01`` record
+    and would silently vanish.
+    """
+    by_gene: dict[str, list[str]] = {}
+    for a in alleles:
+        by_gene.setdefault(a.split("*")[0], []).append(a)
+    keep: dict[str, str] = {}
+    no01: list[str] = []
+    for al in by_gene.values():
+        pick = next((a for a in al if a.endswith("*01")), None)
+        if pick is None:
+            pick = min(al, key=lambda a: a.rsplit("*", 1)[-1])
+            no01.append(pick)
+        keep[pick] = alleles[pick]
+    if no01:
+        logger.info("%s: %d %s gene(s) have no *01 — kept the lowest allele: %s",
+                    locus, len(no01), segment, ", ".join(sorted(no01)[:6]))
+    logger.info("%s: one-allele-per-gene → %d/%d %s alleles",
+                locus, len(keep), len(alleles), segment)
+    return keep
+
+
 def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]:
     """Per-allele junction anchors for every V and J of every locus.
 
@@ -335,9 +444,28 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             })
             counts[f"J:{status}"] += 1
 
+    # `truncated`: the germline DOES reach into the junction, but stops at least a codon short of the
+    # longest allele of its own gene. `docs/reference_build.rst` has documented this status from the
+    # start; it was never implemented, so a truncated allele was indistinguishable from a complete one
+    # and its scaffolds silently emitted short junctions (TRAV20*03 templates 3 nt where its siblings
+    # template 13 -> every clonotype on it came out 3 aa short). `_process_locus` drops these from the
+    # SCAFFOLD set; they stay in this file because VDJdb cites them and bare-junction markup needs
+    # their anchors.
+    by_gene: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        if r["status"] == "ok":
+            by_gene.setdefault((r["segment"], r["allele"].split("*")[0]), []).append(r)
+    for group in by_gene.values():
+        best = max(len(r["germline_nt"]) for r in group)
+        for r in group:
+            if best - len(r["germline_nt"]) >= _TAIL_SLACK_NT:
+                r["status"] = "truncated"
+                counts[f"{r['segment']}:ok"] -= 1
+                counts[f"{r['segment']}:truncated"] += 1
+
     bad = {k: v for k, v in counts.items() if not k.endswith(":ok")}
     if bad:
-        logger.warning("cdr3 anchors: %d unanchored alleles %s", sum(bad.values()), dict(bad))
+        logger.warning("cdr3 anchors: %d allele(s) not clean %s", sum(bad.values()), dict(bad))
     logger.info("cdr3 anchors: %d alleles (%s)", len(rows), dict(counts))
     return rows
 
@@ -366,24 +494,34 @@ def _locus_manifest(nt_all: list[dict], d_germ: list[tuple[str, str, str]]) -> l
     return rows
 
 
-def build_species(organism: str) -> Path:
-    """Build the reference DB for one organism. Returns the output directory."""
+def build_species(organism: str, *, one_allele_per_gene: bool = False) -> Path:
+    """Build the reference DB for one organism. Returns the output directory.
+
+    ``one_allele_per_gene`` builds scaffolds from a single representative allele per gene (``*01``
+    where it exists, else the lowest-numbered) -- roughly a 4x smaller reference with no
+    allele-level ambiguity. Off by default.
+    """
     if organism not in IMGT_SPECIES_DIR:
         raise ValueError(f"Unknown organism {organism!r}; one of {list(IMGT_SPECIES_DIR)}")
     species_dir = IMGT_SPECIES_DIR[organism]
     out_dir = vdj_dir(organism)
     logger = _setup_logger(out_dir)
     t0 = time.perf_counter()
-    logger.info("=== arda reference build: %s (%s) ===", organism, species_dir)
+    logger.info("=== arda reference build: %s (%s)%s ===", organism, species_dir,
+                " [one allele per gene]" if one_allele_per_gene else "")
 
     imgt.download_reference()
     j_frames = combinations.load_j_frames(organism)
+    fwr3_stops = combinations.load_v_fwr3_stops(organism)
+    fr4_offsets = combinations.load_j_fr4_offsets(organism)
 
     nt_all, aa_all, combo_all, fa_nt, fa_aa = [], [], [], [], []
     for locus in LOCI:
         try:
             nt, aa, combo, fnt, faa = _process_locus(
-                organism, species_dir, locus, j_frames, logger)
+                organism, species_dir, locus, j_frames, logger,
+                fwr3_stops=fwr3_stops, fr4_offsets=fr4_offsets,
+                one_allele_per_gene=one_allele_per_gene)
         except Exception as exc:  # noqa: BLE001 — one bad locus must not kill the species
             logger.warning("%s: failed (%s) — skipped", locus.name, exc)
             continue
@@ -464,8 +602,8 @@ def build_species(organism: str) -> Path:
     return out_dir
 
 
-def build(organism: str = "all") -> None:
+def build(organism: str = "all", *, one_allele_per_gene: bool = False) -> None:
     """Build one organism or ``"all"`` supported organisms."""
     organisms = SUPPORTED_ORGANISMS if organism == "all" else (organism,)
     for org in organisms:
-        build_species(org)
+        build_species(org, one_allele_per_gene=one_allele_per_gene)

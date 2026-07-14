@@ -48,7 +48,11 @@ def anchors():
 ])
 def test_anchor_golden_values(anchors, segment, allele, anchor_nt, templated):
     a = anchors[(segment, allele)]
-    assert a.status == "ok"
+    # `truncated` is a FOUND anchor -- the allele's germline simply stops short of its gene's
+    # longest allele (TRBV4-3*04 templates CASS where *01 templates CASSQ). Its anchor and
+    # templated residues are still correct; it is only barred from building scaffolds. This test is
+    # about anchor values, so accept anything that is not `no_anchor`.
+    assert a.status != "no_anchor"
     assert a.templated_aa == templated
     from arda.paths import vdj_dir
     import polars as pl
@@ -58,16 +62,20 @@ def test_anchor_golden_values(anchors, segment, allele, anchor_nt, templated):
 
 
 def test_v_anchor_is_always_a_cysteine(anchors):
-    """A V anchor off by one codon corrupts every coordinate. Refuse, never guess."""
+    """A V anchor off by one codon corrupts every coordinate. Refuse, never guess.
+
+    Covers `truncated` alleles too: their anchor is found and must still be a Cys -- they are barred
+    from scaffolds because the germline is SHORT, not because the anchor is wrong.
+    """
     bad = [a for (seg, a), v in anchors.items()
-           if seg == "V" and v.status == "ok" and not v.templated_aa.startswith("C")]
+           if seg == "V" and v.status != "no_anchor" and not v.templated_aa.startswith("C")]
     assert bad == []
 
 
 def test_j_anchor_is_conserved_for_functional_alleles(anchors):
     """[FW]118 holds for functional J alleles; TRAJ35*01 genuinely has Cys118 in IMGT."""
     bad = sorted(a for (seg, a), v in anchors.items()
-                 if seg == "J" and v.status == "ok" and v.functionality == "F"
+                 if seg == "J" and v.status != "no_anchor" and v.functionality == "F"
                  and not v.templated_aa.endswith(("F", "W")))
     assert bad == ["TRAJ35*01"]
 
