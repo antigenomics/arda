@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.5.4"
+version = "2.5.5"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,13 +20,23 @@ dependencies = [
     "polars>=1.0",
     "typer>=0.12",
     "requests>=2.31",
+    # `arda rnaseq correct` -- CDR3 error correction (neighbour search). REQUIRED, not optional:
+    # as an extra it produced the worst failure mode this package had. A plain
+    # `pip install arda-mapper` would map and assemble a 100M-read sample for 45 minutes, then die
+    # on a bare ModuleNotFoundError before writing a single clonotype -- after all the expensive
+    # work, and past every smoke test, because `arda --version` succeeds without it. seqtree ships
+    # the same 12 wheels on the same platforms as arda (py3.10-3.13, linux/mac/win) and pulls no
+    # runtime deps of its own, so requiring it costs nothing.
+    "seqtree>=0.2",
 ]
 
 [project.optional-dependencies]
 docs = ["sphinx", "pydata-sphinx-theme", "nbsphinx"]
 test = ["pytest", "pytest-cov", "airr>=1.4"]  # airr: validate the AIRR Rearrangement schema
 dev = ["ruff", "pytest", "pybind11"]
-rnaseq = ["seqtree>=0.2"]  # `arda rnaseq correct` — CDR3 error correction (neighbour search)
+# Kept as an empty alias so existing `arda-mapper[rnaseq]` pins (the Nextflow module, collaborator
+# instructions, older docs) keep resolving without a warning. seqtree is a core dependency now.
+rnaseq = []
 # Tests only: OLGA's generative model supplies ground-truth V/J trims (and D spans) for
 # `arda.cdr3fix`. Kept out of `test`/`dev` so the normal suite never imports it.
 groundtruth = ["olga"]

@@ -53,6 +53,7 @@ asset, ~3 MB) into ``$XDG_CACHE_HOME/arda`` (default ``~/.cache/arda``) and buil
 index there — **no ``$ARDA_HOME`` and no reference build required**. Set
 ``ARDA_NO_AUTO_FETCH`` to disable the download (air-gapped runs with a pre-populated cache).
 
-**Bulk RNA-seq mode needs the ``rnaseq`` extra**: ``pip install 'arda-mapper[rnaseq]'``. It pulls
-``seqtree``, which ``arda rnaseq correct`` uses for the clonotype neighbour search. Without it
-``arda rnaseq run`` maps and assembles, then fails before writing any clonotype table.
+Everything ``arda rnaseq`` needs -- including ``seqtree``, the clonotype neighbour search used by
+``arda rnaseq correct`` -- comes with a plain ``pip install arda-mapper``. No extra. (``seqtree``
+was an optional extra before 2.5.5, which meant a plain install could map and assemble a whole
+sample and only then fail, before writing any clonotype table.)

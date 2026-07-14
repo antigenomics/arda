@@ -24,8 +24,9 @@ compatibility: >
   `vdj/` reference auto-fetches into `~/.cache/arda` on first use
   (set `ARDA_NO_AUTO_FETCH` for air-gapped runs), and the `mmseqs` binary auto-fetches a
   static build into the cache if missing — so a bare `pip install` annotates out of the box.
-  Bulk RNA-seq needs the extra: `pip install 'arda-mapper[rnaseq]'` (>=2.5.1) — without
-  `seqtree`, `arda rnaseq run` maps and assembles, then dies before writing any clonotype table.
+  Bulk RNA-seq needs nothing extra: `seqtree` is a core dependency since 2.5.5. (Before that it
+  lived in an optional `[rnaseq]` extra, and a plain install would map and assemble a whole sample
+  and only then die, before writing any clonotype table.)
   A source checkout / `$ARDA_HOME` still uses the committed `database/`. Shell is fish — use
   fish syntax in terminal commands.
 metadata:
@@ -207,7 +208,7 @@ arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node: split → ar
 
 For libraries where only 1–5% of reads are receptor-derived. Three stages, run separately or
 in one shot with `rnaseq run` (which does all three by default). Needs the `rnaseq` extra:
-`pip install 'arda-mapper[rnaseq]'`.
+`pip install arda-mapper`.
 
 **`map`** — streams paired FASTQ (`--r1`/`--r2`), keeps only reads mapping to a receptor
 scaffold, writes them as AIRR. Recall-first, with `--min-score`/`--kmer`/`--max-seqs` around
@@ -298,5 +299,5 @@ and `build-db` / `build-index`.
 - `map_d=True` on synthetic/partial input with no real junction simply finds no
   D — harmless; pass `map_d=False` to skip the search.
 - IgBLAST is needed only to build references, never at annotation time.
-- `arda rnaseq correct` needs the optional `seqtree` dep (`pip install 'arda-mapper[rnaseq]'`);
+- `arda rnaseq correct` uses `seqtree` (a core dependency since 2.5.5);
   without it every `correct` test **skips silently** rather than failing.

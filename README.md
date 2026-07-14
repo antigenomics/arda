@@ -52,8 +52,7 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
 ## Install
 
 ```bash
-pip install arda-mapper             # from PyPI (imports as `arda`); binary wheels ship the C++ extension
-pip install 'arda-mapper[rnaseq]'   # + seqtree, required by `arda rnaseq correct`
+pip install arda-mapper   # from PyPI (imports as `arda`); binary wheels ship the C++ extension
 ```
 
 `mmseqs2` (the search backend) is fetched/managed by arda at runtime. For development — and to
@@ -321,10 +320,10 @@ python -m pytest tests/realworld -q                   # vs IgBLAST, on committed
 env RUN_BENCHMARK=1 python -m pytest tests/benchmark -s   # timing/memory/scaling
 ```
 
-Optional extras gate optional suites: `.[rnaseq]` (`seqtree`) for `arda rnaseq correct`,
+Optional extras gate optional suites:
 `.[groundtruth]` (`olga`) for the generative ground-truth tests that keep `arda.cdr3fix`
 honest, `.[test]` for `airr` schema validation. Without them those tests **skip**, so
-`pip install -e '.[test,rnaseq]'` before reading a green suite as full coverage.
+`pip install -e '.[test]'` before reading a green suite as full coverage.
 
 Layout: `src/arda/{refbuild,annotate}`, C++ in `src/_markup/markup.cpp`,
 references in `database/`, downloads in gitignored `bin/` + `data/`. Design rationale and

@@ -3,6 +3,28 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.5
+
+**`seqtree` is now a core dependency, not an optional extra.** `pip install arda-mapper` is all the
+bulk RNA-seq pipeline needs.
+
+As an extra it produced this package's worst failure mode: a plain install would map and assemble a
+100 M-read sample for 45 minutes and *then* die on a bare `ModuleNotFoundError` — after all the
+expensive work, before writing a single clonotype. It slipped past every smoke test because
+`arda --version` succeeds without it, and it shipped to a collaborator's Nextflow module, whose own
+comments called `-profile conda` "works out of the box" while it could never emit a clonotype table.
+Patching the error message (2.5.1) treated the symptom; the dependency should simply not have been
+optional.
+
+`seqtree` ships the same 12 wheels on the same platforms as arda (py3.10–3.13, linux/mac/win) and
+pulls no runtime dependencies of its own, so requiring it costs nothing.
+
+* `[rnaseq]` survives as an **empty alias**, so existing `arda-mapper[rnaseq]` pins (the Nextflow
+  module, collaborator instructions, older docs) keep resolving without a warning.
+* **Removed every `pytest.importorskip("seqtree")` gate** (10 of them). With seqtree required, a skip
+  there can only *hide* a failure — and a skipped test is exactly how two reference bugs shipped.
+* The Dockerfile keeps its `import seqtree` build check.
+
 ## 2.5.4
 
 **Completes the 2.5.3 reference fix.** 2.5.3 dropped germlines that are *truncated* into the

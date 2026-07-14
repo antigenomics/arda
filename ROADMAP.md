@@ -124,7 +124,7 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
       candidate FASTA + a JSON report (`arda.rnaseq.map`, reuses `annotate.mapper`
       with a `mapped_only` fast-path). `correct`: CDR3 error correction, a port of
       vdjtools `Corrector` (parent:child count ratio, ≤2 mismatch, 20×) over `seqtree`
-      neighbour search (`arda.rnaseq.correct`; optional dep `arda-mapper[rnaseq]`).
+      neighbour search (`arda.rnaseq.correct`; core dep `seqtree`).
       `arda igblast`: all-loci gold-standard AIRR (`refbuild.gold`). Benchmarked in the
       `arda-benchmark` repo vs assembly-based extractors (speed) and IgBLAST (accuracy).
   - [x] **Seamless pipeline integration.** A one-shot `arda rnaseq run` (map + correct
