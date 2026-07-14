@@ -3,6 +3,44 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.4
+
+**Completes the 2.5.3 reference fix.** 2.5.3 dropped germlines that are *truncated* into the
+junction, but left in a second class that is just as wrong and turned out to be doing most of the
+damage: germlines whose junction anchor arda **cannot find at all**.
+
+### Fixed
+
+* **Unanchorable V alleles kept building scaffolds — and were read magnets.** When arda cannot locate
+  Cys104 in a germline (`status=no_anchor`), IgBLAST still annotates a CDR3 on its scaffold, at a
+  position arda has no way to verify. It is demonstrably the wrong one: `TRAV23/DV6*04` yields a
+  scaffold junction `CTTSGTYKYIF` (11 aa) while every other allele of that gene templates `CAAS` and
+  yields 14 aa.
+
+  On a real tumour this was not a rounding error. After 2.5.3 dropped `TRAV20*03`, its reads did not
+  come out correct — they **moved to `TRAV23/DV6*04` carrying the identical 11 aa junctions**, and
+  that one allele then held **55 % of all TRA reads**. The gene label changed; the corrupt junction
+  did not.
+
+  2.5.3's mitigation (keep the scaffold, blank its `junction_aa`, set `productive=F`) does not work:
+  the runtime projects the scaffold's `cdr3_start`/`cdr3_end` onto the read and re-derives a junction
+  from those coordinates. And the check it used — "junction does not start with C" — never fired
+  here, because `CTTSGTYKYIF` *does* start with C. It is simply the **wrong C**.
+
+  Such an allele is now **dropped from the scaffold set when its gene keeps at least one anchored
+  allele** — the sibling is what proves it wrong, and the drop is then free: **0 genes lost, in any
+  organism** (46 human V alleles, 44 mouse, 2 rhesus, 1 rabbit). A gene whose alleles are *all*
+  unanchorable is left alone: nothing contradicts its annotation, and dropping those would delete
+  **41 *functional* mouse IGHV/IGLV genes**.
+
+* **New CI invariant**: a scaffold's junction must agree with its own allele's anchor — no scaffold
+  may be built from an unanchorable allele that has an anchored sibling, and no junction may be
+  shorter than the V alone templates. (Length, not byte-identity: IMGT's gapped and ungapped records
+  for the same allele can differ — mouse `IGLV2*01` disagrees at 12 of 294 bases — and the anchors
+  table reads one file while the scaffold reads the other.)
+
+Human reference: 15,690 → **15,069** V-J scaffolds. Mapping is unchanged; clonotypes and V calls move.
+
 ## 2.5.3
 
 **Reference fix — germlines that are truncated INTO the junction no longer build scaffolds.**

@@ -1,8 +1,8 @@
 locus	group	n_vj_scaffolds	n_jc_scaffolds	n_d_germlines	unreachable_d_germlines	status
-TRA	TR	6960	69	0	0	ok
+TRA	TR	6767	69	0	0	ok
 TRG	TR	105	12	0	0	ok
 IGK	IG	819	10	0	0	ok
-IGL	IG	1020	63	0	0	ok
-IGH	IG	4563	154	48	0	ok
-TRB	TR	2144	32	3	0	ok
-TRD	TR	79	5	3	0	ok
+IGL	IG	1000	63	0	0	ok
+IGH	IG	4225	154	48	0	ok
+TRB	TR	2080	32	3	0	ok
+TRD	TR	73	5	3	0	ok

@@ -66,6 +66,43 @@ def test_no_scaffold_is_built_from_a_truncated_allele(org):
 
 
 @pytest.mark.parametrize("org", ORGANISMS)
+def test_scaffold_junction_agrees_with_its_allele_anchor(org):
+    """A scaffold's junction must start with the residues its V allele's own anchor says it templates.
+
+    The guard that a plain "starts with C" check misses. ``TRAV23/DV6*04`` is unanchorable (arda
+    cannot find its Cys104), yet IgBLAST annotated a CDR3 on its scaffold anyway -- one starting with
+    a *different* C, giving ``CTTSGTYKYIF`` (11 aa) where every sibling allele of that gene templates
+    ``CAAS`` and yields 14 aa. It starts with C, so it passed. It then took **55 % of all TRA reads**
+    in a real tumour, every one of them 3 aa short.
+    """
+    anchors = {r["allele"]: r for r in _rows(org, "cdr3_anchors.tsv") if r["segment"] == "V"}
+    bad = []
+    for r in _rows(org, "markup.tsv"):
+        v = next((x for x in (r["v_call"] or "").split(",") if x), None)
+        j = r["junction_aa"] or ""
+        a = anchors.get(v) if v else None
+        if not (a and j):
+            continue
+        if a["status"] == "no_anchor":
+            # Only a violation when a sibling allele proves what the junction should be; a gene with
+            # no anchored allele at all has nothing to contradict it (and dropping those would delete
+            # 41 functional mouse genes).
+            sibs = [x for k, x in anchors.items()
+                    if k.split("*")[0] == v.split("*")[0] and x["status"] != "no_anchor"]
+            if sibs:
+                bad.append((r["scaffold_id"], v, j, "unanchorable, but a sibling is anchored"))
+        elif len(j) < len(a["templated_aa"]):
+            # Length, not byte-identity: IMGT's gapped and ungapped records for the same allele can
+            # disagree on individual bases (mouse IGLV2*01 differs at 12 of 294), and the anchors
+            # table reads the gapped file while the scaffold reads the ungapped one. What must hold
+            # is that the junction is at least as long as the V alone templates -- a junction shorter
+            # than its own V contribution means the CDR3 window starts in the wrong place.
+            bad.append((r["scaffold_id"], v, j,
+                        f"junction shorter than the V templates ({a['templated_aa']!r})"))
+    assert not bad, f"{org}: {len(bad)} scaffolds disagree with their allele's anchor, e.g. {bad[:3]}"
+
+
+@pytest.mark.parametrize("org", ORGANISMS)
 def test_no_gene_lost_every_allele(org):
     """Dropping truncated alleles must never delete a whole gene.
 
