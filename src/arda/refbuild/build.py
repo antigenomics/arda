@@ -73,12 +73,16 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
                        locus.name, len(v), len(j))
         return [], [], [], [], []
 
-    # Drop germlines that are truncated INTO the junction. Must run after the v_shared merge (the
-    # TRAV/DV alleles are subject to it too) and before the scaffold cross-product.
-    v = drop_truncated(v, {a: v_cys_tail(s, fwr3_stops.get(a)) for a, s in v.items()},
-                       logger=logger, locus=locus.name, segment="V")
-    j = drop_truncated(j, {a: j_junction_tail(s, fr4_offsets.get(a)) for a, s in j.items()},
-                       logger=logger, locus=locus.name, segment="J")
+    # Drop germlines that cannot produce a trustworthy junction. Must run after the v_shared merge
+    # (the TRAV/DV alleles are subject to both rules too) and before the scaffold cross-product.
+    v_tails = {a: v_cys_tail(s, fwr3_stops.get(a)) for a, s in v.items()}
+    j_tails = {a: j_junction_tail(s, fr4_offsets.get(a)) for a, s in j.items()}
+    #   (a) anchor unfindable, but a sibling allele proves what the junction should be
+    v = drop_unanchorable(v, v_tails, logger=logger, locus=locus.name, segment="V")
+    j = drop_unanchorable(j, j_tails, logger=logger, locus=locus.name, segment="J")
+    #   (b) anchor found, but the germline stops short of its own gene's best allele
+    v = drop_truncated(v, v_tails, logger=logger, locus=locus.name, segment="V")
+    j = drop_truncated(j, j_tails, logger=logger, locus=locus.name, segment="J")
     if one_allele_per_gene:
         v = select_one_allele_per_gene(v, logger=logger, locus=locus.name, segment="V")
         j = select_one_allele_per_gene(j, logger=logger, locus=locus.name, segment="J")
@@ -312,6 +316,35 @@ def j_junction_tail(seq: str, fr4_offset=None) -> int:
     """
     anchor = fr4_offset[0] + 1 if fr4_offset else _j_anchor_from_motif(seq)
     return anchor + 3 if 0 <= anchor and anchor + 3 <= len(seq) else -1
+
+
+def drop_unanchorable(alleles: dict[str, str], tails: dict[str, int], *,
+                      logger, locus: str, segment: str) -> dict[str, str]:
+    """Drop alleles whose junction anchor is unfindable **when a sibling allele proves the truth**.
+
+    ``tails[a] < 0`` means arda cannot locate Cys104 in this germline. The scaffold still gets a CDR3
+    -- IgBLAST annotates one -- but at a position arda has no way to verify, and it is demonstrably
+    the WRONG one: ``TRAV23/DV6*04`` yields a scaffold junction ``CTTSGTYKYIF`` (11 aa) while every
+    other allele of its gene templates ``CAAS`` (13 nt, 14 aa junctions). Worse, those scaffolds are
+    read magnets -- ``TRAV23/DV6*04`` took 55 % of all TRA reads in a real tumour, every one with a
+    junction 3 aa short. Blanking the scaffold's ``junction_aa`` is not enough: the runtime projects
+    ``cdr3_start``/``cdr3_end`` onto the read and re-derives a junction from those.
+
+    Only drop when the gene keeps at least one anchored allele. Then the drop is FREE (no gene is
+    lost, in any organism) and the surviving sibling is what proves the dropped one wrong. A gene
+    whose alleles are ALL unanchorable is a different case -- nothing contradicts its annotation, and
+    dropping it would delete 41 *functional* mouse IGHV/IGLV genes -- so those are left alone.
+    """
+    by_gene: dict[str, list[str]] = {}
+    for a in alleles:
+        by_gene.setdefault(a.split("*")[0], []).append(a)
+    drop = {a for al in by_gene.values() if any(tails.get(x, -1) >= 0 for x in al)
+            for a in al if tails.get(a, -1) < 0}
+    if drop:
+        logger.info("%s: dropped %d unanchorable %s allele(s) with an anchored sibling: %s%s",
+                    locus, len(drop), segment, ", ".join(sorted(drop)[:6]),
+                    " …" if len(drop) > 6 else "")
+    return {a: s for a, s in alleles.items() if a not in drop}
 
 
 def drop_truncated(alleles: dict[str, str], tails: dict[str, int], *,

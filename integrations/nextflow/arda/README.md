@@ -90,7 +90,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (copy any existing `skip_*`/`run_*` boolean entry as a template).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.5.3' }` to your deployment config
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.5.4' }` to your deployment config
    (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:
