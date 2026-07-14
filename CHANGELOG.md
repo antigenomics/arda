@@ -26,8 +26,9 @@ there. A killed builder leaves a temp dir, never a half-built DB that looks comp
 and arda uses whatever `mmseqs` is on `PATH`. Any user with their own build (as on a cluster) rebuilds
 locally and races anyway.
 
-### Changed — `seqtree` is now a core dependency, not an optional extra `pip install arda-mapper` is all the
-bulk RNA-seq pipeline needs.
+### Changed — `seqtree` is now a core dependency, not an optional extra
+
+`pip install arda-mapper` is all the bulk RNA-seq pipeline needs.
 
 As an extra it produced this package's worst failure mode: a plain install would map and assemble a
 100 M-read sample for 45 minutes and *then* die on a bare `ModuleNotFoundError` — after all the
