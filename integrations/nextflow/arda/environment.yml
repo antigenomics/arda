@@ -8,4 +8,4 @@ dependencies:
   - pip:
       # [rnaseq] pulls seqtree, which `arda rnaseq correct` needs. Without it the run dies
       # after writing the AIRR, before any clonotype table is produced.
-      - arda-mapper[rnaseq]==2.5.1
+      - arda-mapper[rnaseq]==2.5.3
