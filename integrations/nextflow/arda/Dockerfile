@@ -2,9 +2,9 @@
 # Build and push to your own registry (e.g. the ISPRAS private registry), then point the module's
 # `container` directive (or a withName override in your nextflow.config) at the pushed tag:
 #
-#   docker build -t arda-mapper:2.5.5 integrations/nextflow/arda
-#   docker tag arda-mapper:2.5.5 <your-registry>/arda-mapper:2.5.5
-#   docker push <your-registry>/arda-mapper:2.5.5
+#   docker build -t arda-mapper:2.5.6 integrations/nextflow/arda
+#   docker tag arda-mapper:2.5.6 <your-registry>/arda-mapper:2.5.6
+#   docker push <your-registry>/arda-mapper:2.5.6
 #
 FROM mambaorg/micromamba:1.5.8
 COPY --chown=$MAMBA_USER:$MAMBA_USER environment.yml /tmp/environment.yml
