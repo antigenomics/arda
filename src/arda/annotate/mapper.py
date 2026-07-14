@@ -12,12 +12,12 @@ import queue
 import shutil
 import tempfile
 import threading
-import time
 from pathlib import Path
 
 import polars as pl
 
 from .. import mmseqs
+from .._locking import build_lock
 from ..paths import data_dir, vdj_dir
 from ..refbuild.translate import reverse_complement
 from . import io as seqio
@@ -100,44 +100,24 @@ def _committed_index(organism: str, seqtype: str, target_fasta: Path | None = No
     return None
 
 
-_LOCK_TIMEOUT_S = 900   # an mmseqs createdb of the reference takes seconds; 15 min is a dead-lock, not slowness
-
-
 def _createdb_atomic(target_fasta: Path, db: Path, dbtype: int) -> None:
     """Build an mmseqs DB at ``db``, safely when several arda processes start at once.
 
     `mmseqs createdb` writes ~6 sibling files (``db``, ``db.index``, ``db_h``, ``db_h.index``,
     ``db.dbtype``, ``db.lookup``). Building them in place is not safe, and arda is routinely run
-    concurrently against the SAME reference: the Nextflow module launches one process **per sample**,
-    and a SLURM array one per task. On first use in a fresh environment every one of them finds no
-    index and starts building it into the same paths.
+    concurrently against the SAME reference (see :mod:`arda._locking`): every process finds no index
+    and starts building it into the same paths.
 
     They then interleave writes -- and `build_index` additionally unlinks the files another process
     is mid-read on. The observed failure is silent and total: a 0-byte ``db``, after which every read
     fails to map (``0/200000 reads mapped, loci={}``) with no error and a clean exit code.
 
-    So: hold a lock (``mkdir`` is atomic on POSIX and Windows), build into a private temp dir, and
-    move the finished files into place with ``db`` **last** -- readers test ``db.exists()``, so it
-    must not appear until its siblings are all there. A killed builder leaves a temp dir, never a
-    half-built DB that looks complete.
+    So: hold the build lock, build into a private temp dir, and move the finished files into place
+    with ``db`` **last** -- readers test ``db.exists()``, so it must not appear until its siblings are
+    all there. A killed builder leaves a temp dir, never a half-built DB that looks complete.
     """
-    lock = db.parent / f".{db.name}.lock"
-    deadline = time.monotonic() + _LOCK_TIMEOUT_S
-    while True:
-        try:
-            lock.mkdir()
-            break
-        except FileExistsError:
-            if db.exists():          # another builder finished while we waited
-                return
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"waited {_LOCK_TIMEOUT_S}s for another arda process to build {db}. "
-                    f"If no other run is active, remove {lock} and retry."
-                )
-            time.sleep(0.5)
-    try:
-        if db.exists():              # won the race, but someone else got there first
+    with build_lock(db.parent / f".{db.name}.lock", done=db.exists) as ours:
+        if not ours:
             return
         tmp = db.parent / f".{db.name}.tmp.{os.getpid()}"
         shutil.rmtree(tmp, ignore_errors=True)
@@ -150,8 +130,6 @@ def _createdb_atomic(target_fasta: Path, db: Path, dbtype: int) -> None:
                 os.replace(f, db.parent / f.name)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    finally:
-        lock.rmdir()
 
 
 def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.5.5"
+version = "2.5.6"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,7 @@ dependencies = [
     # work, and past every smoke test, because `arda --version` succeeds without it. seqtree ships
     # the same 12 wheels on the same platforms as arda (py3.10-3.13, linux/mac/win) and pulls no
     # runtime deps of its own, so requiring it costs nothing.
-    "seqtree>=0.2",
+    "seqtree>=0.4",
 ]
 
 [project.optional-dependencies]

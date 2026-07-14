@@ -3,6 +3,47 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.6
+
+### Fixed — a concurrent fetch could publish a half-extracted reference
+
+2.5.5 made the mmseqs **index** build safe under concurrency. The **reference fetch** that runs just
+before it had the same disease, and it was the more dangerous of the two.
+
+`paths.database_dir` decides "is the reference here?" by testing whether `<cache>/database/vdj/` is a
+directory. Its mere existence is the gate. So anything that lets `vdj/` become visible before it is
+complete does not produce a slow download or a crash — it makes every *other* arda process search an
+**incomplete reference** and report success over nothing.
+
+Two things let that happen:
+
+* **No lock.** arda is routinely run concurrently against the same cache — the Nextflow module
+  launches one process per sample, a SLURM array one per task — so on first use in a fresh
+  environment all of them fetched into the same path at once.
+* **A cross-filesystem move.** The old code extracted into `/tmp` and called `shutil.move`.
+  `shutil.move` is a rename only *within* one filesystem; across a boundary it silently degrades to a
+  recursive **copy** — and `/tmp` and `~/.cache` normally are two different filesystems. So `vdj/` was
+  populated file by file, in full view of everyone else. It also `rmtree`'d the existing tree before
+  writing the new one, deleting files a concurrent reader could be mid-search on.
+
+The fetch now holds a build lock, extracts into a staging directory **inside the destination** (so the
+swap is a rename, not a copy), and publishes with a single `os.replace`. `vdj/` is either absent or
+complete — never in between. Under `--force` the old tree is *renamed* aside rather than deleted, so a
+reader already holding its files keeps them.
+
+The lock is now one implementation (`arda._locking.build_lock`) shared by the reference fetch and the
+index build, rather than two copies of the same loop.
+
+### Changed
+
+* `seqtree>=0.4` (was `>=0.2`). Clonotype output is unchanged — `examples/rnaseq/clones.tsv`
+  reproduces bit-for-bit.
+* Docs: corrected the memory guidance. Peak RSS tracks **repertoire richness**, not read depth —
+  mapping is flat (~300–400 MB at any depth), but Stage 3 holds the clone set, so a B-cell-rich tumour
+  peaked at 2.7 GB (28k clonotypes) while a colder sample with *more* reads used 314 MB. The old
+  "< 400 MB, independent of read depth" was measured before the Stage-3 assembler existed and would
+  have OOM-killed anyone sizing a SLURM or Nextflow memory directive from it. Budget ~4 GB.
+
 ## 2.5.5
 
 Two ways a correct arda install could still fail to work. Both hit the delivery path.
