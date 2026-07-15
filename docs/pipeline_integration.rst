@@ -111,8 +111,17 @@ set in memory. Budget **~4 GB** for a lymphocyte- or B-cell-rich sample and ~1 G
 a hard memory cap, ``--no-assemble`` restores the flat mapping-only profile — at the cost of the long
 CDR3s that no single read spans.
 
+Organism follows the genome
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The shipped ``nextflow.config`` reads ``params.genome`` — the iGenomes assembly key nf-core sets from
+``--genome`` — to both gate ARDA and choose its reference: ``GRCh38`` runs with ``--organism human``,
+``GRCm39`` with ``--organism mouse``, and any other (or unset) genome skips ARDA while the rest of the
+pipeline completes. arda ships full references only for human and mouse, so nothing else needs wiring.
+
 Tuning
 ~~~~~~~
 
-All arda flags pass through the module's ``ext.args`` (``--organism mouse``, ``--reconstruct``,
-``--min-score 0``, ``--kmer 11`` …). ``--threads`` is wired to ``task.cpus`` automatically.
+Extra arda flags pass through the module's ``ext.args`` (``--reconstruct``, ``--min-score 0``,
+``--kmer 11`` …); a static ``ext.args`` string overrides the genome-driven ``--organism`` default.
+``--threads`` is wired to ``task.cpus`` automatically.
