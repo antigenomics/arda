@@ -106,13 +106,28 @@ Run with `--run_arda`:
 nextflow run . -profile <your-profile> --input samplesheet.csv --outdir results --run_arda
 ```
 
+## Organism follows the genome automatically
+
+The shipped `nextflow.config` reads `params.genome` — the iGenomes assembly key nf-core sets from
+`--genome` — and both gates ARDA and picks its reference from it, so there is nothing extra to wire:
+
+| `--genome` | ARDA runs? | `--organism` |
+|---|---|---|
+| `GRCh38` | yes | `human` |
+| `GRCm39` | yes | `mouse` |
+| any other / unset | **skipped** (pipeline still completes) | — |
+
+Other assemblies are skipped because arda ships full references only for human and mouse. To force a
+different organism, or add a fifth column to the table below, override `ext.args` with a plain string
+(a static value replaces the genome-driven default).
+
 ## Tuning
 
-All arda flags pass through `ext.args` (set in `nextflow.config`). Common ones:
+All arda flags pass through `ext.args` (set in `nextflow.config`). Common overrides:
 
 | goal | `ext.args` |
 |---|---|
-| mouse reference | `--organism mouse` |
+| force mouse regardless of genome | `--organism mouse` |
 | merge overlapping mates first | `--organism human --reconstruct` |
 | keep every mapped read (recall-max) | `--organism human --min-score 0` |
 | cap memory harder / looser | `--organism human --kmer 11` (or `--kmer 0` for the mmseqs default) |
