@@ -1,11 +1,21 @@
-2026-07-08 22:52:27,899 INFO === arda reference build: rhesus_monkey (Macaca_mulatta) ===
-2026-07-08 22:52:27,899 INFO TRA: no IgBLAST TR internal annotation for rhesus_monkey — skipped
-2026-07-08 22:52:27,899 INFO TRG: no IgBLAST TR internal annotation for rhesus_monkey — skipped
-2026-07-08 22:52:33,573 INFO IGK: V=136 J=5 raw_combos=680 unique_scaffolds=680 annotated=680
-2026-07-08 22:52:38,588 INFO IGL: V=113 J=9 raw_combos=1017 unique_scaffolds=1008 annotated=1008
-2026-07-08 22:52:45,023 INFO IGH: V=126 J=10 raw_combos=1260 unique_scaffolds=1260 annotated=1260
-2026-07-08 22:52:45,043 INFO TRB: no IgBLAST TR internal annotation for rhesus_monkey — skipped
-2026-07-08 22:52:45,043 INFO TRD: no IgBLAST TR internal annotation for rhesus_monkey — skipped
-2026-07-08 22:52:45,110 INFO constant region: 153 J+C scaffolds across 3 loci (+5.2% over 2948 V-J scaffolds)
-2026-07-08 22:52:45,181 INFO D germlines: 55 alleles across 3 loci
-2026-07-08 22:52:45,182 INFO TOTAL: 3101 scaffolds across 3 loci in 17.3s -> /Users/mikesh/vcs/code/arda/database/vdj/rhesus_monkey
+2026-07-14 19:35:36,073 INFO === arda reference build: rhesus_monkey (Macaca_mulatta) ===
+2026-07-14 19:35:36,074 INFO TRA: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-07-14 19:35:36,074 INFO TRG: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-07-14 19:35:36,170 INFO IGK: dropped 1 truncated V allele(s): IGKV3-24*02(9nt)
+2026-07-14 19:35:40,850 INFO IGK: V=135 J=5 raw_combos=675 unique_scaffolds=675 annotated=675
+2026-07-14 19:35:40,861 INFO IGK: 10 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 19:35:40,942 INFO IGL: dropped 1 truncated V allele(s): IGLV6-112*02(26nt)
+2026-07-14 19:35:46,183 INFO IGL: V=112 J=9 raw_combos=1008 unique_scaffolds=999 annotated=999
+2026-07-14 19:35:46,198 INFO IGL: 27 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 19:35:46,291 INFO IGH: dropped 1 unanchorable V allele(s) with an anchored sibling: IGHV3-103*02
+2026-07-14 19:35:52,865 INFO IGH: V=125 J=10 raw_combos=1250 unique_scaffolds=1250 annotated=1250
+2026-07-14 19:35:52,888 INFO TRB: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-07-14 19:35:52,888 INFO TRD: no IgBLAST TR internal annotation for rhesus_monkey — skipped
+2026-07-14 19:35:52,957 INFO constant region: 60/153 J+C scaffolds carry an FR4 (rest have no aux entry)
+2026-07-14 19:35:52,957 INFO constant region: 153 J+C scaffolds across 3 loci (+5.2% over 2924 V-J scaffolds)
+2026-07-14 19:35:53,023 INFO D germlines: 55 alleles across 3 loci
+2026-07-14 19:35:53,032 WARNING cdr3 anchors: 53 allele(s) not clean {'V:no_anchor': 38, 'J:no_anchor': 12, 'V:truncated': 3}
+2026-07-14 19:35:53,032 INFO cdr3 anchors: 802 alleles ({'V:ok': 632, 'V:no_anchor': 38, 'J:ok': 117, 'J:no_anchor': 12, 'V:truncated': 3})
+2026-07-14 19:35:53,035 WARNING rhesus_monkey: 2/7 loci have NO reference scaffolds — reads from TRG, TRD will not be annotated (see loci_manifest.tsv)
+2026-07-14 19:35:53,035 WARNING rhesus_monkey: TRD ships 4 D germlines but no scaffolds — unreachable, dead weight
+2026-07-14 19:35:53,035 INFO TOTAL: 3077 scaffolds across 3 loci in 17.0s -> /Users/mikesh/vcs/code/arda/database/vdj/rhesus_monkey

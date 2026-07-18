@@ -15,8 +15,6 @@ junction -- so the test is over the reads that actually saw the discriminating b
 extra depth at very low coverage. Children route to the parent; chains collapse to the ultimate
 ancestor; ``count[parent] * p_err >= count[child]`` with ``p_err < 1`` gives strictly increasing
 counts along parent pointers, so there are no cycles.
-
-seqtree is an optional dependency (``pip install 'arda-mapper[rnaseq]'``).
 """
 
 from __future__ import annotations
@@ -27,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+import seqtree
 
 from ..refbuild.translate import reverse_complement
 
@@ -37,27 +36,6 @@ _DNA = frozenset("ACGT")
 # The generic heavy constant `isotype_class` returns when a read's C hit spans classes (IGHG1,IGHM
 # -> IGHC): isotype unresolved. Deprioritised when aggregating a clonotype's dominant isotype.
 _GENERIC_ISOTYPE = frozenset({"IGHC"})
-
-
-def _seqtree():
-    """Import ``seqtree``, or explain how to get it.
-
-    It ships in the optional ``rnaseq`` extra, so a plain ``pip install arda-mapper`` maps and
-    assembles fine and only fails here -- after the expensive stages -- with a bare ImportError.
-
-    Only ``ModuleNotFoundError`` means "not installed". A broken build raises a plain
-    ``ImportError`` from inside seqtree's own ``__init__`` (e.g. a stale compiled ``_core``
-    after an editable checkout is rebuilt), and telling that user to install the extra sends
-    them in a circle. Let it through with its real message.
-    """
-    try:
-        import seqtree
-    except ModuleNotFoundError as exc:  # pragma: no cover - depends on install extras
-        raise ModuleNotFoundError(
-            "arda rnaseq correct needs 'seqtree', which ships in the optional 'rnaseq' extra: "
-            "pip install 'arda-mapper[rnaseq]'"
-        ) from exc
-    return seqtree
 
 
 def _strip_mate(sid: str) -> str:
@@ -123,8 +101,6 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
     the parent; chains collapse to the ancestor. ``count[parent] * p_err >= count[child]`` with
     ``p_err < 1`` makes counts strictly increase along parent pointers -> no cycles.
     """
-    seqtree = _seqtree()
-
     n = len(junctions)
     parent: list[int | None] = [None] * n
     safe = [i for i, s in enumerate(junctions) if s and set(s) <= _DNA]
@@ -262,7 +238,6 @@ def _error_pileup(
                 dep[p] += 1
 
     parent = list(parent_simple)
-    seqtree = _seqtree()
     safe = [i for i, s in enumerate(junctions) if s and set(s) <= _DNA]
     idx = seqtree.Index.build([junctions[i] for i in safe], alphabet="nt")
     params = seqtree.SearchParams(max_subs=2, max_ins=0, max_dels=0, max_total_edits=2, engine="seqtm")

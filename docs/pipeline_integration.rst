@@ -60,7 +60,7 @@ unchanged. Five edits, each mirroring how an existing tool is wired:
    ``workflows/rnaseq/nextflow.config`` (sets ``ext.args`` and the publishDir).
 #. Register a ``run_arda = false`` param in ``nextflow.config`` and ``nextflow_schema.json`` (strict
    schema validation).
-#. For container profiles, pin ``withName: 'ARDA' { container = '<registry>/arda-mapper:2.5.1' }``
+#. For container profiles, pin ``withName: 'ARDA' { container = '<registry>/arda-mapper:2.5.7' }``
    in your deployment config.
 
 Then run with ``--run_arda``. The module's ``README.md`` has copy-paste snippets and a standalone
@@ -69,8 +69,8 @@ one-process test harness.
 Runtime & resources
 ~~~~~~~~~~~~~~~~~~~~~
 
-arda is **CPU-bound** (the MMseqs2 search dominates) and **very low-memory** (< 400 MB peak RSS,
-independent of read depth). Give it cores, not RAM. Measured on bulk tumor RNA-seq at 32 cores:
+arda is **CPU-bound** — the MMseqs2 search dominates — so give it cores. Measured on bulk tumor
+RNA-seq at 32 cores, ``arda rnaseq run --assemble`` (map + assemble + correct):
 
 .. list-table::
    :header-rows: 1
@@ -80,18 +80,48 @@ independent of read depth). Give it cores, not RAM. Measured on bulk tumor RNA-s
      - wall time
      - throughput
      - peak RSS
-   * - 104.9 M (52.4 M pairs, 2×150)
+     - clonotypes
+   * - 104.9 M (2×150)
      - 32
-     - 44 min
-     - ~39,600 reads/s (2.4 M/min)
-     - 371 MB
+     - 46 min
+     - ~38,300 reads/s
+     - 2,707 MB
+     - 28,444
+   * - 153.9 M (2×100)
+     - 32
+     - 51 min
+     - ~50,300 reads/s
+     - 511 MB
+     - 1,519
+   * - 138.5 M (2×100)
+     - 32
+     - 45 min
+     - ~51,900 reads/s
+     - 314 MB
+     - 30
 
-Throughput scales roughly linearly with cores; a typical full-depth bulk RNA-seq sample (~50 M read
-pairs) takes ~45 min on 32 cores. The Nextflow module is labelled ``process_high``; raise it with
+Throughput scales roughly linearly with cores; a typical full-depth bulk RNA-seq sample takes ~45 min
+on 32 cores. The Nextflow module is labelled ``process_high``; raise it with
 ``withName: 'ARDA' { cpus = 32 }`` for full-depth data. ``--threads`` follows ``task.cpus``.
+
+**Peak memory tracks repertoire richness, not read depth.** The third sample above has *more* reads
+than the first yet uses 9× less RAM — it carries 30 clonotypes against 28,444. Mapping alone is flat
+and small (~300–400 MB at any depth); it is Stage 3 (assembly + error correction) that holds the clone
+set in memory. Budget **~4 GB** for a lymphocyte- or B-cell-rich sample and ~1 GB for a cold one. Under
+a hard memory cap, ``--no-assemble`` restores the flat mapping-only profile — at the cost of the long
+CDR3s that no single read spans.
+
+Organism follows the genome
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The shipped ``nextflow.config`` reads ``params.genome`` — the iGenomes assembly key nf-core sets from
+``--genome`` — to both gate ARDA and choose its reference: ``GRCh38`` runs with ``--organism human``,
+``GRCm39`` with ``--organism mouse``, and any other (or unset) genome skips ARDA while the rest of the
+pipeline completes. arda ships full references only for human and mouse, so nothing else needs wiring.
 
 Tuning
 ~~~~~~~
 
-All arda flags pass through the module's ``ext.args`` (``--organism mouse``, ``--reconstruct``,
-``--min-score 0``, ``--kmer 11`` …). ``--threads`` is wired to ``task.cpus`` automatically.
+Extra arda flags pass through the module's ``ext.args`` (``--reconstruct``, ``--min-score 0``,
+``--kmer 11`` …); a static ``ext.args`` string overrides the genome-driven ``--organism`` default.
+``--threads`` is wired to ``task.cpus`` automatically.

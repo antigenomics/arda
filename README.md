@@ -45,26 +45,26 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
 - **Honest** — a D call is gated on an E-value that ships with it (`d_support`), a
   germline allele with no derivable anchor is flagged rather than guessed, and a
   repair that would not produce a canonical junction is refused.
-- **Easy to install** — conda for the `mmseqs` binary, `pip install -e .` for the
-  package + C++ extension; IgBLAST is fetched into a gitignored `bin/` and is only
-  needed to (re)build the reference DB, not at runtime.
+- **Easy to install** — `pip install arda-mapper` (binary wheels ship the C++
+  extension); the `mmseqs` binary is fetched as a static build at runtime — no
+  conda. IgBLAST is fetched into a gitignored `bin/` and is only needed to
+  (re)build the reference DB, not at runtime.
 
 ## Install
 
 ```bash
-pip install arda-mapper             # from PyPI (imports as `arda`); binary wheels ship the C++ extension
-pip install 'arda-mapper[rnaseq]'   # + seqtree, required by `arda rnaseq correct`
+pip install arda-mapper   # from PyPI (imports as `arda`); binary wheels ship the C++ extension
 ```
 
 `mmseqs2` (the search backend) is fetched/managed by arda at runtime. For development — and to
 get the committed germline references on disk — use `setup.sh`:
 
 ```bash
-bash setup.sh            # creates conda env `arda`, fetches IgBLAST, pip install -e .
-conda activate arda
+bash setup.sh            # uv .venv, fetches IgBLAST + static mmseqs, editable install
+source .venv/bin/activate
 ```
 
-Flags: `--no-conda` (use the active env), `--build-db` (rebuild references after
+Needs [uv](https://docs.astral.sh/uv/). Flags: `--build-db` (rebuild references after
 install), `--tests` (run the fast suites). The committed `database/vdj/<organism>/`
 references mean **most users never need to build anything**. A `pip install arda-mapper`
 with no source checkout **auto-fetches** the curated references into `~/.cache/arda` on
@@ -128,8 +128,11 @@ box) and a `Dockerfile`, and emits a `versions.yml`. See its
 [README](integrations/nextflow/arda/README.md) and the
 [pipeline-integration guide](https://docs.isalgo.dev/arda/pipeline_integration.html) for the five-line drop-in.
 
-arda is **CPU-bound and low-memory**: ~40k reads/s on 32 cores (~2.4 M reads/min, < 400 MB RAM), so a
-full-depth bulk RNA-seq sample of ~50 M read pairs finishes in ~45 min. Throughput scales with cores.
+arda is **CPU-bound**: ~40–50k reads/s on 32 cores, so a full-depth bulk RNA-seq sample (~50 M read
+pairs) finishes in ~45 min. Throughput scales with cores. Peak memory tracks **repertoire richness**,
+not read depth — mapping is flat (~300–400 MB at any depth), while Stage 3 holds the clone set, so a
+B-cell-rich tumour peaked at 2.7 GB (28k clonotypes) and a colder sample with *more* reads used 314 MB.
+Budget ~4 GB.
 
 ## Library
 
@@ -321,10 +324,10 @@ python -m pytest tests/realworld -q                   # vs IgBLAST, on committed
 env RUN_BENCHMARK=1 python -m pytest tests/benchmark -s   # timing/memory/scaling
 ```
 
-Optional extras gate optional suites: `.[rnaseq]` (`seqtree`) for `arda rnaseq correct`,
+Optional extras gate optional suites:
 `.[groundtruth]` (`olga`) for the generative ground-truth tests that keep `arda.cdr3fix`
 honest, `.[test]` for `airr` schema validation. Without them those tests **skip**, so
-`pip install -e '.[test,rnaseq]'` before reading a green suite as full coverage.
+`pip install -e '.[test]'` before reading a green suite as full coverage.
 
 Layout: `src/arda/{refbuild,annotate}`, C++ in `src/_markup/markup.cpp`,
 references in `database/`, downloads in gitignored `bin/` + `data/`. Design rationale and

@@ -1,11 +1,17 @@
-2026-07-08 22:52:09,869 INFO === arda reference build: rabbit (Oryctolagus_cuniculus) ===
-2026-07-08 22:52:09,869 INFO TRA: no IgBLAST TR internal annotation for rabbit — skipped
-2026-07-08 22:52:09,870 INFO TRG: no IgBLAST TR internal annotation for rabbit — skipped
-2026-07-08 22:52:16,460 INFO IGK: V=67 J=19 raw_combos=1273 unique_scaffolds=1206 annotated=1206
-2026-07-08 22:52:20,385 INFO IGL: V=22 J=4 raw_combos=88 unique_scaffolds=84 annotated=84
-2026-07-08 22:52:26,551 INFO IGH: V=39 J=11 raw_combos=429 unique_scaffolds=429 annotated=429
-2026-07-08 22:52:26,562 INFO TRB: no IgBLAST TR internal annotation for rabbit — skipped
-2026-07-08 22:52:26,562 INFO TRD: no IgBLAST TR internal annotation for rabbit — skipped
-2026-07-08 22:52:26,600 INFO constant region: 137 J+C scaffolds across 3 loci (+8.0% over 1719 V-J scaffolds)
-2026-07-08 22:52:26,639 INFO D germlines: 15 alleles across 3 loci
-2026-07-08 22:52:26,639 INFO TOTAL: 1856 scaffolds across 3 loci in 16.8s -> /Users/mikesh/vcs/code/arda/database/vdj/rabbit
+2026-07-14 19:35:20,697 INFO === arda reference build: rabbit (Oryctolagus_cuniculus) ===
+2026-07-14 19:35:20,698 INFO TRA: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-14 19:35:20,698 INFO TRG: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-14 19:35:26,361 INFO IGK: V=67 J=19 raw_combos=1273 unique_scaffolds=1206 annotated=1206
+2026-07-14 19:35:30,602 INFO IGL: V=22 J=4 raw_combos=88 unique_scaffolds=84 annotated=84
+2026-07-14 19:35:35,966 INFO IGH: V=39 J=11 raw_combos=429 unique_scaffolds=429 annotated=429
+2026-07-14 19:35:35,980 INFO TRB: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-14 19:35:35,980 INFO TRD: no IgBLAST TR internal annotation for rabbit — skipped
+2026-07-14 19:35:36,019 INFO constant region: 137/137 J+C scaffolds carry an FR4 (rest have no aux entry)
+2026-07-14 19:35:36,019 INFO constant region: 137 J+C scaffolds across 3 loci (+8.0% over 1719 V-J scaffolds)
+2026-07-14 19:35:36,061 INFO D germlines: 15 alleles across 3 loci
+2026-07-14 19:35:36,067 WARNING cdr3 anchors: 8 allele(s) not clean {'J:no_anchor': 5, 'V:no_anchor': 3}
+2026-07-14 19:35:36,067 INFO cdr3 anchors: 405 alleles ({'V:ok': 293, 'J:ok': 104, 'J:no_anchor': 5, 'V:no_anchor': 3})
+2026-07-14 19:35:36,070 WARNING rabbit: 4/7 loci have NO reference scaffolds — reads from TRA, TRG, TRB, TRD will not be annotated (see loci_manifest.tsv)
+2026-07-14 19:35:36,070 WARNING rabbit: TRB ships 2 D germlines but no scaffolds — unreachable, dead weight
+2026-07-14 19:35:36,070 WARNING rabbit: TRD ships 2 D germlines but no scaffolds — unreachable, dead weight
+2026-07-14 19:35:36,070 INFO TOTAL: 1856 scaffolds across 3 loci in 15.4s -> /Users/mikesh/vcs/code/arda/database/vdj/rabbit

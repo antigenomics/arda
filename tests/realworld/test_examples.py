@@ -111,7 +111,6 @@ def test_committed_rnaseq_clonotypes_still_reproduce(tmp_path):
     Row order ties on (duplicate_count, consensus_count), so compare as a sorted set of the
     columns the README quotes rather than row-for-row.
     """
-    pytest.importorskip("seqtree")  # `correct` needs the optional rnaseq extra
     from arda.rnaseq.assemble import assemble_contigs
     from arda.rnaseq.correct import correct_airr
     from arda.rnaseq.map import map_rnaseq
@@ -130,9 +129,13 @@ def test_committed_rnaseq_clonotypes_still_reproduce(tmp_path):
 def test_rnaseq_example_actually_demonstrates_d():
     """An example that shows no D would document nothing. Lock in what the README claims."""
     df = _committed(EXAMPLES / "rnaseq" / "clones.tsv")
-    assert df.height == 21
+    # 21 -> 20 -> 19 as germlines that cannot produce a trustworthy junction stopped building
+    # scaffolds (3'-truncated alleles, then unanchorable ones with an anchored sibling). Reads on a
+    # dropped allele reassign to a surviving sibling of the same gene, merging rows that shared a
+    # junction and differed only in v_call. Mapping is untouched -- only the V calls move.
+    assert df.height == 19
     with_d = df.filter(pl.col("d_call").is_not_null() & (pl.col("d_call") != ""))
-    assert with_d.height == 8, "8 of 21 clonotypes carry a d_call"
+    assert with_d.height == 8, "8 of 19 clonotypes carry a d_call"
     dd = df.filter(pl.col("d2_call").is_not_null() & (pl.col("d2_call") != ""))
     assert dd.height == 1 and dd["d_call"][0] == "TRDD2*01" and dd["d2_call"][0] == "TRDD3*01"
     assert set(df["locus"].to_list()) == {"IGH", "IGK", "IGL", "TRA", "TRB", "TRD"}

@@ -1,7 +1,7 @@
 """Unit tests for the RNA-seq mode (``arda.rnaseq``).
 
 ``read_pairs`` is pure and always runs. ``map_rnaseq`` needs mmseqs + the human DB
-(skips otherwise). ``correct_airr`` needs the optional ``seqtree`` dep.
+(skips otherwise).
 """
 
 from __future__ import annotations
@@ -251,7 +251,6 @@ def test_prep_rejects_unknown_strand():
 
 
 def test_correct_parent_child_collapse(tmp_path):
-    seqtree = pytest.importorskip("seqtree")  # noqa: F841 — optional dep gate
     from arda.rnaseq.correct import correct_airr
 
     # 30 nt (in frame) and a canonical C...F junction_aa — `correct` keeps only complete
@@ -287,7 +286,6 @@ def test_correct_drops_incomplete_junctions(tmp_path):
     clonotype table fills with truncated/out-of-frame/stop-codon artefacts — measured at 42 %
     of IGH clonotypes on 100 bp RNA-seq. `productive` does not catch truncation on its own.
     """
-    pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     good = ("TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF")   # canonical, in frame
@@ -315,7 +313,6 @@ def test_correct_keys_on_locus_v_j_not_junction_alone(tmp_path):
     """A clonotype is (locus, v_call, j_call, junction). The SAME nucleotide junction from a
     different V/J is a different clonotype -- grouping on the junction alone merged them and kept
     an arbitrary member's calls."""
-    pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
@@ -337,7 +334,6 @@ def test_correct_read_and_consensus_counts_from_mates(tmp_path):
     """AIRR counts: ``duplicate_count`` = READS (every mate row; the standard read-counting
     convention), ``consensus_count`` = distinct fragment consensuses (the two mates of one molecule
     are one). 5 molecules x 2 spanning mates -> duplicate_count 10, consensus_count 5."""
-    pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
@@ -359,7 +355,6 @@ def test_correct_isotype_from_constant_mate(tmp_path):
     """The isotype lives on the constant-region MATE (``c_class``, no junction), which the complete-only
     filter drops; the junction read carries none. correct links them by fragment id and reports the
     dominant RESOLVED class -- the ambiguous ``IGHC`` wins only if nothing resolves."""
-    pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     junc, aa = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC", "CASSLDGTF"
@@ -382,7 +377,6 @@ def test_correct_isotype_from_constant_mate(tmp_path):
 def test_correct_keeps_inframe_indel_variant(tmp_path):
     """A 3 bp (in-frame SHM) indel costs indel_rate**3 and must NOT collapse even onto a very deep
     parent -- three coincident indel errors are ~1e-6, so it is a real clonotype, not an error."""
-    pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     P = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC"                 # CASSLDGTF (30 nt, in frame)
@@ -404,7 +398,6 @@ def test_correct_keeps_inframe_indel_variant(tmp_path):
 def test_correct_pileup_binom_collapses_low_freq_variant(tmp_path):
     """The binom pileup path piles reads up per position and collapses a low-frequency 1-sub variant
     onto a deep parent (child allele depth is consistent with sequencing error of the parent depth)."""
-    pytest.importorskip("seqtree")
     from arda.rnaseq.correct import correct_airr
 
     P = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC"
@@ -506,7 +499,6 @@ def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_sca
     ``<prefix>.airr/.clones/.arda.json`` naming from ``--out-prefix``, and that the report carries
     both stages plus the arda version the module actually ran.
     """
-    pytest.importorskip("seqtree")
     rng = random.Random(2)
     pool = [s for i, s in human_scaffolds if i.startswith(("IGH_", "TRB_")) and len(s) > 150]
     recs = [(f"rec{k}", (lambda s, p: s[p:p + 150])(rng.choice(pool), rng.randrange(50)))
@@ -799,7 +791,6 @@ def test_clonotype_row_order_is_deterministic_under_tied_abundance(tmp_path):
     """
     import random
 
-    pytest.importorskip("seqtree")  # optional dep gate, as every other `correct` test uses
     from arda.rnaseq.correct import correct_airr
 
     # Three distinct clonotypes with identical read support: every pairwise tie is live.
@@ -823,39 +814,24 @@ def test_clonotype_row_order_is_deterministic_under_tied_abundance(tmp_path):
     assert len(pl.read_csv(outs[0].encode(), separator="\t", infer_schema_length=0)) == 3
 
 
-def test_missing_seqtree_is_actionable_but_a_broken_one_is_not_disguised():
-    """`arda rnaseq correct` needs the optional `rnaseq` extra, and says so -- once.
 
-    Only ModuleNotFoundError means "not installed". A stale compiled `_core` (an editable
-    seqtree checkout rebuilt against another Python) raises a plain ImportError from inside
-    seqtree's own `__init__`. Telling that user to `pip install 'arda-mapper[rnaseq]'` sends
-    them in a circle, so the real message must survive.
+def test_seqtree_is_a_hard_dependency():
+    """seqtree must import from a plain `pip install arda-mapper`, with no extra.
+
+    It used to live in an optional `[rnaseq]` extra, which produced this package's worst failure
+    mode: a plain install would map and assemble a 100M-read sample for 45 minutes and only then die
+    on a bare ModuleNotFoundError, before writing a single clonotype -- past every smoke test,
+    because `arda --version` succeeds without it. If this ever goes back to being optional, the
+    `correct` tests must not `importorskip` it: a skip there hides the failure instead of showing it.
     """
-    import builtins
+    import seqtree  # noqa: F401
 
-    from arda.rnaseq.correct import _seqtree
-
-    real = builtins.__import__
-
-    def absent(name, *a, **k):
-        if name == "seqtree":
-            raise ModuleNotFoundError("No module named 'seqtree'")
-        return real(name, *a, **k)
-
-    def broken(name, *a, **k):
-        if name == "seqtree":
-            raise ImportError("cannot import name 'ScoreMatrix' from 'seqtree._core'")
-        return real(name, *a, **k)
-
-    try:
-        builtins.__import__ = absent
-        with pytest.raises(ModuleNotFoundError, match=r"arda-mapper\[rnaseq\]"):
-            _seqtree()
-
-        builtins.__import__ = broken
-        with pytest.raises(ImportError, match="ScoreMatrix") as exc:
-            _seqtree()
-        assert not isinstance(exc.value, ModuleNotFoundError), "a broken build is not a missing one"
-        assert "rnaseq" not in str(exc.value), "do not send a broken install to reinstall the extra"
-    finally:
-        builtins.__import__ = real
+    import tomllib
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return  # installed without the source tree
+    meta = tomllib.loads(pyproject.read_text())["project"]
+    assert any(d.startswith("seqtree") for d in meta["dependencies"]), \
+        "seqtree must be a core dependency, not an extra"

@@ -4,8 +4,10 @@
 
 process ARDA {
     tag "$meta.id"
-    // arda is CPU-bound (the MMseqs2 search dominates) but very low-memory (<400 MB, independent of
-    // depth) -- give it cores, not RAM. ~40k reads/s on 32 cores; a full-depth ~100M-read sample ~45 min.
+    // arda is CPU-bound: the MMseqs2 search dominates. ~40-50k reads/s on 32 cores; a full-depth
+    // ~100M-read sample takes ~45 min. Peak RSS tracks REPERTOIRE RICHNESS, not read depth -- mapping
+    // is flat (~300-400 MB at any depth), but Stage 3 holds the clone set, so a B-cell-rich tumour hit
+    // 2.7 GB at 28k clonotypes while a colder sample with MORE reads used 314 MB. Budget ~4 GB.
     label 'process_high'
 
     // arda is pip-installable (PyPI: arda-mapper) and needs the mmseqs2 binary.
@@ -13,7 +15,7 @@ process ARDA {
     //   -profile docker   -> build the image from the Dockerfile beside this module and push it to
     //                        your registry, then point `container` at it (or override in a config).
     conda "${moduleDir}/environment.yml"
-    container "arda-mapper:2.5.1"
+    container "arda-mapper:2.5.7"
 
     input:
     tuple val(meta), path(reads)

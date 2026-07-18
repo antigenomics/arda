@@ -3,6 +3,228 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.7
+
+### Fixed — a stale mmseqs cache was reused instead of rebuilt
+
+`_cached_target_db` detects a stale target DB by mtime (older than `alleles.fasta`) and calls
+`_createdb_atomic` to rebuild it — but that build guard gated "already built" on bare **existence**
+(`done=db.exists`, from the 2.5.5 concurrency work). So it found the stale file, called the work done,
+and skipped the rebuild: every run then searched the previous scaffolds, projecting the current
+`markup.tsv` coords through an out-of-date alignment and sliding the junction off Cys104. Surfaced as
+shifted mouse markup — a 352-nt TRB scaffold cached under a reference since rebuilt to 346 nt gave
+`junction_aa='LCASSFHRDYNSPL'` instead of `CASSFHRDYNSPLYF`. "Done" now means a *current* db (exists
+**and** at least as new as its source fasta); the same skip also affected `build-index` after a
+`build-db`.
+
+### Fixed — the committed precompiled indexes were never used
+
+The precompiled mmseqs DBs shipped in `database/vdj/*/mmseqs/` are gated on a version marker, compared
+with an exact `==`. But `mmseqs version` prints the same release+commit with different punctuation
+across builds — the official static binary says `18-8cc5c`, the bioconda build `18.8cc5c`. When the
+toolchain moved to the static binary, every committed marker (written under conda's mmseqs) stopped
+matching, so the shipped indexes were silently ignored and every run rebuilt a private cache. The
+comparison now uses a separator-insensitive `mmseqs.version_key` (folds `[\s._-]+`→`-`, lowercases),
+which bridges the cosmetic difference while still rejecting a genuinely different version.
+
+### Changed — dev/CI toolchain moved from conda to uv
+
+mmseqs2's bioconda binary was the only thing tying the dev environment to conda; it also ships an
+official static build, which arda already auto-fetches. `setup.sh` now builds a `uv` `.venv` (portable
+under bash and zsh) and CI installs via `uv`. Conda stays only for the Nextflow/ISP integration, which
+ships its own `environment.yml`. Does not affect `pip install arda-mapper`.
+
+## 2.5.6
+
+### Fixed — a concurrent fetch could publish a half-extracted reference
+
+2.5.5 made the mmseqs **index** build safe under concurrency. The **reference fetch** that runs just
+before it had the same disease, and it was the more dangerous of the two.
+
+`paths.database_dir` decides "is the reference here?" by testing whether `<cache>/database/vdj/` is a
+directory. Its mere existence is the gate. So anything that lets `vdj/` become visible before it is
+complete does not produce a slow download or a crash — it makes every *other* arda process search an
+**incomplete reference** and report success over nothing.
+
+Two things let that happen:
+
+* **No lock.** arda is routinely run concurrently against the same cache — the Nextflow module
+  launches one process per sample, a SLURM array one per task — so on first use in a fresh
+  environment all of them fetched into the same path at once.
+* **A cross-filesystem move.** The old code extracted into `/tmp` and called `shutil.move`.
+  `shutil.move` is a rename only *within* one filesystem; across a boundary it silently degrades to a
+  recursive **copy** — and `/tmp` and `~/.cache` normally are two different filesystems. So `vdj/` was
+  populated file by file, in full view of everyone else. It also `rmtree`'d the existing tree before
+  writing the new one, deleting files a concurrent reader could be mid-search on.
+
+The fetch now holds a build lock, extracts into a staging directory **inside the destination** (so the
+swap is a rename, not a copy), and publishes with a single `os.replace`. `vdj/` is either absent or
+complete — never in between. Under `--force` the old tree is *renamed* aside rather than deleted, so a
+reader already holding its files keeps them.
+
+The lock is now one implementation (`arda._locking.build_lock`) shared by the reference fetch and the
+index build, rather than two copies of the same loop.
+
+### Changed
+
+* `seqtree>=0.4` (was `>=0.2`). Clonotype output is unchanged — `examples/rnaseq/clones.tsv`
+  reproduces bit-for-bit.
+* Docs: corrected the memory guidance. Peak RSS tracks **repertoire richness**, not read depth —
+  mapping is flat (~300–400 MB at any depth), but Stage 3 holds the clone set, so a B-cell-rich tumour
+  peaked at 2.7 GB (28k clonotypes) while a colder sample with *more* reads used 314 MB. The old
+  "< 400 MB, independent of read depth" was measured before the Stage-3 assembler existed and would
+  have OOM-killed anyone sizing a SLURM or Nextflow memory directive from it. Budget ~4 GB.
+
+## 2.5.5
+
+Two ways a correct arda install could still fail to work. Both hit the delivery path.
+
+### Fixed — concurrent runs corrupted the mmseqs index
+
+**arda is routinely run concurrently against the same reference** — the Nextflow module launches one
+process *per sample*, a SLURM array one per task — and the index build was not safe against that.
+
+`mmseqs createdb` creates its `db` file the instant it starts writing. Every *other* arda process
+therefore saw `db.exists() == True`, skipped building, and searched a **half-written database**. The
+failure was silent and total: **`0/200000 reads mapped, loci={}`**, no error, clean exit code. A whole
+27-dataset benchmark run came back as zeros. (`build_index` was worse: it unlinked the files a
+concurrent reader was mid-search on, and mmseqs died with `Cannot open index file db_h.index.1`.)
+
+The build now holds a lock, writes into a private temp dir, and moves the finished files into place
+with `db` **last** — readers test `db.exists()`, so it must not appear until its siblings are all
+there. A killed builder leaves a temp dir, never a half-built DB that looks complete.
+
+*Shipping a prebuilt index would not have fixed this*: the index is keyed to the mmseqs **version**,
+and arda uses whatever `mmseqs` is on `PATH`. Any user with their own build (as on a cluster) rebuilds
+locally and races anyway.
+
+### Changed — `seqtree` is now a core dependency, not an optional extra
+
+`pip install arda-mapper` is all the bulk RNA-seq pipeline needs.
+
+As an extra it produced this package's worst failure mode: a plain install would map and assemble a
+100 M-read sample for 45 minutes and *then* die on a bare `ModuleNotFoundError` — after all the
+expensive work, before writing a single clonotype. It slipped past every smoke test because
+`arda --version` succeeds without it, and it shipped to a collaborator's Nextflow module, whose own
+comments called `-profile conda` "works out of the box" while it could never emit a clonotype table.
+Patching the error message (2.5.1) treated the symptom; the dependency should simply not have been
+optional.
+
+`seqtree` ships the same 12 wheels on the same platforms as arda (py3.10–3.13, linux/mac/win) and
+pulls no runtime dependencies of its own, so requiring it costs nothing.
+
+* `[rnaseq]` survives as an **empty alias**, so existing `arda-mapper[rnaseq]` pins (the Nextflow
+  module, collaborator instructions, older docs) keep resolving without a warning.
+* **Removed every `pytest.importorskip("seqtree")` gate** (10 of them). With seqtree required, a skip
+  there can only *hide* a failure — and a skipped test is exactly how two reference bugs shipped.
+* The Dockerfile keeps its `import seqtree` build check.
+
+## 2.5.4
+
+**Completes the 2.5.3 reference fix.** 2.5.3 dropped germlines that are *truncated* into the
+junction, but left in a second class that is just as wrong and turned out to be doing most of the
+damage: germlines whose junction anchor arda **cannot find at all**.
+
+### Fixed
+
+* **Unanchorable V alleles kept building scaffolds — and were read magnets.** When arda cannot locate
+  Cys104 in a germline (`status=no_anchor`), IgBLAST still annotates a CDR3 on its scaffold, at a
+  position arda has no way to verify. It is demonstrably the wrong one: `TRAV23/DV6*04` yields a
+  scaffold junction `CTTSGTYKYIF` (11 aa) while every other allele of that gene templates `CAAS` and
+  yields 14 aa.
+
+  On a real tumour this was not a rounding error. After 2.5.3 dropped `TRAV20*03`, its reads did not
+  come out correct — they **moved to `TRAV23/DV6*04` carrying the identical 11 aa junctions**, and
+  that one allele then held **55 % of all TRA reads**. The gene label changed; the corrupt junction
+  did not.
+
+  2.5.3's mitigation (keep the scaffold, blank its `junction_aa`, set `productive=F`) does not work:
+  the runtime projects the scaffold's `cdr3_start`/`cdr3_end` onto the read and re-derives a junction
+  from those coordinates. And the check it used — "junction does not start with C" — never fired
+  here, because `CTTSGTYKYIF` *does* start with C. It is simply the **wrong C**.
+
+  Such an allele is now **dropped from the scaffold set when its gene keeps at least one anchored
+  allele** — the sibling is what proves it wrong, and the drop is then free: **0 genes lost, in any
+  organism** (46 human V alleles, 44 mouse, 2 rhesus, 1 rabbit). A gene whose alleles are *all*
+  unanchorable is left alone: nothing contradicts its annotation, and dropping those would delete
+  **41 *functional* mouse IGHV/IGLV genes**.
+
+* **New CI invariant**: a scaffold's junction must agree with its own allele's anchor — no scaffold
+  may be built from an unanchorable allele that has an anchored sibling, and no junction may be
+  shorter than the V alone templates. (Length, not byte-identity: IMGT's gapped and ungapped records
+  for the same allele can differ — mouse `IGLV2*01` disagrees at 12 of 294 bases — and the anchors
+  table reads one file while the scaffold reads the other.)
+
+Human reference: 15,690 → **15,069** V-J scaffolds. Mapping is unchanged; clonotypes and V calls move.
+
+## 2.5.3
+
+**Reference fix — germlines that are truncated INTO the junction no longer build scaffolds.**
+Clonotype output changes; mapping does not. Re-run rather than diff against 2.5.2 clonotypes.
+
+### Fixed
+
+* **3'-truncated V alleles produced junctions that were short but looked canonical.** Some IMGT V
+  records stop before the canonical 3' end, so the `V + pad + J` scaffold built from them **lacks
+  nucleotides a real rearrangement has** — and every read projected onto such a scaffold came out
+  with a junction short by exactly that much. `TRAV20*03` templates 3 nt into the junction where its
+  siblings template 13, so every clonotype built on it was **3 aa short**. On a real tumour it took
+  1,039 reads (48 % of all TRA reads) across 33 clonotypes, and arda's TRA CDR3-length distribution
+  peaked 3 aa below every other tool's.
+
+  Nothing downstream could catch it: the junction still starts with Cys and ends with [FW], so it
+  looks canonical and `correct --complete-only` passes it. The build's completeness gate only checks
+  that region *coordinates* exist, which they do.
+
+  An allele is now dropped from the **scaffold set** if its germline reaches at least one codon less
+  far into the junction than the longest allele of its own gene. Orphan-safe by construction — the
+  threshold is relative to the gene's own best allele, so that allele always survives and no gene can
+  lose all of its alleles. 63 human V alleles, 53 mouse (`TRAV20*03/*04`, `TRBV4-3*02/*03/*04`,
+  `IGKV3-20*02`, …). They remain in `cdr3_anchors.tsv`, now flagged **`status=truncated`** — a status
+  `docs/reference_build.rst` has documented from the start and which was never implemented.
+
+* **Scaffolds whose V has no findable Cys104 claimed to be productive.** 570 human and 179 mouse V-J
+  scaffolds emitted a `junction_aa` that does not begin at Cys104 — i.e. not a junction at all — and
+  549 of the human ones were flagged `productive=T`. Such a scaffold now **keeps its place in the
+  reference** (the read still maps, so filter recall is untouched) but carries **no junction** and
+  `productive=F`, so `correct --complete-only` drops it instead of minting a bogus clonotype.
+
+  Dropping those alleles outright was considered and rejected: it would delete **41 *functional*
+  mouse IGHV/IGLV genes**, and arda is the only tool in the benchmark that runs on mouse.
+
+* Effect on the shipped example: mapping is **bit-identical** (925/1035 reads, same per-locus
+  counts); clonotypes go 21 → 20 because reads on a dropped allele reassign to a surviving sibling of
+  the same gene, merging rows that shared a junction and differed only in `v_call`.
+
+### Added
+
+* **`arda build-db --one-allele-per-gene`** — build scaffolds from one representative allele per gene
+  (`*01` where it exists, else the lowest-numbered). Human: **16,035 → 4,443 scaffolds (3.6x smaller)**
+  with **all 290 V genes retained**. Deliberately not a literal `*01` filter: 19 human V genes
+  (`IGHV2-70D`, `IGHV3-25`, `IGHV3-43D`, `IGHV3-62`, `IGHV3-64D`, …) have no `*01` record and would
+  vanish silently. Off by default.
+
+* **Reference invariants now run in CI**, without a built DB (`tests/unit/test_reference_invariants.py`):
+  every scaffold junction starts at Cys104; no scaffold is built from a truncated allele; no gene loses
+  every allele; TRD still carries the shared `TRAV*/DV*` genes; human still has its 345 `J+C` scaffolds.
+  Both reference bugs found so far were invisible to CI because the only tests covering them needed a
+  built database and were skipped — that is exactly how the 2.5.2 defect regressed.
+
+## 2.5.2
+
+**Annotation fix (γδ / δ chains).** TRA and TRD are interleaved on chr14 and share V genes filed under
+`TRAV` as `.../DV...` (e.g. `TRAV14/DV4`). Whether those landed in the TRD scaffold set silently
+depended on IMGT functionality flags in the `TRDV` file — a clean `arda build-db` could produce TRD
+scaffolds with **no** `/DV` genes, so a δ rearrangement on such a V gene had no TRD scaffold to match
+and was **miscalled TRA** (the locus follows the J/D/C gene, never the shared V).
+
+* `refbuild`: `Locus.v_shared=("TRAV", "/DV")` now pulls the shared genes into TRD deterministically.
+* Added a DB-free regression test — the existing `test_locus_disambiguation` needs a built DB, so it
+  was skipped in CI, which is how this regressed.
+* Human reference rebuilt; TRD scaffolds now carry `TRAV/DV`. No API change.
+
+On real δ amplicon data each library now maps ~99.6–99.9 % to TRD.
+
 ## 2.5.1
 
 Packaging and integration fixes. No change to mapping, assembly, correction or any output

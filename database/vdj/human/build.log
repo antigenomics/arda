@@ -1,22 +1,37 @@
-2026-07-11 09:29:44,691 INFO === arda reference build: human (Homo_sapiens) ===
-2026-07-11 09:30:01,344 INFO TRA: V=126 J=69 raw_combos=8694 unique_scaffolds=8694 annotated=8694
-2026-07-11 09:30:01,445 INFO TRA: dropped 729 scaffolds with incomplete markup
-2026-07-11 09:30:08,704 INFO TRG: V=22 J=7 raw_combos=154 unique_scaffolds=132 annotated=132
-2026-07-11 09:30:08,707 INFO TRG: dropped 22 scaffolds with incomplete markup
-2026-07-11 09:30:14,645 INFO IGK: V=103 J=10 raw_combos=1030 unique_scaffolds=920 annotated=920
-2026-07-11 09:30:14,659 INFO IGK: dropped 92 scaffolds with incomplete markup
-2026-07-11 09:30:20,277 INFO IGL: V=105 J=11 raw_combos=1155 unique_scaffolds=1050 annotated=1050
-2026-07-11 09:30:20,293 INFO IGL: dropped 10 scaffolds with incomplete markup
-2026-07-11 09:30:37,555 INFO IGH: V=379 J=14 raw_combos=5306 unique_scaffolds=5124 annotated=5124
-2026-07-11 09:30:37,617 INFO IGH: dropped 405 scaffolds with incomplete markup
-2026-07-11 09:30:47,790 INFO TRB: V=166 J=16 raw_combos=2656 unique_scaffolds=2624 annotated=2624
-2026-07-11 09:30:47,825 INFO TRB: dropped 48 scaffolds with incomplete markup
-2026-07-11 09:30:47,916 INFO TRD: +19 shared V alleles from TRAV (/DV)
-2026-07-11 09:30:58,972 INFO TRD: V=26 J=5 raw_combos=130 unique_scaffolds=130 annotated=130
-2026-07-11 09:30:58,975 INFO TRD: dropped 45 scaffolds with incomplete markup
-2026-07-11 09:30:59,092 INFO constant region: 328/345 J+C scaffolds carry an FR4 (rest have no aux entry)
-2026-07-11 09:30:59,093 INFO constant region: 345 J+C scaffolds across 7 loci (+2.0% over 17323 V-J scaffolds)
-2026-07-11 09:30:59,268 INFO D germlines: 54 alleles across 3 loci
-2026-07-11 09:30:59,276 WARNING cdr3 anchors: 90 unanchored alleles {'V:no_anchor': 88, 'J:no_anchor': 2}
-2026-07-11 09:30:59,276 INFO cdr3 anchors: 1240 alleles ({'V:ok': 1015, 'V:no_anchor': 88, 'J:ok': 135, 'J:no_anchor': 2})
-2026-07-11 09:30:59,288 INFO TOTAL: 17668 scaffolds across 7 loci in 74.6s -> /Users/mikesh/vcs/code/arda/database/vdj/human
+2026-07-14 19:32:45,319 INFO === arda reference build: human (Homo_sapiens) ===
+2026-07-14 19:32:45,440 INFO TRA: dropped 8 unanchorable V allele(s) with an anchored sibling: TRAV1-2*02, TRAV13-1*03, TRAV14/DV4*04, TRAV23/DV6*04, TRAV26-2*02, TRAV30*04 …
+2026-07-14 19:32:45,441 INFO TRA: dropped 16 truncated V allele(s): TRAV13-2*02(10nt), TRAV20*03(3nt), TRAV20*04(6nt), TRAV26-1*03(6nt), TRAV30*02(6nt), TRAV30*03(6nt) …
+2026-07-14 19:32:58,813 INFO TRA: V=102 J=69 raw_combos=7038 unique_scaffolds=7038 annotated=7038
+2026-07-14 19:32:58,898 INFO TRA: dropped 271 scaffolds with incomplete markup
+2026-07-14 19:32:58,933 INFO TRG: dropped 1 unanchorable J allele(s) with an anchored sibling: TRGJP2*02
+2026-07-14 19:32:58,934 INFO TRG: dropped 1 truncated V allele(s): TRGV2*02(15nt)
+2026-07-14 19:33:14,042 INFO TRG: V=21 J=6 raw_combos=126 unique_scaffolds=105 annotated=105
+2026-07-14 19:33:14,136 INFO IGK: dropped 1 truncated V allele(s): IGKV3-20*02(7nt)
+2026-07-14 19:33:34,972 INFO IGK: V=102 J=10 raw_combos=1020 unique_scaffolds=910 annotated=910
+2026-07-14 19:33:34,984 INFO IGK: dropped 91 scaffolds with incomplete markup
+2026-07-14 19:33:34,984 INFO IGK: 9 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 19:33:35,062 INFO IGL: dropped 3 unanchorable V allele(s) with an anchored sibling: IGLV2-11*03, IGLV2-8*03, IGLV8-61*03
+2026-07-14 19:33:35,062 INFO IGL: dropped 2 truncated V allele(s): IGLV3-10*02(27nt), IGLV3-9*01(27nt)
+2026-07-14 19:33:40,155 INFO IGL: V=100 J=11 raw_combos=1100 unique_scaffolds=1000 annotated=1000
+2026-07-14 19:33:40,169 INFO IGL: 30 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 19:33:40,404 INFO IGH: dropped 29 unanchorable V allele(s) with an anchored sibling: IGHV1-18*02, IGHV1-69*03, IGHV1-69-2*02, IGHV1/OR15-5*01, IGHV2-5*03, IGHV2-70*02 …
+2026-07-14 19:33:40,405 INFO IGH: dropped 12 truncated V allele(s): IGHV2-5*04(7nt), IGHV2-5*11(9nt), IGHV2-70*09(9nt), IGHV4-30-2*02(6nt), IGHV4-31*04(6nt), IGHV4-31*05(6nt) …
+2026-07-14 19:33:53,228 INFO IGH: V=338 J=14 raw_combos=4732 unique_scaffolds=4550 annotated=4550
+2026-07-14 19:33:53,283 INFO IGH: dropped 325 scaffolds with incomplete markup
+2026-07-14 19:33:53,284 INFO IGH: 13 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 19:33:53,395 INFO TRB: dropped 4 unanchorable V allele(s) with an anchored sibling: TRBV11-3*03, TRBV5-8*02, TRBV7-3*02, TRBV7-3*03
+2026-07-14 19:33:53,396 INFO TRB: dropped 29 truncated V allele(s): TRBV10-3*04(3nt), TRBV11-2*02(12nt), TRBV11-3*02(12nt), TRBV13*02(12nt), TRBV15*03(12nt), TRBV16*03(12nt) …
+2026-07-14 19:34:00,620 INFO TRB: V=133 J=16 raw_combos=2128 unique_scaffolds=2096 annotated=2096
+2026-07-14 19:34:00,647 INFO TRB: dropped 16 scaffolds with incomplete markup
+2026-07-14 19:34:00,647 INFO TRB: 48 scaffolds have no Cys104 anchor — kept for mapping, junction suppressed
+2026-07-14 19:34:00,735 INFO TRD: +19 shared V alleles from TRAV (/DV)
+2026-07-14 19:34:00,743 INFO TRD: dropped 2 unanchorable V allele(s) with an anchored sibling: TRAV14/DV4*04, TRAV23/DV6*04
+2026-07-14 19:34:00,743 INFO TRD: dropped 2 truncated V allele(s): TRAV36/DV7*02(10nt), TRAV36/DV7*03(6nt)
+2026-07-14 19:34:05,894 INFO TRD: V=22 J=5 raw_combos=110 unique_scaffolds=110 annotated=110
+2026-07-14 19:34:05,897 INFO TRD: dropped 37 scaffolds with incomplete markup
+2026-07-14 19:34:06,016 INFO constant region: 328/345 J+C scaffolds carry an FR4 (rest have no aux entry)
+2026-07-14 19:34:06,017 INFO constant region: 345 J+C scaffolds across 7 loci (+2.3% over 15069 V-J scaffolds)
+2026-07-14 19:34:06,159 INFO D germlines: 54 alleles across 3 loci
+2026-07-14 19:34:06,168 WARNING cdr3 anchors: 153 allele(s) not clean {'V:no_anchor': 88, 'J:no_anchor': 2, 'V:truncated': 63}
+2026-07-14 19:34:06,168 INFO cdr3 anchors: 1240 alleles ({'V:ok': 952, 'V:no_anchor': 88, 'J:ok': 135, 'J:no_anchor': 2, 'V:truncated': 63})
+2026-07-14 19:34:06,179 INFO TOTAL: 15414 scaffolds across 7 loci in 80.9s -> /Users/mikesh/vcs/code/arda/database/vdj/human
