@@ -115,8 +115,17 @@ def _createdb_atomic(target_fasta: Path, db: Path, dbtype: int) -> None:
     So: hold the build lock, build into a private temp dir, and move the finished files into place
     with ``db`` **last** -- readers test ``db.exists()``, so it must not appear until its siblings are
     all there. A killed builder leaves a temp dir, never a half-built DB that looks complete.
+
+    "Done" means a **current** db, not merely a present one: an existing db OLDER than
+    ``target_fasta`` is stale and must be rebuilt. Gating on bare existence made a stale cache
+    permanent -- ``_cached_target_db`` decides to rebuild on mtime, then this guard sees the old
+    file, calls it done, and skips. The reference was rebuilt (e.g. `build-db`, or a pulled
+    `alleles.fasta`) but every run kept searching the previous scaffolds, silently shifting markup.
     """
-    with build_lock(db.parent / f".{db.name}.lock", done=db.exists) as ours:
+    def _current() -> bool:
+        return db.exists() and db.stat().st_mtime >= target_fasta.stat().st_mtime
+
+    with build_lock(db.parent / f".{db.name}.lock", done=_current) as ours:
         if not ours:
             return
         tmp = db.parent / f".{db.name}.tmp.{os.getpid()}"
