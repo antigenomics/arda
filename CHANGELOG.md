@@ -3,6 +3,37 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.5.7
+
+### Fixed — a stale mmseqs cache was reused instead of rebuilt
+
+`_cached_target_db` detects a stale target DB by mtime (older than `alleles.fasta`) and calls
+`_createdb_atomic` to rebuild it — but that build guard gated "already built" on bare **existence**
+(`done=db.exists`, from the 2.5.5 concurrency work). So it found the stale file, called the work done,
+and skipped the rebuild: every run then searched the previous scaffolds, projecting the current
+`markup.tsv` coords through an out-of-date alignment and sliding the junction off Cys104. Surfaced as
+shifted mouse markup — a 352-nt TRB scaffold cached under a reference since rebuilt to 346 nt gave
+`junction_aa='LCASSFHRDYNSPL'` instead of `CASSFHRDYNSPLYF`. "Done" now means a *current* db (exists
+**and** at least as new as its source fasta); the same skip also affected `build-index` after a
+`build-db`.
+
+### Fixed — the committed precompiled indexes were never used
+
+The precompiled mmseqs DBs shipped in `database/vdj/*/mmseqs/` are gated on a version marker, compared
+with an exact `==`. But `mmseqs version` prints the same release+commit with different punctuation
+across builds — the official static binary says `18-8cc5c`, the bioconda build `18.8cc5c`. When the
+toolchain moved to the static binary, every committed marker (written under conda's mmseqs) stopped
+matching, so the shipped indexes were silently ignored and every run rebuilt a private cache. The
+comparison now uses a separator-insensitive `mmseqs.version_key` (folds `[\s._-]+`→`-`, lowercases),
+which bridges the cosmetic difference while still rejecting a genuinely different version.
+
+### Changed — dev/CI toolchain moved from conda to uv
+
+mmseqs2's bioconda binary was the only thing tying the dev environment to conda; it also ships an
+official static build, which arda already auto-fetches. `setup.sh` now builds a `uv` `.venv` (portable
+under bash and zsh) and CI installs via `uv`. Conda stays only for the Nextflow/ISP integration, which
+ships its own `environment.yml`. Does not affect `pip install arda-mapper`.
+
 ## 2.5.6
 
 ### Fixed — a concurrent fetch could publish a half-extracted reference

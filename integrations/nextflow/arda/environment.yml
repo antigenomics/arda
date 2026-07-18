@@ -7,4 +7,4 @@ dependencies:
   - pip
   - pip:
       # seqtree (needed by `arda rnaseq correct`) is a core dependency since 2.5.5 -- no extra.
-      - arda-mapper==2.5.6
+      - arda-mapper==2.5.7
