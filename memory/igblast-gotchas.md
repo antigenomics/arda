@@ -25,4 +25,5 @@ makeblastdb.
 
 ## Binaries / versions
 IgBLAST 1.22.0 (NCBI LATEST as of build). Organisms with internal_data: human,
-mouse, rat, rabbit, rhesus_monkey. MMseqs2 from bioconda (binary `mmseqs`).
+mouse, rat, rabbit, rhesus_monkey. MMseqs2 = official static binary (no conda),
+auto-fetched into `bin/`.

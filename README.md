@@ -45,9 +45,10 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
 - **Honest** — a D call is gated on an E-value that ships with it (`d_support`), a
   germline allele with no derivable anchor is flagged rather than guessed, and a
   repair that would not produce a canonical junction is refused.
-- **Easy to install** — conda for the `mmseqs` binary, `pip install -e .` for the
-  package + C++ extension; IgBLAST is fetched into a gitignored `bin/` and is only
-  needed to (re)build the reference DB, not at runtime.
+- **Easy to install** — `pip install arda-mapper` (binary wheels ship the C++
+  extension); the `mmseqs` binary is fetched as a static build at runtime — no
+  conda. IgBLAST is fetched into a gitignored `bin/` and is only needed to
+  (re)build the reference DB, not at runtime.
 
 ## Install
 
@@ -59,11 +60,11 @@ pip install arda-mapper   # from PyPI (imports as `arda`); binary wheels ship th
 get the committed germline references on disk — use `setup.sh`:
 
 ```bash
-bash setup.sh            # creates conda env `arda`, fetches IgBLAST, pip install -e .
-conda activate arda
+bash setup.sh            # uv .venv, fetches IgBLAST + static mmseqs, editable install
+source .venv/bin/activate
 ```
 
-Flags: `--no-conda` (use the active env), `--build-db` (rebuild references after
+Needs [uv](https://docs.astral.sh/uv/). Flags: `--build-db` (rebuild references after
 install), `--tests` (run the fast suites). The committed `database/vdj/<organism>/`
 references mean **most users never need to build anything**. A `pip install arda-mapper`
 with no source checkout **auto-fetches** the curated references into `~/.cache/arda` on

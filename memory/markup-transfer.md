@@ -28,9 +28,9 @@ boundary, acceptable).
   the deduped scaffold.
 
 ## mmseqs binary discovery
-`$ARDA_MMSEQS` → `bin/mmseqs` → PATH. In normal use arda is installed *into* the
-`arda` conda env where `mmseqs` is on PATH. When running from another env (e.g.
-dev/base), set `$ARDA_MMSEQS` to the env binary.
+`$ARDA_MMSEQS` → `bin/mmseqs` → PATH → auto-fetch a static build into `bin/`. No
+conda: dev uses a uv `.venv`; `mmseqs` is the official static binary
+(`scripts/fetch_mmseqs.py` / `arda._mmseqs_fetch`). Set `$ARDA_MMSEQS` to override.
 
 ## Done since v1
 - **Reverse-complement** nt queries: `--strand 2`; reverse hits (qstart>qend) are
