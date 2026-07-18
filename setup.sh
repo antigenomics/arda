@@ -1,29 +1,25 @@
 #!/usr/bin/env bash
-# arda bootstrap — source of truth for a reproducible install.
+# arda bootstrap (uv) — reproducible dev install, no conda.
 #
 # Steps:
-#   1. Create/update the `arda` conda environment (python + mmseqs2 + toolchain).
-#   2. Download the latest IgBLAST release into ./bin (gitignored).
-#   3. pip install -e . (compiles the _markup C++ extension).
+#   1. uv venv .venv + editable install (compiles the _markup C++ extension).
+#   2. Download the latest IgBLAST release into ./bin (gitignored; DB build only).
+#   3. Fetch a static MMseqs2 binary into ./bin unless one is already on PATH.
 #
-# Flags:
-#   --no-conda    Skip conda env creation (use the already-active environment).
-#   --build-db    After install, build the reference DB (arda build-db).
-#   --tests       After install, run the fast test suites.
+# Conda is used ONLY by the Nextflow integration (integrations/nextflow/arda, the
+# Gamaleya/ISP pipeline), which ships its own environment.yml + Dockerfile.
 #
 # Usage:
-#   bash setup.sh [--no-conda] [--build-db] [--tests]
+#   bash setup.sh [--build-db] [--tests]
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_NAME="arda"
-USE_CONDA=1
+# Script dir, portable to both `bash setup.sh` and `zsh setup.sh` (BASH_SOURCE is
+# bash-only; $0 is the script path when executed, in both shells).
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 DO_BUILD_DB=0
 DO_TESTS=0
-
 for arg in "$@"; do
   case "$arg" in
-    --no-conda) USE_CONDA=0 ;;
     --build-db) DO_BUILD_DB=1 ;;
     --tests)    DO_TESTS=1 ;;
     *) echo "Unknown flag: $arg" >&2; exit 2 ;;
@@ -32,60 +28,43 @@ done
 
 log() { printf '\033[1;34m[arda]\033[0m %s\n' "$*"; }
 
-# --- 1. conda environment --------------------------------------------------
-if [[ "$USE_CONDA" -eq 1 ]]; then
-  if ! command -v conda >/dev/null 2>&1; then
-    echo "conda not found on PATH; install miniconda/anaconda or pass --no-conda." >&2
-    exit 1
-  fi
-  if conda env list | awk '{print $1}' | grep -qx "$ENV_NAME"; then
-    log "conda env '$ENV_NAME' exists — updating from environment.yml"
-    conda env update -n "$ENV_NAME" -f "$ROOT/environment.yml" --prune
-  else
-    log "creating conda env '$ENV_NAME' from environment.yml"
-    conda env create -f "$ROOT/environment.yml"
-  fi
-  # Run subsequent python/pip inside the env.
-  PY="conda run -n $ENV_NAME python"
-else
-  PY="python"
-fi
+command -v uv >/dev/null 2>&1 || {
+  echo "uv not found — install it: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
+  exit 1
+}
 
-# --- 2. IgBLAST release ----------------------------------------------------
-# shellcheck disable=SC2086 — $PY is "conda run -n <env> python", must word-split (as elsewhere)
-$PY "$ROOT/scripts/fetch_igblast.py" --dest "$ROOT/bin"
+# --- 1. venv + editable install --------------------------------------------
+# Build deps go in the venv so the scikit-build editable on-import rebuild can
+# find pybind11 (hence --no-build-isolation).
+log "creating .venv and installing arda (uv)"
+uv venv "$ROOT/.venv"
+# shellcheck disable=SC1091
+source "$ROOT/.venv/bin/activate"
+uv pip install pybind11 scikit-build-core ninja
+uv pip install -e "$ROOT" --no-build-isolation
 
-# --- 3. editable install (builds the C++ extension) ------------------------
-log "pip install -e . (builds _markup)"
-$PY -m pip install -e "$ROOT"
+# --- 2. IgBLAST release (offline DB build only) ----------------------------
+python "$ROOT/scripts/fetch_igblast.py" --dest "$ROOT/bin"
 
-# --- 3b. mmseqs2 (no-conda only) -------------------------------------------
-# The conda env provides mmseqs2; without conda, fetch a static binary into bin/
-# (arda also auto-fetches lazily on first use, so this is just eager).
-if [[ "$USE_CONDA" -eq 0 ]]; then
-  if ! command -v mmseqs >/dev/null 2>&1; then
-    log "fetching static mmseqs2 binary into ./bin"
-    $PY "$ROOT/scripts/fetch_mmseqs.py" --dest "$ROOT/bin" || true
-  fi
-fi
+# --- 3. MMseqs2 static binary (runtime) ------------------------------------
+# arda also auto-fetches lazily on first use, so this is just eager.
+command -v mmseqs >/dev/null 2>&1 || \
+  python "$ROOT/scripts/fetch_mmseqs.py" --dest "$ROOT/bin" || true
 
 # --- 4. verification -------------------------------------------------------
-log "verifying toolchain"
-if [[ "$USE_CONDA" -eq 1 ]]; then
-  conda run -n "$ENV_NAME" mmseqs version || true
-fi
+log "verifying"
+python -c "import arda; print('arda', arda.__version__)"
+python -c "from arda.mmseqs import version; print('mmseqs', version())"
 "$ROOT/bin/igblastn" -version | head -1 || true
-$PY -c "import arda._markup as m; print('arda._markup', m.__version__)"
-$PY -c "import arda; print('arda', arda.__version__)"
 
 # --- optional follow-ups ---------------------------------------------------
 if [[ "$DO_BUILD_DB" -eq 1 ]]; then
   log "building reference database"
-  $PY -m arda.cli build-db --organism all
+  arda build-db --organism all
 fi
 if [[ "$DO_TESTS" -eq 1 ]]; then
   log "running fast tests"
-  $PY -m pytest "$ROOT/tests/unit" "$ROOT/tests/synthetic" -q || true
+  python -m pytest "$ROOT/tests/unit" "$ROOT/tests/synthetic" -q || true
 fi
 
-log "done."
+log "done. activate with: source .venv/bin/activate"

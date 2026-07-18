@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [master, main, dev]
   pull_request:
   workflow_dispatch:
 
@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v5
 
       - name: Install build toolchain
         run: sudo apt-get update && sudo apt-get install -y cmake g++
@@ -38,8 +40,8 @@ jobs:
         # skips, so CI never exercised the clonotype error model or its deterministic
         # row ordering. Nine tests were being skipped, not passing.
         run: |
-          pip install scikit-build-core pybind11 ninja airr
-          pip install -e .[test] --no-build-isolation
+          uv pip install --system scikit-build-core pybind11 ninja airr
+          uv pip install --system -e .[test] --no-build-isolation
 
       - name: Show environment
         run: |
