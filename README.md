@@ -100,8 +100,7 @@ covering every junction-repair outcome, including one arda reports and refuses t
 it refuses outright; and a 1,035-read FASTQ that runs the whole bulk RNA-seq pipeline in ~6 s.
 Two tests re-run that script and fail if a committed artifact stops reproducing.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for what changed per release and
-[`benchmarks/RESULTS.md`](benchmarks/RESULTS.md) for measured speed and accuracy.
+See [`CHANGELOG.md`](CHANGELOG.md) for what changed per release.
 
 The reference database ships with **precompiled MMseqs2 indexes**
 (`database/vdj/<organism>/mmseqs/`), so annotation runs out of the box with no
@@ -258,7 +257,7 @@ gold-standard reference for benchmarking (see the `arda-benchmark` project).
    its errors located and conservatively repaired, and optionally given a D gene inferred
    from the junction *length* (`--d-posterior`).
 
-See [`memory/`](memory/) for design rationale and gotchas. Fast sequence
+Fast sequence
 primitives (`translate`, `detect_coding_frame`, `reverse_complement`,
 `back_translate`) live in the C++ extension and are re-exported from
 `arda.refbuild.translate` — mirpy-API-compatible, so mirpy can `import arda` and
@@ -330,7 +329,4 @@ honest, `.[test]` for `airr` schema validation. Without them those tests **skip*
 `pip install -e '.[test]'` before reading a green suite as full coverage.
 
 Layout: `src/arda/{refbuild,annotate}`, C++ in `src/_markup/markup.cpp`,
-references in `database/`, downloads in gitignored `bin/` + `data/`. Design rationale and
-the gotchas that cost us the most live in [`memory/`](memory/) — read
-[`memory/d-mapping.md`](memory/d-mapping.md) and
-[`memory/junction-markup.md`](memory/junction-markup.md) before touching either.
+references in `database/`, downloads in gitignored `bin/` + `data/`.
