@@ -14,6 +14,7 @@ The invariant these tests pin: **any process that can see ``db`` must find it co
 """
 
 import multiprocessing as mp
+import os
 import time
 from pathlib import Path
 
@@ -108,3 +109,24 @@ def test_db_is_moved_into_place_last(tmp_path, monkeypatch):
     mapper._createdb_atomic(Path("/dev/null"), db, 2)
 
     assert moved[-1] == "db", f"`db` must be moved into place last; order was {moved}"
+
+
+def test_a_stale_cache_is_rebuilt(tmp_path, monkeypatch):
+    """A db OLDER than its source fasta is stale and must be rebuilt -- "done" means current, not present.
+
+    `_cached_target_db` decides staleness by mtime, then calls `_createdb_atomic` to rebuild. When the
+    build guard gated on bare existence, the stale file it found counted as done and the rebuild
+    silently no-op'd, so every run kept searching the previous scaffolds. Found as shifted mouse
+    markup: a 352-nt TRB scaffold cached under a reference since rebuilt to 346 nt, projecting the
+    346-nt coords through a 352-nt alignment and sliding the junction off Cys104.
+    """
+    fasta = tmp_path / "alleles.fasta"
+    fasta.write_text(">x\nACGT\n")
+    db = tmp_path / "db"
+    db.write_text("STALE")
+    old = fasta.stat().st_mtime - 100          # the cache predates its source -> stale
+    os.utime(db, (old, old))
+
+    monkeypatch.setattr(mmseqs, "createdb", lambda f, out, dbtype=2: Path(out).write_text("FRESH"))
+    mapper._createdb_atomic(fasta, db, 2)
+    assert db.read_text() == "FRESH", "a cache older than its source fasta was not rebuilt"
