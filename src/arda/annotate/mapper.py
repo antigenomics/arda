@@ -93,7 +93,7 @@ def _committed_index(organism: str, seqtype: str, target_fasta: Path | None = No
     if target_fasta is not None and db.stat().st_mtime < Path(target_fasta).stat().st_mtime:
         return None  # the reference was rebuilt after this index was compiled
     try:
-        if ver.read_text().strip() == mmseqs.version():
+        if mmseqs.version_key(ver.read_text()) == mmseqs.version_key(mmseqs.version()):
             return db
     except Exception:  # noqa: BLE001 — mmseqs missing; fall through to rebuild
         return None
@@ -180,7 +180,8 @@ def build_index(organism: str = "all", *, force: bool = False) -> None:
             # version alone made `build-index` a silent no-op after `build-db` rewrote alleles.fasta:
             # the rebuilt reference was never compiled, and the runtime kept searching the old one.
             fresh = db.exists() and db.stat().st_mtime >= fasta.stat().st_mtime
-            if fresh and not force and vfile.exists() and vfile.read_text().strip() == ver:
+            if fresh and not force and vfile.exists() and \
+                    mmseqs.version_key(vfile.read_text()) == mmseqs.version_key(ver):
                 continue
             out.mkdir(parents=True, exist_ok=True)
             # No unlink-then-rebuild: that deleted the files a concurrently-running arda was reading.

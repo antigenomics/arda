@@ -60,7 +60,7 @@ unchanged. Five edits, each mirroring how an existing tool is wired:
    ``workflows/rnaseq/nextflow.config`` (sets ``ext.args`` and the publishDir).
 #. Register a ``run_arda = false`` param in ``nextflow.config`` and ``nextflow_schema.json`` (strict
    schema validation).
-#. For container profiles, pin ``withName: 'ARDA' { container = '<registry>/arda-mapper:2.5.6' }``
+#. For container profiles, pin ``withName: 'ARDA' { container = '<registry>/arda-mapper:2.5.7' }``
    in your deployment config.
 
 Then run with ``--run_arda``. The module's ``README.md`` has copy-paste snippets and a standalone

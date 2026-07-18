@@ -13,6 +13,7 @@ is set — so neither pip nor conda users need to install mmseqs manually.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -25,6 +26,7 @@ __all__ = [
     "mmseqs_binary",
     "run",
     "version",
+    "version_key",
     "createdb",
     "search",
     "convertalis",
@@ -103,8 +105,25 @@ def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
 
 @lru_cache(maxsize=1)
 def version() -> str:
-    """Return the mmseqs version string (e.g. ``18.8cc5c``)."""
+    """Return the mmseqs version string (e.g. ``18-8cc5c``)."""
     return run(["version"]).stdout.strip()
+
+
+def version_key(v: str) -> str:
+    """Canonical form of a version string, for comparing an index marker to the running mmseqs.
+
+    ``mmseqs version`` prints the same release+commit with different punctuation across builds:
+    the official static binary says ``18-8cc5c``, the bioconda build ``18.8cc5c``. They are the
+    same mmseqs and produce byte-compatible indexes; only the separator differs. Comparing the raw
+    strings with ``==`` therefore rejected every committed index the moment the toolchain moved from
+    conda's mmseqs to the static one -- so the precompiled DBs shipped in ``database/`` were never
+    used and every run rebuilt a private cache instead.
+
+    Fold each run of separator characters to a single ``-`` and lowercase. This bridges the cosmetic
+    difference while still distinguishing genuinely different versions (``17-b804f`` != ``18-8cc5c``),
+    so an incompatible index is never accepted.
+    """
+    return re.sub(r"[\s._-]+", "-", v.strip().lower())
 
 
 def createdb(fasta: str | Path, db: str | Path, *, dbtype: int | None = None) -> Path:
