@@ -26,6 +26,12 @@ echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); $(grep -c . <<<"$members") members
 for org in human mouse rat rabbit rhesus_monkey; do
   for f in alleles.fasta alleles.aa.fasta markup.tsv markup.aa.tsv cdr3_anchors.tsv; do
     grep -q "^vdj/$org/$f\$" <<<"$members" || { echo "ERROR: vdj/$org/$f missing"; exit 1; }
+    # Present is not enough: a build-db run without IgBLAST emits 0-byte alleles/markup, which pass
+    # the presence check, ship, and then crash every fresh install with `NoDataError: empty CSV`.
+    # (v2.5.7 shipped exactly this.) The smallest real file is rat/cdr3_anchors.tsv at ~24 KB, so a
+    # 1 KB floor catches empty without ever tripping on a valid small-repertoire organism.
+    sz=$(tar -xzf "$OUT" -O "vdj/$org/$f" | wc -c)
+    [ "$sz" -gt 1000 ] || { echo "ERROR: vdj/$org/$f is empty ($sz B) -- was build-db run without IgBLAST?"; exit 1; }
   done
 done
 # D germlines exist only for organisms with a D locus; d_prior only where a model was published.
