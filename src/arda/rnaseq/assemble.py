@@ -34,6 +34,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ._res import Stage
 from ..annotate.contig import reannotate_contigs
 
 __all__ = ["assemble_contigs", "AssembleReport"]
@@ -82,6 +83,11 @@ class AssembleReport:
     contigs: int = 0
     contigs_complete: int = 0          # contigs whose re-annotated junction is complete
     reads_rescued: int = 0             # incomplete member reads attributed to a complete contig
+    # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
+    # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
+    wall_seconds: float = 0.0
+    peak_rss_mb: float = 0.0
+    rss_gain_mb: float = 0.0
 
     def as_dict(self) -> dict:
         return self.__dict__.copy()
@@ -223,6 +229,7 @@ def assemble_contigs(
     """
     output = Path(output)
     raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
+    stage = Stage()
     report = AssembleReport(reads_in=raw.height)
     n = raw.height
     cols = {c: raw[c].to_list() for c in raw.columns}
@@ -274,6 +281,7 @@ def assemble_contigs(
     report.contigs = len(contig_records)
     if not contig_records:
         _write_empty(output)
+        stage.finish(report)
         if report_path:
             Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
         return report
@@ -310,6 +318,7 @@ def assemble_contigs(
         pl.DataFrame(rows).select(_OUT_COLUMNS).write_csv(output, separator="\t")
     else:
         _write_empty(output)
+    stage.finish(report)
     if report_path:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
     return report

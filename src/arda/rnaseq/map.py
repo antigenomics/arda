@@ -17,15 +17,13 @@ from __future__ import annotations
 
 import json
 import queue
-import resource
-import sys
 import threading
-import time
 from itertools import islice, zip_longest
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from ._res import Stage
 from ..annotate import io as seqio
 from ..annotate import mapper
 from ..annotate.airr_out import airr_header, format_rows
@@ -256,19 +254,6 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         yield f"{i2}/2", s2
 
 
-def _peak_rss_mb() -> float:
-    """Peak RSS of this process AND its children, in MB.
-
-    ``RUSAGE_SELF`` alone is wrong here and was: 92 % of a `map` run's wall time is spent inside the
-    `mmseqs` **subprocess**, and mmseqs' nucleotide prefilter allocates a `4**k` index table that
-    dominates the footprint. Reporting only the Python process understated peak RSS by roughly an
-    order of magnitude. ``ru_maxrss`` is bytes on macOS, KB on Linux.
-    """
-    scale = 1024 * 1024 if sys.platform == "darwin" else 1024
-    return max(resource.getrusage(who).ru_maxrss
-               for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN)) / scale
-
-
 @dataclass
 class RnaseqReport:
     """Counts + timing for one ``map`` run (written as JSON with ``--report``)."""
@@ -286,7 +271,8 @@ class RnaseqReport:
     threads: int = 0
     wall_seconds: float = 0.0
     reads_per_second: float = 0.0
-    peak_rss_mb: float = 0.0
+    peak_rss_mb: float = 0.0          # whole-process high-water mark at stage end
+    rss_gain_mb: float = 0.0          # how much THIS stage raised it
 
     @property
     def mapped_fraction(self) -> float:
@@ -369,7 +355,7 @@ def map_rnaseq(
     report = RnaseqReport(input=str(r1), organism=organism, threads=threads,
                           min_score=min_score)
     reads_fh = open(emit_reads, "w") if emit_reads else None
-    t0 = time.perf_counter()
+    stage = Stage()
     try:
         with open(output, "w") as fh:
             fh.write(airr_header() + "\n")
@@ -405,10 +391,9 @@ def map_rnaseq(
             reads_fh.close()
     t.join()
 
-    report.wall_seconds = time.perf_counter() - t0
-    report.reads_per_second = (
-        report.total_reads / report.wall_seconds if report.wall_seconds else 0.0)
-    report.peak_rss_mb = _peak_rss_mb()
+    stage.finish(report)   # wall_seconds / peak_rss_mb / rss_gain_mb, same definition as Stages 2-3
+    report.reads_per_second = round(
+        report.total_reads / report.wall_seconds if report.wall_seconds else 0.0, 1)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
     return report

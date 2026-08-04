@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+
+from ._res import Stage
 import seqtree
 
 from ..refbuild.translate import reverse_complement
@@ -72,6 +74,11 @@ class CorrectReport:
     collapsed: int = 0  # clonotypes absorbed into a parent
     reads_with_junction: int = 0   # Stage-1 reads carrying any junction
     reads_incomplete: int = 0      # ...of which dropped as truncated/out-of-frame/stop
+    # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
+    # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
+    wall_seconds: float = 0.0
+    peak_rss_mb: float = 0.0
+    rss_gain_mb: float = 0.0
 
     def as_dict(self) -> dict:
         d = self.__dict__.copy()
@@ -473,6 +480,7 @@ def correct_airr(
     if error_method not in ("simple", "binom", "betabinom"):
         raise ValueError(f"error_method must be simple|binom|betabinom, got {error_method!r}")
 
+    stage = Stage()
     output = Path(output)
     raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
     if extra_airr is not None:
@@ -608,6 +616,7 @@ def correct_airr(
         rows = [(rid, junctions[roots[r]]) for r in range(len(roots)) for rid in read_sets[r]]
         pl.DataFrame(rows, schema=["sequence_id", "junction"], orient="row").write_csv(
             read_map, separator="\t")
+    stage.finish(report)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
     return report
