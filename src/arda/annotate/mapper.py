@@ -215,7 +215,16 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     if df.height == 0:
         return {}
     df = df.with_columns(pl.col("bits").cast(pl.Float64, strict=False))
-    df = df.sort("bits", descending=True).unique(subset="query", keep="first")
+    # `target` is a tie-break key, and `maintain_order` is not decoration. Paralogous scaffolds
+    # tie exactly on whole-scaffold bits (IGHV3-30*01 vs IGHV3-30-3*01, IGKV1-x vs IGKV3-x), and
+    # polars' sort and `unique` are both unordered by default -- so the winner, and therefore the
+    # emitted v_call, depended on the order mmseqs happened to list the alignments in. Measured:
+    # every one of 25 tied queries flipped its call when the input rows were reversed.
+    # That makes a run irreproducible, and it makes byte-identity between the single-node,
+    # sharded and Nextflow paths unprovable -- a shard boundary changes row order, nothing else.
+    # Lexicographically smallest target among exact ties: arbitrary, but the same everywhere.
+    df = (df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
+            .unique(subset="query", keep="first", maintain_order=True))
     return {row["query"]: row for row in df.iter_rows(named=True)}
 
 

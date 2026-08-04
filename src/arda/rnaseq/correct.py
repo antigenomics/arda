@@ -502,11 +502,24 @@ def correct_airr(
     # reported as `consensus_count` when abundance is spanning (`coverage=False`).
     df = df.with_columns(pl.col("sequence_id").str.replace(r"/[12]$", "").alias("_frag"))
     keys = ["locus", "v_call", "j_call", "junction"]
-    g = df.group_by(keys).agg(
+    # Every ordering below is load-bearing; without them `correct` is not reproducible AT ALL.
+    # Measured on 200k reads: three runs, same input, same flags -> three different clones.tsv.
+    # polars' group_by is a multithreaded hash aggregation, so all three of these were arbitrary:
+    #   * group order          -> `_parents` collapses error children onto whichever parent it met
+    #                             first, so an identical junction flipped between paralogous V calls
+    #                             (IGHV3-11*06 vs IGHV3-21*08) from run to run;
+    #   * read order in a group -> `_assign_coverage` is first-with-longest-overlap-wins, so
+    #                             `duplicate_count` moved (11/8 vs 9/6 for one IGK clonotype);
+    #   * equal `count` rows    -> emitted in arbitrary order.
+    # Sorting the input makes `.first()` well defined; sorting `read_ids` fixes coverage; and the
+    # final sort carries the full group key, which is a TOTAL order -- so the row order no longer
+    # depends on the input row order either. That last property is what lets a sharded or Nextflow
+    # run be byte-identical to a single-node one.
+    g = df.sort("sequence_id").group_by(keys, maintain_order=True).agg(
         pl.col("_frag").n_unique().alias("count"),           # fragments (consensuses), not reads
-        pl.col("sequence_id").alias("read_ids"),
+        pl.col("sequence_id").sort().alias("read_ids"),
         pl.col("junction_aa").first().alias("junction_aa"),
-    ).sort("count", descending=True)
+    ).sort(["count", *keys], descending=[True, False, False, False, False])
 
     junctions = g["junction"].to_list()
     counts = [int(c) for c in g["count"].to_list()]

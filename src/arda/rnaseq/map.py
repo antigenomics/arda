@@ -158,6 +158,44 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
 _RNASEQ_CHUNK = 200_000
 
 
+def frag_stem(i: str) -> str:
+    """Fragment id for a read id: the mate suffix stripped.
+
+    Tolerates the ``/1``,``/2`` and `` 1:N:0:`` conventions already present in the wild.
+    """
+    i = i.split()[0]
+    return i[:-2] if i.endswith(("/1", "/2")) else i
+
+
+def chunked_fragments(records: Iterator[tuple], size: int) -> Iterator[list]:
+    """Chunk records without ever splitting a FRAGMENT across two chunks.
+
+    ``_apply_constant_rule`` decides per fragment *within a chunk*, so a boundary falling
+    between two mates costs that fragment its isotype donation (`isotype_from_mate`). Plain
+    ``chunked`` gets away with it by accident: in the default paired path records arrive
+    strictly two-per-fragment, so a boundary at a multiple of the chunk size never lands
+    mid-fragment. ``--reconstruct`` destroys that accident -- a merged pair emits one record
+    and an unmerged pair two, so the parity drifts and boundaries do land mid-fragment.
+
+    Without this, `map` output depends on ``--chunk-size``, and under sharding it would
+    depend on the shard layout too -- which is exactly the byte-identity the SLURM and
+    Nextflow paths are supposed to guarantee.
+
+    A chunk may exceed ``size`` by at most one fragment.
+    """
+    batch: list = []
+    prev: str | None = None
+    for rec in records:
+        stem = frag_stem(rec[0])
+        if batch and len(batch) >= size and stem != prev:
+            yield batch
+            batch = []
+        batch.append(rec)
+        prev = stem
+    if batch:
+        yield batch
+
+
 def read_pairs(r1: str | Path, r2: str | Path | None = None,
                *, reconstruct: bool = False, limit: int | None = None) -> Iterator[tuple[str, str]]:
     """Stream ``(id, sequence)`` reads for single-end (``r1`` only) or paired input.
@@ -187,11 +225,7 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         yield from islice(it, limit) if limit is not None else it
         return
 
-    def _stem(i: str) -> str:
-        # tolerate the `/1`,`/2` and ` 1:N:0:` conventions already present in the file
-        i = i.split()[0]
-        return i[:-2] if i.endswith(("/1", "/2")) else i
-
+    _stem = frag_stem
     # zip_longest, not zip: plain zip stops at the shorter file AND consumes one extra record from the
     # longer one, so a truncated mate file is invisible both during and after the loop.
     # Quality is read only when reconstructing (merge_pair's tie-break needs it) -- the default path
@@ -322,7 +356,7 @@ def map_rnaseq(
     def reader():
         try:
             pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit)
-            for chunk in seqio.chunked(pairs, chunk_size):
+            for chunk in chunked_fragments(pairs, chunk_size):
                 chunks.put(chunk)
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
             reader_exc.append(exc)
