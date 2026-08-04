@@ -191,7 +191,11 @@ def split(
     out_dir: Path = typer.Argument(..., help="Directory for shard FASTA files."),
     shards: int = typer.Option(..., "--shards", help="Number of shards."),
 ) -> None:
-    """Round-robin split an input into N shard FASTA files (for cluster runs)."""
+    """Round-robin split an input into N shard FASTA files (amplicon / single-end).
+
+    **Not for paired RNA-seq.** This writes FASTA, so quality is dropped, and it round-robins
+    *records*, so a fragment's two mates land in different shards. Use ``arda rnaseq split``.
+    """
     from .cluster import split as _split
 
     paths = _split(input, out_dir, shards)
@@ -226,7 +230,12 @@ def slurm(
     mem: str = typer.Option("8G"),
     submit: bool = typer.Option(False, "--submit", help="Run the generated submit.sh now."),
 ) -> None:
-    """Write (and optionally submit) a SLURM submit.sh: split → array-annotate → merge."""
+    """Write (and optionally submit) a SLURM submit.sh: split → array-annotate → merge.
+
+    **Not for paired RNA-seq.** This shards FASTA into ``arda annotate``: quality is dropped
+    and mates are separated. It also has no Stage 2/3, so there is no clonotype table at the
+    end. Use ``arda rnaseq slurm``.
+    """
     import os
     import subprocess
     from .cluster import render_submit_script
@@ -456,44 +465,115 @@ def rnaseq_run(
 
     Use the ``map`` / ``assemble`` / ``correct`` commands separately to tune their knobs.
     """
-    import json
+    from .rnaseq import pipeline
 
-    from .rnaseq.correct import correct_airr
-    from .rnaseq.map import map_rnaseq
+    # The body lives in `rnaseq.pipeline` so that `arda rnaseq reduce` -- the tail of a sharded
+    # run -- calls the SAME Stage-2/3 function, not a copy of it. Two copies would drift, and
+    # then "accuracy does not differ between run modes" would be a hope rather than a property.
+    pipeline.run(r1, out_dir, out_prefix, r2=r2, organism=organism, threads=threads,
+                 reconstruct=reconstruct, min_score=min_score,
+                 kmer=(None if kmer == 0 else kmer), assemble=assemble,
+                 complete_only=complete_only, map_d=map_d, limit=(limit or None),
+                 echo=typer.echo)
+    typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
+               f"{out_dir / f'{out_prefix}.clones.tsv'}, "
+               f"{out_dir / f'{out_prefix}.arda.json'}")
 
-    out_dir.mkdir(parents=True, exist_ok=True)
-    airr = out_dir / f"{out_prefix}.airr.tsv"
-    clones = out_dir / f"{out_prefix}.clones.tsv"
-    report = out_dir / f"{out_prefix}.arda.json"
 
-    mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
-                      reconstruct=reconstruct, min_score=min_score, map_d=map_d,
-                      kmer=(None if kmer == 0 else kmer), limit=(limit or None))
-    typer.echo(
-        f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
-        f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
+@rnaseq_app.command("split")
+def rnaseq_split(
+    r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
+    out_dir: Path = typer.Option(..., "--out-dir", "-d", help="Directory for the shard FASTQs."),
+    shards: int = typer.Option(..., "--shards", help="Number of contiguous blocks."),
+    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
+) -> None:
+    """Split paired FASTQ into contiguous blocks of read pairs, for a sharded Stage 1.
 
-    arep = None
-    extra = None
-    if assemble:
-        from .rnaseq.assemble import assemble_contigs
-        extra = out_dir / f"{out_prefix}.assembled.airr.tsv"
-        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d)
-        typer.echo(
-            f"[arda] assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
-            f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
+    Unlike ``arda split`` (FASTA/amplicon) this keeps the quality strings and never separates a
+    fragment's two mates. Blocks are contiguous, so concatenating the per-shard AIRR in shard
+    order reproduces the single-node row order exactly.
+    """
+    from .cluster import split_pairs
 
-    crep = correct_airr(airr, clones, organism=organism, map_d=map_d,
-                        complete_only=complete_only, extra_airr=extra)
-    typer.echo(
-        f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
-        f"({crep.collapsed} collapsed) over {crep.reads} reads")
+    written = split_pairs(r1, out_dir, shards=shards, r2=r2)
+    typer.echo(f"[arda] wrote {len(written)} shard(s) to {out_dir}")
 
-    report.write_text(json.dumps(
-        {"arda_version": __version__, "map": mrep.as_dict(),
-         "assemble": arep.as_dict() if arep else None, "correct": crep.as_dict()},
-        indent=2) + "\n")
-    typer.echo(f"[arda] wrote {airr}, {clones}, {report}")
+
+@rnaseq_app.command("reduce")
+def rnaseq_reduce(
+    shard_dir: Path = typer.Option(..., "--shard-dir", help="Directory of per-shard AIRR TSVs."),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
+    map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
+) -> None:
+    """Merge a sharded Stage 1, then run Stages 2-3 ONCE over the whole thing.
+
+    `assemble` and `correct` are global: run per shard, a clone split across shards is counted
+    once per shard and contigs that tile across shards are never built. So the sharded path
+    distributes only ``map``, and this is the step that finishes the job.
+    """
+    from .rnaseq import pipeline
+
+    pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
+                    assemble=assemble, complete_only=complete_only, map_d=map_d,
+                    echo=typer.echo)
+    typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
+
+
+@rnaseq_app.command("slurm")
+def rnaseq_slurm(
+    r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
+    out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
+    shards: int = typer.Option(..., "--shards", help="Array size = number of Stage-1 shards."),
+    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    work_dir: Path = typer.Option(Path("arda_slurm"), help="Scratch for shards + submit.sh."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(8, help="--cpus-per-task, and mmseqs threads."),
+    kmer: int = typer.Option(12, "--kmer", "-k", help="MMseqs2 -k (the memory knob)."),
+    min_score: float = typer.Option(75.0, "--min-score", help="Min bit score to keep a read."),
+    reconstruct: bool = typer.Option(False, "--reconstruct", help="Merge overlapping mates."),
+    assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
+    map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
+    partition: Optional[str] = typer.Option(None, help="SLURM partition."),
+    time_limit: str = typer.Option("04:00:00", "--time", help="Walltime per array task."),
+    mem: str = typer.Option("8G", help="Memory per array task (Stage 1 is flat, ~300-400 MB)."),
+    reduce_time: str = typer.Option("08:00:00", help="Walltime for the reduce step."),
+    reduce_mem: str = typer.Option(
+        "16G", help="Memory for reduce. Stage 3 holds the clone set: budget ~4 GB, more for a "
+                    "B-cell-rich sample (2.7 GB measured at 28k clonotypes)."),
+    submit: bool = typer.Option(False, "--submit", help="Run the generated script."),
+) -> None:
+    """Write (and optionally submit) a SLURM script: split → array-``map`` → reduce.
+
+    Only Stage 1 is distributed; Stages 2-3 run once over the merged AIRR, through the same
+    code path ``arda rnaseq run`` uses. With contiguous pair shards the result is
+    byte-identical to a single-node run.
+    """
+    import os
+    import subprocess
+
+    from .cluster import render_rnaseq_submit_script
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    script = work_dir / "submit.sh"
+    script.write_text(render_rnaseq_submit_script(
+        r1, out_prefix, work_dir, shards=shards, r2=r2, out_dir=out_dir, organism=organism,
+        threads=threads, kmer=kmer, min_score=min_score, reconstruct=reconstruct,
+        assemble=assemble, complete_only=complete_only, map_d=map_d, partition=partition,
+        time=time_limit, mem=mem, reduce_time=reduce_time, reduce_mem=reduce_mem,
+        arda_mmseqs=os.environ.get("ARDA_MMSEQS")))
+    script.chmod(0o755)
+    typer.echo(f"[arda] wrote {script}")
+    if submit:
+        subprocess.run(["bash", str(script)], check=True)
 
 
 if __name__ == "__main__":
