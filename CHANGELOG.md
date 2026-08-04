@@ -34,6 +34,99 @@ official static build, which arda already auto-fetches. `setup.sh` now builds a 
 under bash and zsh) and CI installs via `uv`. Conda stays only for the Nextflow/ISP integration, which
 ships its own `environment.yml`. Does not affect `pip install arda-mapper`.
 
+## 2.6.0
+
+### Fixed — a run was not reproducible
+
+`arda rnaseq correct` did not produce the same output twice. Three runs over one unchanged
+200k-read AIRR, same flags, gave three different `clones.tsv`. polars' `group_by` is a
+multithreaded hash aggregation and the clonotype fold leaned on it three times without pinning
+an order: group order (so `_parents` collapsed an error child onto whichever parent it met
+first — one identical junction flipped between `IGHV3-11*06` and `IGHV3-21*08`), read order
+within a group (so `_assign_coverage`, which is first-with-longest-overlap-wins, moved
+`duplicate_count` between 11 and 9 for one IGK clonotype), and the order of equal-`count` rows.
+
+None of it was visible. The row *count* was stable at 449 every time, so the table looked
+reproducible while its V calls and abundances were not.
+
+Two more coin flips in the same class, upstream: `_best_hits` resolved exactly-tied bit scores
+with an unordered sort and an unordered `unique` — paralogous scaffolds tie routinely, and
+**all 25** tied queries in a fixture flipped their V call when the input rows were reversed —
+and chunk boundaries could fall between a fragment's two mates, costing that fragment the
+isotype donation `_apply_constant_rule` makes per chunk. The default paired path got away with
+the latter (records arrive strictly two per fragment) but `--reconstruct` breaks that parity.
+
+After the fix, on 200k reads: all three artifacts byte-identical across 1, 4 and 8 threads;
+`correct` byte-identical over five repeat runs and six input-row permutations. The shipped
+example is unchanged and the realworld IgBLAST-concordance suite still passes — this is a
+reproducibility fix, not an accuracy change.
+
+### Added — `arda rnaseq slurm`, byte-identical to a single-node run
+
+`arda slurm` could not run the RNA-seq path, and aiming it there would have been silently
+wrong: it writes FASTA (dropping quality), round-robins *records* so a fragment's mates land in
+different shards, and has no Stage 2/3 at all.
+
+New `arda rnaseq split | reduce | slurm`. Only Stage 1 is distributed — `correct` counts
+distinct fragments globally and `assemble` grows contigs *across* reads, so sharding either
+would count a clone once per shard and never build the long-CDR3 contigs Stage 3 exists for.
+Shards are **contiguous blocks of read pairs**, so concatenating the per-shard AIRR in shard
+order reproduces the single-node row order exactly, and `run` and `reduce` call the *same*
+Stage-2/3 function rather than two copies that could drift.
+
+Verified on 60k real read pairs, single-node vs 5 shards: `airr.tsv`, `assembled.airr.tsv` and
+`clones.tsv` all byte-identical.
+
+The amplicon `arda split` / `arda slurm` are unchanged, and now say in their help that they are
+not for paired RNA-seq.
+
+### Added — resource reporting for every stage, and provenance in the report
+
+`assemble` and `correct` now report `wall_seconds`, `peak_rss_mb` and `rss_gain_mb`; `map` was
+moved onto the same helper so all three mean the same thing. This matters because Stage 3 is
+the expensive one: mapping is flat at ~300–400 MB at any depth, but the clone set scales with
+repertoire richness (2.7 GB at 28k clonotypes vs 314 MB for a colder sample with *more* reads),
+so a `--mem` directive sized from the mapping number alone gets OOM-killed.
+
+`peak_rss_mb` is documented as what it actually is: the whole-process high-water mark **as of
+that stage's end**, monotone, because `getrusage` offers no per-stage reset. That is the number
+a memory directive has to cover; `rss_gain_mb` gives the per-stage attribution.
+
+The merged report also gained `mmseqs_version` and a `reference` fingerprint — when two
+delivery modes disagree, a different aligner build or reference is the usual cause and neither
+is otherwise visible.
+
+### Added — mmseqs that just works, and is the *right* mmseqs
+
+`mmseqs_binary()` took whatever was on `PATH`. An index is only reusable by the release that
+compiled it, so a mismatched binary made every run discard `database/`'s precompiled DBs and
+rebuild a private cache — no error, just a slow start and results not comparable with anyone
+else's. Seen on a cluster whose `~/bin/mmseqs` shadowed conda's version-matched one.
+
+Candidates are now version-matched, with auto-fetch of a known-good build as the fallback and a
+warning that names the consequence if even that fails. `$ARDA_MMSEQS` stays unchecked (an
+explicit override is the user's call), and no filtering happens when no index ships — a plain
+`pip install` has nothing to be compatible with.
+
+`versions_compatible()` also handles a spelling `version_key` could not: the static release
+asset prints its **full commit hash** where bioconda and the index marker print
+release+short-commit. Release 18 *is* commit `8cc5c…`, so those are one build — and since the
+static asset is what arda auto-fetches, the stricter comparison would have rejected arda's own
+downloaded binary on every macOS install.
+
+New `pip install 'arda-mapper[mmseqs]'` ships the binary in a companion wheel
+(`packaging/arda-mmseqs`), so there is no first-run download and no network needed. A separate
+distribution because pip cannot be asked to *prefer* a wheel — build tags are ranked, not
+chosen; the same shape `cmake`, `ninja` and `ruff` use. MMseqs2 is MIT and its notice ships
+with the wheel.
+
+### Changed
+
+* The Nextflow module pins `mmseqs2 =18.8cc5c` exactly (was `>=15`). A floating pin lets conda
+  resolve a different aligner than the CLI and SLURM paths use — an accuracy-differs-between-
+  modes hazard, not just a caching one.
+* The module gained the `meta.yml` it never had.
+
 ## 2.5.6
 
 ### Fixed — a concurrent fetch could publish a half-extracted reference

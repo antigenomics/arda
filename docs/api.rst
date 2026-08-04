@@ -81,6 +81,19 @@ Bulk RNA-seq
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: arda.rnaseq.pipeline
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Cluster sharding
+----------------
+
+.. automodule:: arda.cluster
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Reference build
 ---------------
 

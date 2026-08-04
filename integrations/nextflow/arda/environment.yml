@@ -3,8 +3,11 @@ channels:
   - bioconda
 dependencies:
   - python >=3.10
-  - bioconda::mmseqs2 >=15
+  # PINNED EXACTLY, not `>=15`. An mmseqs index is only reusable by the release that built it,
+  # so a floating pin lets conda resolve a *different aligner* than the CLI and SLURM paths use.
+  # That is an accuracy-differs-between-run-modes hazard, not merely a caching one.
+  - bioconda::mmseqs2 =18.8cc5c
   - pip
   - pip:
       # seqtree (needed by `arda rnaseq correct`) is a core dependency since 2.5.5 -- no extra.
-      - arda-mapper==2.5.7
+      - arda-mapper==2.6.0

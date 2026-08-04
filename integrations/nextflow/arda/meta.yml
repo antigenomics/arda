@@ -1,0 +1,61 @@
+name: arda
+description: Extract a TCR/BCR repertoire from bulk RNA-seq reads as AIRR clonotypes
+keywords:
+  - airr
+  - tcr
+  - bcr
+  - repertoire
+  - immunogenomics
+  - rnaseq
+tools:
+  - arda:
+      description: |
+        Antigen Receptor Domain Annotation. Filters receptor-derived reads out of bulk RNA-seq
+        with an MMseqs2 k-mer prefilter, annotates FR/CDR regions against IMGT-derived
+        V(+pad+)J and J+C scaffolds, assembles long CDR3s that no single read spans, and
+        collapses sequencing error into a clonotype table.
+      homepage: https://github.com/antigenomics/arda
+      documentation: https://antigenomics.github.io/arda/
+      tool_dev_url: https://github.com/antigenomics/arda
+      licence: ["GPL-3.0"]
+
+input:
+  - meta:
+      type: map
+      description: |
+        Groovy Map with sample metadata. Must carry `single_end`, which selects whether R2 is
+        passed through: e.g. [ id:'sample1', single_end:false ]
+  - reads:
+      type: file
+      description: One FASTQ for single-end, or a two-element list [R1, R2] for paired.
+      pattern: "*.{fastq,fq}{,.gz}"
+
+output:
+  - clones:
+      type: file
+      description: Corrected clonotype table, keyed by (locus, v_call, j_call, junction).
+      pattern: "*.clones.tsv"
+  - airr:
+      type: file
+      description: |
+        Stage-1 mapped reads, AIRR Rearrangement. Matched by exact name, never `*.airr.tsv`:
+        that glob also catches the assembler's `*.assembled.airr.tsv`, and the two would then
+        arrive on this channel as a two-element list.
+      pattern: "${prefix}.airr.tsv"
+  - assembled_airr:
+      type: file
+      description: Stage-3 assembled long-CDR3 contigs (absent under --no-assemble).
+      pattern: "*.assembled.airr.tsv"
+  - report:
+      type: file
+      description: |
+        Merged per-stage run report: counts, per-locus yield, wall time and peak RSS per stage,
+        plus the arda/mmseqs versions and the reference fingerprint used.
+      pattern: "*.arda.json"
+  - versions:
+      type: file
+      description: File containing software versions.
+      pattern: "versions.yml"
+
+authors:
+  - "@mikessh"

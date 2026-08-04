@@ -201,8 +201,44 @@ arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+a
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda build-db --organism all                # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for local mmseqs version
-arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node: split → array → merge
+arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node AMPLICON: split → array → merge
+arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-node RNA-SEQ
 ```
+
+## Cluster: two adapters, and picking the wrong one fails silently
+
+| input | command | shard unit |
+|---|---|---|
+| amplicon / single-end FASTA | `arda slurm` (`arda split` + `arda merge`) | one record |
+| bulk paired RNA-seq | `arda rnaseq slurm` (`arda rnaseq split` + `rnaseq reduce`) | one read **pair** |
+
+**Never point `arda split` / `arda slurm` at paired RNA-seq.** They write FASTA — dropping the
+quality strings `--reconstruct` needs — and round-robin *records*, which puts a fragment's two
+mates in different shards. There is no error; the numbers just come out wrong.
+
+**Never shard Stage 2 or Stage 3.** `correct` counts distinct fragments and collapses error
+variants globally; `assemble` grows contigs across reads. Per shard, a clone split across N
+shards is counted N times and the long-CDR3 contigs Stage 3 exists for are never built, because
+the reads that tile them never meet. `arda rnaseq slurm` distributes only `map` and runs the
+rest once, through the same function `arda rnaseq run` uses — so a sharded run is
+**byte-identical** to a single-node one (verified on real data, all three artifacts).
+
+## mmseqs: nothing to install, and nothing to pin
+
+`pip install arda-mapper` auto-fetches a static binary on first use; `pip install
+'arda-mapper[mmseqs]'` ships it in the wheel so there is no download at all. Candidates are
+**version-matched** against the shipped indexes — an index is only reusable by the release that
+built it, so an unrelated `mmseqs` on `PATH` would silently discard `database/`'s precompiled
+DBs and rebuild a private cache. `$ARDA_MMSEQS` overrides everything and is not checked.
+
+## Run reports: `peak_rss_mb` is monotone, by design
+
+Every stage reports `wall_seconds`, `peak_rss_mb` and `rss_gain_mb`. `peak_rss_mb` is the
+**whole-process** high-water mark *as of that stage's end* (getrusage offers no per-stage
+reset), which is exactly what a SLURM `--mem` or Nextflow `memory` directive must cover;
+`rss_gain_mb` is that stage's contribution. **Budget for Stage 3, not Stage 1**: mapping is flat
+at ~300–400 MB at any depth, but the clone set scales with repertoire richness — 2.7 GB at 28k
+clonotypes, versus 314 MB for a colder sample with *more* reads.
 
 ## Bulk RNA-seq mode (`arda rnaseq`)
 

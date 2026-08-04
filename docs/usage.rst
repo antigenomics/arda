@@ -122,8 +122,66 @@ Scaling
 -------
 
 MMseqs2 runs multi-threaded (``--threads``); inputs may be FASTA or FASTQ, plain
-or gzipped. For cluster runs, shard the input across SLURM array tasks and
-concatenate the per-shard AIRR TSVs.
+or gzipped. There are two cluster adapters, and they are **not** interchangeable.
+
+``arda slurm`` — amplicon / single-end
+  Shards one FASTA across an array of ``arda annotate`` tasks and concatenates the results.
+
+``arda rnaseq slurm`` — bulk RNA-seq
+  Shards paired FASTQ across an array of ``arda rnaseq map`` tasks, then runs Stages 2-3
+  **once** over the merged Stage-1 AIRR::
+
+      arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8 \
+          --partition medium --submit
+
+  The result is **byte-identical** to the equivalent ``arda rnaseq run``. Two properties make
+  that true, and both are easy to break:
+
+  * shards are **contiguous blocks of read pairs** (never round-robin), so concatenating the
+    per-shard AIRR in shard order reproduces the single-node row order exactly;
+  * only Stage 1 is distributed. ``correct`` counts distinct fragments and collapses error
+    variants globally, and ``assemble`` grows contigs across reads — sharding either would
+    count a clone once per shard and never build the long-CDR3 contigs Stage 3 exists for.
+
+.. warning::
+
+   Do not point ``arda split`` or ``arda slurm`` at paired RNA-seq. They write FASTA, so the
+   quality strings ``--reconstruct`` needs are discarded, and they round-robin *records*, which
+   puts a fragment's two mates in different shards. Use ``arda rnaseq split`` /
+   ``arda rnaseq slurm``.
+
+Run reports
+-----------
+
+``--report`` (per stage) and ``arda rnaseq run`` (merged, ``<prefix>.arda.json``) record what
+happened and what it cost. Three resource fields appear on every stage:
+
+``wall_seconds``
+   Elapsed time in that stage.
+
+``peak_rss_mb``
+   The **whole-process** (including the child ``mmseqs``) high-water mark **as of the end of
+   that stage** — so it is monotone across stages. ``resource.getrusage`` reports high-water
+   marks only and offers no per-stage reset, so when all three stages share one process a stage
+   cannot be charged its own peak in isolation. This is deliberately the number to size a SLURM
+   ``--mem`` or Nextflow ``memory`` directive from: it is what the process actually required by
+   that point.
+
+``rss_gain_mb``
+   How much *that* stage raised the mark. For an unambiguous per-stage figure, run the stage in
+   its own process (``arda rnaseq map`` / ``assemble`` / ``correct`` separately); then
+   ``peak_rss_mb`` is that stage alone.
+
+.. note::
+
+   Budget for **Stage 3**, not Stage 1. Mapping is flat at ~300-400 MB regardless of read
+   depth, but ``assemble``/``correct`` hold the clone set: a B-cell-rich tumour peaked at
+   2.7 GB on 28k clonotypes while a colder sample with *more* reads used 314 MB. Peak RSS
+   tracks repertoire richness, not read depth.
+
+The report also carries ``arda_version``, ``mmseqs_version`` and a ``reference`` fingerprint
+(path, size, mtime). If two runs disagree, compare those first — a different aligner build or a
+differently-fetched reference is the usual cause, and neither is visible in the output.
 
 Supported organisms
 -------------------
