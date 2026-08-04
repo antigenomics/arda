@@ -151,9 +151,30 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
         overlap = _overlap_consensus(a, q1[pos:pos + ov], b, q2[::-1][:ov])
     return s1[:pos] + overlap + r2[ov:]
 
-# RNA-seq is mostly non-receptor, so larger chunks amortise mmseqs' fixed per-call
-# cost (~0.8 s startup) over more reads; memory stays bounded (one chunk at a time).
-_RNASEQ_CHUNK = 200_000
+# Records per mmseqs invocation. Larger chunks amortise the fixed per-call cost; memory stays
+# bounded because only one chunk is resident.
+#
+# 400k, not 200k, and not "as large as possible" -- both ends were measured on real data
+# (10 full-depth cluster runs, 754.7M reads, plus a chunk-size sweep on 1.2M records, 8 threads):
+#
+#   chunks:    12        6        3        1
+#   wall:   51.3s    47.6s    46.3s    47.7s      <- minimum at 3 chunks (~400k records)
+#
+# Going UP from 400k is slower, not faster. The reader is a daemon thread behind a
+# `queue.Queue(maxsize=2)`, so with one giant chunk there is nothing left to overlap and the
+# +3.0% regression is the pipeline serialising. The measured per-invocation intercept is
+# **0.56 s** -- not the ~1.6 s an earlier 200k-read profile implied -- which is why this knob is
+# worth only ~2.6% and why "batch every mmseqs call into one" is NOT the big lever it looked
+# like. The real cost model is:
+#
+#     wall_map ~= total_reads / 44,470  +  mapped_reads / 681
+#
+# i.e. a read that HITS costs ~65x one that does not, so on anything but a cold library the
+# alignment term dominates and chunking cannot touch it. See `scripts/bench_cost_model.py`.
+#
+# Safe to change because `chunked_fragments` made the output invariant to it -- verified:
+# identical AIRR checksum and identical `isotype_from_mate` at 50k / 200k / 400k.
+_RNASEQ_CHUNK = 400_000
 
 
 def frag_stem(i: str) -> str:

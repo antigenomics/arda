@@ -36,3 +36,24 @@ Every dataset arda ships or consumes, where it came from, and how to regenerate 
 |---|---|---|
 | OLGA default models | `olga` package (GPL-3.0) | `human_T_alpha/beta`, `human_B_heavy/kappa/lambda`, `mouse_T_alpha/beta`. Only `human_T_beta`, `mouse_T_beta`, `human_B_heavy` carry a D gene. |
 | vdjrearm models | `$ARDA_VDJREARM` → `/Users/mikesh/vcs/code/vdjrearm/model/Homo+sapiens/` | Adds human **TRD** (with D) and **TRG**, which OLGA lacks. OLGA-format (`model_params.txt`, `model_marginals.txt`, `{V,J}_gene_CDR3_anchors.csv`); verified to load via `olga.load_model`. No LICENSE file upstream. |
+
+## `tests/data/rnaseq_real/` — real paired reads for the RNA-seq tests (added 2026-08-05)
+
+| field | value |
+|---|---|
+| origin | **SRR5233639** (BioProject PRJNA371303, Bolotin 2017), human bulk RNA-seq, 2×100 bp |
+| content | 660 read pairs: 260 fragments arda maps (IGH 60, IGK 60, IGL 60, TRB 50, TRA 27, TRG 3) + 400 sampled non-receptor fragments |
+| size | 44 KB + 44 KB gzipped |
+| provenance | **experimental** — verbatim sequencer reads, unmodified (sequence *and* quality strings preserved) |
+
+Selection is reproducible: map the first 150,000 pairs of SRR5233639, take up to 60 mapped
+fragments per locus, then add non-receptor fragments at a fixed 1 % sampling rate with
+`random.Random(20260805)`.
+
+**Why it exists.** Every other `tests/unit/test_rnaseq*.py` builds its reads by slicing the
+reference and mutating it, which puts the reference on both sides of the assertion. Real reads
+carry what we would not think to synthesise: adapters, 3′ quality drop-off, PCR error,
+off-target transcripts, non-overlapping mates, and reads landing in J→C rather than V.
+
+⚠ These reads are from a **public** BioProject and may be redistributed. Do not extend this
+fixture with Gamaleya tumour reads (private) or with anything under `data_bio/`.
