@@ -4,10 +4,15 @@ Inspired by pymmseqs (MIT) but deliberately dependency-free: we only need
 binary discovery, a subprocess runner, and the ``createdb`` / ``search`` /
 ``convertalis`` (and ``easy-search``) pipeline used by the annotator.
 
-Discovery order for the binary: ``$ARDA_MMSEQS`` → ``<project>/bin/mmseqs`` →
-``mmseqs`` on ``PATH``. If none are found, a static binary is auto-fetched into
-``<project>/bin/mmseqs`` (one-time, transparent) unless ``$ARDA_NO_AUTO_FETCH``
-is set — so neither pip nor conda users need to install mmseqs manually.
+Discovery order for the binary: ``$ARDA_MMSEQS`` → the optional ``arda-mmseqs``
+companion wheel → ``<project>/bin/mmseqs`` → ``mmseqs`` on ``PATH``. Candidates
+after the explicit override are **version-matched against the precompiled indexes
+in** ``database/``: an index is only reusable by the mmseqs release that built it,
+so accepting an arbitrary PATH binary silently discards the shipped index and
+rebuilds a private cache. If nothing matches, a known-good static binary is
+auto-fetched into ``<project>/bin/mmseqs`` (one-time, transparent) unless
+``$ARDA_NO_AUTO_FETCH`` is set — so neither pip nor conda users need to install
+mmseqs manually. ``pip install 'arda-mapper[mmseqs]'`` skips even that.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ __all__ = [
     "run",
     "version",
     "version_key",
+    "versions_compatible",
     "createdb",
     "search",
     "convertalis",
@@ -53,30 +59,124 @@ class MMseqsError(RuntimeError):
     """Raised when an ``mmseqs`` invocation exits non-zero."""
 
 
+def _bundled_binary() -> str | None:
+    """The binary shipped by the optional ``arda-mmseqs`` companion wheel, if installed."""
+    try:
+        from arda_mmseqs import binary  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001 — not installed is the normal case
+        return None
+    try:
+        p = Path(binary())
+        return str(p) if p.exists() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@lru_cache(maxsize=None)
+def _version_of(path: str) -> str | None:
+    """``mmseqs version`` for one specific binary, or None if it will not run.
+
+    Separate from :func:`version` because that one resolves through
+    :func:`mmseqs_binary`, and resolution needs to interrogate candidates first.
+    """
+    try:
+        proc = subprocess.run([path, "version"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def committed_index_version() -> str | None:
+    """The mmseqs version the precompiled indexes in ``database/`` were built with.
+
+    ``None`` when no index ships (the packaged reference asset deliberately omits them, so a
+    plain ``pip install`` has nothing to match) — in that case any mmseqs will do, because the
+    first run builds its own cache regardless.
+
+    Deliberately does *not* go through :func:`~arda.paths.vdj_dir`: that resolves
+    ``database_dir()``, which will auto-*download* the reference. Binary discovery must never
+    trigger a network fetch.
+    """
+    try:
+        from .paths import _source_root, cache_root
+
+        roots = []
+        src = _source_root()
+        if src is not None:
+            roots.append(src / "database")
+        roots.append(cache_root() / "database")
+        for root in roots:
+            for ver in sorted((root / "vdj").glob("*/mmseqs/*/VERSION")):
+                text = ver.read_text().strip()
+                if text:
+                    return text
+    except Exception:  # noqa: BLE001 — discovery must not fail on a layout surprise
+        return None
+    return None
+
+
 @lru_cache(maxsize=1)
 def mmseqs_binary() -> str:
-    """Locate the ``mmseqs`` executable, auto-fetching a static build if needed.
+    """Locate an mmseqs executable that can actually use the shipped indexes.
 
-    Resolution: ``$ARDA_MMSEQS`` → ``<project>/bin/mmseqs`` → ``mmseqs`` on
-    ``PATH``. If still not found, download a static binary into
-    ``<project>/bin/mmseqs`` (one-time) unless ``$ARDA_NO_AUTO_FETCH`` is set.
+    Resolution: ``$ARDA_MMSEQS`` → the ``arda-mmseqs`` companion wheel →
+    ``<project>/bin/mmseqs`` → ``mmseqs`` on ``PATH`` → auto-fetched static build.
+
+    **Version-matched, not merely present.** Taking whatever `mmseqs` happened to be on PATH
+    was a silent correctness and performance bug: an index is only reusable by the release it
+    was compiled with, so a mismatched binary makes every run reject ``database/``'s
+    precompiled DBs and rebuild a private cache instead — no error, just a slow start and, if
+    the two releases align differently, results that are not comparable with anyone else's.
+    Found in the wild: a cluster with a bare-git-hash build ahead of conda's on PATH.
+
+    ``$ARDA_MMSEQS`` is never version-checked — an explicit override is the user's call.
+    If nothing matches, the known-good static build is fetched (unless ``$ARDA_NO_AUTO_FETCH``);
+    if that also fails we fall back to the best candidate and warn, naming the consequence.
     """
     env = os.environ.get("ARDA_MMSEQS")
     if env:
         return env
-    local = bin_dir() / "mmseqs"
-    if local.exists():
-        return str(local)
-    found = shutil.which("mmseqs")
-    if found:
-        return found
+
+    candidates = [c for c in (_bundled_binary(),
+                              str(bin_dir() / "mmseqs") if (bin_dir() / "mmseqs").exists() else None,
+                              shutil.which("mmseqs")) if c]
+
+    want = committed_index_version()
+    if want is None:
+        # No shipped index to be compatible with; any working mmseqs is fine.
+        if candidates:
+            return candidates[0]
+    else:
+        for cand in candidates:
+            got = _version_of(cand)
+            if got and versions_compatible(got, want):
+                return cand
+
     if "ARDA_NO_AUTO_FETCH" not in os.environ:
         fetched = _auto_fetch()
         if fetched is not None:
-            return fetched
+            got = _version_of(fetched)
+            if want is None or (got and versions_compatible(got, want)):
+                return fetched
+            candidates.append(fetched)
+
+    if candidates:
+        import warnings
+
+        got = _version_of(candidates[0]) or "unknown"
+        warnings.warn(
+            f"mmseqs {got} does not match the version the shipped indexes were built with "
+            f"({want}); the precompiled reference index will be ignored and a private cache "
+            f"rebuilt on first use. Install a matching build "
+            f"(pip install 'arda-mapper[mmseqs]') or set $ARDA_MMSEQS to silence this.",
+            RuntimeWarning, stacklevel=2,
+        )
+        return candidates[0]
+
     raise MMseqsError(
-        "mmseqs binary not found. Install it (conda install -c bioconda mmseqs2), "
-        "set $ARDA_MMSEQS, or allow auto-fetch (unset $ARDA_NO_AUTO_FETCH)."
+        "mmseqs binary not found. Install it (pip install 'arda-mapper[mmseqs]', or "
+        "conda install -c bioconda mmseqs2), set $ARDA_MMSEQS, or allow auto-fetch "
+        "(unset $ARDA_NO_AUTO_FETCH)."
     )
 
 
@@ -122,8 +222,40 @@ def version_key(v: str) -> str:
     Fold each run of separator characters to a single ``-`` and lowercase. This bridges the cosmetic
     difference while still distinguishing genuinely different versions (``17-b804f`` != ``18-8cc5c``),
     so an incompatible index is never accepted.
+
+    Not sufficient on its own -- see :func:`versions_compatible`, which is what callers should use.
     """
     return re.sub(r"[\s._-]+", "-", v.strip().lower())
+
+
+def _commit_token(v: str) -> str:
+    """The build's git commit from a version string, or ``""`` if it carries none."""
+    toks = re.split(r"[\s._-]+", v.strip().lower())
+    hexes = [t for t in toks if len(t) >= 5 and all(c in "0123456789abcdef" for c in t)]
+    return hexes[-1] if hexes else ""
+
+
+def versions_compatible(a: str, b: str) -> bool:
+    """Do two ``mmseqs version`` strings denote builds with interchangeable index formats?
+
+    Punctuation is not the only way the same build spells itself. The official **static release
+    asset prints its full 40-char commit hash** (``8cc5ce367b5638c4306c2d7cfc652dd099a4643f``)
+    while the bioconda build and the committed index marker print release+short-commit
+    (``18.8cc5c`` / ``18-8cc5c``). Release 18 *is* commit ``8cc5c...``, so those are one build --
+    but no amount of separator folding makes the strings equal.
+
+    That mattered concretely: arda's own auto-fetched binary is the static asset, so a pure
+    :func:`version_key` comparison rejected the index arda itself ships, on every macOS install.
+
+    So: compare commit hashes when both carry one, accepting a prefix match in either direction
+    (short vs full form). Fall back to :func:`version_key` when one has no hash at all. A genuinely
+    different build has a different commit (``76da68ad...`` is not ``8cc5c...``) and is still
+    rejected.
+    """
+    ca, cb = _commit_token(a), _commit_token(b)
+    if ca and cb:
+        return ca.startswith(cb) or cb.startswith(ca)
+    return version_key(a) == version_key(b)
 
 
 def createdb(fasta: str | Path, db: str | Path, *, dbtype: int | None = None) -> Path:

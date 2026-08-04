@@ -37,6 +37,11 @@ dev = ["ruff", "pytest", "pybind11"]
 # Kept as an empty alias so existing `arda-mapper[rnaseq]` pins (the Nextflow module, collaborator
 # instructions, older docs) keep resolving without a warning. seqtree is a core dependency now.
 rnaseq = []
+# Ship the aligner instead of downloading it on first use. Not a hard dependency: the plain
+# install auto-fetches the same static binary. The pin is deliberately loose because it is not
+# what keeps you safe -- `mmseqs.mmseqs_binary()` version-matches whatever it finds against the
+# precompiled indexes in `database/`, so a stale bundle is rejected like any other candidate.
+mmseqs = ["arda-mmseqs>=18,<19"]
 # Tests only: OLGA's generative model supplies ground-truth V/J trims (and D spans) for
 # `arda.cdr3fix`. Kept out of `test`/`dev` so the normal suite never imports it.
 groundtruth = ["olga"]
