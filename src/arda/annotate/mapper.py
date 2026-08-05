@@ -302,57 +302,92 @@ def _db_keys(db: Path) -> dict[str, str]:
 
 
 def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
-                   seg_rows: dict[str, dict], tmp: Path, *,
+                   seg_rows: dict[tuple[str, str], dict], seqs: dict[str, str], tmp: Path, *,
                    threads: int) -> tuple[dict[str, dict], set[str]]:
     """Align each read against ONLY the scaffold its (best V, best J) implies.
 
     Measured: 10,787 alignments instead of 3.04 M -- 5.36 s -> 0.044 s (122x) on a 20 k-read
     amplicon.
 
-    Returns ``(hits, failed)``. Anything in ``failed`` (or simply absent) is rescued by the
-    caller against the full reference, so a miss here costs time, never a read.
+    **Strand is taken per read from what the segment pass observed, never assumed.** Library
+    strandedness is a property of the prep, not a constant: measured across this project's own
+    panel, TruSeq-stranded dUTP libraries put R1 antisense (`fr-firststrand`, Illumina's documented
+    behaviour), Raji's DNBSEQ prep runs the *opposite* convention with R1 sense, TCR amplicons have
+    **both** mates antisense (primer-defined, so not a transcriptome convention at all), and K562
+    is unstranded at ~25/25/25/25. Four regimes in one panel.
+
+    `mmseqs search` copes by running `extractframes` internally (doubling the query DB) and
+    mapping back with `offsetalignment`. A hand-built prefilter DB has no such mechanism, so
+    instead we reverse-complement the reads whose segment hit was on the minus strand, align them
+    forward, and flip the reported coordinates back. The result is indistinguishable from the
+    one-pass output: mmseqs also reports reverse hits with ``qstart > qend`` and aligned strings
+    already on the coding strand, which is exactly what `_annotate_chunk` expects.
+
+    Returns ``(hits, failed)``. Anything in ``failed`` is rescued by the caller, so a miss here
+    costs time, never a read.
     """
     want = sorted(implied)
-    # createsubdb preserves the source numeric keys, so the source mapping stays valid for the
-    # subset -- and the subset has no `.lookup` of its own to read.
     qkey = _db_keys(query_db)
-    sub = _subset_db(query_db, want, tmp / "impQ", keys=qkey)
     tkey = _db_keys(full_db)
-    rows, skipped = [], set()
+
+    fwd, rc, skipped = [], [], set()
     for qid in want:
-        sid = implied[qid]
         seg = seg_rows.get((qid, "V"))
-        if seg is None or qid not in qkey or sid not in tkey:
+        if seg is None or qid not in qkey or implied[qid] not in tkey:
             skipped.add(qid)
             continue
         qs, qe, ts = int(seg["qstart"]), int(seg["qend"]), int(seg["tstart"])
-        if qs > qe:
-            # Reverse-strand hit. mmseqs reports these with qstart > qend, so `qstart - tstart`
-            # is not a diagonal, and a hand-built prefilter entry gives `align` no way to know it
-            # should align the reverse complement. Rather than guess, hand these to the rescue
-            # pass, which runs a full `search --strand 2` and handles them exactly as today.
-            skipped.add(qid)
-            continue
-        # A V target is `scaffold[:v_sequence_end]`, i.e. offset 0 in scaffold coordinates, so
-        # the segment hit's diagonal transfers unchanged. (A J target would need
-        # `j_sequence_start - 1` added back; we deliberately key on the V hit only.)
-        rows.append(f"{qkey[qid]}\t{tkey[sid]}\t{int(float(seg['bits']))}\t{qs - ts}")
-    if not rows:
-        return {}, set(want)
+        (rc if qs > qe else fwd).append((qid, qs, qe, ts, float(seg["bits"])))
 
-    pref_tsv = tmp / "implied.pref.tsv"
-    pref_tsv.write_text("\n".join(rows) + "\n")
-    pref_db = tmp / "impPref"
-    mmseqs.run(["tsv2db", str(pref_tsv), str(pref_db), "--output-dbtype", "7"])
-    aln = tmp / "impAln"
-    # No `--search-type` here: `mmseqs align` does not accept it (it infers nucleotide mode from
-    # the DB type). Passing it aborts the whole run.
-    mmseqs.run(["align", str(sub), str(full_db), str(pref_db), str(aln),
-                "-a", "--alignment-mode", "3", "--threads", str(threads)])
-    out_tsv = tmp / "implied.tsv"
-    mmseqs.convertalis(sub, full_db, aln, out_tsv, threads=threads,
-                       search_type=_SEARCH_TYPE["nt"])
-    hits = _best_hits(out_tsv)
+    hits: dict[str, dict] = {}
+    # Forward-strand reads reuse the original query DB; reverse-strand reads need a private DB of
+    # reverse complements, because `align` has no way to be told to flip.
+    for tag, group, flip in (("f", fwd, False), ("r", rc, True)):
+        if not group:
+            continue
+        ids = [g[0] for g in group]
+        if flip:
+            rc_fa = tmp / f"rc_{tag}.fasta"
+            with open(rc_fa, "w") as fh:
+                for qid, *_ in group:
+                    fh.write(f">{qid}\n{reverse_complement(seqs[qid])}\n")
+            sub = tmp / f"impQ_{tag}"
+            mmseqs.createdb(rc_fa, sub, dbtype=2)
+            keys = _db_keys(sub)
+        else:
+            sub = _subset_db(query_db, ids, tmp / f"impQ_{tag}", keys=qkey)
+            keys = qkey
+
+        rows = []
+        for qid, qs, qe, ts, bits in group:
+            if flip:
+                # 1-based position p on a length-L read maps to L - p + 1 on its reverse
+                # complement, so a minus-strand hit (qs > qe) becomes a plus-strand one.
+                qs = len(seqs[qid]) - qs + 1
+            rows.append(f"{keys[qid]}\t{tkey[implied[qid]]}\t{int(bits)}\t{qs - ts}")
+        pref_tsv = tmp / f"implied_{tag}.pref.tsv"
+        pref_tsv.write_text("\n".join(rows) + "\n")
+        pref_db = tmp / f"impPref_{tag}"
+        mmseqs.run(["tsv2db", str(pref_tsv), str(pref_db), "--output-dbtype", "7"])
+        aln = tmp / f"impAln_{tag}"
+        # No `--search-type`: `mmseqs align` does not accept it (it infers nt from the DB type).
+        mmseqs.run(["align", str(sub), str(full_db), str(pref_db), str(aln),
+                    "-a", "--alignment-mode", "3", "--threads", str(threads)])
+        out_tsv = tmp / f"implied_{tag}.tsv"
+        mmseqs.convertalis(sub, full_db, aln, out_tsv, threads=threads,
+                           search_type=_SEARCH_TYPE["nt"])
+        got = _best_hits(out_tsv)
+        if flip:
+            for qid, row in got.items():
+                L = len(seqs[qid])
+                row = dict(row)
+                # Back to original-read coordinates, restoring the qstart > qend convention that
+                # signals a minus-strand hit downstream.
+                row["qstart"], row["qend"] = L - int(row["qstart"]) + 1, L - int(row["qend"]) + 1
+                hits[qid] = row
+        else:
+            hits.update(got)
+
     return hits, skipped | (set(want) - set(hits))
 
 
@@ -385,7 +420,8 @@ def _full_rescue(query_db: Path, full_db: Path, ids: list[str], tmp: Path, *,
 def _segment_best_hits(
     query_db: Path, seg_db: Path, full_db: Path, tmp: Path, ref: Reference, *,
     threads: int, sensitivity: float, mm_strand: int | None, max_seqs: int, kmer: int | None,
-    search_type: int, combos: dict[tuple[str, str], str] | None = None,
+    search_type: int, seqs: dict[str, str],
+    combos: dict[tuple[str, str], str] | None = None,
 ) -> tuple[dict[str, dict], dict]:
     """Two-pass best hits: cheap segment pass, then align only the implied scaffold.
 
@@ -436,7 +472,7 @@ def _segment_best_hits(
 
     best, failed = ({}, set())
     if sl.implied:
-        best, failed = _align_implied(query_db, full_db, sl.implied, seg_rows, tmp,
+        best, failed = _align_implied(query_db, full_db, sl.implied, seg_rows, seqs, tmp,
                                       threads=threads)
     rescue = sorted(set(sl.rescue) | failed)
     if rescue:
