@@ -15,6 +15,7 @@ recovers the pair).
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import queue
@@ -23,6 +24,11 @@ from itertools import islice, zip_longest
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
+
+try:                      # C-accelerated FASTQ/FASTA parsing; see _read_pairs_dnaio
+    import dnaio as _dnaio
+except ImportError:       # pure-Python fallback below keeps a source checkout working
+    _dnaio = None
 
 from ._res import Stage
 from ..annotate import io as seqio
@@ -242,6 +248,15 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
             own data and produced a *published* false discovery (a spurious R2-only blind spot) that
             had to be retracted. A pair of FASTQs is an assertion; check it.
     """
+    # dnaio only on the unlimited path. `limit` is a HEAD: a truncation beyond it must never be
+    # reached, which is why `read_pairs(r1, r2, limit=2)` succeeds on a file pair that diverges at
+    # record 3. dnaio validates pairing as it fills its own buffers, so it sees -- and raises on --
+    # a divergence the caller asked never to reach. A limited run is small by construction, so it
+    # gives up nothing that matters to take the pure-Python path here.
+    if _dnaio is not None and limit is None:
+        yield from _read_pairs_dnaio(r1, r2, reconstruct=reconstruct)
+        return
+
     if r2 is None:
         it = seqio.read_sequences(r1)
         yield from islice(it, limit) if limit is not None else it
@@ -276,6 +291,53 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
                 continue
         yield f"{i1}/1", s1
         yield f"{i2}/2", s2
+
+
+def _read_pairs_dnaio(r1, r2, *, reconstruct: bool) -> Iterator[tuple[str, str]]:
+    """The same stream, parsed in C.
+
+    Once ``--prefilter`` removed the search, reading became the largest single cost of a bulk run
+    -- 65 % of a 0.024 %-receptor library, where before it was 3 % and explicitly not worth
+    touching. Reworking the pure-Python loop bought 1.43x; dnaio is 2x on top of that including
+    the mate tagging (3.25 vs 1.63 M records/s on a 1 M-pair fixture).
+
+    It is used only because it makes the SAME two assertions this function has always made, and
+    both are load-bearing: a truncated mate file and a shuffled mate file each produced a
+    *published* false discovery in this project (a spurious R2-only blind spot) that had to be
+    retracted. dnaio raises on both -- "There are more reads in file 1 than in file 2" and "Read
+    name 'b' in file 1 does not match 'zzz'" -- and they are re-raised as ``ValueError`` here so
+    callers and tests see the error type they always have.
+    """
+    try:
+        if r2 is None:
+            with _dnaio.open(str(r1)) as fh:
+                for rec in fh:
+                    yield rec.id, rec.sequence
+            return
+        with _dnaio.open(str(r1), str(r2)) as fh:
+            for a, b in fh:
+                if reconstruct:
+                    merged = merge_pair(a.sequence, b.sequence,
+                                        q1=a.qualities, q2=b.qualities)
+                    if merged is not None:
+                        yield a.id, merged
+                        continue
+                yield f"{a.id}/1", a.sequence
+                yield f"{b.id}/2", b.sequence
+    except _dnaio.FileFormatError as exc:
+        # Re-word to the two phrases callers and tests match on. dnaio says "Reads are improperly
+        # paired. There are more reads in file 1 than in file 2" and "Read name 'b' in file 1 does
+        # not match 'zzz'"; this pipeline has always distinguished a TRUNCATED mate file from a
+        # SHUFFLED one, because they are different data-integrity failures with different fixes.
+        msg = str(exc)
+        if "does not match" in msg:
+            raise ValueError(f"R1/R2 mate mismatch: {msg}. "
+                             f"The FASTQs are not in the same order.") from exc
+        raise ValueError(f"R1 and R2 differ in length; one file is truncated. {msg}") from exc
+    except (EOFError, gzip.BadGzipFile) as exc:
+        # Same surfacing as `seqio.read_sequences`: a bare EOFError from the gzip layer reaches
+        # Typer as "Aborted." with no cause, which reads like a Ctrl-D rather than a bad input.
+        raise ValueError(f"truncated or corrupt gzip input: {r1} / {r2}") from exc
 
 
 @dataclass
