@@ -180,6 +180,63 @@ public:
         return out;
     }
 
+    // Filter `records` (a sequence of (id, sequence) tuples) down to the survivors, in one call.
+    //
+    // `mask` alone is not enough: around it the caller had to build a 4 M-element list of
+    // sequences to pass in, and unpack a 4 M-element list of ints coming back -- two full Python
+    // passes over every read, which is why the 2.66x the scan gained showed up as 1.16x end to
+    // end. Here the only Python objects created are the survivors, and on bulk that is 0.5-2 % of
+    // the input. The returned tuples are the caller's own, not copies.
+    py::list filter(py::sequence records, int seq_index, int min_hits, int threads) const {
+        const size_t n = size_t(py::len(records));
+        py::list out;
+        if (n == 0) return out;
+        if (min_hits < 1) min_hits = 1;
+
+        std::vector<PyObject*> items;
+        std::vector<std::pair<const char*, size_t>> views;
+        items.reserve(n);
+        views.reserve(n);
+        for (auto rec : records) {
+            PyObject* item = rec.ptr();
+            PyObject* s = PySequence_GetItem(item, seq_index);   // new reference
+            if (s == nullptr) throw py::error_already_set();
+            Py_ssize_t len = 0;
+            const char* p = PyUnicode_AsUTF8AndSize(s, &len);
+            Py_DECREF(s);   // `records` still holds the tuple, which holds the str
+            if (p == nullptr) throw py::error_already_set();
+            items.push_back(item);
+            views.emplace_back(p, size_t(len));
+        }
+
+        std::vector<uint8_t> keep(n, 0);
+        size_t nthread = threads > 0 ? size_t(threads) : 1;
+        nthread = std::min(nthread, n);
+        auto worker = [&](size_t lo, size_t hi) {
+            for (size_t i = lo; i < hi; ++i)
+                keep[i] = scan(views[i].first, views[i].second, min_hits) >= min_hits ? 1 : 0;
+        };
+        {
+            py::gil_scoped_release rel;
+            if (nthread <= 1) {
+                worker(0, n);
+            } else {
+                std::vector<std::thread> pool;
+                pool.reserve(nthread);
+                const size_t step = (n + nthread - 1) / nthread;
+                for (size_t t = 0; t < nthread; ++t) {
+                    const size_t lo = t * step, hi = std::min(n, lo + step);
+                    if (lo >= hi) break;
+                    pool.emplace_back(worker, lo, hi);
+                }
+                for (auto& th : pool) th.join();
+            }
+        }
+        for (size_t i = 0; i < n; ++i)
+            if (keep[i]) out.append(py::reinterpret_borrow<py::object>(items[i]));
+        return out;
+    }
+
 private:
     void add_all(const std::string& s) {
         int run = 0;
@@ -212,6 +269,10 @@ PYBIND11_MODULE(_prefilter, m) {
         .def("mask", &Prefilter::mask,
              py::arg("sequences"), py::arg("min_hits") = 1, py::arg("threads") = 1,
              "1 for each sequence with >= min_hits indexed k-mers, 0 otherwise.")
+        .def("filter", &Prefilter::filter,
+             py::arg("records"), py::arg("seq_index") = 1, py::arg("min_hits") = 1,
+             py::arg("threads") = 1,
+             "The subset of `records` whose element `seq_index` has >= min_hits indexed k-mers.")
         .def_property_readonly("size", &Prefilter::size, "Distinct indexed k-mers.")
         .def_property_readonly("k", &Prefilter::k, "k-mer length.");
 }

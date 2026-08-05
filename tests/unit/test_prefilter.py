@@ -87,7 +87,7 @@ def test_k_outside_the_supported_range_is_rejected():
         Prefilter(["ACGT" * 10], 33)
 
 
-def test_keep_mask_indexes_the_fasta_mmseqs_searches(tmp_path):
+def test_keep_records_indexes_the_fasta_mmseqs_searches(tmp_path):
     """The index must come from the search target. A prefilter built over V+J alone loses 16.29 %
     of real reads, 69.27 % of them J->C -- so what gets indexed is the whole ballgame, and this
     asserts the wiring reads the same FASTA rather than a hand-listed segment set."""
@@ -95,4 +95,13 @@ def test_keep_mask_indexes_the_fasta_mmseqs_searches(tmp_path):
     target = "".join(random.Random(8).choice("ACGT") for _ in range(300))
     fa.write_text(f">t1\n{target[:150]}\n{target[150:]}\n")   # wrapped: the reader must join lines
     recs = [("hit", target[100:200]), ("miss", "A" * 100)]
-    assert prefilter.keep_mask(recs, fa, threads=2) == [1, 0]
+    assert prefilter.keep_records(recs, fa, threads=2) == [recs[0]]
+
+
+def test_filter_returns_the_callers_own_objects_not_copies():
+    """`filter` hands back the very tuples it was given. Anything else would rebuild 4 M Python
+    objects to save a Python-level list comprehension, which is the cost it exists to avoid."""
+    idx = Prefilter(["ACGT" * 40], 16)
+    a, b = ("a", "ACGT" * 25), ("b", "A" * 100)
+    out = idx.filter([a, b], 1, 1, 2)
+    assert len(out) == 1 and out[0] is a

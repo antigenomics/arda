@@ -75,8 +75,15 @@ def available() -> bool:
     return True
 
 
-def keep_mask(records: list[tuple[str, str]], target_fasta: Path, *,
-              threads: int = 1, min_hits: int = MIN_HITS, k: int = K) -> list[int]:
-    """1 for each ``(id, sequence)`` record worth searching, 0 for the rest."""
+def keep_records(records: list[tuple[str, str]], target_fasta: Path, *,
+                 threads: int = 1, min_hits: int = MIN_HITS, k: int = K) -> list[tuple[str, str]]:
+    """The ``(id, sequence)`` records worth handing to MMseqs2.
+
+    Filtering happens entirely inside the extension. Returning a per-read mask instead would put
+    two full Python passes around the scan -- building a list of sequences to pass in, unpacking a
+    list of ints coming back -- and those cost more than the scan does: the same C++ change
+    measured 2.66x in isolation and 1.16x through a mask-shaped API. Here the only Python objects
+    created are the survivors, which on bulk is 0.5-2 % of the input.
+    """
     idx = build(Path(target_fasta), k)
-    return list(idx.mask([seq for _sid, seq in records], min_hits, threads))
+    return idx.filter(records, 1, min_hits, threads)

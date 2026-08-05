@@ -463,9 +463,8 @@ def map_rnaseq(
                     break
                 report.total_reads += len(chunk)
                 if prefilter and seqtype == "nt":
-                    from ..prefilter import keep_mask  # noqa: PLC0415 — optional native ext
-                    mask = keep_mask(chunk, ref.target_fasta, threads=threads)
-                    survivors = [r for r, m in zip(chunk, mask) if m]
+                    from ..prefilter import keep_records  # noqa: PLC0415 — optional native ext
+                    survivors = keep_records(chunk, ref.target_fasta, threads=threads)
                     report.prefilter_stats["seen"] = (
                         report.prefilter_stats.get("seen", 0) + len(chunk))
                     report.prefilter_stats["passed"] = (
