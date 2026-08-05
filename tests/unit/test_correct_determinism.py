@@ -20,6 +20,7 @@ from __future__ import annotations
 import random
 
 import polars as pl
+import pytest
 
 from arda.rnaseq.correct import correct_airr
 
@@ -98,3 +99,74 @@ def test_output_row_order_is_total_not_merely_stable(tmp_path):
     ordered = sorted(keyed, key=lambda t: (-t[0], -t[1], t[2], t[3], t[4]))
     assert keyed == ordered, "rows are not in (abundance desc, junction/V/J asc) order"
     assert len(set(keyed)) == len(keyed), "tie-break key is not unique per row"
+
+
+# ---------------------------------------------------------------------------------------------
+# `--error-method binom|betabinom` used to HANG, not merely disagree. Kept in this DB-free module
+# because a run that never terminates is the worst failure a pipeline stage has, and this must not
+# be gated behind an mmseqs/reference skip.
+# ---------------------------------------------------------------------------------------------
+
+# Both pairs are REAL: lifted from a 16,157-row Stage-1 AIRR whose 1,190 clonotypes contained
+# exactly these two mutual-parent pairs (indices 77<->143 and 857<->861) under both methods.
+# Same locus, same V, same J, same junction length, differing by 1 and 2 substitutions
+# respectively, at spanning depths of 3/2 and 1/1 -- the low-coverage regime the pileup path
+# exists to serve, which is also the only regime that produces the cycle.
+_MUTUAL_PAIRS = [
+    ("TGCCAACACTATAATAGTTACCCTCTCACTTTC", "TGCCAACAGTATAATAGTTACCCTCTCACTTTC",
+     "IGKV1-16*02", "IGKJ4*01", "IGK", 3, 2),
+    ("TGTCAGCAATATGGTAGCTCACCTCGGACGTTC", "TGTCAGCAGTATGGTAGCTCACCTCAGACGTTC",
+     "IGKV3D-20*01", "IGKJ1*01", "IGK", 1, 1),
+]
+
+
+def _walk(parent):
+    """Every node's root, refusing to loop. Returns the set of nodes that sit on a cycle."""
+    on_cycle = set()
+    for i in range(len(parent)):
+        seen, x = set(), i
+        while parent[x] is not None:
+            if x in seen:
+                on_cycle.add(i)
+                break
+            seen.add(x)
+            x = parent[x]
+    return on_cycle
+
+
+@pytest.mark.parametrize("method", ["binom", "betabinom"])
+@pytest.mark.parametrize("j1,j2,v,j,loc,s1,s2", _MUTUAL_PAIRS)
+def test_error_pileup_never_makes_two_clonotypes_each_others_parent(
+        method, j1, j2, v, j, loc, s1, s2):
+    """`_root` is an unbounded `while parent[i] is not None`, so a 2-cycle hangs the run.
+
+    `_parents` cannot produce one: it accepts a parent only under
+    ``count[parent] * p_err >= count[child]`` with ``p_err < 1``, which forces counts to increase
+    strictly along parent pointers -- the module docstring cites exactly this as its no-cycle
+    proof. `_error_pileup` re-decided parentage from per-position depth and carried NO ordering
+    condition, and the depth test is symmetric at low coverage: ``_binom_sf(1, 2, 0.001) =
+    0.001999 > alpha = 1e-3``, so each of a pair passes as the other's error child.
+    """
+    import polars as pl
+
+    from arda.rnaseq.correct import _error_pileup
+
+    juncs = [j1, j2]
+    spans = [s1, s2]
+    rows = [{"sequence_id": f"c{i}r{r}", "sequence": jn, "junction": jn, "locus": loc,
+             "v_call": v, "j_call": j}
+            for i, jn in enumerate(juncs) for r in range(spans[i])]
+    parent = _error_pileup(pl.DataFrame(rows), juncs, [v, v], [j, j], [loc, loc],
+                           [None, None], spans, error_rate=0.001, indel_rate=0.001,
+                           method=method)
+
+    assert parent[0] is None or parent[parent[0]] != 0, (
+        f"{method}: clonotypes 0 and 1 are each other's parent ({parent}) -- _root would not "
+        f"terminate")
+    assert not _walk(parent), f"{method}: parent pointers contain a cycle: {parent}"
+    # A parent must be strictly more abundant than its child; that ordering IS the acyclicity.
+    for child, par in enumerate(parent):
+        if par is not None:
+            assert spans[par] > spans[child], (
+                f"{method}: clonotype {child} (span {spans[child]}) got parent {par} "
+                f"(span {spans[par]}) -- counts must increase along parent pointers")

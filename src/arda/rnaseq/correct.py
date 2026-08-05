@@ -269,7 +269,15 @@ def _error_pileup(
                 if sf(cd, cd + pd, error_rate) <= alpha:    # child allele too deep to be error
                     ok = False
                     break
-            if ok and span_counts[nj] > best_count:
+            # A parent must be strictly MORE abundant than its child. `_parents` gets this for
+            # free -- `count[parent] * p_err >= count[child]` with `p_err < 1` forces counts to
+            # increase along parent pointers, which is the module's stated no-cycle proof. The
+            # depth test above carries no such ordering: it asks only whether the child allele's
+            # depth is consistent with sequencing error of the parent's, and that can be true in
+            # BOTH directions for a pair of similar-abundance neighbours. Two clonotypes then
+            # become each other's parent and `_root` walks the 2-cycle forever -- an unbounded
+            # hang, not a wrong number, on `--error-method binom|betabinom`.
+            if ok and span_counts[nj] > span_counts[ci] and span_counts[nj] > best_count:
                 best, best_count = nj, span_counts[nj]
         if best is not None:
             parent[ci] = best
