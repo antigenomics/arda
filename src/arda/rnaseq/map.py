@@ -506,6 +506,18 @@ def map_rnaseq(
                     if reads_fh is not None:
                         reads_fh.write(f">{r['sequence_id']}\n{r['sequence']}\n")
 
+            # The prefilter runs HERE, in the consumer, not in the reader thread. Moving it into
+            # the reader to overlap it with `mmseqs search` was tried and measured WORSE
+            # (SRR10611239 7.79 -> 9.12 s), for two reasons worth writing down:
+            #
+            #   * the overlap already exists, just split differently -- parsing is in the reader
+            #     thread and the prefilter here, so the two run concurrently. Putting both in one
+            #     thread serialises them, and on a cold library the prefilter (1.3 s) dwarfs the
+            #     search (1.35 s of a 7.79 s run), so that loss is the bigger term.
+            #   * at a 2 % pass rate there is only ever ONE batch to overlap. Filling 400 k
+            #     survivors on SRR8363894 takes 19.4 M reads scanned -- more than the whole file --
+            #     so the reader must consume everything before the first search can start.
+            #
             # READ chunk size and SEARCH batch size are not the same thing once the prefilter is
             # on. Reading stays chunked to bound memory, but a prefiltered chunk is tiny -- 0.47 %
             # of reads survive on a 0.024 %-receptor library -- and every `mmseqs search` call
