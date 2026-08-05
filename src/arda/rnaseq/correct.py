@@ -208,7 +208,13 @@ def _error_pileup(
             if len(lst) < cap:
                 lst.append((ri, p))
     depth = [[0] * len(jn) for jn in junctions]                       # per clonotype, per-position read depth
-    cols = {c: raw[c].to_list() for c in raw.columns}
+    # Only the columns this function reads. A Stage-1 AIRR has 83, and `to_list()` on the
+    # rest builds Python str objects for `sequence_alignment`, `germline_alignment` and
+    # every region sequence -- measured 2.42 KB/row against 0.41 KB/row for the columns
+    # actually used, i.e. ~2 KB wasted per mapped read (~7 GB at SRR5233639's full depth).
+    # `col()` below already tolerates an absent column, so restricting the dict is safe.
+    _USED = ("c_call", "j_call", "locus", "rev_comp", "sequence", "v_call")
+    cols = {c: raw[c].to_list() for c in raw.columns if c in _USED}
     n = raw.height
 
     def col(name):
@@ -317,7 +323,14 @@ def _assign_coverage(
     """
     assigned: list[list[str]] = [[] for _ in root_jn]
     n = raw.height
-    cols = {c: raw[c].to_list() for c in raw.columns}
+    # Only the columns this function reads. A Stage-1 AIRR has 83, and `to_list()` on the
+    # rest builds Python str objects for `sequence_alignment`, `germline_alignment` and
+    # every region sequence -- measured 2.42 KB/row against 0.41 KB/row for the columns
+    # actually used, i.e. ~2 KB wasted per mapped read (~7 GB at SRR5233639's full depth).
+    # `col()` below already tolerates an absent column, so restricting the dict is safe.
+    _USED = ("c_call", "j_call", "junction", "locus", "rev_comp", "sequence",
+             "sequence_id", "v_call")
+    cols = {c: raw[c].to_list() for c in raw.columns if c in _USED}
 
     def col(name):
         return cols.get(name, [None] * n)
