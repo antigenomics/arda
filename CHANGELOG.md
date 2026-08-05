@@ -164,9 +164,21 @@ two different rules, so **allele-level `v_call` agreement went 0.9735 -> 0.9956*
 `--two-pass` is now reachable: it is wired into `arda rnaseq map` and `arda rnaseq run` (and so
 through the SLURM and Nextflow paths, which call the same function), with the segment DB and
 `combinations.tsv` built and parsed once per run rather than per chunk, and the shortlist
-accounting reported under `segment_search` in `arda.json`. **Off by default** — the win scales
-with the library's receptor fraction. A missing `segments.fasta` falls back to the one-pass
-search with a warning rather than failing.
+accounting reported under `segment_search` in `arda.json`. A missing `segments.fasta` falls back
+to the one-pass search with a warning rather than failing.
+
+**Off by default, and it is an amplicon optimisation rather than a general one.** The scheme
+needs a read to hit both a V and a J so the pair names one scaffold. Primer-anchored amplicon
+reads do (85 %); bulk RNA-seq reads land anywhere in a transcript and do not (5 %). Measured:
+
+| library | receptor % | fast path | speedup |
+|---|---|---|---|
+| TCR amplicon | 48.47 | 85.13 % | **3.51x** |
+| bulk RNA-seq | 2.74 | 4.98 % | 0.762x — 31 % **slower** |
+
+On bulk the segment search is overhead on top of a rescue that is nearly the whole set. Neither
+regime loses a read arda would report (0 lost at or above `--min-score`, 0 gained, both). The
+bulk case is a *scan-term* problem and the segment reference structurally cannot address it.
 
 ### Changed — a measured cost model, and a bigger chunk
 

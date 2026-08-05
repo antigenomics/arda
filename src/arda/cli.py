@@ -321,7 +321,7 @@ def rnaseq_map(
              "0 = whole file."),
     two_pass: bool = typer.Option(
         False, "--two-pass/--one-pass",
-        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped. The win scales with the library's receptor fraction (measured 2.2x on amplicon; near-nil on a 0.0003% negative), so it is off by default. Needs `arda build-index`."),
+        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score, both regimes). **Amplicon only.** It needs a read to hit BOTH a V and a J, which primer-anchored amplicon reads do (85%) and bulk RNA-seq reads do not (5%): measured 3.51x on a 48%-receptor TCR amplicon and 0.762x -- i.e. 31% SLOWER -- on a 2.74%-receptor bulk library, where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -458,7 +458,7 @@ def rnaseq_run(
              "0 = whole file."),
     two_pass: bool = typer.Option(
         False, "--two-pass/--one-pass",
-        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped. The win scales with the library's receptor fraction (measured 2.2x on amplicon; near-nil on a 0.0003% negative), so it is off by default. Needs `arda build-index`."),
+        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score, both regimes). **Amplicon only.** It needs a read to hit BOTH a V and a J, which primer-anchored amplicon reads do (85%) and bulk RNA-seq reads do not (5%): measured 3.51x on a 48%-receptor TCR amplicon and 0.762x -- i.e. 31% SLOWER -- on a 2.74%-receptor bulk library, where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 

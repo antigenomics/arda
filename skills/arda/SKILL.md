@@ -320,6 +320,12 @@ The two-pass search uses it: hit the segment reference, take each read's best V 
 the pair up in `combinations.tsv` — that names exactly **one** V×J scaffold, so the second
 alignment is one target per read instead of ~277.
 
+⚠ **`--two-pass` is an amplicon optimisation. Do not reach for it on bulk RNA-seq.** It needs a
+read to hit BOTH a V and a J. Primer-anchored amplicon reads do (85 %) → **3.51x**; bulk reads
+land anywhere in a transcript and do not (5 %) → **0.762x, i.e. 31 % slower**, because the
+segment search becomes overhead on top of a rescue that is nearly the whole library. Off by
+default for this reason. Bulk is a *scan-term* problem; this lever only touches the align term.
+
 **Reads are never dropped by the fast path.** `arda.annotate.shortlist.shortlist()` partitions
 every read into `implied` (took the fast path) or `rescue` (goes back to the full reference), and
 asserts the partition is total. Anything that does not resolve — V only, J only, a V×J pair the
