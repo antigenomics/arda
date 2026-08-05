@@ -170,3 +170,36 @@ def test_error_pileup_never_makes_two_clonotypes_each_others_parent(
             assert spans[par] > spans[child], (
                 f"{method}: clonotype {child} (span {spans[child]}) got parent {par} "
                 f"(span {spans[par]}) -- counts must increase along parent pointers")
+
+
+def test_isotype_vote_counts_fragments_not_assigned_mates():
+    """A clonotype's isotype is the dominant class over its FRAGMENTS, one vote each.
+
+    The vote iterated `read_list`, which holds per-mate `sequence_id`s, and looked each one's
+    fragment up in `frag_iso` — so a fragment with both mates assigned contributed its calls
+    twice, while a fragment with one assigned mate contributed once. The weighting was therefore
+    by assigned mates, not by molecules, and a 1-fragment minority could outvote a 2-fragment
+    majority.
+
+    Constructed to be decisive: two IGHM fragments contribute one mate each, one IGHG fragment
+    contributes both. Per-mate weighting gives IGHG 2 votes vs IGHM 2 and resolves the tie
+    arbitrarily; per-fragment gives IGHM 2 vs IGHG 1.
+    """
+    from collections import Counter
+
+    from arda.rnaseq.correct import _strip_mate
+
+    frag_iso = {"fA": ("IGHM",), "fB": ("IGHM",), "fC": ("IGHG",)}
+    read_list = ["fA/1", "fB/1", "fC/1", "fC/2"]
+
+    per_mate = []
+    for sid in read_list:
+        per_mate.extend(frag_iso.get(_strip_mate(sid), ()))
+    assert Counter(per_mate)["IGHG"] == 2 and Counter(per_mate)["IGHM"] == 2, (
+        "the fixture no longer demonstrates the bug")
+
+    per_frag = []
+    for frag in dict.fromkeys(_strip_mate(sid) for sid in read_list):
+        per_frag.extend(frag_iso.get(frag, ()))
+    assert Counter(per_frag).most_common(1)[0][0] == "IGHM"
+    assert Counter(per_frag)["IGHG"] == 1, "a fragment voted more than once"

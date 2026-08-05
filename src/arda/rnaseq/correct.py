@@ -609,9 +609,14 @@ def correct_airr(
         # A clonotype's isotype = the dominant RESOLVED class over its fragments' constant mates.
         # `isotype_class` emits the generic `IGHC` only on cross-class ambiguity (IGHG1,IGHM), so
         # report IGHC only if NO read resolves -- a handful of ambiguous reads must not outvote it.
+        # One vote per FRAGMENT, not per assigned mate. `read_list` holds sequence_ids, so a
+        # fragment whose two mates were both assigned used to contribute its calls twice while a
+        # fragment with one assigned mate contributed once -- weighting the vote by assigned
+        # mates rather than by molecules, exactly as the first line of this comment says it must
+        # not. A 1-fragment minority could then outvote a 2-fragment majority.
         calls: list[str] = []
-        for sid in read_list:
-            calls.extend(frag_iso.get(_strip_mate(sid), ()))
+        for frag in dict.fromkeys(_strip_mate(sid) for sid in read_list):
+            calls.extend(frag_iso.get(frag, ()))
         if not calls:
             return ""
         resolved = [c for c in calls if c not in _GENERIC_ISOTYPE]
