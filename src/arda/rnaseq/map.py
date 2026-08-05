@@ -16,6 +16,7 @@ recovers the pair).
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import threading
 from itertools import islice, zip_longest
@@ -28,6 +29,8 @@ from ..annotate import io as seqio
 from ..annotate import mapper
 from ..annotate.airr_out import airr_header, format_rows
 from ..refbuild.translate import reverse_complement
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["map_rnaseq", "read_pairs", "merge_pair", "RnaseqReport"]
 
@@ -294,6 +297,9 @@ class RnaseqReport:
     reads_per_second: float = 0.0
     peak_rss_mb: float = 0.0          # whole-process high-water mark at stage end
     rss_gain_mb: float = 0.0          # how much THIS stage raised it
+    # Two-pass segment search accounting, empty when it is off. `rescued` reads cost a full-
+    # reference realignment; they are the price of the fast path never dropping one.
+    segment_search: dict = field(default_factory=dict)
 
     @property
     def mapped_fraction(self) -> float:
@@ -325,6 +331,7 @@ def map_rnaseq(
     limit: int | None = None,
     emit_reads: str | Path | None = None,
     report_path: str | Path | None = None,
+    two_pass: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -345,6 +352,13 @@ def map_rnaseq(
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
+        two_pass: use the segment reference to shortlist a single V×J scaffold per read before
+            aligning (:func:`arda.annotate.mapper._segment_best_hits`). Reads it cannot resolve
+            are realigned against the full reference, so nothing is dropped — see
+            :mod:`arda.annotate.shortlist`. Off by default: the win scales with the library's
+            receptor fraction, so it pays on amplicon and barely moves a 0.0003 %-receptor
+            negative. Requires ``segments.fasta`` (written by ``arda build-index``); silently
+            falls back to the one-pass search when it is absent.
 
     Returns:
         The run :class:`RnaseqReport` (also printed by the CLI).
@@ -352,6 +366,18 @@ def map_rnaseq(
     output = Path(output)
     ref, target_db, threads, sens, mm_strand = mapper._prep(
         organism, seqtype, threads, sensitivity, strand)
+
+    # Built and parsed ONCE for the whole run, not per chunk: the segment DB is an mmseqs build
+    # and `combinations.tsv` is 550 KB. Both are read-only afterwards.
+    segment_db = combos = None
+    if two_pass:
+        segment_db = mapper._cached_segment_db(ref, organism)
+        if segment_db is None:
+            logger.warning("--two-pass: no segments.fasta for %s (run `arda build-index`); "
+                           "falling back to the one-pass search", organism)
+        else:
+            from ..annotate.shortlist import load_combinations
+            combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
 
     chunks: queue.Queue = queue.Queue(maxsize=2)
     # The reader runs in a daemon thread, so anything it raises -- a missing FASTQ, a shuffled mate
@@ -390,7 +416,9 @@ def map_rnaseq(
                 keep = mapper._annotate_chunk(
                     chunk, ref, target_db, seqtype, threads=threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
-                    mapped_only=True, max_seqs=max_seqs, kmer=kmer)
+                    mapped_only=True, max_seqs=max_seqs, kmer=kmer,
+                    segment_db=segment_db, combos=combos,
+                    report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
                     report.constant_only_fragments += n_drop

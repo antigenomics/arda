@@ -133,6 +133,34 @@ decides the locus — and the reference already encodes it: of 1,050 scaffolds b
 segment, 1,005 are locus TRA and 45 are locus TRD. An earlier draft rescued these as ambiguous,
 discarding real rearrangements the reference contains. `combinations.tsv` is the arbiter.
 
+### Fixed — the two-pass fabricated junctions on J->C reads
+
+A read that runs through its J into the constant region has two plausible homes: the V×J
+scaffold its best (V, J) pair names, and the J+C scaffold the segment pass actually hit. Among
+775 V alleles a 100 nt read always has *some* V above threshold, so the shortlist always found a
+pair — and forcing that choice took a read scoring **141** on a J+C scaffold, re-seated it at
+**99** on a V×J one, destroyed its `c_call` (the isotype) and **invented a `junction_aa`** out of
+the spurious V. 4 of 453 mapped real reads, 3 of them gaining a fabricated junction.
+
+Both scaffolds now compete on bit score, exactly as they do in the one-pass search. Two targets
+per read is still ~138x fewer alignments than the full reference. On real reads `locus`,
+`c_call`, `junction_aa` and `productive` are now byte-identical to the one-pass output.
+
+The one remaining approximation is stated rather than smoothed over: the scaffold is chosen from
+the best V *segment* hit, which is not always the allele whose whole scaffold scores highest, so
+**15 of 453 reads (3.3 %) land on a sibling allele** and 5 score a few bits lower. Gene, locus and
+junction are unchanged in every case — the difference lives entirely in the `*NN` suffix, which
+short reads cannot resolve anyway. Where the *gene* differs (2 reads, both exact ties) the
+two-pass picks the functional gene where the one-pass picked an orphon and a duplicate-locus
+paralog.
+
+`--two-pass` is now reachable: it is wired into `arda rnaseq map` and `arda rnaseq run` (and so
+through the SLURM and Nextflow paths, which call the same function), with the segment DB and
+`combinations.tsv` built and parsed once per run rather than per chunk, and the shortlist
+accounting reported under `segment_search` in `arda.json`. **Off by default** — the win scales
+with the library's receptor fraction. A missing `segments.fasta` falls back to the one-pass
+search with a warning rather than failing.
+
 ### Changed — a measured cost model, and a bigger chunk
 
 Fitting 13 full-depth cluster runs (60,252 s) gives `wall_map ~= total_reads/44,470 +

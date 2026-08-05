@@ -319,6 +319,9 @@ def rnaseq_map(
         help="Analyse only the first N reads (single-end) / read pairs (paired), then stop — a "
              "native head, so subsampling no longer needs an external `zcat | head | gzip`. "
              "0 = whole file."),
+    two_pass: bool = typer.Option(
+        False, "--two-pass/--one-pass",
+        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped. The win scales with the library's receptor fraction (measured 2.2x on amplicon; near-nil on a 0.0003% negative), so it is off by default. Needs `arda build-index`."),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -331,7 +334,7 @@ def rnaseq_map(
                      map_d=map_d, reconstruct=reconstruct, min_score=min_score,
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
-                     limit=(limit or None),
+                     limit=(limit or None), two_pass=two_pass,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
@@ -453,6 +456,9 @@ def rnaseq_run(
         0, "--limit", "-n",
         help="Analyse only the first N reads (single-end) / read pairs (paired), then stop. "
              "0 = whole file."),
+    two_pass: bool = typer.Option(
+        False, "--two-pass/--one-pass",
+        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped. The win scales with the library's receptor fraction (measured 2.2x on amplicon; near-nil on a 0.0003% negative), so it is off by default. Needs `arda build-index`."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
@@ -474,7 +480,7 @@ def rnaseq_run(
                  reconstruct=reconstruct, min_score=min_score,
                  kmer=(None if kmer == 0 else kmer), assemble=assemble,
                  complete_only=complete_only, map_d=map_d, limit=(limit or None),
-                 echo=typer.echo)
+                 two_pass=two_pass, echo=typer.echo)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
                f"{out_dir / f'{out_prefix}.clones.tsv'}, "
                f"{out_dir / f'{out_prefix}.arda.json'}")

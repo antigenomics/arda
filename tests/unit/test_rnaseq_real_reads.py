@@ -148,3 +148,100 @@ def test_report_carries_resources_and_provenance(tmp_path):
     assert "mmseqs_version" in rep and "reference" in rep
     on_disk = json.loads((tmp_path / "R.arda.json").read_text())
     assert on_disk["correct"]["clonotypes_out"] == rep["correct"]["clonotypes_out"]
+
+
+# ---------------------------------------------------------------------------------------------
+# Two-pass segment search. The claim is "cheaper, and no read arda would report is lost", so the
+# tests compare it against the one-pass path on the same real reads rather than against itself.
+# ---------------------------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def two_pass(tmp_path_factory):
+    from arda.rnaseq.map import map_rnaseq
+
+    d = tmp_path_factory.mktemp("real_tp")
+    out = d / "tp.airr.tsv"
+    rep = map_rnaseq(READS_1, out, r2=READS_2, threads=2, two_pass=True)
+    return out, rep
+
+
+def _by_id(path):
+    d = pl.read_csv(path, separator="\t", infer_schema_length=0)
+    return {r["sequence_id"]: r for r in d.iter_rows(named=True)}
+
+
+def test_two_pass_loses_no_read_and_invents_none(mapped, two_pass):
+    """The whole point of the rescue set: the kept-read SET is the one-pass set, exactly."""
+    one, two = _by_id(mapped[0]), _by_id(two_pass[0])
+    assert set(one) - set(two) == set(), "the fast path dropped reads the one-pass search kept"
+    assert set(two) - set(one) == set(), "the fast path invented reads"
+    assert mapped[1].per_locus == two_pass[1].per_locus
+
+
+def _gene(call):
+    """`IGKV3-20*01,IGKV3D-20*01` -> `IGKV3-20,IGKV3D-20`. Allele suffixes dropped, order fixed."""
+    return ",".join(sorted({x.split("*")[0] for x in (call or "").split(",") if x}))
+
+
+def test_two_pass_does_not_reseat_a_J_to_C_read_onto_a_VxJ_scaffold(mapped, two_pass):
+    """A J->C read must keep its isotype and must NOT gain a junction.
+
+    A read that runs through J into C has two plausible homes -- the V×J scaffold its best (V, J)
+    pair names, and the J+C scaffold the segment pass actually hit -- and among 775 V alleles a
+    100 nt read always has *some* V above threshold. Forcing the V×J choice took a read scoring
+    141 on a J+C scaffold, re-seated it at 99 on a V×J one, destroyed the `c_call` and
+    **fabricated a junction** out of the spurious V. Both scaffolds now compete on bit score, as
+    they do in the one-pass search, and these four columns are byte-identical on real reads.
+    """
+    one, two = _by_id(mapped[0]), _by_id(two_pass[0])
+    for col in ("locus", "c_call", "junction_aa", "productive"):
+        bad = [q for q in one if (one[q][col] or "") != (two[q][col] or "")]
+        assert not bad, f"{col} differs on {len(bad)} read(s), e.g. " + ", ".join(
+            f"{q}: {one[q][col]!r} -> {two[q][col]!r}" for q in bad[:3])
+
+
+def test_two_pass_disagrees_only_on_the_allele_suffix(mapped, two_pass):
+    """V and J calls may differ, but only *within* a gene -- never the gene, never the junction.
+
+    This is the two-pass's one real approximation, and it is worth stating precisely rather than
+    papering over. The scaffold is chosen from the best V *segment* hit, which is not always the
+    allele whose whole scaffold scores highest: 15 of 453 real reads (3.3 %) end on a sibling
+    allele and 5 score a few bits lower. Every one of them keeps the same gene, the same locus and
+    a byte-identical `junction_aa` -- the difference lives entirely in the `*NN` suffix, which is
+    the part of a V call short-read data cannot resolve anyway.
+
+    Where the gene itself differs (2 reads, both exact bit-score ties) the two-pass picks the
+    *functional* gene where the one-pass picked an orphon (`IGKV3/OR2-268*02`) and a
+    duplicate-locus paralog (`IGKV3D-20*01`).
+    """
+    one, two = _by_id(mapped[0]), _by_id(two_pass[0])
+    for col in ("v_call", "j_call"):
+        bad = [q for q in one if _gene(one[q][col]) != _gene(two[q][col])]
+        # A tie is arbitrary in both directions; anything else means a worse scaffold was chosen.
+        for q in bad:
+            assert float(one[q]["mmseqs2_score"]) == float(two[q]["mmseqs2_score"]), (
+                f"{q}: {col} gene changed at a DIFFERENT score "
+                f"{one[q][col]}@{one[q]['mmseqs2_score']} -> {two[q][col]}@{two[q]['mmseqs2_score']}")
+        assert len(bad) <= 0.01 * len(one), (
+            f"{col} gene-level agreement fell below 99 %: {len(bad)}/{len(one)} differ")
+
+
+def test_two_pass_accounts_for_every_read_in_the_report(two_pass):
+    """`implied + rescued` is the audit trail; `no_segment_hit` is the residual exposure."""
+    _, rep = two_pass
+    ss = rep.segment_search
+    assert ss, "two_pass=True produced no segment_search accounting"
+    assert ss["implied"] + ss["rescued"] + ss["no_segment_hit"] == rep.total_reads
+    assert sum(ss["reasons"].values()) >= ss["rescued"] - ss["reasons"].get("", 0)
+    assert 0.0 <= ss["fast_fraction"] <= 1.0
+
+
+def test_two_pass_falls_back_rather_than_failing_without_a_segment_reference(tmp_path, monkeypatch):
+    """A missing `segments.fasta` must degrade to the one-pass search, not raise."""
+    from arda.annotate import mapper
+    from arda.rnaseq.map import map_rnaseq
+
+    monkeypatch.setattr(mapper, "_cached_segment_db", lambda ref, organism: None)
+    rep = map_rnaseq(READS_1, tmp_path / "fb.airr.tsv", r2=READS_2, threads=2, two_pass=True)
+    assert rep.mapped_reads > 300
+    assert rep.segment_search == {}
