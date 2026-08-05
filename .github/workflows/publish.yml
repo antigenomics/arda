@@ -79,8 +79,13 @@ jobs:
           path: wheels/
       - name: Install wheel and import arda
         shell: bash
+        # No `pip install --upgrade pip` here. On Windows that resolves to `pip.exe`, which refuses
+        # to replace its own running executable -- "ERROR: To modify pip, please run ... -m pip
+        # install --upgrade pip" -- and failed all four Windows legs on the 2.6.0 release, blocking
+        # publish. Latent since the workflow was written; it only fires now that the runner ships a
+        # pip new enough to error instead of warn. The runner's pip is current regardless, and this
+        # job exists to test the wheel, not pip.
         run: |
-          pip install --upgrade pip
           tag="cp${{ matrix.python-version }}"; tag="${tag/./}"
           python - "$tag" <<'PY'
           import sys, glob, subprocess
