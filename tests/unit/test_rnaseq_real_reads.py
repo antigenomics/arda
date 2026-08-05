@@ -276,3 +276,35 @@ def test_two_pass_falls_back_rather_than_failing_without_a_segment_reference(tmp
     rep = map_rnaseq(READS_1, tmp_path / "fb.airr.tsv", r2=READS_2, threads=2, two_pass=True)
     assert rep.mapped_reads > 300
     assert rep.segment_search == {}
+
+
+def test_productive_is_empty_when_no_junction_was_observed(mapped):
+    """`productive` is a property of the V-J junction, so a read that never reached one is
+    UNEVALUABLE, not non-productive.
+
+    Reporting "F" made a bare V fragment look like a confirmed non-productive rearrangement --
+    on this real bulk fixture that was 342 of 453 mapped reads (75 %), since most reads land
+    wholly inside V and never reach CDR3. The module always had the rule right for a V-LESS read
+    (`productive` stays empty); this extends it to the read that has a V but no junction.
+
+    The invariant is an iff, asserted both ways: `productive` is set exactly when `junction_aa`
+    is.
+    """
+    d = pl.read_csv(mapped[0], separator="\t", infer_schema_length=0)
+    rows = list(d.iter_rows(named=True))
+    no_junc = [r for r in rows if not (r["junction_aa"] or "").strip()
+               and (r["productive"] or "").strip()]
+    assert not no_junc, (
+        f"{len(no_junc)} read(s) carry a productive call with no junction, e.g. "
+        + ", ".join(f"{r['sequence_id']}={r['productive']!r}" for r in no_junc[:3]))
+    junc_unset = [r for r in rows if (r["junction_aa"] or "").strip()
+                  and not (r["productive"] or "").strip()]
+    assert not junc_unset, (
+        f"{len(junc_unset)} read(s) have a junction but no productive call, e.g. "
+        + ", ".join(r["sequence_id"] for r in junc_unset[:3]))
+    # vj_in_frame collapses the same fact and must be gated identically.
+    assert all(bool((r["vj_in_frame"] or "").strip()) == bool((r["productive"] or "").strip())
+               for r in rows), "vj_in_frame and productive are not gated on the same condition"
+    # stop_codon is NOT gated this way: a stop in the V-side regions is observed regardless.
+    assert any((r["stop_codon"] or "").strip() and not (r["junction_aa"] or "").strip()
+               for r in rows), "stop_codon should stay evaluable for a junctionless read"
