@@ -3,37 +3,6 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## 2.5.7
-
-### Fixed — a stale mmseqs cache was reused instead of rebuilt
-
-`_cached_target_db` detects a stale target DB by mtime (older than `alleles.fasta`) and calls
-`_createdb_atomic` to rebuild it — but that build guard gated "already built" on bare **existence**
-(`done=db.exists`, from the 2.5.5 concurrency work). So it found the stale file, called the work done,
-and skipped the rebuild: every run then searched the previous scaffolds, projecting the current
-`markup.tsv` coords through an out-of-date alignment and sliding the junction off Cys104. Surfaced as
-shifted mouse markup — a 352-nt TRB scaffold cached under a reference since rebuilt to 346 nt gave
-`junction_aa='LCASSFHRDYNSPL'` instead of `CASSFHRDYNSPLYF`. "Done" now means a *current* db (exists
-**and** at least as new as its source fasta); the same skip also affected `build-index` after a
-`build-db`.
-
-### Fixed — the committed precompiled indexes were never used
-
-The precompiled mmseqs DBs shipped in `database/vdj/*/mmseqs/` are gated on a version marker, compared
-with an exact `==`. But `mmseqs version` prints the same release+commit with different punctuation
-across builds — the official static binary says `18-8cc5c`, the bioconda build `18.8cc5c`. When the
-toolchain moved to the static binary, every committed marker (written under conda's mmseqs) stopped
-matching, so the shipped indexes were silently ignored and every run rebuilt a private cache. The
-comparison now uses a separator-insensitive `mmseqs.version_key` (folds `[\s._-]+`→`-`, lowercases),
-which bridges the cosmetic difference while still rejecting a genuinely different version.
-
-### Changed — dev/CI toolchain moved from conda to uv
-
-mmseqs2's bioconda binary was the only thing tying the dev environment to conda; it also ships an
-official static build, which arda already auto-fetches. `setup.sh` now builds a `uv` `.venv` (portable
-under bash and zsh) and CI installs via `uv`. Conda stays only for the Nextflow/ISP integration, which
-ships its own `environment.yml`. Does not affect `pip install arda-mapper`.
-
 ## 2.6.0
 
 ### Fixed — a run was not reproducible
@@ -126,6 +95,96 @@ with the wheel.
   resolve a different aligner than the CLI and SLURM paths use — an accuracy-differs-between-
   modes hazard, not just a caching one.
 * The module gained the `meta.yml` it never had.
+
+### Added — a segment reference, and a fast path that cannot lose a read
+
+Searching 15,414 V×J scaffolds re-pays for the shared V region once per J that V pairs with —
+median 13, and 67 for TRA. `arda.refbuild.segments` emits every V, J and J+C allele as its own
+target instead: **1,244 human targets, 12.4x fewer**. A read's best V and best J then name
+exactly one scaffold through `combinations.tsv`, so the second alignment is one target rather
+than ~277. Measured on a TRA amplicon: **2.20x end to end, 85 % of reads on the fast path.**
+
+The reference is derived from `alleles.fasta` + `markup.tsv` in under a second, so `build-index`
+generates it rather than shipping it — the same argument that already excludes the mmseqs
+indexes from the 3.2 MB release asset.
+
+`arda.annotate.shortlist` exists to keep this from becoming a different tool. arda's claim is
+near-zero Stage-1 false negatives, so every read is partitioned into `implied` (fast path) or
+`rescue` (realigned against the full reference), and the partition is asserted total. V-only,
+J-only, an unknown V×J pair, a failed second alignment — all rescued, none dropped. Measured: of
+5,278 hits on real amplicon reads, **one** was lost, at bit score 56 — below the default
+`--min-score 75`, so nothing arda would have reported. Gene-level agreement with the one-pass
+path: locus 99.96 %, V 99.09 %, J 99.24 %.
+
+Two mistakes in this path produce *correct output that is silently no faster*, so both are
+now documented and tested: `JC|` targets are keyed by scaffold id rather than allele (getting it
+wrong collapsed the fast path from 85.3 % to 0.1 %), and `top_hit` on the segment pass destroys
+the V+J pairing the whole scheme depends on.
+
+Strand is handled per read, not per library. The segment pass runs `--strand 2` and mmseqs
+reports reverse hits with `qstart > qend`, which makes a hand-built prefilter diagonal
+meaningless; reverse-strand reads are aligned against their own reverse complement and the
+coordinates flipped back. A fixed-orientation assumption would have been wrong on the first
+library tested — 99.1 % of its reads were reverse-strand, and library strandedness is not a
+constant across protocols.
+
+There is deliberately **no alpha/delta ambiguity rule**. TRD *is* TRAV/DV + TRDJ — the J (and C)
+decides the locus — and the reference already encodes it: of 1,050 scaffolds built from a TRAV/DV
+segment, 1,005 are locus TRA and 45 are locus TRD. An earlier draft rescued these as ambiguous,
+discarding real rearrangements the reference contains. `combinations.tsv` is the arbiter.
+
+### Changed — a measured cost model, and a bigger chunk
+
+Fitting 13 full-depth cluster runs (60,252 s) gives `wall_map ~= total_reads/44,470 +
+mapped_reads/681`: **a read that hits costs ~65x one that does not**. That splits `map` into a
+scan term and an align term whose ratio is set by the library's receptor fraction, and it is why
+the segment reference helps most on amplicon and least on a 0.0003 %-receptor negative. The
+RNA-seq chunk moved 200k -> 400k on the same evidence. `scripts/bench_cost_model.py` refits it.
+
+Unit tests now run against **real reads** (660 pairs from public SRR5233639, 88 KB) rather than
+synthetic ones only.
+
+### Fixed — every cold-cache install of a bumped version 404'd
+
+`reference_url` was derived from `__version__`, so releasing 2.5.7 pointed first-run users at a
+`v2.5.7` asset that does not exist — the reference tarball only changes when the reference does.
+Pinned to `_REFERENCE_TAG` with a fallback. Found by the cold-cache experiment, not by a test.
+
+### Changed — lint gates CI, and the docs Makefile matches it
+
+`ruff check src/` reported 16 errors and CI never ran it. Fixed and gated. `docs/Makefile` built
+without `-W` while CI built with it, so a local docs build could pass on something CI rejects.
+
+## 2.5.7
+
+### Fixed — a stale mmseqs cache was reused instead of rebuilt
+
+`_cached_target_db` detects a stale target DB by mtime (older than `alleles.fasta`) and calls
+`_createdb_atomic` to rebuild it — but that build guard gated "already built" on bare **existence**
+(`done=db.exists`, from the 2.5.5 concurrency work). So it found the stale file, called the work done,
+and skipped the rebuild: every run then searched the previous scaffolds, projecting the current
+`markup.tsv` coords through an out-of-date alignment and sliding the junction off Cys104. Surfaced as
+shifted mouse markup — a 352-nt TRB scaffold cached under a reference since rebuilt to 346 nt gave
+`junction_aa='LCASSFHRDYNSPL'` instead of `CASSFHRDYNSPLYF`. "Done" now means a *current* db (exists
+**and** at least as new as its source fasta); the same skip also affected `build-index` after a
+`build-db`.
+
+### Fixed — the committed precompiled indexes were never used
+
+The precompiled mmseqs DBs shipped in `database/vdj/*/mmseqs/` are gated on a version marker, compared
+with an exact `==`. But `mmseqs version` prints the same release+commit with different punctuation
+across builds — the official static binary says `18-8cc5c`, the bioconda build `18.8cc5c`. When the
+toolchain moved to the static binary, every committed marker (written under conda's mmseqs) stopped
+matching, so the shipped indexes were silently ignored and every run rebuilt a private cache. The
+comparison now uses a separator-insensitive `mmseqs.version_key` (folds `[\s._-]+`→`-`, lowercases),
+which bridges the cosmetic difference while still rejecting a genuinely different version.
+
+### Changed — dev/CI toolchain moved from conda to uv
+
+mmseqs2's bioconda binary was the only thing tying the dev environment to conda; it also ships an
+official static build, which arda already auto-fetches. `setup.sh` now builds a `uv` `.venv` (portable
+under bash and zsh) and CI installs via `uv`. Conda stays only for the Nextflow/ISP integration, which
+ships its own `environment.yml`. Does not affect `pip install arda-mapper`.
 
 ## 2.5.6
 
