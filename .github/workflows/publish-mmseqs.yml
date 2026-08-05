@@ -46,16 +46,18 @@ jobs:
         run: python build_wheel.py --plat "${{ matrix.plat }}" --asset "${{ matrix.asset }}"
       - name: Check it
         run: python -m twine check packaging/arda-mmseqs/dist/*.whl
-      # The asset URL is `releases/latest/download`, so upstream cutting 19.x would silently put
-      # a 19 binary in a wheel labelled 18.x -- and arda would then reject it against the shipped
-      # indexes at runtime, far from here. Only the linux leg can execute what it just built.
+      # The asset URL is `releases/latest/download`, so upstream cutting 19.x would silently put a
+      # 19 binary in a wheel labelled 18.x -- and arda would then reject it against the shipped
+      # indexes at runtime, far from here. Checked against the upstream RELEASE TAG rather than by
+      # running the binary: `mmseqs version` prints the build's git commit (`8cc5ce36...`), not the
+      # tag, so a naive prefix match on it fails on a correct build. The tag is also the actual
+      # source of truth here, since that is what `releases/latest/download` resolves against.
       - name: The bundled binary must be the version on the label
-        if: matrix.plat == 'manylinux_2_17_x86_64'
         run: |
-          got=$(packaging/arda-mmseqs/src/arda_mmseqs/bin/mmseqs version)
+          tag=$(python -c "import json,urllib.request; print(json.load(urllib.request.urlopen('https://api.github.com/repos/soedinglab/MMseqs2/releases/latest'))['tag_name'])")
           want=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('packaging/arda-mmseqs/pyproject.toml').read_text())['project']['version'].split('.')[0])")
-          echo "bundled=$got wheel major=$want"
-          case "$got" in "$want"*) ;; *) echo "::error::bundled MMseqs2 $got != wheel version $want.x"; exit 1;; esac
+          echo "upstream latest=$tag  wheel major=$want"
+          case "$tag" in "$want"-*) ;; *) echo "::error::upstream MMseqs2 $tag != wheel version $want.x — bump packaging/arda-mmseqs/pyproject.toml"; exit 1;; esac
       - uses: actions/upload-artifact@v4
         with:
           name: mmseqs-wheel-${{ matrix.plat }}
