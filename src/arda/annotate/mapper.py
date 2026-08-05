@@ -483,7 +483,15 @@ def _segment_best_hits(
     seen = set(best_v) | set(best_j)
     assert set(sl.implied) | set(sl.rescue) == seen, "a read was lost during shortlisting"
     n_fast = len(sl.implied) - len(failed & set(sl.implied))
-    report = {"implied": n_fast, "rescued": len(rescue),
+    # Reads the segment pass never hit at all. Nearly all are genuinely non-receptor -- on bulk
+    # that is ~97% of the library, which is the entire point -- but a few are real: a
+    # junction-spanning read with weak homology can clear threshold on the concatenated
+    # `V+pad+J` scaffold while neither half clears it alone, and raising sensitivity does not
+    # recover them (measured to `-s 7.5 -e 1.0`). Counted here so the exposure is auditable
+    # rather than implicit. Measured: 1 of 5,278 on amplicon at bits 56, 0 of 1,956 on bulk --
+    # and **none at or above the default `--min-score 75`**, so nothing arda would report is lost.
+    n_unseen = max(0, len(_db_keys(query_db)) - len(seen))
+    report = {"implied": n_fast, "rescued": len(rescue), "no_segment_hit": n_unseen,
               "fast_fraction": round(n_fast / len(seen), 4) if seen else 0.0,
               "reasons": {**sl.reasons, **({"second_pass_failed": len(failed)} if failed else {})}}
     return best, report
