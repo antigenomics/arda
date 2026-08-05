@@ -152,3 +152,66 @@ def test_targets_are_unique_and_non_empty(built):
     # A V target should be a substantial chunk of a V gene, not a stub.
     v = [s for i, s in fasta.items() if i.startswith("V|")]
     assert min(len(s) for s in v) > 50, "a V target is implausibly short"
+
+
+def test_segment_targets_resolve_through_the_reference():
+    """A `V|`/`J|` target must return a RefEntry, or every segment hit is dropped as unmapped.
+
+    `Reference` is built from `markup.tsv`, which describes scaffolds. Until `segments.markup.tsv`
+    was loaded alongside it, `ref.get("V|IGHV3-7*02")` returned None and `_annotate_chunk` dropped
+    the read — measured: searching the segment reference produced **0** annotated reads against
+    the scaffold reference's 278 on the same input, even though the search found them. The search
+    being fast is useless if nothing downstream can resolve what it found.
+    """
+    from arda.annotate.reference import load_reference
+
+    ref = load_reference("human", "nt")
+    scaffold = ref.get("IGH_1053")
+    assert scaffold is not None and scaffold.v_call and scaffold.j_call
+
+    v = ref.get("V|IGHV3-7*02")
+    assert v is not None, "V segment targets do not resolve — segment hits would be dropped"
+    assert v.v_call == "IGHV3-7*02" and v.locus == "IGH"
+    assert not v.j_call, "a V segment has no J half"
+
+    j = ref.get("J|IGHJ4*02")
+    assert j is not None, "J segment targets do not resolve"
+    assert j.j_call == "IGHJ4*02" and not j.v_call
+
+
+def test_v_segment_region_coordinates_match_their_scaffolds():
+    """The claim that makes segment-only annotation possible, asserted rather than assumed.
+
+    A scaffold is `V + pad + J` with the V left-aligned, so a V allele occupies position 1 of both
+    its segment and every scaffold built from it. Measured: all 775 V segments agree with their
+    scaffolds on `fwr1/cdr1/fwr2/cdr2/fwr3` start and end — 0 differ. A V-only read annotated from
+    the segment therefore gets the same region coordinates it would get from a scaffold, and never
+    needed the scaffold at all (a scaffold exists to carry a junction such a read does not have).
+    """
+    import polars as pl
+
+    from arda.annotate.reference import load_reference
+
+    ref = load_reference("human", "nt")
+    d = ref.target_fasta.parent
+    seg = {r["scaffold_id"].split("|", 1)[1]: r
+           for r in pl.read_csv(d / "segments.markup.tsv", separator="\t",
+                                infer_schema_length=0).iter_rows(named=True)
+           if str(r["scaffold_id"]).startswith("V|")}
+    scaf_by_v = {}
+    for r in pl.read_csv(d / "markup.tsv", separator="\t",
+                         infer_schema_length=0).iter_rows(named=True):
+        scaf_by_v.setdefault(r.get("v_call"), r)
+
+    cols = [f"{r}_{e}" for r in ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3") for e in ("start", "end")]
+    checked = 0
+    for allele, srow in seg.items():
+        ref_row = scaf_by_v.get(allele)
+        if ref_row is None:
+            continue
+        checked += 1
+        for c in cols:
+            assert (srow.get(c) or "") == (ref_row.get(c) or ""), (
+                f"{allele}: {c} differs between segment ({srow.get(c)}) and scaffold "
+                f"({ref_row.get(c)}) — segment-only annotation would shift the regions")
+    assert checked >= 700, f"only {checked} V segments compared; the fixture looks wrong"
