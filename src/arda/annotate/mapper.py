@@ -228,6 +228,231 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     return {row["query"]: row for row in df.iter_rows(named=True)}
 
 
+# The segment pass needs only these five fields. NOT `DEFAULT_FORMAT_OUTPUT`: that carries
+# `cigar`/`qaln`/`taln` for up to `--max-seqs` rows per read, which is the 194 MB / 877 MB
+# regression `top_hit` exists to prevent (see its docstring). Here we cannot reduce to one row
+# per query first -- a junction-spanning read must contribute its best V AND its best J -- so the
+# only lever is asking for fewer columns.
+_SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart"
+
+
+def _segment_rows(tsv: Path) -> list[dict]:
+    """Every alignment row from a segment-pass convertalis TSV, five columns wide."""
+    if not tsv.exists() or tsv.stat().st_size == 0:
+        return []
+    cols = _SEGMENT_FORMAT.split(",")
+    schema = {c: (pl.Utf8 if c in _STR_COLS else pl.Float64) for c in cols}
+    df = pl.read_csv(tsv, separator="\t", has_header=False, new_columns=cols,
+                     schema_overrides=schema)
+    # Deterministic: exact bit-score ties between paralogous targets are broken on `target`,
+    # the same rule `_best_hits` uses. Resolving them by TSV row order (as an earlier draft did)
+    # silently undid the determinism fix -- 25/25 tied queries flipped when rows were reversed.
+    df = df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
+    return list(df.iter_rows(named=True))
+
+
+def _subset_db(src_db: Path, ids: list[str], dst: Path,
+               keys: dict[str, str] | None = None) -> Path:
+    """A query sub-DB holding exactly ``ids``, keys and headers intact.
+
+    Two things an earlier draft got wrong, both silent:
+
+    * it read a ``.lookup`` beside the *output* DB, which ``createsubdb`` never writes, so every
+      id missed and the entire fast path fell through to rescue while still producing correct
+      output -- fast to miss, because nothing failed;
+    * it subset only the sequence DB. ``createsubdb`` acts on ONE database, so without the
+      matching ``_h`` call ``convertalis`` cannot print query *names* and emits numeric keys,
+      which would key the result dict by something the caller never asked about.
+
+    ``--id-mode 1`` is not usable for the header DB (``<db>_h`` has no ``.lookup`` of its own), so
+    both calls go through numeric keys taken from the source DB's lookup. ``createsubdb``
+    preserves those keys, which is why the caller can keep using the source mapping afterwards.
+
+    Raises:
+        MMseqsError: if any id is absent from the source lookup. Dropping them silently is what
+            would lose reads, and this function sits on the no-read-lost path.
+    """
+    keys = keys if keys is not None else _db_keys(src_db)
+    missing = [i for i in ids if i not in keys]
+    if missing:
+        raise mmseqs.MMseqsError(
+            f"{len(missing)} read id(s) absent from {src_db}.lookup, e.g. {missing[:3]}")
+    listing = dst.parent / f"{dst.name}.keys"
+    listing.write_text("\n".join(keys[i] for i in ids) + "\n")
+    mmseqs.run(["createsubdb", str(listing), str(src_db), str(dst)])
+    mmseqs.run(["createsubdb", str(listing), f"{src_db}_h", f"{dst}_h"])
+    return dst
+
+
+def _db_keys(db: Path) -> dict[str, str]:
+    """``{fasta_identifier: numeric_db_key}`` from an mmseqs ``.lookup``.
+
+    Needed because a hand-built prefilter DB addresses entries by numeric key, not by name.
+    """
+    out: dict[str, str] = {}
+    lk = Path(f"{db}.lookup")
+    if not lk.exists():
+        return out
+    with open(lk) as fh:
+        for line in fh:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) >= 2:
+                out[parts[1]] = parts[0]
+    return out
+
+
+def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
+                   seg_rows: dict[str, dict], tmp: Path, *,
+                   threads: int) -> tuple[dict[str, dict], set[str]]:
+    """Align each read against ONLY the scaffold its (best V, best J) implies.
+
+    Measured: 10,787 alignments instead of 3.04 M -- 5.36 s -> 0.044 s (122x) on a 20 k-read
+    amplicon.
+
+    Returns ``(hits, failed)``. Anything in ``failed`` (or simply absent) is rescued by the
+    caller against the full reference, so a miss here costs time, never a read.
+    """
+    want = sorted(implied)
+    # createsubdb preserves the source numeric keys, so the source mapping stays valid for the
+    # subset -- and the subset has no `.lookup` of its own to read.
+    qkey = _db_keys(query_db)
+    sub = _subset_db(query_db, want, tmp / "impQ", keys=qkey)
+    tkey = _db_keys(full_db)
+    rows, skipped = [], set()
+    for qid in want:
+        sid = implied[qid]
+        seg = seg_rows.get((qid, "V"))
+        if seg is None or qid not in qkey or sid not in tkey:
+            skipped.add(qid)
+            continue
+        qs, qe, ts = int(seg["qstart"]), int(seg["qend"]), int(seg["tstart"])
+        if qs > qe:
+            # Reverse-strand hit. mmseqs reports these with qstart > qend, so `qstart - tstart`
+            # is not a diagonal, and a hand-built prefilter entry gives `align` no way to know it
+            # should align the reverse complement. Rather than guess, hand these to the rescue
+            # pass, which runs a full `search --strand 2` and handles them exactly as today.
+            skipped.add(qid)
+            continue
+        # A V target is `scaffold[:v_sequence_end]`, i.e. offset 0 in scaffold coordinates, so
+        # the segment hit's diagonal transfers unchanged. (A J target would need
+        # `j_sequence_start - 1` added back; we deliberately key on the V hit only.)
+        rows.append(f"{qkey[qid]}\t{tkey[sid]}\t{int(float(seg['bits']))}\t{qs - ts}")
+    if not rows:
+        return {}, set(want)
+
+    pref_tsv = tmp / "implied.pref.tsv"
+    pref_tsv.write_text("\n".join(rows) + "\n")
+    pref_db = tmp / "impPref"
+    mmseqs.run(["tsv2db", str(pref_tsv), str(pref_db), "--output-dbtype", "7"])
+    aln = tmp / "impAln"
+    # No `--search-type` here: `mmseqs align` does not accept it (it infers nucleotide mode from
+    # the DB type). Passing it aborts the whole run.
+    mmseqs.run(["align", str(sub), str(full_db), str(pref_db), str(aln),
+                "-a", "--alignment-mode", "3", "--threads", str(threads)])
+    out_tsv = tmp / "implied.tsv"
+    mmseqs.convertalis(sub, full_db, aln, out_tsv, threads=threads,
+                       search_type=_SEARCH_TYPE["nt"])
+    hits = _best_hits(out_tsv)
+    return hits, skipped | (set(want) - set(hits))
+
+
+def _full_rescue(query_db: Path, full_db: Path, ids: list[str], tmp: Path, *,
+                 threads: int, sensitivity: float, mm_strand: int | None,
+                 max_seqs: int, kmer: int | None, search_type: int) -> dict[str, dict]:
+    """Realign unresolved reads against the FULL reference -- the exactness guarantee.
+
+    This is what makes the fast path safe to enable: whatever the segment pass could not resolve
+    gets precisely the treatment it would have received with no optimisation at all. Measured
+    cost: 11 % of the new total on amplicon, 20 % on bulk.
+
+    Raises:
+        MMseqsError: if the sub-DB cannot be built. Returning ``{}`` here would silently drop the
+            entire rescue set -- the exact failure this function exists to prevent -- so it is
+            deliberately loud.
+    """
+    if not ids:
+        return {}
+    sub = _subset_db(query_db, sorted(ids), tmp / "rescQ")
+    res, out_tsv = tmp / "rescRes", tmp / "rescue.tsv"
+    mmseqs.search(sub, full_db, res, tmp / "resc_tmp", search_type=search_type,
+                  sensitivity=sensitivity, max_seqs=max_seqs, threads=threads, kmer=kmer,
+                  extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
+    mmseqs.convertalis(sub, full_db, mmseqs.top_hit(res, tmp / "rescBest"),
+                       out_tsv, threads=threads, search_type=search_type)
+    return _best_hits(out_tsv)
+
+
+def _segment_best_hits(
+    query_db: Path, seg_db: Path, full_db: Path, tmp: Path, ref: Reference, *,
+    threads: int, sensitivity: float, mm_strand: int | None, max_seqs: int, kmer: int | None,
+    search_type: int, combos: dict[tuple[str, str], str] | None = None,
+) -> tuple[dict[str, dict], dict]:
+    """Two-pass best hits: cheap segment pass, then align only the implied scaffold.
+
+    Produces the same ``{query: hit_row}`` shape as the one-pass path, so everything downstream
+    (strand handling, markup transfer, D mapping) is untouched.
+
+    **No read is lost.** Whatever the segment pass cannot resolve to a single V×J scaffold --
+    V-only, J-only, a pair absent from the reference, a reverse-strand hit, or a second-pass
+    miss -- is realigned against the FULL reference exactly as today. The partition is asserted,
+    not assumed, and `_full_rescue` raises rather than returning empty.
+    """
+    from .shortlist import load_combinations, shortlist
+
+    seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
+    mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
+                  search_type=search_type, sensitivity=sensitivity, max_seqs=max_seqs,
+                  threads=threads, kmer=kmer,
+                  extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
+    # NOT `top_hit` here. `filterdb --extract-lines 1` keeps ONE row per query, which destroys
+    # exactly the pairing this pass exists to find: a junction-spanning read must contribute its
+    # best V AND its best J. Reducing first left `implied` at 0 -- correct output, zero speedup.
+    mmseqs.convertalis(query_db, seg_db, seg_res, seg_tsv, threads=threads,
+                       search_type=search_type, format_output=_SEGMENT_FORMAT)
+
+    # Best V and best J per read. `JC|` targets are named by SCAFFOLD id, not by allele, so they
+    # are resolved through the segment markup -- feeding the raw name into the combination lookup
+    # silently fails for every J->C read and collapsed the fast path from 85.3 % to 0.1 % once.
+    best_v: dict[str, str] = {}
+    best_j: dict[str, str] = {}
+    top: dict[tuple[str, str], float] = {}
+    seg_rows: dict[tuple[str, str], dict] = {}
+    for row in _segment_rows(seg_tsv):
+        q, t, bits = row["query"], row["target"], float(row["bits"])
+        kind, sep, name = t.partition("|")
+        if not sep or kind not in ("V", "J", "JC"):
+            continue                      # unrecognised target: never silently treat it as a J
+        side = "V" if kind == "V" else "J"
+        if (q, side) in top:              # rows arrive pre-sorted by (bits desc, target asc)
+            continue
+        top[(q, side)] = bits
+        seg_rows[(q, side)] = row
+        allele = ref.segment_j_call(name) if kind == "JC" else name
+        (best_v if side == "V" else best_j)[q] = allele
+
+    if combos is None:
+        combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
+    sl = shortlist(best_v, best_j, combos)
+
+    best, failed = ({}, set())
+    if sl.implied:
+        best, failed = _align_implied(query_db, full_db, sl.implied, seg_rows, tmp,
+                                      threads=threads)
+    rescue = sorted(set(sl.rescue) | failed)
+    if rescue:
+        best.update(_full_rescue(query_db, full_db, rescue, tmp, threads=threads,
+                                 sensitivity=sensitivity, mm_strand=mm_strand,
+                                 max_seqs=max_seqs, kmer=kmer, search_type=search_type))
+
+    seen = set(best_v) | set(best_j)
+    assert set(sl.implied) | set(sl.rescue) == seen, "a read was lost during shortlisting"
+    n_fast = len(sl.implied) - len(failed & set(sl.implied))
+    report = {"implied": n_fast, "rescued": len(rescue),
+              "fast_fraction": round(n_fast / len(seen), 4) if seen else 0.0,
+              "reasons": {**sl.reasons, **({"second_pass_failed": len(failed)} if failed else {})}}
+    return best, report
+
+
 def _annotate_chunk(
     records: list[tuple[str, str]],
     ref: Reference,

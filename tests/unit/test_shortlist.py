@@ -43,18 +43,26 @@ def test_every_unresolvable_read_is_rescued_with_a_reason(bv, bj, failed, reason
     assert sl.reasons == {reason: 1}
 
 
-def test_trav_dv_crossing_the_locus_is_rescued_not_guessed():
-    """The measured failure: 54% of residual V disagreements were TRA->TRD.
+def test_trav_dv_with_a_trdj_is_TRD_not_a_chimera():
+    """TRD *is* TRAV/DV + TRDJ -- the J decides the locus, so this must take the fast path.
 
-    TRAV/DV segments are genuinely dual-use, and a joint argmax over V and J did not resolve
-    them. Until a locus prior exists, these are rescued rather than guessed.
+    arda's reference carries 45 `TRAV/DV + TRDJ` scaffolds under locus TRD alongside 1,005
+    `TRAV/DV + TRAJ` ones under TRA. An earlier draft rescued the cross-locus case as
+    "ambiguous", discarding real rearrangements the reference already contains.
     """
-    sl = shortlist({"r": "TRAV23/DV6*01"}, {"r": "TRDJ1*01"}, COMBOS)
-    assert sl.rescue == ["r"]
-    assert sl.reasons == {"trav_dv_locus_ambiguous": 1}
-    # ...but a TRAV/DV read that stays inside TRA is fine and must NOT be rescued.
-    ok = shortlist({"r": "TRAV23/DV6*01"}, {"r": "TRAJ12*01"}, COMBOS)
-    assert ok.implied == {"r": "TRA_5"} and ok.rescue == []
+    trd = shortlist({"r": "TRAV23/DV6*01"}, {"r": "TRDJ1*01"}, COMBOS)
+    assert trd.implied == {"r": "TRD_2"}, "a real TRD rearrangement was rescued as ambiguous"
+    assert trd.rescue == []
+    # The same V with a TRAJ is TRA -- same segment, different locus, both legitimate.
+    tra = shortlist({"r": "TRAV23/DV6*01"}, {"r": "TRAJ12*01"}, COMBOS)
+    assert tra.implied == {"r": "TRA_5"} and tra.rescue == []
+
+
+def test_a_genuine_chimera_is_still_rescued():
+    """Trusting the reference is the whole rule: a pair it does not contain is not biology."""
+    sl = shortlist({"r": "IGHV3-21*06"}, {"r": "TRBJ2-1*01"}, COMBOS)
+    assert sl.implied == {} and sl.rescue == ["r"]
+    assert sl.reasons == {"no_such_combination": 1}
 
 
 def test_the_partition_is_total_over_a_mixed_population():

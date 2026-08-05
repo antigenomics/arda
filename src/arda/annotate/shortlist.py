@@ -31,11 +31,12 @@ Why reads land in ``rescue``, measured on a TRA amplicon:
 * **failed second alignment** (1.9 %) — the synthesized diagonal is derived from the V hit, so it
   is wrong for a read whose scaffold alignment does not begin in V.
 
-⚠ **Known, unfixed: the α/δ locus policy.** Of 212 residual V-gene disagreements against the full
-reference on one amplicon, **114 (54 %) are TRA→TRD** — the TRAV/DV dual-use ambiguity. A joint
-``argmax(bits_V + bits_J)`` over the top-5 of each, constrained to real combinations, does *not*
-fix it: the segment pass's best J genuinely is a TRDJ. This needs a locus prior, so until it
-lands, :func:`shortlist` routes ambiguous TRAV/DV reads to ``rescue`` rather than guessing.
+**α/δ is not ambiguity, it is the answer.** TRD *is* TRAV/DV + TRDJ: the J (and C) decides the
+locus. An earlier draft rescued TRAV/DV reads whose best J crossed the locus, which discarded
+real rearrangements — arda's reference already carries 45 `TRAV/DV + TRDJ` scaffolds under locus
+TRD alongside 1,005 `TRAV/DV + TRAJ` ones under TRA. So the "114 of 212 residual V disagreements
+are TRA→TRD" finding is most likely the two-pass being *more* correct than a baseline that picks
+by whole-scaffold bit score with an arbitrary J half.
 """
 
 from __future__ import annotations
@@ -43,11 +44,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-__all__ = ["Shortlist", "load_combinations", "shortlist", "TRAV_DV_AMBIGUOUS"]
+__all__ = ["Shortlist", "load_combinations", "shortlist"]
 
-#: TRAV/DV segments rearrange into both TRA and TRD. Until a locus prior exists, a read whose
-#: best V is one of these and whose best J crosses the locus is rescued, never guessed.
-TRAV_DV_AMBIGUOUS = ("/DV",)
+# NOTE: there is deliberately no TRAV/DV special case. TRD *is* TRAV/DV + TRDJ -- the J (and C)
+# decides the locus, not the V -- and arda's reference already encodes exactly that: of 1,050
+# scaffolds built from a TRAV/DV segment, 1,005 are locus TRA (paired with a TRAJ) and 45 are
+# locus TRD (paired with a TRDJ), e.g. `TRD_5 = TRAV23/DV6*02 + TRDJ1*01`. An earlier draft
+# rescued these as "ambiguous", which threw away legitimate rearrangements that the reference
+# already contains. `combinations.tsv` is the arbiter: a pair that exists is real biology, a pair
+# that does not is a genuine chimera.
 
 
 @dataclass
@@ -132,10 +137,6 @@ def shortlist(best_v: dict[str, str], best_j: dict[str, str],
             sl._mark(rid, "j_only")            # J->C read, no V to pair
         elif not j:
             sl._mark(rid, "v_only")            # never reached a J; baseline picks arbitrarily
-        elif any(t in v for t in TRAV_DV_AMBIGUOUS) and _locus(v) != _locus(j):
-            # TRAV/DV is dual-use and the segment pass's best J crosses the locus. Measured at
-            # 54% of residual V disagreements; guessing here moved TRA reads to TRD.
-            sl._mark(rid, "trav_dv_locus_ambiguous")
         else:
             sid = combos.get((v, j))
             if sid is None:
