@@ -30,13 +30,17 @@ What gets installed
 MMseqs2 without conda
 ---------------------
 
-You do not have to install MMseqs2. Either of these works with nothing else set up::
+You do not have to install MMseqs2. This is enough::
 
     pip install arda-mapper              # auto-fetches a static binary on first use
-    pip install 'arda-mapper[mmseqs]'    # ships the binary in the wheel; no download at all
 
-Resolution order: ``$ARDA_MMSEQS`` → the ``arda-mapper[mmseqs]`` wheel → ``<project>/bin/mmseqs``
-→ ``mmseqs`` on ``PATH`` → auto-fetch.
+Resolution order: ``$ARDA_MMSEQS`` → an ``arda_mmseqs`` package if one is installed →
+``<project>/bin/mmseqs`` → ``mmseqs`` on ``PATH`` → auto-fetch.
+
+The ``[mmseqs]`` extra still resolves, but it installs nothing: the companion ``arda-mmseqs``
+distribution that used to bundle the binary is not published, and an extra naming a package PyPI
+does not have is a hard failure rather than a soft one. Auto-fetch pulls the same static
+binary.
 
 **Candidates are version-matched, not merely found.** An mmseqs index is only reusable by the
 release that compiled it, so an unrelated ``mmseqs`` on ``PATH`` makes arda discard the

@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.6.2"
+version = "2.6.3"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,11 +37,16 @@ dev = ["ruff", "pytest", "pybind11"]
 # Kept as an empty alias so existing `arda-mapper[rnaseq]` pins (the Nextflow module, collaborator
 # instructions, older docs) keep resolving without a warning. seqtree is a core dependency now.
 rnaseq = []
-# Ship the aligner instead of downloading it on first use. Not a hard dependency: the plain
-# install auto-fetches the same static binary. The pin is deliberately loose because it is not
-# what keeps you safe -- `mmseqs.mmseqs_binary()` version-matches whatever it finds against the
-# precompiled indexes in `database/`, so a stale bundle is rejected like any other candidate.
-mmseqs = ["arda-mmseqs>=18,<19"]
+# An empty alias, like `rnaseq` above, and for a sharper reason: an extra naming a package PyPI
+# does not have is a hard resolution FAILURE, not a soft one. `arda-mmseqs` is built by
+# .github/workflows/publish-mmseqs.yml but has never been uploaded, so as a real dependency this
+# extra turned `pip install 'arda-mapper[mmseqs]'` -- which the README, the docs and
+# `mmseqs_binary()`'s own error message all recommend -- into `No matching distribution found`.
+#
+# Nothing is lost by emptying it. The bundled wheel was only ever a convenience over the runtime
+# auto-fetch, which pulls the same static binary and is what a plain install already does; both
+# need the network exactly once. Restore the pin when the distribution is actually published.
+mmseqs = []
 # Tests only: OLGA's generative model supplies ground-truth V/J trims (and D spans) for
 # `arda.cdr3fix`. Kept out of `test`/`dev` so the normal suite never imports it.
 groundtruth = ["olga"]

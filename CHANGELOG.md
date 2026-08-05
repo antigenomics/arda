@@ -3,6 +3,33 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.6.3
+
+### Fixed — `pip install 'arda-mapper[mmseqs]'` was a hard failure
+
+The `mmseqs` extra depended on `arda-mmseqs`, a companion distribution that is built by CI but
+has never been uploaded to PyPI. An extra naming a package the index does not have does not
+degrade gracefully — it is a resolution error:
+
+```
+ERROR: No matching distribution found for arda-mmseqs<19,>=18; extra == "mmseqs"
+```
+
+And that exact command was what the README, the installation docs, and `mmseqs_binary()`'s own
+"binary not found" error all told you to run. The one actionable line in the error message was
+itself broken.
+
+`mmseqs` is now an empty alias, like `rnaseq` already was, so existing pins keep resolving.
+Nothing is lost: the bundled wheel was only ever a convenience over the runtime auto-fetch,
+which pulls the same static binary, is what a plain install already does, and needs the network
+exactly once — as `pip` itself just did. The four places that recommended the extra now describe
+auto-fetch, and the resolution test asserts the advice names a route that exists.
+
+There is no install-time alternative to look for: **a wheel has no post-install hook.** `pip`
+unpacks an archive and runs nothing, by design, so "download it during `pip install`" is not
+something a package can opt into. Fetching at first use is the standard answer to that
+constraint, and it is what arda already does.
+
 ## 2.6.2
 
 ### Fixed — auto-fetch staged its download in the system temp dir, and died on a cluster

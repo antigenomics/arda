@@ -175,8 +175,15 @@ def test_nothing_found_at_all_raises_with_actionable_advice(tmp_path, monkeypatc
     monkeypatch.setattr(mmseqs.shutil, "which", lambda _n: None)
     monkeypatch.setattr(mmseqs, "bin_dir", lambda: tmp_path / "nonexistent")
 
-    with pytest.raises(mmseqs.MMseqsError, match=r"arda-mapper\[mmseqs\]"):
+    # The advice has to be advice that WORKS. It used to say `pip install 'arda-mapper[mmseqs]'`,
+    # and that extra pointed at a distribution never published to PyPI -- so the one actionable
+    # line in the error was itself a hard failure (`No matching distribution found`). Assert both
+    # halves: a route that exists, and not that one.
+    with pytest.raises(mmseqs.MMseqsError) as exc:
         mmseqs.mmseqs_binary()
+    msg = str(exc.value)
+    assert "ARDA_NO_AUTO_FETCH" in msg and "$ARDA_MMSEQS" in msg
+    assert "arda-mapper[mmseqs]" not in msg
 
 
 def test_committed_index_version_never_triggers_a_reference_download(monkeypatch):

@@ -225,8 +225,8 @@ rest once, through the same function `arda rnaseq run` uses — so a sharded run
 
 ## mmseqs: nothing to install, and nothing to pin
 
-`pip install arda-mapper` auto-fetches a static binary on first use; `pip install
-'arda-mapper[mmseqs]'` ships it in the wheel so there is no download at all. Candidates are
+`pip install arda-mapper` auto-fetches a static binary on first use — there is no extra to
+add, and the `[mmseqs]` extra installs nothing (see installation.rst). Candidates are
 **version-matched** against the shipped indexes — an index is only reusable by the release that
 built it, so an unrelated `mmseqs` on `PATH` would silently discard `database/`'s precompiled
 DBs and rebuild a private cache. `$ARDA_MMSEQS` overrides everything and is not checked.

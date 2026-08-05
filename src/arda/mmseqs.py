@@ -12,7 +12,7 @@ so accepting an arbitrary PATH binary silently discards the shipped index and
 rebuilds a private cache. If nothing matches, a known-good static binary is
 auto-fetched into ``<project>/bin/mmseqs`` (one-time, transparent) unless
 ``$ARDA_NO_AUTO_FETCH`` is set — so neither pip nor conda users need to install
-mmseqs manually. ``pip install 'arda-mapper[mmseqs]'`` skips even that.
+mmseqs manually -- the binary is fetched on first use.
 """
 
 from __future__ import annotations
@@ -167,16 +167,15 @@ def mmseqs_binary() -> str:
         warnings.warn(
             f"mmseqs {got} does not match the version the shipped indexes were built with "
             f"({want}); the precompiled reference index will be ignored and a private cache "
-            f"rebuilt on first use. Install a matching build "
-            f"(pip install 'arda-mapper[mmseqs]') or set $ARDA_MMSEQS to silence this.",
+            f"rebuilt on first use. Let arda auto-fetch a matching build (unset "
+            f"$ARDA_NO_AUTO_FETCH) or set $ARDA_MMSEQS to silence this.",
             RuntimeWarning, stacklevel=2,
         )
         return candidates[0]
 
     raise MMseqsError(
-        "mmseqs binary not found. Install it (pip install 'arda-mapper[mmseqs]', or "
-        "conda install -c bioconda mmseqs2), set $ARDA_MMSEQS, or allow auto-fetch "
-        "(unset $ARDA_NO_AUTO_FETCH)."
+        "mmseqs binary not found. Allow auto-fetch (unset $ARDA_NO_AUTO_FETCH), install it "
+        "(conda install -c bioconda mmseqs2), or set $ARDA_MMSEQS."
     )
 
 
