@@ -47,8 +47,8 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
   repair that would not produce a canonical junction is refused.
 - **Easy to install** — `pip install arda-mapper` (binary wheels ship the C++
   extension); the `mmseqs` binary is fetched as a static build at runtime — no
-  conda. IgBLAST is fetched into a gitignored `bin/` and is only needed to
-  (re)build the reference DB, not at runtime.
+  conda. IgBLAST is fetched on first use the same way, and is only needed to
+  (re)build the reference DB or to run `arda igblast`, never for annotation.
 
 ## Install
 
