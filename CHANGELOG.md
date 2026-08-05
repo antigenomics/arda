@@ -180,6 +180,102 @@ On bulk the segment search is overhead on top of a rescue that is nearly the who
 regime loses a read arda would report (0 lost at or above `--min-score`, 0 gained, both). The
 bulk case is a *scan-term* problem and the segment reference structurally cannot address it.
 
+### Fixed — `productive="F"` claimed 75 % of mapped reads are non-productive
+
+`productive` is a property of the V-J junction, and `phase` is only computed when a read reaches
+both CDR3 and FWR4. A read with a V but no junction fell through to `"F"` — a bare V fragment
+reported as a *confirmed* non-productive rearrangement. On the real bulk fixture that is **342 of
+453 mapped reads (75 %)**, since most bulk reads lie wholly inside V and never reach CDR3.
+
+The module already had the rule right one branch over (a V-less read leaves `productive` empty —
+"not non-productive, it is unevaluable"). `productive` and `vj_in_frame` are now empty unless a
+junction was observed; `stop_codon` deliberately is not, because a stop in the V-side regions is
+directly observed either way. The test asserts the invariant both ways — `productive` is set iff
+`junction_aa` is — so neither an over- nor an under-report can pass.
+
+### Fixed — the isotype vote counted mates, not fragments
+
+`_dominant_ccall` documents itself as the dominant resolved class over a clonotype's *fragments'*
+constant mates, but iterated per-mate `sequence_id`s. A fragment with both mates assigned voted
+twice while a fragment with one assigned mate voted once, so a 1-fragment minority could outvote
+a 2-fragment majority. One vote per fragment now, order preserved so the tie-break stays
+deterministic. Only affects samples with uneven mate assignment.
+
+### Fixed — `--error-method binom|betabinom` could hang forever
+
+`_root` walks parent pointers in an unbounded `while`, so a 2-cycle is not a wrong answer — it is
+a run that never returns. `_parents` cannot make one (it requires `count[parent] * p_err >=
+count[child]`, forcing counts to increase along the chain), but `_error_pileup` re-decided
+parentage from per-position depth with no ordering condition, and that test is symmetric at low
+coverage: `_binom_sf(1, 2, 0.001) = 0.001999 > alpha`, so each of a pair passes as the other's
+error child. Reproduced on real Stage-1 output (16,157 rows → 1,190 clonotypes): mutual pairs at
+indices 77↔143 and 857↔861 under both methods. Fixed by restoring the invariant — a parent must
+be strictly more abundant than its child. Not on the default path (`error_method="simple"` is
+acyclic by construction), and the regression test lives in the DB-free suite, because a stage
+that never terminates must not be gated behind an mmseqs skip.
+
+### Fixed — tied V candidates shared one alignment diagonal
+
+A V×J scaffold is `V + pad + J` with the V left-aligned, so a read sits at the same offset only
+in scaffolds whose V allele has the same length — and alleles of one gene do not. On the human
+reference **11 V genes carry alleles of differing length, 8 differing by ≥ 35 nt and one by 72**,
+and `mmseqs align` returns nothing once the diagonal is off by more than ~35 nt, so the shared
+diagonal silently dropped the sibling scaffold. Each candidate is now shifted by its V-end
+difference. A candidate whose geometry is unknown keeps the unshifted diagonal and is no worse
+off than before.
+
+### Changed — each stage materialises only the AIRR columns it reads
+
+`_error_pileup`, `_assign_coverage` and `assemble_contigs` each built Python strings for all 83
+columns of the Stage-1 AIRR, including `sequence_alignment`, `germline_alignment` and the seven
+region sequences. They subscript 6, 8 and 11 of them. Measured on 181,200 real rows: **2.42 KB/row
+for all columns vs 0.41 KB/row for the used ones — `correct` peak RSS 1099 → 714 MB**. At full
+depth (~3.6 M mapped rows) that is ~7 GB. `clones.tsv` is byte-identical across the full
+three-stage pipeline.
+
+### Added — `--adaptive`, measured and off by default
+
+`--max-accept` is unbounded by default, so arda aligns every hitting read against all ~300 of its
+prefilter candidates and keeps one. Capping it is the largest single lever on the align term
+(75 % of bulk search wall). The cap alone is lossy, so `--adaptive` caps everything and then
+re-searches *uncapped* only the reads whose capped score falls below a trigger. Measured on 1 M
+real bulk reads: **2.17× with zero reads lost**, the uncertain set being 0.5 % of the library.
+
+Off by default because read preservation is not the whole guarantee: it also changes
+`junction_aa` on 3 of 453 reads on the real-read fixture — two of them scoring 128 and 131
+against a 90-bit trigger — and moves **~23 % of the clonotype table** (allele-level Jaccard
+0.7706 on 1 M bulk reads). A high score does not certify that the best alignment was found, so a
+score-only trigger may not be calibratable at all. Shipped rather than deleted because the
+measurement bounds how much of a bulk run is alignment work that never reaches the output; the
+test pins the junction-move count so it cannot silently grow.
+
+### Fixed — segment targets could not be resolved through `Reference`
+
+`Reference` is built from `markup.tsv`, which describes scaffolds, so `ref.get("V|IGHV3-7*02")`
+returned `None` and `_annotate_chunk` dropped every segment hit as unmapped: searching the
+segment reference produced **0 annotated reads against the scaffold reference's 278** on the same
+input, even though the search found them. `segments.markup.tsv` shares the schema and the key
+space and now loads through the same path. Optional by design — a reference built before 2.6.0
+has no segment entries rather than failing.
+
+After this the segment reference annotates the same 278 reads and finds all 126 V-only reads. All
+775 V segments agree with their scaffolds on FR1–FR3 region coordinates (0 differing), because a
+scaffold is `V+pad+J` with the V at position 1. The two paths still disagree on the V *gene* for
+13 of 126 V-only reads, because the segment search ranks paralogues by V alone while the scaffold
+search ranks by `V+pad+J`; running `arda igblast` on exactly those reads agrees with the segment
+call **9 times to 3**. Segment-as-primary remains unreleased pending the junction and clonotype
+gates.
+
+### Fixed — the two-pass tests were testing the one-pass search
+
+Generating the segment reference in `build-index` and gitignoring it left CI — which never runs
+`build-index` — with no `segments.fasta`, so `map_rnaseq` fell back to the one-pass search as
+designed and the comparison tests compared the one-pass output *to itself*, and passed. Third
+instance of this repo's signature failure: silent success over nothing. A module fixture now
+builds the segment reference, and `test_two_pass_is_actually_engaged` guards the guard — it
+asserts the fast path resolved something and says in its failure message that every other
+two-pass assertion is vacuous otherwise.
+
 ### Changed — a measured cost model, and a bigger chunk
 
 Fitting 13 full-depth cluster runs (60,252 s) gives `wall_map ~= total_reads/44,470 +
@@ -187,6 +283,13 @@ mapped_reads/681`: **a read that hits costs ~65x one that does not**. That split
 scan term and an align term whose ratio is set by the library's receptor fraction, and it is why
 the segment reference helps most on amplicon and least on a 0.0003 %-receptor negative. The
 RNA-seq chunk moved 200k -> 400k on the same evidence. `scripts/bench_cost_model.py` refits it.
+
+Refit directly against `mmseqs search` rather than against whole-run wall (round 5): `wall_search
+~= reads/46,353 + hits/350`, where *hits* is reads with at least one prefilter candidate. It fits
+three independent points to 0.0 s and carries **no fixed per-call term** — the earlier
+`mapped_reads/681` was a whole-run figure imported into a per-hit decomposition, which forced a
+spurious intercept. Four consecutive 400k searches take 35.0/34.8/35.2/35.9 s, i.e. flat, so
+chunking costs 1.021x and no more.
 
 Unit tests now run against **real reads** (660 pairs from public SRR5233639, 88 KB) rather than
 synthetic ones only.

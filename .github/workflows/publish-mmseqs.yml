@@ -1,0 +1,81 @@
+name: Publish arda-mmseqs To PyPI
+
+# The companion distribution: one static MMseqs2 binary per platform, wheel-wrapped, so
+# `pip install 'arda-mapper[mmseqs]'` never downloads anything at first use.
+#
+# Deliberately NOT triggered by an arda-mapper release. The two version lines are independent --
+# `arda-mmseqs` is versioned by the MMseqs2 release it wraps (18.x), arda-mapper by its own work --
+# and coupling them would force a pointless upload of an unchanged binary on every arda release.
+# Run it by hand when the bundled MMseqs2 version changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Where to upload"
+        type: choice
+        default: testpypi
+        options: [testpypi, pypi]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Wheel for ${{ matrix.plat }}
+    runs-on: ubuntu-latest        # no compilation: the binary is downloaded, so one runner does all
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plat: manylinux_2_17_x86_64
+            asset: mmseqs-linux-avx2.tar.gz
+          - plat: macosx_11_0_arm64
+            asset: mmseqs-osx-universal.tar.gz
+          - plat: macosx_10_9_x86_64
+            asset: mmseqs-osx-universal.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip build wheel twine requests
+      - name: Build the wheel
+        working-directory: packaging/arda-mmseqs
+        run: python build_wheel.py --plat "${{ matrix.plat }}" --asset "${{ matrix.asset }}"
+      - name: Check it
+        run: python -m twine check packaging/arda-mmseqs/dist/*.whl
+      # The asset URL is `releases/latest/download`, so upstream cutting 19.x would silently put
+      # a 19 binary in a wheel labelled 18.x -- and arda would then reject it against the shipped
+      # indexes at runtime, far from here. Only the linux leg can execute what it just built.
+      - name: The bundled binary must be the version on the label
+        if: matrix.plat == 'manylinux_2_17_x86_64'
+        run: |
+          got=$(packaging/arda-mmseqs/src/arda_mmseqs/bin/mmseqs version)
+          want=$(python -c "import tomllib,pathlib; print(tomllib.loads(pathlib.Path('packaging/arda-mmseqs/pyproject.toml').read_text())['project']['version'].split('.')[0])")
+          echo "bundled=$got wheel major=$want"
+          case "$got" in "$want"*) ;; *) echo "::error::bundled MMseqs2 $got != wheel version $want.x"; exit 1;; esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmseqs-wheel-${{ matrix.plat }}
+          path: packaging/arda-mmseqs/dist/*.whl
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.repository }}
+    permissions:
+      contents: read
+      id-token: write  # OIDC trusted publishing, same as the arda-mapper workflow
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mmseqs-wheel-*
+          merge-multiple: true
+          path: dist/
+      - run: ls -l dist/
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ inputs.repository == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
