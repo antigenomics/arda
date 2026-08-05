@@ -460,11 +460,36 @@ def map_rnaseq(
     # that as "this sample has no receptor reads". Capture it and re-raise on the consumer side.
     reader_exc: list[BaseException] = []
 
+    # Reading, prefiltering AND batching all happen in this thread, so they overlap the search.
+    # `mmseqs search` is a subprocess: while it runs the interpreter is blocked in `wait()` with the
+    # GIL dropped, which is exactly when the next batch should be being read and filtered. Doing the
+    # filter in the consumer instead made the two strictly serial -- on SRR8363894 that is 2.77 s of
+    # read+prefilter and 7.43 s of search back to back, where the pair could cost max(), not sum().
+    #
+    # The queue therefore carries FINISHED BATCHES, not raw chunks. That is what keeps memory
+    # bounded while letting the reader run arbitrarily far ahead in *reads*: a batch is at most
+    # `chunk_size` survivors however many million reads had to be scanned to find them.
     def reader():
+        prefiltering = prefilter and seqtype == "nt"
+        if prefiltering:
+            from ..prefilter import keep_records  # noqa: PLC0415 — optional native extension
+        pending: list = []
+        n_pending_read = 0
         try:
             pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit)
             for chunk in chunked_fragments(pairs, chunk_size):
-                chunks.put(chunk)
+                n_pending_read += len(chunk)
+                if prefiltering:
+                    chunk = keep_records(chunk, ref.target_fasta, threads=threads)
+                pending.extend(chunk)
+                # Flush on a chunk boundary only. `chunked_fragments` keeps a fragment's mates in
+                # one chunk, and splitting them is a bug this pipeline has shipped once already
+                # under --reconstruct.
+                if len(pending) >= chunk_size:
+                    chunks.put((n_pending_read, pending))
+                    pending, n_pending_read = [], 0
+            if pending or n_pending_read:
+                chunks.put((n_pending_read, pending))
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
             reader_exc.append(exc)
         finally:
@@ -506,39 +531,27 @@ def map_rnaseq(
                     if reads_fh is not None:
                         reads_fh.write(f">{r['sequence_id']}\n{r['sequence']}\n")
 
-            # READ chunk size and SEARCH batch size are not the same thing once the prefilter is
-            # on. Reading stays chunked to bound memory, but a prefiltered chunk is tiny -- 0.47 %
-            # of reads survive on a 0.024 %-receptor library -- and every `mmseqs search` call
-            # costs ~0.7 s of fixed setup whatever it is given. Ten near-empty searches were 25.8 s
-            # against 13.4 s for one (SRR10611239). So survivors accumulate until they amount to a
-            # full chunk's worth of work, and only then is MMseqs2 invoked.
-            #
-            # Flushing only ever happens on a chunk boundary, never inside one: `chunked_fragments`
-            # guarantees a fragment's mates land in the same chunk, and splitting them is a bug
-            # this pipeline has already shipped once under --reconstruct.
-            pending: list = []
+            # This loop now does nothing but search and write. Reading, prefiltering and batching
+            # all happen in the reader thread (see `reader` above) so that they overlap the
+            # subprocess this loop spends its time waiting on. READ chunk size and SEARCH batch
+            # size are separate: a prefiltered 400 k-read chunk holds ~1,900 reads, and every
+            # `mmseqs search` call costs ~0.7 s of fixed setup whatever it is handed -- ten
+            # near-empty searches measured 25.8 s against 13.4 s for one.
             while True:
-                chunk = chunks.get()
-                if chunk is None:
+                item = chunks.get()
+                if item is None:
                     if reader_exc:
                         raise reader_exc[0]
                     break
-                report.total_reads += len(chunk)
+                n_read, batch = item
+                report.total_reads += n_read
                 if prefilter and seqtype == "nt":
-                    from ..prefilter import keep_records  # noqa: PLC0415 — optional native ext
-                    survivors = keep_records(chunk, ref.target_fasta, threads=threads)
                     report.prefilter_stats["seen"] = (
-                        report.prefilter_stats.get("seen", 0) + len(chunk))
+                        report.prefilter_stats.get("seen", 0) + n_read)
                     report.prefilter_stats["passed"] = (
-                        report.prefilter_stats.get("passed", 0) + len(survivors))
-                else:
-                    survivors = chunk
-                pending.extend(survivors)
-                if len(pending) >= chunk_size:
-                    flush(pending)
-                    pending = []
-            if pending:
-                flush(pending)
+                        report.prefilter_stats.get("passed", 0) + len(batch))
+                if batch:
+                    flush(batch)
     finally:
         if reads_fh is not None:
             reads_fh.close()
