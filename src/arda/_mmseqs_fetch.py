@@ -78,7 +78,10 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
     asset = default_asset()
     url = RELEASE_URL.format(asset=asset)
     print(f"[arda] fetching mmseqs: {url}", file=sys.stderr)
-    with tempfile.TemporaryDirectory(prefix="arda_mmseqs_") as td:
+    # Scratch next to the destination, NOT in the system temp dir: on a cluster /tmp is routinely
+    # a small node-local filesystem (aldan3's is 2.0 GB with 29 MB free) and this archive plus its
+    # extraction does not fit. The IgBLAST fetch died there first, with ENOSPC.
+    with tempfile.TemporaryDirectory(prefix=".arda_mmseqs_", dir=bin_dir) as td:
         tmp = Path(td)
         tarball = tmp / asset
         _download(url, tarball)

@@ -155,7 +155,13 @@ def fetch(dest: Path, *, force: bool = False) -> Path:
         staging = dest.parent / f".{dest.name}.staging.{os.getpid()}"
         shutil.rmtree(staging, ignore_errors=True)
         try:
-            with tempfile.TemporaryDirectory(prefix="arda_igblast_") as td:
+            # Scratch next to the destination, NOT in the system temp dir. The release is a
+            # ~400 MB download that extracts to more, and on a cluster /tmp is routinely a small
+            # node-local filesystem -- aldan3's is 2.0 GB with 29 MB free, where this died on
+            # `OSError: [Errno 28] No space left on device`. Putting it here also means the whole
+            # download-extract-lay out-replace sequence happens on one filesystem, so the final
+            # move is a rename by construction rather than by assumption.
+            with tempfile.TemporaryDirectory(prefix=".arda_igblast_", dir=dest.parent) as td:
                 tmp = Path(td)
                 tar_path = tmp / tarball
                 _download(LATEST_URL + tarball, tar_path)
