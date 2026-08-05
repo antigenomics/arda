@@ -3,6 +3,62 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.6.3
+
+### Fixed — the mmseqs auto-fetch could publish a half-written binary
+
+arda runs concurrently against one cache **by design** — a Nextflow process per sample, a SLURM
+array task per shard — and on a cold cache every one of them calls the fetch in the same moment.
+That path installed with `shutil.copy2` straight onto `bin/mmseqs`, which is this repo's
+signature bug in its purest form. Two silent failures:
+
+* `copy2` writes **in place**, so two processes doing it at once interleave their bytes and
+  produce a corrupt binary that nothing reported an error about;
+* `dest.exists()` — the gate deciding the work is already done — goes true on the **first byte**
+  `copy2` writes. A third process therefore finds an mmseqs, trusts it, and executes a truncated
+  file. The `chmod` came *after* the copy as well, leaving a second window in which the file
+  existed but was not executable.
+
+Now there is one downloader under `build_lock`, the binary is made executable while still under
+a private name, and a single `os.replace` publishes it. A rename is atomic within a filesystem,
+so `bin/mmseqs` only ever exists as a complete, executable binary — which is what makes
+`dest.exists()` a legitimate gate instead of a bug. (`os.replace` is a rename only within one
+filesystem, which is why 2.6.2's move of the staging directory next to the destination is a
+prerequisite, not a separate fix.)
+
+The two new tests were checked against the old implementation and **both fail there** — a
+concurrency test that passes on the broken code pins nothing. The decisive one interrupts the
+copy *after* it has written bytes, which is what a full disk, an OOM kill or a SLURM timeout
+does, and asserts no partial binary is left for the next process to run.
+
+The reference fetch (`_database_fetch`) and the new IgBLAST fetch already worked this way; this
+brings the third one into line.
+
+### Fixed — `pip install 'arda-mapper[mmseqs]'` was a hard failure
+
+The `mmseqs` extra depended on `arda-mmseqs`, a companion distribution that is built by CI but
+has never been uploaded to PyPI. An extra naming a package the index does not have does not
+degrade gracefully — it is a resolution error:
+
+```
+ERROR: No matching distribution found for arda-mmseqs<19,>=18; extra == "mmseqs"
+```
+
+And that exact command was what the README, the installation docs, and `mmseqs_binary()`'s own
+"binary not found" error all told you to run. The one actionable line in the error message was
+itself broken.
+
+`mmseqs` is now an empty alias, like `rnaseq` already was, so existing pins keep resolving.
+Nothing is lost: the bundled wheel was only ever a convenience over the runtime auto-fetch,
+which pulls the same static binary, is what a plain install already does, and needs the network
+exactly once — as `pip` itself just did. The four places that recommended the extra now describe
+auto-fetch, and the resolution test asserts the advice names a route that exists.
+
+There is no install-time alternative to look for: **a wheel has no post-install hook.** `pip`
+unpacks an archive and runs nothing, by design, so "download it during `pip install`" is not
+something a package can opt into. Fetching at first use is the standard answer to that
+constraint, and it is what arda already does.
+
 ## 2.6.2
 
 ### Fixed — auto-fetch staged its download in the system temp dir, and died on a cluster

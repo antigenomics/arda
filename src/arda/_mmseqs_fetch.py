@@ -19,6 +19,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from ._locking import build_lock
+
 RELEASE_URL = "https://github.com/soedinglab/MMseqs2/releases/latest/download/{asset}"
 
 # GitHub rejects the default Python-urllib User-Agent on some networks; mimic a
@@ -68,40 +70,72 @@ def default_asset() -> str:
 
 
 def fetch(bin_dir: Path, *, force: bool = False) -> Path:
-    """Download + install the mmseqs binary into *bin_dir*; return its path."""
+    """Download + install the mmseqs binary into *bin_dir*; return its path.
+
+    Concurrency-safe, because arda runs concurrently against one cache by design -- a Nextflow
+    process per sample, a SLURM array task per shard -- and on a cold cache every one of them
+    calls this at the same moment.
+
+    It used to `shutil.copy2` straight onto ``bin/mmseqs``, which is this repo's signature bug in
+    its purest form. Two failures, both silent:
+
+    * copy2 writes **in place**, so two processes doing it at once interleave their bytes and the
+      result is a corrupt binary that nobody reported an error about;
+    * ``dest.exists()`` -- the gate that decides the work is already done -- becomes true on the
+      **first byte** copy2 writes. A third process therefore sees an mmseqs, returns it, and
+      executes a truncated file. (The chmod came after the copy too, so there was a second window
+      where the file existed but was not executable.)
+
+    Now: one downloader under the build lock, the binary made executable while still under a
+    private name, and a single ``os.replace`` to publish it. A rename is atomic within a
+    filesystem, so ``dest`` only ever exists as a complete, executable binary -- which is what
+    makes ``dest.exists()`` a legitimate gate rather than a bug.
+    """
     bin_dir = Path(bin_dir)
     bin_dir.mkdir(parents=True, exist_ok=True)
     dest = bin_dir / "mmseqs"
     if dest.exists() and not force:
         return dest
 
-    asset = default_asset()
-    url = RELEASE_URL.format(asset=asset)
-    print(f"[arda] fetching mmseqs: {url}", file=sys.stderr)
-    # Scratch next to the destination, NOT in the system temp dir: on a cluster /tmp is routinely
-    # a small node-local filesystem (aldan3's is 2.0 GB with 29 MB free) and this archive plus its
-    # extraction does not fit. The IgBLAST fetch died there first, with ENOSPC.
-    with tempfile.TemporaryDirectory(prefix=".arda_mmseqs_", dir=bin_dir) as td:
-        tmp = Path(td)
-        tarball = tmp / asset
-        _download(url, tarball)
-        with tarfile.open(tarball) as tf:
-            tmp_resolved = tmp.resolve()
-            for member in tf.getmembers():
-                if member.issym() or member.islnk():
-                    raise RuntimeError(
-                        f"Refusing to extract link from MMseqs2 archive: {member.name}"
-                    )
-                member_path = (tmp / member.name).resolve()
-                if not str(member_path).startswith(str(tmp_resolved) + os.sep):
-                    raise RuntimeError(
-                        f"Refusing to extract path outside temp dir: {member.name}"
-                    )
-            tf.extractall(tmp)
-        extracted = next(tmp.rglob("bin/mmseqs"), None)  # static archives: mmseqs/bin/mmseqs
-        if extracted is None:
-            raise RuntimeError(f"Unexpected MMseqs2 archive layout in {asset}")
-        shutil.copy2(extracted, dest)
-        dest.chmod(dest.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    # Under --force the work is ours by definition; otherwise whoever we queued behind may have
+    # finished it while we waited, and there is then nothing left to do.
+    done = (lambda: False) if force else dest.exists
+    with build_lock(bin_dir / ".mmseqs.lock", done=done) as ours:
+        if not ours:
+            return dest
+        asset = default_asset()
+        url = RELEASE_URL.format(asset=asset)
+        print(f"[arda] fetching mmseqs: {url}", file=sys.stderr)
+        # Scratch next to the destination, NOT in the system temp dir: on a cluster /tmp is
+        # routinely a small node-local filesystem (aldan3's is 2.0 GB with 29 MB free) and this
+        # archive plus its extraction does not fit. The IgBLAST fetch died there first, with
+        # ENOSPC. It also puts the staged binary on the same filesystem as `dest`, which is what
+        # makes the `os.replace` below a rename rather than a copy.
+        with tempfile.TemporaryDirectory(prefix=".arda_mmseqs_", dir=bin_dir) as td:
+            tmp = Path(td)
+            tarball = tmp / asset
+            _download(url, tarball)
+            with tarfile.open(tarball) as tf:
+                tmp_resolved = tmp.resolve()
+                for member in tf.getmembers():
+                    if member.issym() or member.islnk():
+                        raise RuntimeError(
+                            f"Refusing to extract link from MMseqs2 archive: {member.name}"
+                        )
+                    member_path = (tmp / member.name).resolve()
+                    if not str(member_path).startswith(str(tmp_resolved) + os.sep):
+                        raise RuntimeError(
+                            f"Refusing to extract path outside temp dir: {member.name}"
+                        )
+                tf.extractall(tmp)
+            extracted = next(tmp.rglob("bin/mmseqs"), None)  # static archives: mmseqs/bin/mmseqs
+            if extracted is None:
+                raise RuntimeError(f"Unexpected MMseqs2 archive layout in {asset}")
+            staged = tmp / "mmseqs.staged"
+            shutil.copy2(extracted, staged)
+            # Executable BEFORE it is published, never after: a rename cannot be observed
+            # half-done, but a chmod that follows the publish can.
+            staged.chmod(staged.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+            os.replace(staged, dest)
     print(f"[arda] installed mmseqs -> {dest}", file=sys.stderr)
     return dest
