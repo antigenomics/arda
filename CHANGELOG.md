@@ -3,6 +3,308 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.6.0
+
+### Fixed — a run was not reproducible
+
+`arda rnaseq correct` did not produce the same output twice. Three runs over one unchanged
+200k-read AIRR, same flags, gave three different `clones.tsv`. polars' `group_by` is a
+multithreaded hash aggregation and the clonotype fold leaned on it three times without pinning
+an order: group order (so `_parents` collapsed an error child onto whichever parent it met
+first — one identical junction flipped between `IGHV3-11*06` and `IGHV3-21*08`), read order
+within a group (so `_assign_coverage`, which is first-with-longest-overlap-wins, moved
+`duplicate_count` between 11 and 9 for one IGK clonotype), and the order of equal-`count` rows.
+
+None of it was visible. The row *count* was stable at 449 every time, so the table looked
+reproducible while its V calls and abundances were not.
+
+Two more coin flips in the same class, upstream: `_best_hits` resolved exactly-tied bit scores
+with an unordered sort and an unordered `unique` — paralogous scaffolds tie routinely, and
+**all 25** tied queries in a fixture flipped their V call when the input rows were reversed —
+and chunk boundaries could fall between a fragment's two mates, costing that fragment the
+isotype donation `_apply_constant_rule` makes per chunk. The default paired path got away with
+the latter (records arrive strictly two per fragment) but `--reconstruct` breaks that parity.
+
+After the fix, on 200k reads: all three artifacts byte-identical across 1, 4 and 8 threads;
+`correct` byte-identical over five repeat runs and six input-row permutations. The shipped
+example is unchanged and the realworld IgBLAST-concordance suite still passes — this is a
+reproducibility fix, not an accuracy change.
+
+### Added — `arda rnaseq slurm`, byte-identical to a single-node run
+
+`arda slurm` could not run the RNA-seq path, and aiming it there would have been silently
+wrong: it writes FASTA (dropping quality), round-robins *records* so a fragment's mates land in
+different shards, and has no Stage 2/3 at all.
+
+New `arda rnaseq split | reduce | slurm`. Only Stage 1 is distributed — `correct` counts
+distinct fragments globally and `assemble` grows contigs *across* reads, so sharding either
+would count a clone once per shard and never build the long-CDR3 contigs Stage 3 exists for.
+Shards are **contiguous blocks of read pairs**, so concatenating the per-shard AIRR in shard
+order reproduces the single-node row order exactly, and `run` and `reduce` call the *same*
+Stage-2/3 function rather than two copies that could drift.
+
+Verified on 60k real read pairs, single-node vs 5 shards: `airr.tsv`, `assembled.airr.tsv` and
+`clones.tsv` all byte-identical.
+
+The amplicon `arda split` / `arda slurm` are unchanged, and now say in their help that they are
+not for paired RNA-seq.
+
+### Added — resource reporting for every stage, and provenance in the report
+
+`assemble` and `correct` now report `wall_seconds`, `peak_rss_mb` and `rss_gain_mb`; `map` was
+moved onto the same helper so all three mean the same thing. This matters because Stage 3 is
+the expensive one: mapping is flat at ~300–400 MB at any depth, but the clone set scales with
+repertoire richness (2.7 GB at 28k clonotypes vs 314 MB for a colder sample with *more* reads),
+so a `--mem` directive sized from the mapping number alone gets OOM-killed.
+
+`peak_rss_mb` is documented as what it actually is: the whole-process high-water mark **as of
+that stage's end**, monotone, because `getrusage` offers no per-stage reset. That is the number
+a memory directive has to cover; `rss_gain_mb` gives the per-stage attribution.
+
+The merged report also gained `mmseqs_version` and a `reference` fingerprint — when two
+delivery modes disagree, a different aligner build or reference is the usual cause and neither
+is otherwise visible.
+
+### Added — mmseqs that just works, and is the *right* mmseqs
+
+`mmseqs_binary()` took whatever was on `PATH`. An index is only reusable by the release that
+compiled it, so a mismatched binary made every run discard `database/`'s precompiled DBs and
+rebuild a private cache — no error, just a slow start and results not comparable with anyone
+else's. Seen on a cluster whose `~/bin/mmseqs` shadowed conda's version-matched one.
+
+Candidates are now version-matched, with auto-fetch of a known-good build as the fallback and a
+warning that names the consequence if even that fails. `$ARDA_MMSEQS` stays unchecked (an
+explicit override is the user's call), and no filtering happens when no index ships — a plain
+`pip install` has nothing to be compatible with.
+
+`versions_compatible()` also handles a spelling `version_key` could not: the static release
+asset prints its **full commit hash** where bioconda and the index marker print
+release+short-commit. Release 18 *is* commit `8cc5c…`, so those are one build — and since the
+static asset is what arda auto-fetches, the stricter comparison would have rejected arda's own
+downloaded binary on every macOS install.
+
+New `pip install 'arda-mapper[mmseqs]'` ships the binary in a companion wheel
+(`packaging/arda-mmseqs`), so there is no first-run download and no network needed. A separate
+distribution because pip cannot be asked to *prefer* a wheel — build tags are ranked, not
+chosen; the same shape `cmake`, `ninja` and `ruff` use. MMseqs2 is MIT and its notice ships
+with the wheel.
+
+### Changed
+
+* The Nextflow module pins `mmseqs2 =18.8cc5c` exactly (was `>=15`). A floating pin lets conda
+  resolve a different aligner than the CLI and SLURM paths use — an accuracy-differs-between-
+  modes hazard, not just a caching one.
+* The module gained the `meta.yml` it never had.
+
+### Added — a segment reference, and a fast path that cannot lose a read
+
+Searching 15,414 V×J scaffolds re-pays for the shared V region once per J that V pairs with —
+median 13, and 67 for TRA. `arda.refbuild.segments` emits every V, J and J+C allele as its own
+target instead: **1,244 human targets, 12.4x fewer**. A read's best V and best J then name
+exactly one scaffold through `combinations.tsv`, so the second alignment is one target rather
+than ~277. Measured on a TRA amplicon: **2.20x end to end, 85 % of reads on the fast path.**
+
+The reference is derived from `alleles.fasta` + `markup.tsv` in under a second, so `build-index`
+generates it rather than shipping it — the same argument that already excludes the mmseqs
+indexes from the 3.2 MB release asset.
+
+`arda.annotate.shortlist` exists to keep this from becoming a different tool. arda's claim is
+near-zero Stage-1 false negatives, so every read is partitioned into `implied` (fast path) or
+`rescue` (realigned against the full reference), and the partition is asserted total. V-only,
+J-only, an unknown V×J pair, a failed second alignment — all rescued, none dropped. Measured: of
+5,278 hits on real amplicon reads, **one** was lost, at bit score 56 — below the default
+`--min-score 75`, so nothing arda would have reported. Gene-level agreement with the one-pass
+path: locus 99.96 %, V 99.09 %, J 99.24 %.
+
+Two mistakes in this path produce *correct output that is silently no faster*, so both are
+now documented and tested: `JC|` targets are keyed by scaffold id rather than allele (getting it
+wrong collapsed the fast path from 85.3 % to 0.1 %), and `top_hit` on the segment pass destroys
+the V+J pairing the whole scheme depends on.
+
+Strand is handled per read, not per library. The segment pass runs `--strand 2` and mmseqs
+reports reverse hits with `qstart > qend`, which makes a hand-built prefilter diagonal
+meaningless; reverse-strand reads are aligned against their own reverse complement and the
+coordinates flipped back. A fixed-orientation assumption would have been wrong on the first
+library tested — 99.1 % of its reads were reverse-strand, and library strandedness is not a
+constant across protocols.
+
+There is deliberately **no alpha/delta ambiguity rule**. TRD *is* TRAV/DV + TRDJ — the J (and C)
+decides the locus — and the reference already encodes it: of 1,050 scaffolds built from a TRAV/DV
+segment, 1,005 are locus TRA and 45 are locus TRD. An earlier draft rescued these as ambiguous,
+discarding real rearrangements the reference contains. `combinations.tsv` is the arbiter.
+
+### Fixed — the two-pass fabricated junctions on J->C reads
+
+A read that runs through its J into the constant region has two plausible homes: the V×J
+scaffold its best (V, J) pair names, and the J+C scaffold the segment pass actually hit. Among
+775 V alleles a 100 nt read always has *some* V above threshold, so the shortlist always found a
+pair — and forcing that choice took a read scoring **141** on a J+C scaffold, re-seated it at
+**99** on a V×J one, destroyed its `c_call` (the isotype) and **invented a `junction_aa`** out of
+the spurious V. 4 of 453 mapped real reads, 3 of them gaining a fabricated junction.
+
+Both scaffolds now compete on bit score, exactly as they do in the one-pass search. Two targets
+per read is still ~138x fewer alignments than the full reference. On real reads `locus`,
+`c_call`, `junction_aa` and `productive` are now byte-identical to the one-pass output.
+
+Two further corrections came out of wiring it up. V alleles of one gene differ by a nucleotide or
+two, so a short read routinely cannot separate them — **a measured mean of 3.45 tie exactly** on
+segment bit score. Picking one of them by segment score alone diverged from the one-pass V *call*
+on 38 % of TRA amplicon reads, and since the clonotype key is `(locus, v_call, j_call, junction)`
+at ALLELE level, that silently splits and merges clonotypes. Every tied allele's scaffold is now a
+candidate (capped at 8; they share a diagonal, so it is one extra prefilter line each, not an
+extra search).
+
+That made the alignment TSV 2.88x larger — and it was being written with the full 17-column
+format, `cigar`/`qaln`/`taln` included, rebuilding a fraction of the 194 MB -> 877 MB peak-RSS
+regression `top_hit` exists to prevent. Reducing to one row per query first fixes the memory and,
+unexpectedly, the calls: both paths now break exact ties by mmseqs' own ordering rather than by
+two different rules, so **allele-level `v_call` agreement went 0.9735 -> 0.9956** and `junction_aa`,
+`locus` and `c_call` are byte-identical. Deterministic across 2, 4 and 8 threads.
+
+`--two-pass` is now reachable: it is wired into `arda rnaseq map` and `arda rnaseq run` (and so
+through the SLURM and Nextflow paths, which call the same function), with the segment DB and
+`combinations.tsv` built and parsed once per run rather than per chunk, and the shortlist
+accounting reported under `segment_search` in `arda.json`. A missing `segments.fasta` falls back
+to the one-pass search with a warning rather than failing.
+
+**Off by default, and it is an amplicon optimisation rather than a general one.** The scheme
+needs a read to hit both a V and a J so the pair names one scaffold. Primer-anchored amplicon
+reads do (85 %); bulk RNA-seq reads land anywhere in a transcript and do not (5 %). Measured:
+
+| library | receptor % | fast path | speedup |
+|---|---|---|---|
+| TCR amplicon | 48.47 | 85.13 % | **3.51x** |
+| bulk RNA-seq | 2.74 | 4.98 % | 0.762x — 31 % **slower** |
+
+On bulk the segment search is overhead on top of a rescue that is nearly the whole set. Neither
+regime loses a read arda would report (0 lost at or above `--min-score`, 0 gained, both). The
+bulk case is a *scan-term* problem and the segment reference structurally cannot address it.
+
+### Fixed — `productive="F"` claimed 75 % of mapped reads are non-productive
+
+`productive` is a property of the V-J junction, and `phase` is only computed when a read reaches
+both CDR3 and FWR4. A read with a V but no junction fell through to `"F"` — a bare V fragment
+reported as a *confirmed* non-productive rearrangement. On the real bulk fixture that is **342 of
+453 mapped reads (75 %)**, since most bulk reads lie wholly inside V and never reach CDR3.
+
+The module already had the rule right one branch over (a V-less read leaves `productive` empty —
+"not non-productive, it is unevaluable"). `productive` and `vj_in_frame` are now empty unless a
+junction was observed; `stop_codon` deliberately is not, because a stop in the V-side regions is
+directly observed either way. The test asserts the invariant both ways — `productive` is set iff
+`junction_aa` is — so neither an over- nor an under-report can pass.
+
+### Fixed — the isotype vote counted mates, not fragments
+
+`_dominant_ccall` documents itself as the dominant resolved class over a clonotype's *fragments'*
+constant mates, but iterated per-mate `sequence_id`s. A fragment with both mates assigned voted
+twice while a fragment with one assigned mate voted once, so a 1-fragment minority could outvote
+a 2-fragment majority. One vote per fragment now, order preserved so the tie-break stays
+deterministic. Only affects samples with uneven mate assignment.
+
+### Fixed — `--error-method binom|betabinom` could hang forever
+
+`_root` walks parent pointers in an unbounded `while`, so a 2-cycle is not a wrong answer — it is
+a run that never returns. `_parents` cannot make one (it requires `count[parent] * p_err >=
+count[child]`, forcing counts to increase along the chain), but `_error_pileup` re-decided
+parentage from per-position depth with no ordering condition, and that test is symmetric at low
+coverage: `_binom_sf(1, 2, 0.001) = 0.001999 > alpha`, so each of a pair passes as the other's
+error child. Reproduced on real Stage-1 output (16,157 rows → 1,190 clonotypes): mutual pairs at
+indices 77↔143 and 857↔861 under both methods. Fixed by restoring the invariant — a parent must
+be strictly more abundant than its child. Not on the default path (`error_method="simple"` is
+acyclic by construction), and the regression test lives in the DB-free suite, because a stage
+that never terminates must not be gated behind an mmseqs skip.
+
+### Fixed — tied V candidates shared one alignment diagonal
+
+A V×J scaffold is `V + pad + J` with the V left-aligned, so a read sits at the same offset only
+in scaffolds whose V allele has the same length — and alleles of one gene do not. On the human
+reference **11 V genes carry alleles of differing length, 8 differing by ≥ 35 nt and one by 72**,
+and `mmseqs align` returns nothing once the diagonal is off by more than ~35 nt, so the shared
+diagonal silently dropped the sibling scaffold. Each candidate is now shifted by its V-end
+difference. A candidate whose geometry is unknown keeps the unshifted diagonal and is no worse
+off than before.
+
+### Changed — each stage materialises only the AIRR columns it reads
+
+`_error_pileup`, `_assign_coverage` and `assemble_contigs` each built Python strings for all 83
+columns of the Stage-1 AIRR, including `sequence_alignment`, `germline_alignment` and the seven
+region sequences. They subscript 6, 8 and 11 of them. Measured on 181,200 real rows: **2.42 KB/row
+for all columns vs 0.41 KB/row for the used ones — `correct` peak RSS 1099 → 714 MB**. At full
+depth (~3.6 M mapped rows) that is ~7 GB. `clones.tsv` is byte-identical across the full
+three-stage pipeline.
+
+### Added — `--adaptive`, measured and off by default
+
+`--max-accept` is unbounded by default, so arda aligns every hitting read against all ~300 of its
+prefilter candidates and keeps one. Capping it is the largest single lever on the align term
+(75 % of bulk search wall). The cap alone is lossy, so `--adaptive` caps everything and then
+re-searches *uncapped* only the reads whose capped score falls below a trigger. Measured on 1 M
+real bulk reads: **2.17× with zero reads lost**, the uncertain set being 0.5 % of the library.
+
+Off by default because read preservation is not the whole guarantee: it also changes
+`junction_aa` on 3 of 453 reads on the real-read fixture — two of them scoring 128 and 131
+against a 90-bit trigger — and moves **~23 % of the clonotype table** (allele-level Jaccard
+0.7706 on 1 M bulk reads). A high score does not certify that the best alignment was found, so a
+score-only trigger may not be calibratable at all. Shipped rather than deleted because the
+measurement bounds how much of a bulk run is alignment work that never reaches the output; the
+test pins the junction-move count so it cannot silently grow.
+
+### Fixed — segment targets could not be resolved through `Reference`
+
+`Reference` is built from `markup.tsv`, which describes scaffolds, so `ref.get("V|IGHV3-7*02")`
+returned `None` and `_annotate_chunk` dropped every segment hit as unmapped: searching the
+segment reference produced **0 annotated reads against the scaffold reference's 278** on the same
+input, even though the search found them. `segments.markup.tsv` shares the schema and the key
+space and now loads through the same path. Optional by design — a reference built before 2.6.0
+has no segment entries rather than failing.
+
+After this the segment reference annotates the same 278 reads and finds all 126 V-only reads. All
+775 V segments agree with their scaffolds on FR1–FR3 region coordinates (0 differing), because a
+scaffold is `V+pad+J` with the V at position 1. The two paths still disagree on the V *gene* for
+13 of 126 V-only reads, because the segment search ranks paralogues by V alone while the scaffold
+search ranks by `V+pad+J`; running `arda igblast` on exactly those reads agrees with the segment
+call **9 times to 3**. Segment-as-primary remains unreleased pending the junction and clonotype
+gates.
+
+### Fixed — the two-pass tests were testing the one-pass search
+
+Generating the segment reference in `build-index` and gitignoring it left CI — which never runs
+`build-index` — with no `segments.fasta`, so `map_rnaseq` fell back to the one-pass search as
+designed and the comparison tests compared the one-pass output *to itself*, and passed. Third
+instance of this repo's signature failure: silent success over nothing. A module fixture now
+builds the segment reference, and `test_two_pass_is_actually_engaged` guards the guard — it
+asserts the fast path resolved something and says in its failure message that every other
+two-pass assertion is vacuous otherwise.
+
+### Changed — a measured cost model, and a bigger chunk
+
+Fitting 13 full-depth cluster runs (60,252 s) gives `wall_map ~= total_reads/44,470 +
+mapped_reads/681`: **a read that hits costs ~65x one that does not**. That splits `map` into a
+scan term and an align term whose ratio is set by the library's receptor fraction, and it is why
+the segment reference helps most on amplicon and least on a 0.0003 %-receptor negative. The
+RNA-seq chunk moved 200k -> 400k on the same evidence. `scripts/bench_cost_model.py` refits it.
+
+Refit directly against `mmseqs search` rather than against whole-run wall (round 5): `wall_search
+~= reads/46,353 + hits/350`, where *hits* is reads with at least one prefilter candidate. It fits
+three independent points to 0.0 s and carries **no fixed per-call term** — the earlier
+`mapped_reads/681` was a whole-run figure imported into a per-hit decomposition, which forced a
+spurious intercept. Four consecutive 400k searches take 35.0/34.8/35.2/35.9 s, i.e. flat, so
+chunking costs 1.021x and no more.
+
+Unit tests now run against **real reads** (660 pairs from public SRR5233639, 88 KB) rather than
+synthetic ones only.
+
+### Fixed — every cold-cache install of a bumped version 404'd
+
+`reference_url` was derived from `__version__`, so releasing 2.5.7 pointed first-run users at a
+`v2.5.7` asset that does not exist — the reference tarball only changes when the reference does.
+Pinned to `_REFERENCE_TAG` with a fallback. Found by the cold-cache experiment, not by a test.
+
+### Changed — lint gates CI, and the docs Makefile matches it
+
+`ruff check src/` reported 16 errors and CI never ran it. Fixed and gated. `docs/Makefile` built
+without `-W` while CI built with it, so a local docs build could pass on something CI rejects.
+
 ## 2.5.7
 
 ### Fixed — a stale mmseqs cache was reused instead of rebuilt

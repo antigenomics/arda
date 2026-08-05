@@ -43,6 +43,15 @@ jobs:
           uv pip install --system scikit-build-core pybind11 ninja airr
           uv pip install --system -e .[test] --no-build-isolation
 
+      # Lint gates the source, not the tests -- `src/` is what ships. Ran before the tests so a
+      # style break is reported in seconds rather than after the C++ build and the full suite.
+      - name: Lint
+        # PINNED. An unpinned linter in a required gate fails on someone else's release note:
+        # ruff's default rule set widened between releases and a green local run became 114 CI
+        # errors, 39 of them objecting to `typer.Option(...)` in a default argument. The rule set
+        # itself is pinned in pyproject.toml for the same reason.
+        run: uv pip install --system 'ruff==0.15.9' && ruff check src/
+
       - name: Show environment
         run: |
           "$ARDA_MMSEQS" version

@@ -15,7 +15,7 @@ OUT="${1:-arda-reference-vdj.tar.gz}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export COPYFILE_DISABLE=1   # macOS bsdtar: no ._AppleDouble members
 
-tar czf "$OUT" -C "$ROOT/database" --exclude='vdj/*/mmseqs' vdj
+tar czf "$OUT" -C "$ROOT/database" --exclude='vdj/*/mmseqs' --exclude='vdj/*/segments.*' vdj
 # Capture the listing once. Piping `tar tzf | grep -q` SIGPIPEs tar under `pipefail` (grep exits on the
 # first match, closing the pipe) -> a false failure; here-strings have no producer to break.
 members=$(tar tzf "$OUT")

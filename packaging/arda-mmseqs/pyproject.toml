@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arda-mmseqs"
+version = "18.0.0"
+description = "A static MMseqs2 binary, packaged as a wheel for arda-mapper"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "antigenomics" }]
+keywords = ["mmseqs2", "arda", "alignment", "bioinformatics"]
+classifiers = [
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Homepage = "https://github.com/antigenomics/arda"
+"MMseqs2 upstream" = "https://github.com/soedinglab/MMseqs2"
+
+# The binary is dropped in by build_wheel.py before the wheel is built.
+[tool.setuptools.package-data]
+arda_mmseqs = ["bin/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

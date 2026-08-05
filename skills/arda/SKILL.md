@@ -201,8 +201,44 @@ arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+a
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda build-db --organism all                # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for local mmseqs version
-arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node: split → array → merge
+arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node AMPLICON: split → array → merge
+arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-node RNA-SEQ
 ```
+
+## Cluster: two adapters, and picking the wrong one fails silently
+
+| input | command | shard unit |
+|---|---|---|
+| amplicon / single-end FASTA | `arda slurm` (`arda split` + `arda merge`) | one record |
+| bulk paired RNA-seq | `arda rnaseq slurm` (`arda rnaseq split` + `rnaseq reduce`) | one read **pair** |
+
+**Never point `arda split` / `arda slurm` at paired RNA-seq.** They write FASTA — dropping the
+quality strings `--reconstruct` needs — and round-robin *records*, which puts a fragment's two
+mates in different shards. There is no error; the numbers just come out wrong.
+
+**Never shard Stage 2 or Stage 3.** `correct` counts distinct fragments and collapses error
+variants globally; `assemble` grows contigs across reads. Per shard, a clone split across N
+shards is counted N times and the long-CDR3 contigs Stage 3 exists for are never built, because
+the reads that tile them never meet. `arda rnaseq slurm` distributes only `map` and runs the
+rest once, through the same function `arda rnaseq run` uses — so a sharded run is
+**byte-identical** to a single-node one (verified on real data, all three artifacts).
+
+## mmseqs: nothing to install, and nothing to pin
+
+`pip install arda-mapper` auto-fetches a static binary on first use; `pip install
+'arda-mapper[mmseqs]'` ships it in the wheel so there is no download at all. Candidates are
+**version-matched** against the shipped indexes — an index is only reusable by the release that
+built it, so an unrelated `mmseqs` on `PATH` would silently discard `database/`'s precompiled
+DBs and rebuild a private cache. `$ARDA_MMSEQS` overrides everything and is not checked.
+
+## Run reports: `peak_rss_mb` is monotone, by design
+
+Every stage reports `wall_seconds`, `peak_rss_mb` and `rss_gain_mb`. `peak_rss_mb` is the
+**whole-process** high-water mark *as of that stage's end* (getrusage offers no per-stage
+reset), which is exactly what a SLURM `--mem` or Nextflow `memory` directive must cover;
+`rss_gain_mb` is that stage's contribution. **Budget for Stage 3, not Stage 1**: mapping is flat
+at ~300–400 MB at any depth, but the clone set scales with repertoire richness — 2.7 GB at 28k
+clonotypes, versus 314 MB for a colder sample with *more* reads.
 
 ## Bulk RNA-seq mode (`arda rnaseq`)
 
@@ -272,6 +308,43 @@ their TCR loci build `EMPTY` (the IG-only limitation in the table above).
 Read [references/reference-build.md](references/reference-build.md) for the
 `arda.refbuild` pipeline (IMGT germlines → V×J scaffolds → IgBLAST → markup TSVs)
 and `build-db` / `build-index`.
+
+### The segment reference and the rescue guarantee
+
+`build-index` also writes `segments.fasta` + `segments.markup.tsv` (`arda.refbuild.segments`):
+every V, J and J+C allele as its own target — **1,244 human targets against 15,414 V×J
+scaffolds**, 12.4× fewer. It is *derived* from `alleles.fasta` + `markup.tsv` in under a second,
+so it is neither committed nor shipped in the release tarball, exactly like the mmseqs indexes.
+
+The two-pass search uses it: hit the segment reference, take each read's best V and best J, look
+the pair up in `combinations.tsv` — that names exactly **one** V×J scaffold, so the second
+alignment is one target per read instead of ~277.
+
+⚠ **`--two-pass` is an amplicon optimisation. Do not reach for it on bulk RNA-seq.** It needs a
+read to hit BOTH a V and a J. Primer-anchored amplicon reads do (85 %) → **3.51x**; bulk reads
+land anywhere in a transcript and do not (5 %) → **0.762x, i.e. 31 % slower**, because the
+segment search becomes overhead on top of a rescue that is nearly the whole library. Off by
+default for this reason. Bulk is a *scan-term* problem; this lever only touches the align term.
+
+**Reads are never dropped by the fast path.** `arda.annotate.shortlist.shortlist()` partitions
+every read into `implied` (took the fast path) or `rescue` (goes back to the full reference), and
+asserts the partition is total. Anything that does not resolve — V only, J only, a V×J pair the
+reference does not contain, a failed second alignment — is realigned, not discarded.
+
+Two traps, each of which produced *correct output that was silently no faster*:
+
+- **`JC|` targets are named by scaffold id, not by allele.** Feed the raw target name to
+  `shortlist()` and every J→C read returns `no_such_combination`. Resolve through
+  `Reference.segment_j_call()`. Measured cost of getting this wrong: the fast path collapsed
+  from 85.3 % to 0.1 %.
+- **Never `top_hit` the segment pass.** One best hit per read destroys the V+J pairing the whole
+  scheme depends on — `implied` goes to 0.
+
+**TRD is TRAV/DV + TRDJ; the J (and C) decides the locus, not the V.** arda's reference already
+encodes it — of 1,050 scaffolds built from a TRAV/DV segment, 1,005 are locus TRA (with a TRAJ)
+and 45 are locus TRD (with a TRDJ). There is deliberately no "α/δ is ambiguous" rule:
+`combinations.tsv` is the arbiter, a pair it contains is real biology and one it does not is a
+genuine chimera.
 
 ## Sequence primitives
 

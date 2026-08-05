@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+
+from ._res import Stage
 import seqtree
 
 from ..refbuild.translate import reverse_complement
@@ -72,6 +74,11 @@ class CorrectReport:
     collapsed: int = 0  # clonotypes absorbed into a parent
     reads_with_junction: int = 0   # Stage-1 reads carrying any junction
     reads_incomplete: int = 0      # ...of which dropped as truncated/out-of-frame/stop
+    # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
+    # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
+    wall_seconds: float = 0.0
+    peak_rss_mb: float = 0.0
+    rss_gain_mb: float = 0.0
 
     def as_dict(self) -> dict:
         d = self.__dict__.copy()
@@ -201,7 +208,13 @@ def _error_pileup(
             if len(lst) < cap:
                 lst.append((ri, p))
     depth = [[0] * len(jn) for jn in junctions]                       # per clonotype, per-position read depth
-    cols = {c: raw[c].to_list() for c in raw.columns}
+    # Only the columns this function reads. A Stage-1 AIRR has 83, and `to_list()` on the
+    # rest builds Python str objects for `sequence_alignment`, `germline_alignment` and
+    # every region sequence -- measured 2.42 KB/row against 0.41 KB/row for the columns
+    # actually used, i.e. ~2 KB wasted per mapped read (~7 GB at SRR5233639's full depth).
+    # `col()` below already tolerates an absent column, so restricting the dict is safe.
+    _USED = ("c_call", "j_call", "locus", "rev_comp", "sequence", "v_call")
+    cols = {c: raw[c].to_list() for c in raw.columns if c in _USED}
     n = raw.height
 
     def col(name):
@@ -257,10 +270,20 @@ def _error_pileup(
             for d in disc:
                 cd, pd = depth[ci][d], depth[nj][d]
                 if cd == 0:
-                    ok = False; break
+                    ok = False
+                    break
                 if sf(cd, cd + pd, error_rate) <= alpha:    # child allele too deep to be error
-                    ok = False; break
-            if ok and span_counts[nj] > best_count:
+                    ok = False
+                    break
+            # A parent must be strictly MORE abundant than its child. `_parents` gets this for
+            # free -- `count[parent] * p_err >= count[child]` with `p_err < 1` forces counts to
+            # increase along parent pointers, which is the module's stated no-cycle proof. The
+            # depth test above carries no such ordering: it asks only whether the child allele's
+            # depth is consistent with sequencing error of the parent's, and that can be true in
+            # BOTH directions for a pair of similar-abundance neighbours. Two clonotypes then
+            # become each other's parent and `_root` walks the 2-cycle forever -- an unbounded
+            # hang, not a wrong number, on `--error-method binom|betabinom`.
+            if ok and span_counts[nj] > span_counts[ci] and span_counts[nj] > best_count:
                 best, best_count = nj, span_counts[nj]
         if best is not None:
             parent[ci] = best
@@ -300,7 +323,14 @@ def _assign_coverage(
     """
     assigned: list[list[str]] = [[] for _ in root_jn]
     n = raw.height
-    cols = {c: raw[c].to_list() for c in raw.columns}
+    # Only the columns this function reads. A Stage-1 AIRR has 83, and `to_list()` on the
+    # rest builds Python str objects for `sequence_alignment`, `germline_alignment` and
+    # every region sequence -- measured 2.42 KB/row against 0.41 KB/row for the columns
+    # actually used, i.e. ~2 KB wasted per mapped read (~7 GB at SRR5233639's full depth).
+    # `col()` below already tolerates an absent column, so restricting the dict is safe.
+    _USED = ("c_call", "j_call", "junction", "locus", "rev_comp", "sequence",
+             "sequence_id", "v_call")
+    cols = {c: raw[c].to_list() for c in raw.columns if c in _USED}
 
     def col(name):
         return cols.get(name, [None] * n)
@@ -316,7 +346,8 @@ def _assign_coverage(
             continue
         rp = exact.get(((locc[i] or ""), (vc[i] or ""), (jc[i] or ""), (jnc[i] or "")))
         if rp is not None:
-            assigned[rp].append(sid); done.add(sid)
+            assigned[rp].append(sid)
+            done.add(sid)
 
     # Pass 2: align the rest (partial V-side / J-side reads that never reached a complete junction).
     index: dict[str, list[tuple[int, int]]] = defaultdict(list)
@@ -359,7 +390,8 @@ def _assign_coverage(
                 if mm <= budget:
                     best_ov, best_ri = ov, ri
         if best_ri is not None:
-            assigned[best_ri].append(sid); done.add(sid)
+            assigned[best_ri].append(sid)
+            done.add(sid)
     return assigned
 
 
@@ -473,6 +505,7 @@ def correct_airr(
     if error_method not in ("simple", "binom", "betabinom"):
         raise ValueError(f"error_method must be simple|binom|betabinom, got {error_method!r}")
 
+    stage = Stage()
     output = Path(output)
     raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
     if extra_airr is not None:
@@ -502,11 +535,24 @@ def correct_airr(
     # reported as `consensus_count` when abundance is spanning (`coverage=False`).
     df = df.with_columns(pl.col("sequence_id").str.replace(r"/[12]$", "").alias("_frag"))
     keys = ["locus", "v_call", "j_call", "junction"]
-    g = df.group_by(keys).agg(
+    # Every ordering below is load-bearing; without them `correct` is not reproducible AT ALL.
+    # Measured on 200k reads: three runs, same input, same flags -> three different clones.tsv.
+    # polars' group_by is a multithreaded hash aggregation, so all three of these were arbitrary:
+    #   * group order          -> `_parents` collapses error children onto whichever parent it met
+    #                             first, so an identical junction flipped between paralogous V calls
+    #                             (IGHV3-11*06 vs IGHV3-21*08) from run to run;
+    #   * read order in a group -> `_assign_coverage` is first-with-longest-overlap-wins, so
+    #                             `duplicate_count` moved (11/8 vs 9/6 for one IGK clonotype);
+    #   * equal `count` rows    -> emitted in arbitrary order.
+    # Sorting the input makes `.first()` well defined; sorting `read_ids` fixes coverage; and the
+    # final sort carries the full group key, which is a TOTAL order -- so the row order no longer
+    # depends on the input row order either. That last property is what lets a sharded or Nextflow
+    # run be byte-identical to a single-node one.
+    g = df.sort("sequence_id").group_by(keys, maintain_order=True).agg(
         pl.col("_frag").n_unique().alias("count"),           # fragments (consensuses), not reads
-        pl.col("sequence_id").alias("read_ids"),
+        pl.col("sequence_id").sort().alias("read_ids"),
         pl.col("junction_aa").first().alias("junction_aa"),
-    ).sort("count", descending=True)
+    ).sort(["count", *keys], descending=[True, False, False, False, False])
 
     junctions = g["junction"].to_list()
     counts = [int(c) for c in g["count"].to_list()]
@@ -563,9 +609,14 @@ def correct_airr(
         # A clonotype's isotype = the dominant RESOLVED class over its fragments' constant mates.
         # `isotype_class` emits the generic `IGHC` only on cross-class ambiguity (IGHG1,IGHM), so
         # report IGHC only if NO read resolves -- a handful of ambiguous reads must not outvote it.
+        # One vote per FRAGMENT, not per assigned mate. `read_list` holds sequence_ids, so a
+        # fragment whose two mates were both assigned used to contribute its calls twice while a
+        # fragment with one assigned mate contributed once -- weighting the vote by assigned
+        # mates rather than by molecules, exactly as the first line of this comment says it must
+        # not. A 1-fragment minority could then outvote a 2-fragment majority.
         calls: list[str] = []
-        for sid in read_list:
-            calls.extend(frag_iso.get(_strip_mate(sid), ()))
+        for frag in dict.fromkeys(_strip_mate(sid) for sid in read_list):
+            calls.extend(frag_iso.get(frag, ()))
         if not calls:
             return ""
         resolved = [c for c in calls if c not in _GENERIC_ISOTYPE]
@@ -595,6 +646,7 @@ def correct_airr(
         rows = [(rid, junctions[roots[r]]) for r in range(len(roots)) for rid in read_sets[r]]
         pl.DataFrame(rows, schema=["sequence_id", "junction"], orient="row").write_csv(
             read_map, separator="\t")
+    stage.finish(report)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
     return report

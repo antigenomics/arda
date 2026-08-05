@@ -24,10 +24,45 @@ from ._mmseqs_fetch import _download  # reuse the hardened UA/retry downloader
 _ASSET = "arda-reference-vdj.tar.gz"
 _URL = "https://github.com/antigenomics/arda/releases/download/v{version}/" + _ASSET
 
+# The release tag that carries the CURRENT reference asset — deliberately NOT `__version__`.
+#
+# The reference is data and changes on its own schedule; the package version changes every
+# release. Deriving the URL from `__version__` silently coupled them, so the moment the version
+# was bumped ahead of a GitHub release every cold-cache install died on:
+#     RuntimeError: failed to download .../v2.6.0/arda-reference-vdj.tar.gz: HTTP Error 404
+# Found by running eight concurrent arda processes against a fresh cache on a cluster; it would
+# have hit the first real `pip install` of any release whose asset was not up yet.
+#
+# Bump this ONLY when a release actually publishes a new reference tarball. `$ARDA_REFERENCE_TAG`
+# overrides it for testing a candidate asset.
+_REFERENCE_TAG = "2.5.7"
+
 
 def reference_url(version: str | None = None) -> str:
-    """Release-asset URL for the reference tarball at ``version`` (default: this build)."""
-    return _URL.format(version=version or __version__)
+    """Release-asset URL for the reference tarball.
+
+    Defaults to :data:`_REFERENCE_TAG` (the release that published the current reference), not
+    to the running package version — see the note there.
+    """
+    tag = version or os.environ.get("ARDA_REFERENCE_TAG") or _REFERENCE_TAG
+    return _URL.format(version=tag.lstrip("v"))
+
+
+def _candidate_urls(version: str | None = None) -> list[str]:
+    """Reference URLs to try, in order.
+
+    The pinned tag first. If an explicit ``version`` was asked for it is the only candidate —
+    a caller naming a version must not silently get a different one. Otherwise fall back to the
+    running package version, which covers a release that *did* ship its own asset before
+    ``_REFERENCE_TAG`` was updated.
+    """
+    if version:
+        return [reference_url(version)]
+    urls = [reference_url()]
+    fallback = _URL.format(version=__version__)
+    if fallback not in urls:
+        urls.append(fallback)
+    return urls
 
 
 def fetch_database(dest: Path, *, force: bool = False, version: str | None = None) -> Path:
@@ -67,13 +102,24 @@ def fetch_database(dest: Path, *, force: bool = False, version: str | None = Non
 
 def _fetch_into(dest: Path, target: Path, version: str | None) -> None:
     """Download, verify and stage the reference beside ``target``, then swap it in atomically."""
-    url = reference_url(version)
-    print(f"[arda] fetching reference database (one-time): {url}", file=sys.stderr)
+    urls = _candidate_urls(version)
+    print(f"[arda] fetching reference database (one-time): {urls[0]}", file=sys.stderr)
     # dir=dest, not /tmp: os.replace below is only a rename -- and only atomic -- within one filesystem.
     staging = Path(tempfile.mkdtemp(dir=dest, prefix=".arda_db_"))
     try:
         tarball = staging / _ASSET
-        _download(url, tarball)
+        last: Exception | None = None
+        for i, url in enumerate(urls):
+            try:
+                _download(url, tarball)
+                last = None
+                break
+            except Exception as exc:  # noqa: BLE001 — try the next candidate tag
+                last = exc
+                if i + 1 < len(urls):
+                    print(f"[arda] {url} unavailable; trying {urls[i + 1]}", file=sys.stderr)
+        if last is not None:
+            raise last
         with tarfile.open(tarball) as tf:
             staged = staging.resolve()
             for member in tf.getmembers():

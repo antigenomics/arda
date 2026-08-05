@@ -237,3 +237,13 @@ __marimo__/
 
 # arda: keep curated reference DB logs (must come after the global *.log rule)
 !database/**/*.log
+
+# arda-mmseqs wheel build output: the binary is downloaded by build_wheel.py, never committed.
+/packaging/arda-mmseqs/src/arda_mmseqs/bin/
+/packaging/arda-mmseqs/dist/
+
+# arda: the segment reference is DERIVED from alleles.fasta + markup.tsv by `build-index` in well
+# under a second. Not committed and not shipped in the release tarball -- same argument as the
+# mmseqs indexes (see scripts/pack_reference.sh).
+database/vdj/*/segments.fasta
+database/vdj/*/segments.markup.tsv

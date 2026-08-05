@@ -619,12 +619,24 @@ def transfer_hit(
                     rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
-            rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
-            # Surface the two facts `productive` collapses. stop_codon is specifically about `*`
-            # (the `_` frameshift marker is not a stop); vj_in_frame is the V/J frame agreement.
+            # `phase is None` means the read never reached BOTH cdr3 and fwr4, so no junction was
+            # observed -- and productivity is a property of the V-J junction. Such a read is
+            # `unevaluable`, not `non-productive`, exactly as a V-less read is (see the `else`
+            # below, which has always got this right). Reporting "F" made a bare V fragment look
+            # like a confirmed non-productive rearrangement: on real bulk output that is 72 % of
+            # mapped reads, since most reads land wholly inside V and never reach CDR3. AIRR's
+            # `productive` is "predicted to be productive" -- with no junction there is nothing to
+            # predict from, and empty is the honest answer.
+            if phase is None:
+                rec["productive"] = ""
+                rec["vj_in_frame"] = ""
+            else:
+                rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
+                rec["vj_in_frame"] = "T" if phase == 0 else "F"
+            # `stop_codon` is NOT gated the same way: a stop in the V-side regions is directly
+            # observed whether or not the junction was reached, so it stays evaluable here.
             j_stop = "*" in rec.get("junction_aa", "")
             rec["stop_codon"] = "F" if (vclean and not j_stop) else "T"
-            rec["vj_in_frame"] = "T" if phase == 0 else "F"
         # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call)

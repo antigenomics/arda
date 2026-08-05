@@ -29,17 +29,35 @@ What gets installed
 MMseqs2 without conda
 ---------------------
 
-If you install with plain ``pip`` (no conda env) and ``mmseqs`` is not on
-``PATH``, arda **auto-fetches** a static MMseqs2 binary into ``bin/mmseqs`` on
-first use — no manual install needed. Controls:
+You do not have to install MMseqs2. Either of these works with nothing else set up::
 
-* ``$ARDA_MMSEQS`` — use a specific mmseqs binary (highest priority).
+    pip install arda-mapper              # auto-fetches a static binary on first use
+    pip install 'arda-mapper[mmseqs]'    # ships the binary in the wheel; no download at all
+
+Resolution order: ``$ARDA_MMSEQS`` → the ``arda-mapper[mmseqs]`` wheel → ``<project>/bin/mmseqs``
+→ ``mmseqs`` on ``PATH`` → auto-fetch.
+
+**Candidates are version-matched, not merely found.** An mmseqs index is only reusable by the
+release that compiled it, so an unrelated ``mmseqs`` on ``PATH`` makes arda discard the
+precompiled indexes shipped in ``database/`` and rebuild a private cache — silently, costing a
+slow first run and, if the two releases align differently, results that are not comparable with
+anyone else's. arda therefore checks each candidate against the shipped index marker and falls
+back to a known-good build rather than accepting a mismatch. If it cannot find or fetch a
+matching one it warns and says what the consequence will be.
+
+Two deliberate exceptions: ``$ARDA_MMSEQS`` is never version-checked (an explicit override is
+your call), and when no precompiled index ships — which is the case for a plain ``pip install``,
+since the packaged reference omits the indexes — there is nothing to match, so any working
+mmseqs is accepted.
+
+Controls:
+
+* ``$ARDA_MMSEQS`` — use a specific mmseqs binary (highest priority, unchecked).
 * ``$ARDA_MMSEQS_ASSET`` — override the release asset (e.g.
   ``mmseqs-linux-sse41.tar.gz`` on pre-AVX2 CPUs).
 * ``$ARDA_NO_AUTO_FETCH`` — disable auto-fetch (then install mmseqs yourself).
 
-Fetch eagerly with ``python scripts/fetch_mmseqs.py`` (``setup.sh --no-conda``
-does this for you).
+Fetch eagerly with ``python scripts/fetch_mmseqs.py`` (``setup.sh`` does this for you).
 
 The committed ``database/vdj/<organism>/`` references — including **precompiled
 MMseqs2 indexes** under ``mmseqs/`` — mean a source checkout needs no build. The shipped

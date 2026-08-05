@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.5.7"
+version = "2.6.0"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +37,11 @@ dev = ["ruff", "pytest", "pybind11"]
 # Kept as an empty alias so existing `arda-mapper[rnaseq]` pins (the Nextflow module, collaborator
 # instructions, older docs) keep resolving without a warning. seqtree is a core dependency now.
 rnaseq = []
+# Ship the aligner instead of downloading it on first use. Not a hard dependency: the plain
+# install auto-fetches the same static binary. The pin is deliberately loose because it is not
+# what keeps you safe -- `mmseqs.mmseqs_binary()` version-matches whatever it finds against the
+# precompiled indexes in `database/`, so a stale bundle is rejected like any other candidate.
+mmseqs = ["arda-mmseqs>=18,<19"]
 # Tests only: OLGA's generative model supplies ground-truth V/J trims (and D spans) for
 # `arda.cdr3fix`. Kept out of `test`/`dev` so the normal suite never imports it.
 groundtruth = ["olga"]
@@ -59,6 +64,18 @@ editable.verbose = false
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# Rules are SELECTED EXPLICITLY, not inherited. ruff's defaults change between releases, and CI
+# installs ruff unpinned -- so a green local `ruff check src/` turned into 114 CI errors on a ruff
+# whose defaults had widened, 39 of them B008 complaining about `typer.Option(...)` in a default
+# argument, which is exactly how typer is meant to be used. An unpinned linter in a required gate
+# fails on someone else's release note.
+# E4/E7/E9 + F is the classic pyflakes+pycodestyle core: real errors, no style opinions. It is
+# what was green when this gate was added, and it is what caught the 16 errors that prompted it.
+# `I` (import order) is deliberately NOT selected -- it flags 15 files this round touched none of,
+# and a lint gate whose first act is a repo-wide reorder is a gate people start ignoring.
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

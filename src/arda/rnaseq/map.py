@@ -16,20 +16,21 @@ recovers the pair).
 from __future__ import annotations
 
 import json
+import logging
 import queue
-import resource
-import sys
 import threading
-import time
 from itertools import islice, zip_longest
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from ._res import Stage
 from ..annotate import io as seqio
 from ..annotate import mapper
 from ..annotate.airr_out import airr_header, format_rows
 from ..refbuild.translate import reverse_complement
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["map_rnaseq", "read_pairs", "merge_pair", "RnaseqReport"]
 
@@ -153,9 +154,68 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
         overlap = _overlap_consensus(a, q1[pos:pos + ov], b, q2[::-1][:ov])
     return s1[:pos] + overlap + r2[ov:]
 
-# RNA-seq is mostly non-receptor, so larger chunks amortise mmseqs' fixed per-call
-# cost (~0.8 s startup) over more reads; memory stays bounded (one chunk at a time).
-_RNASEQ_CHUNK = 200_000
+# Records per mmseqs invocation. Larger chunks amortise the fixed per-call cost; memory stays
+# bounded because only one chunk is resident.
+#
+# 400k, not 200k, and not "as large as possible" -- both ends were measured on real data
+# (10 full-depth cluster runs, 754.7M reads, plus a chunk-size sweep on 1.2M records, 8 threads):
+#
+#   chunks:    12        6        3        1
+#   wall:   51.3s    47.6s    46.3s    47.7s      <- minimum at 3 chunks (~400k records)
+#
+# Going UP from 400k is slower, not faster. The reader is a daemon thread behind a
+# `queue.Queue(maxsize=2)`, so with one giant chunk there is nothing left to overlap and the
+# +3.0% regression is the pipeline serialising. The measured per-invocation intercept is
+# **0.56 s** -- not the ~1.6 s an earlier 200k-read profile implied -- which is why this knob is
+# worth only ~2.6% and why "batch every mmseqs call into one" is NOT the big lever it looked
+# like. The real cost model is:
+#
+#     wall_map ~= total_reads / 44,470  +  mapped_reads / 681
+#
+# i.e. a read that HITS costs ~65x one that does not, so on anything but a cold library the
+# alignment term dominates and chunking cannot touch it. See `scripts/bench_cost_model.py`.
+#
+# Safe to change because `chunked_fragments` made the output invariant to it -- verified:
+# identical AIRR checksum and identical `isotype_from_mate` at 50k / 200k / 400k.
+_RNASEQ_CHUNK = 400_000
+
+
+def frag_stem(i: str) -> str:
+    """Fragment id for a read id: the mate suffix stripped.
+
+    Tolerates the ``/1``,``/2`` and `` 1:N:0:`` conventions already present in the wild.
+    """
+    i = i.split()[0]
+    return i[:-2] if i.endswith(("/1", "/2")) else i
+
+
+def chunked_fragments(records: Iterator[tuple], size: int) -> Iterator[list]:
+    """Chunk records without ever splitting a FRAGMENT across two chunks.
+
+    ``_apply_constant_rule`` decides per fragment *within a chunk*, so a boundary falling
+    between two mates costs that fragment its isotype donation (`isotype_from_mate`). Plain
+    ``chunked`` gets away with it by accident: in the default paired path records arrive
+    strictly two-per-fragment, so a boundary at a multiple of the chunk size never lands
+    mid-fragment. ``--reconstruct`` destroys that accident -- a merged pair emits one record
+    and an unmerged pair two, so the parity drifts and boundaries do land mid-fragment.
+
+    Without this, `map` output depends on ``--chunk-size``, and under sharding it would
+    depend on the shard layout too -- which is exactly the byte-identity the SLURM and
+    Nextflow paths are supposed to guarantee.
+
+    A chunk may exceed ``size`` by at most one fragment.
+    """
+    batch: list = []
+    prev: str | None = None
+    for rec in records:
+        stem = frag_stem(rec[0])
+        if batch and len(batch) >= size and stem != prev:
+            yield batch
+            batch = []
+        batch.append(rec)
+        prev = stem
+    if batch:
+        yield batch
 
 
 def read_pairs(r1: str | Path, r2: str | Path | None = None,
@@ -187,11 +247,7 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         yield from islice(it, limit) if limit is not None else it
         return
 
-    def _stem(i: str) -> str:
-        # tolerate the `/1`,`/2` and ` 1:N:0:` conventions already present in the file
-        i = i.split()[0]
-        return i[:-2] if i.endswith(("/1", "/2")) else i
-
+    _stem = frag_stem
     # zip_longest, not zip: plain zip stops at the shorter file AND consumes one extra record from the
     # longer one, so a truncated mate file is invisible both during and after the loop.
     # Quality is read only when reconstructing (merge_pair's tie-break needs it) -- the default path
@@ -222,19 +278,6 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         yield f"{i2}/2", s2
 
 
-def _peak_rss_mb() -> float:
-    """Peak RSS of this process AND its children, in MB.
-
-    ``RUSAGE_SELF`` alone is wrong here and was: 92 % of a `map` run's wall time is spent inside the
-    `mmseqs` **subprocess**, and mmseqs' nucleotide prefilter allocates a `4**k` index table that
-    dominates the footprint. Reporting only the Python process understated peak RSS by roughly an
-    order of magnitude. ``ru_maxrss`` is bytes on macOS, KB on Linux.
-    """
-    scale = 1024 * 1024 if sys.platform == "darwin" else 1024
-    return max(resource.getrusage(who).ru_maxrss
-               for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN)) / scale
-
-
 @dataclass
 class RnaseqReport:
     """Counts + timing for one ``map`` run (written as JSON with ``--report``)."""
@@ -252,7 +295,11 @@ class RnaseqReport:
     threads: int = 0
     wall_seconds: float = 0.0
     reads_per_second: float = 0.0
-    peak_rss_mb: float = 0.0
+    peak_rss_mb: float = 0.0          # whole-process high-water mark at stage end
+    rss_gain_mb: float = 0.0          # how much THIS stage raised it
+    # Two-pass segment search accounting, empty when it is off. `rescued` reads cost a full-
+    # reference realignment; they are the price of the fast path never dropping one.
+    segment_search: dict = field(default_factory=dict)
 
     @property
     def mapped_fraction(self) -> float:
@@ -284,6 +331,8 @@ def map_rnaseq(
     limit: int | None = None,
     emit_reads: str | Path | None = None,
     report_path: str | Path | None = None,
+    two_pass: bool = False,
+    adaptive: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -304,6 +353,20 @@ def map_rnaseq(
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
+        adaptive: cap alignments per read and re-search only the reads whose capped score is
+            low (:func:`arda.annotate.mapper._extend_uncertain`). Measured 2.17x on 1 M bulk reads
+            with **zero reads lost** — but read preservation is not the whole guarantee.
+            **OFF by default**: on the real-read fixture it also changes `junction_aa` on 3 of 453
+            reads, and two of them scored 128 and 131, far above the 90-bit trigger. So a high
+            score does NOT certify that the best alignment was found, and the trigger cannot be
+            calibrated on score alone. Opt in only where a junction-level difference is acceptable.
+        two_pass: use the segment reference to shortlist a single V×J scaffold per read before
+            aligning (:func:`arda.annotate.mapper._segment_best_hits`). Reads it cannot resolve
+            are realigned against the full reference, so nothing is dropped — see
+            :mod:`arda.annotate.shortlist`. Off by default: the win scales with the library's
+            receptor fraction, so it pays on amplicon and barely moves a 0.0003 %-receptor
+            negative. Requires ``segments.fasta`` (written by ``arda build-index``); silently
+            falls back to the one-pass search when it is absent.
 
     Returns:
         The run :class:`RnaseqReport` (also printed by the CLI).
@@ -311,6 +374,18 @@ def map_rnaseq(
     output = Path(output)
     ref, target_db, threads, sens, mm_strand = mapper._prep(
         organism, seqtype, threads, sensitivity, strand)
+
+    # Built and parsed ONCE for the whole run, not per chunk: the segment DB is an mmseqs build
+    # and `combinations.tsv` is 550 KB. Both are read-only afterwards.
+    segment_db = combos = None
+    if two_pass:
+        segment_db = mapper._cached_segment_db(ref, organism)
+        if segment_db is None:
+            logger.warning("--two-pass: no segments.fasta for %s (run `arda build-index`); "
+                           "falling back to the one-pass search", organism)
+        else:
+            from ..annotate.shortlist import load_combinations
+            combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
 
     chunks: queue.Queue = queue.Queue(maxsize=2)
     # The reader runs in a daemon thread, so anything it raises -- a missing FASTQ, a shuffled mate
@@ -322,7 +397,7 @@ def map_rnaseq(
     def reader():
         try:
             pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit)
-            for chunk in seqio.chunked(pairs, chunk_size):
+            for chunk in chunked_fragments(pairs, chunk_size):
                 chunks.put(chunk)
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
             reader_exc.append(exc)
@@ -335,7 +410,7 @@ def map_rnaseq(
     report = RnaseqReport(input=str(r1), organism=organism, threads=threads,
                           min_score=min_score)
     reads_fh = open(emit_reads, "w") if emit_reads else None
-    t0 = time.perf_counter()
+    stage = Stage()
     try:
         with open(output, "w") as fh:
             fh.write(airr_header() + "\n")
@@ -349,7 +424,9 @@ def map_rnaseq(
                 keep = mapper._annotate_chunk(
                     chunk, ref, target_db, seqtype, threads=threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
-                    mapped_only=True, max_seqs=max_seqs, kmer=kmer)
+                    mapped_only=True, max_seqs=max_seqs, kmer=kmer,
+                    segment_db=segment_db, combos=combos, adaptive=adaptive,
+                    report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
                     report.constant_only_fragments += n_drop
@@ -371,10 +448,9 @@ def map_rnaseq(
             reads_fh.close()
     t.join()
 
-    report.wall_seconds = time.perf_counter() - t0
-    report.reads_per_second = (
-        report.total_reads / report.wall_seconds if report.wall_seconds else 0.0)
-    report.peak_rss_mb = _peak_rss_mb()
+    stage.finish(report)   # wall_seconds / peak_rss_mb / rss_gain_mb, same definition as Stages 2-3
+    report.reads_per_second = round(
+        report.total_reads / report.wall_seconds if report.wall_seconds else 0.0, 1)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
     return report

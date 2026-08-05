@@ -16,7 +16,6 @@ pairs recorded.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from ..paths import bin_dir
 from .loci import Locus

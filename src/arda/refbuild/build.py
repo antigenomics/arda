@@ -515,13 +515,13 @@ def _locus_manifest(nt_all: list[dict], d_germ: list[tuple[str, str, str]]) -> l
     jc = Counter(r["locus"] for r in nt_all if r.get("c_call"))
     dc = Counter(loc for loc, _, _ in d_germ)
     rows = []
-    for l in LOCI:
-        n_scaf = vj[l.name] + jc[l.name]
+    for loc in LOCI:
+        n_scaf = vj[loc.name] + jc[loc.name]
         rows.append({
-            "locus": l.name, "group": l.group,
-            "n_vj_scaffolds": vj[l.name], "n_jc_scaffolds": jc[l.name],
-            "n_d_germlines": dc[l.name],
-            "unreachable_d_germlines": dc[l.name] if n_scaf == 0 else 0,
+            "locus": loc.name, "group": loc.group,
+            "n_vj_scaffolds": vj[loc.name], "n_jc_scaffolds": jc[loc.name],
+            "n_d_germlines": dc[loc.name],
+            "unreachable_d_germlines": dc[loc.name] if n_scaf == 0 else 0,
             "status": "ok" if n_scaf else "EMPTY",
         })
     return rows
@@ -558,7 +558,11 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False) -> Path:
         except Exception as exc:  # noqa: BLE001 — one bad locus must not kill the species
             logger.warning("%s: failed (%s) — skipped", locus.name, exc)
             continue
-        nt_all += nt; aa_all += aa; combo_all += combo; fa_nt += fnt; fa_aa += faa
+        nt_all += nt
+        aa_all += aa
+        combo_all += combo
+        fa_nt += fnt
+        fa_aa += faa
 
     # A V-J scaffold is V-J all the way to its 3' end and carries no constant region.
     lengths = {i: len(s) for i, s in fa_nt}
