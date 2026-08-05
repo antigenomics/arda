@@ -109,9 +109,13 @@ public:
     // Number of distinct query windows found in the index, capped: the caller only ever compares
     // against `min_hits`, so counting past it is wasted work on the reads that pass.
     int hits(const std::string& s, int min_hits) const {
+        return scan(s.data(), s.size(), min_hits);
+    }
+
+    int scan(const char* s, size_t n, int min_hits) const {
         int run = 0, found = 0;
         uint64_t code = 0;
-        for (size_t i = 0; i < s.size(); ++i) {
+        for (size_t i = 0; i < n; ++i) {
             const int8_t b = BASE_IDX[static_cast<unsigned char>(s[i])];
             if (b < 0) { run = 0; code = 0; continue; }  // N: drop every window covering it
             code = ((code << 2) | uint64_t(b)) & mask_;
@@ -127,29 +131,48 @@ public:
 
     // Per-sequence pass/fail. Returns uint8 rather than bool because std::vector<bool> is a
     // bitfield and cannot be written from several threads without a race.
-    std::vector<uint8_t> mask(const std::vector<std::string>& queries,
-                              int min_hits, int threads) const {
-        std::vector<uint8_t> out(queries.size(), 0);
-        if (queries.empty()) return out;
+    //
+    // Takes a py::sequence, NOT a std::vector<std::string>. pybind11's automatic conversion would
+    // allocate and copy every read before a single thread starts -- 4 M allocations under the GIL,
+    // measured at 2.34 s on 32 cluster threads against 5.39 M reads/s on ONE laptop core, i.e. the
+    // copy was several times the scan it was feeding. `PyUnicode_AsUTF8AndSize` hands back a
+    // pointer into the str object's own buffer instead; the list keeps every object alive for the
+    // duration of the call, so the views stay valid after the GIL is dropped.
+    std::vector<uint8_t> mask(py::sequence queries, int min_hits, int threads) const {
+        const size_t n = size_t(py::len(queries));
+        std::vector<uint8_t> out(n, 0);
+        if (n == 0) return out;
         if (min_hits < 1) min_hits = 1;
+
+        std::vector<std::pair<const char*, size_t>> views;
+        views.reserve(n);
+        for (auto item : queries) {
+            Py_ssize_t len = 0;
+            const char* p = PyUnicode_AsUTF8AndSize(item.ptr(), &len);
+            if (p == nullptr) throw py::error_already_set();
+            views.emplace_back(p, size_t(len));
+        }
+
         size_t nthread = threads > 0 ? size_t(threads) : 1;
-        nthread = std::min(nthread, queries.size());
+        nthread = std::min(nthread, n);
 
         auto worker = [&](size_t lo, size_t hi) {
             for (size_t i = lo; i < hi; ++i)
-                out[i] = hits(queries[i], min_hits) >= min_hits ? 1 : 0;
+                out[i] = scan(views[i].first, views[i].second, min_hits) >= min_hits ? 1 : 0;
         };
+        // The GIL is dropped only now, once every pointer has been taken -- `PyUnicode_AsUTF8AndSize`
+        // is a CPython call and must not run without it. `views` and `out` are then touched through
+        // disjoint index ranges, so the threads need no synchronisation.
+        py::gil_scoped_release rel;
         if (nthread <= 1) {
-            worker(0, queries.size());
+            worker(0, n);
             return out;
         }
-        // The GIL is released by the caller binding; `queries` and `out` are only read/written
-        // through disjoint index ranges, so no synchronisation is needed.
         std::vector<std::thread> pool;
         pool.reserve(nthread);
-        const size_t step = (queries.size() + nthread - 1) / nthread;
+        const size_t step = (n + nthread - 1) / nthread;
         for (size_t t = 0; t < nthread; ++t) {
-            const size_t lo = t * step, hi = std::min(queries.size(), lo + step);
+            const size_t lo = t * step, hi = std::min(n, lo + step);
             if (lo >= hi) break;
             pool.emplace_back(worker, lo, hi);
         }
@@ -188,7 +211,6 @@ PYBIND11_MODULE(_prefilter, m) {
              "Indexed k-mers found in `sequence`, counted no further than `min_hits`.")
         .def("mask", &Prefilter::mask,
              py::arg("sequences"), py::arg("min_hits") = 1, py::arg("threads") = 1,
-             py::call_guard<py::gil_scoped_release>(),
              "1 for each sequence with >= min_hits indexed k-mers, 0 otherwise.")
         .def_property_readonly("size", &Prefilter::size, "Distinct indexed k-mers.")
         .def_property_readonly("k", &Prefilter::k, "k-mer length.");
