@@ -87,5 +87,5 @@ LOCI: tuple[Locus, ...] = (
     Locus("TRD", "TR", "TRDV", "TRDJ", "TRDD", "TCR", v_shared=("TRAV", "/DV")),
 )
 
-VJ_LOCI = tuple(l for l in LOCI if not l.has_d)
-VDJ_LOCI = tuple(l for l in LOCI if l.has_d)
+VJ_LOCI = tuple(loc for loc in LOCI if not loc.has_d)
+VDJ_LOCI = tuple(loc for loc in LOCI if loc.has_d)

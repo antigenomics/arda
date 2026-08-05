@@ -1,5 +1,7 @@
 # Minimal sphinx Makefile.
-SPHINXOPTS    ?=
+# `-W --keep-going` mirrors .github/workflows/docs.yml -- a local `make html` that passes where CI
+# fails is worse than no local build at all. Override with `make html SPHINXOPTS=` when drafting.
+SPHINXOPTS    ?= -W --keep-going
 SPHINXBUILD   ?= sphinx-build
 SOURCEDIR     = .
 BUILDDIR      = _build

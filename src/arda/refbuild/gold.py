@@ -61,10 +61,10 @@ def _combined_db(species_dir: str, group: str, role: str, stems: list[str]) -> P
 
 def _run_group(query_fa: Path, organism: str, species_dir: str, group: str,
                num_threads: int, out_tsv: Path) -> Path:
-    loci = [l for l in LOCI if l.group == group]
-    v = _combined_db(species_dir, group, "V", [l.v for l in loci])
-    j = _combined_db(species_dir, group, "J", [l.j for l in loci])
-    d_stems = [l.d for l in loci if l.has_d]
+    loci = [loc for loc in LOCI if loc.group == group]
+    v = _combined_db(species_dir, group, "V", [loc.v for loc in loci])
+    j = _combined_db(species_dir, group, "J", [loc.j for loc in loci])
+    d_stems = [loc.d for loc in loci if loc.has_d]
     d = (_combined_db(species_dir, group, "D", d_stems)  # type: ignore[arg-type]
          if d_stems else _dummy_d_db(species_dir))
     aux = bin_dir() / "optional_file" / f"{organism}_gl.aux"

@@ -264,9 +264,11 @@ def _error_pileup(
             for d in disc:
                 cd, pd = depth[ci][d], depth[nj][d]
                 if cd == 0:
-                    ok = False; break
+                    ok = False
+                    break
                 if sf(cd, cd + pd, error_rate) <= alpha:    # child allele too deep to be error
-                    ok = False; break
+                    ok = False
+                    break
             if ok and span_counts[nj] > best_count:
                 best, best_count = nj, span_counts[nj]
         if best is not None:
@@ -323,7 +325,8 @@ def _assign_coverage(
             continue
         rp = exact.get(((locc[i] or ""), (vc[i] or ""), (jc[i] or ""), (jnc[i] or "")))
         if rp is not None:
-            assigned[rp].append(sid); done.add(sid)
+            assigned[rp].append(sid)
+            done.add(sid)
 
     # Pass 2: align the rest (partial V-side / J-side reads that never reached a complete junction).
     index: dict[str, list[tuple[int, int]]] = defaultdict(list)
@@ -366,7 +369,8 @@ def _assign_coverage(
                 if mm <= budget:
                     best_ov, best_ri = ov, ri
         if best_ri is not None:
-            assigned[best_ri].append(sid); done.add(sid)
+            assigned[best_ri].append(sid)
+            done.add(sid)
     return assigned
 
 

@@ -43,6 +43,11 @@ jobs:
           uv pip install --system scikit-build-core pybind11 ninja airr
           uv pip install --system -e .[test] --no-build-isolation
 
+      # Lint gates the source, not the tests -- `src/` is what ships. Ran before the tests so a
+      # style break is reported in seconds rather than after the C++ build and the full suite.
+      - name: Lint
+        run: uv pip install --system ruff && ruff check src/
+
       - name: Show environment
         run: |
           "$ARDA_MMSEQS" version

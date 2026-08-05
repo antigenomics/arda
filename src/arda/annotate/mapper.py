@@ -194,6 +194,18 @@ def build_index(organism: str = "all", *, force: bool = False) -> None:
             vfile.write_text(ver + "\n")      # marker written LAST: it is what certifies the DB
             print(f"[arda] built mmseqs index {org}/{seqtype} ({ver})")
 
+        # The segment reference (V / J / J+C as separate targets) is derived from `alleles.fasta` +
+        # `markup.tsv` in well under a second, so it is generated here rather than committed or
+        # shipped in the release tarball -- the same argument that already excludes the mmseqs
+        # indexes. Its own mmseqs DB is built lazily by `_cached_target_db` on first use.
+        alleles = vdj_dir(org) / "alleles.fasta"
+        seg = vdj_dir(org) / "segments.fasta"
+        if alleles.exists() and (force or not seg.exists()
+                                 or seg.stat().st_mtime < alleles.stat().st_mtime):
+            from ..refbuild.segments import build_segment_reference
+            stats = build_segment_reference(org)
+            print(f"[arda] built segment reference {org} ({stats.total} targets)")
+
 
 def _best_hits(tsv: Path) -> dict[str, dict]:
     """Parse the mmseqs TSV and return the top-scoring hit per query.
