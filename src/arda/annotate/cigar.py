@@ -106,8 +106,8 @@ def _germline_pos(key: str, t: int, t_jstart: int, t_vjend: int) -> int:
     return t - t_vjend                                    # C: germline starts one past the V-J end
 
 
-def segment_cigars(qaln: str, taln: str, qstart: int, tstart: int, qlen: int,
-                   t_vend: int, t_jstart: int, t_vjend: int) -> dict[str, str]:
+def _segment_cigars_py(qaln: str, taln: str, qstart: int, tstart: int, qlen: int,
+                       t_vend: int, t_jstart: int, t_vjend: int) -> dict[str, str]:
     """Return ``{"v_cigar":…, "j_cigar":…, "c_cigar":…}`` (only the segments that have a body).
 
     ``qaln``/``taln`` are the mmseqs aligned strings (``-`` for gaps), ``qstart``/``tstart`` their
@@ -143,3 +143,29 @@ def segment_cigars(qaln: str, taln: str, qstart: int, tstart: int, qlen: int,
         if cig:
             out[f"{key}_cigar"] = cig
     return out
+
+
+# The C++ port. This loop runs once per alignment COLUMN per mapped read and makes two calls per
+# column; profiled over the real-read fixture it was 47,309 `_classify` + 46,943 `_germline_pos`
+# calls for 524 reads, and 63 % of `transfer_hit`. That term is what caps arda on receptor-rich
+# libraries, where the prefilter has nothing left to remove and every surviving read builds a
+# record. The Python version stays as `_segment_cigars_py` -- it is the reference the extension is
+# tested against, and the fallback when the extension is not built.
+try:
+    from .._markup import segment_cigars as _segment_cigars_cpp
+except ImportError:  # pragma: no cover - source checkout without the built extension
+    _segment_cigars_cpp = None
+
+
+def segment_cigars(qaln: str, taln: str, qstart: int, tstart: int, qlen: int,
+                   t_vend: int, t_jstart: int, t_vjend: int) -> dict[str, str]:
+    """Return ``{"v_cigar":…, "j_cigar":…, "c_cigar":…}`` (only the segments that have a body).
+
+    ``qaln``/``taln`` are the mmseqs aligned strings (``-`` for gaps), ``qstart``/``tstart`` their
+    1-based query/target start, ``qlen`` the full query length. Boundaries are 1-based scaffold
+    positions; pass 0 for an absent segment.
+    """
+    if _segment_cigars_cpp is not None:
+        return _segment_cigars_cpp(qaln, taln, qstart, tstart, qlen,
+                                   t_vend, t_jstart, t_vjend)
+    return _segment_cigars_py(qaln, taln, qstart, tstart, qlen, t_vend, t_jstart, t_vjend)

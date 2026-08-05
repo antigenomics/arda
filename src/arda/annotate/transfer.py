@@ -229,7 +229,7 @@ def _empty_record(query_id: str, query_seq: str) -> dict:
     return rec
 
 
-def _aln_identity(qaln: str, taln: str, tstart: int, t_lo: int, t_hi: int):
+def _aln_identity_py(qaln: str, taln: str, tstart: int, t_lo: int, t_hi: int):
     """Fractional identity over the germline positions in target range [t_lo, t_hi].
 
     Walks the aligned strings tracking the target (scaffold) position; counts each
@@ -245,6 +245,25 @@ def _aln_identity(qaln: str, taln: str, tstart: int, t_lo: int, t_hi: int):
                     ident += 1
             t += 1
     return round(ident / covered, 4) if covered else ""
+
+
+try:
+    from .._markup import aln_identity as _aln_identity_cpp
+except ImportError:  # pragma: no cover - source checkout without the built extension
+    _aln_identity_cpp = None
+
+
+def _aln_identity(qaln: str, taln: str, tstart: int, t_lo: int, t_hi: int):
+    """Fractional identity over the germline positions in target range [t_lo, t_hi].
+
+    Per-column loop, so it lives in the extension; `_aln_identity_py` is the reference it is
+    tested against and the fallback when the extension is not built. The C++ side returns -1.0
+    for "nothing covered" because 0.0 is a real identity of zero, a different statement.
+    """
+    if _aln_identity_cpp is not None:
+        v = _aln_identity_cpp(qaln, taln, tstart, t_lo, t_hi)
+        return round(v, 4) if v >= 0.0 else ""
+    return _aln_identity_py(qaln, taln, tstart, t_lo, t_hi)
 
 
 def _project_point(hit: dict, ref_pos: int) -> int:

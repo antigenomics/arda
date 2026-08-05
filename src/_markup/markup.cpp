@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <climits>
 #include <map>
 #include <stdexcept>
@@ -354,9 +355,119 @@ static std::tuple<std::string, std::string, int, int, int, int> merge_alignment(
     return {out_q, out_t, qstart, qend, t_lo, t_hi};
 }
 
+
+// ---------------------------------------------------------------------------
+// Per-segment AIRR CIGARs.
+//
+// The pure-Python `arda.annotate.cigar.segment_cigars` walks the alignment column by column and
+// makes two function calls per column (`_classify`, `_germline_pos`). Profiled over the real-read
+// fixture that was 47,309 + 46,943 calls for 524 mapped reads, and 63 % of `transfer_hit`'s
+// 130 us -- which is the term that caps arda on receptor-rich libraries, where the prefilter has
+// nothing left to remove and every surviving read builds a record.
+//
+// Straight port, column for column, so the two implementations can be diffed on real data.
+// V is [1, t_vend], J is [t_jstart, t_vjend], C is > t_vjend; the N-pad between V and J belongs to
+// no germline (it is the np region). A zero boundary means the segment is absent -- a `J + C`
+// scaffold has t_vend == 0.
+// ---------------------------------------------------------------------------
+
+static inline int seg_key(int tpos, int t_vend, int t_jstart, int t_vjend) {
+    if (t_vend && tpos <= t_vend) return 0;                              // v
+    if (t_jstart && t_vjend && tpos >= t_jstart && tpos <= t_vjend) return 1;  // j
+    if (t_vjend && tpos > t_vjend) return 2;                             // c
+    return -1;
+}
+
+static inline int germline_pos(int key, int t, int t_jstart, int t_vjend) {
+    if (key == 0) return t;                       // V: scaffold position IS the germline position
+    if (key == 1) return t - t_jstart + 1;
+    return t - t_vjend;                           // C: germline starts one past the V-J end
+}
+
+static std::string build_cigar_cpp(int q_lead, int g_lead, const std::string& ops, int q_trail) {
+    std::string body;
+    for (size_t i = 0; i < ops.size();) {
+        size_t j = i;
+        while (j < ops.size() && ops[j] == ops[i]) ++j;
+        body += std::to_string(j - i);
+        body += ops[i];
+        i = j;
+    }
+    std::string out;
+    if (q_lead > 0) out += std::to_string(q_lead) + "S";
+    if (g_lead > 0) out += std::to_string(g_lead) + "N";
+    out += body;
+    // Trailing germline N is intentionally omitted (it is optional in AIRR).
+    if (q_trail > 0) out += std::to_string(q_trail) + "S";
+    return out;
+}
+
+std::map<std::string, std::string> segment_cigars(
+        const std::string& qaln, const std::string& taln,
+        int qstart, int tstart, int qlen,
+        int t_vend, int t_jstart, int t_vjend) {
+    static const char* NAMES[3] = {"v_cigar", "j_cigar", "c_cigar"};
+    std::string ops[3];
+    int q_first[3] = {0, 0, 0}, q_last[3] = {0, 0, 0}, g_first[3] = {0, 0, 0};
+    bool seen[3] = {false, false, false};
+
+    int q = qstart, t = tstart;
+    const size_t n = std::min(qaln.size(), taln.size());
+    for (size_t i = 0; i < n; ++i) {
+        const bool cq = qaln[i] != '-';
+        const bool ct = taln[i] != '-';
+        const char op = (cq && ct) ? 'M' : (cq ? 'I' : 'D');
+        const int key = seg_key(t, t_vend, t_jstart, t_vjend);  // on an insertion, t is the next base
+        if (key >= 0) {
+            ops[key] += op;
+            if (cq) {
+                if (!seen[key]) { q_first[key] = q; seen[key] = true; }
+                q_last[key] = q;
+            }
+            if (ct && g_first[key] == 0) g_first[key] = germline_pos(key, t, t_jstart, t_vjend);
+        }
+        if (cq) ++q;
+        if (ct) ++t;
+    }
+
+    std::map<std::string, std::string> out;
+    for (int k = 0; k < 3; ++k) {
+        if (!seen[k]) continue;                   // no query base aligned to this segment
+        const int g_lead = (g_first[k] ? g_first[k] : 1) - 1;
+        std::string cig = build_cigar_cpp(q_first[k] - 1, g_lead, ops[k], qlen - q_last[k]);
+        if (!cig.empty()) out[NAMES[k]] = cig;
+    }
+    return out;
+}
+
+
+// Fractional identity over germline positions in target range [t_lo, t_hi].
+//
+// Second per-column loop in `transfer_hit`, and once `segment_cigars` moved to C++ it was 44 % of
+// what remained. Same walk: count each target-consuming column that falls in range, and how many
+// of those are an exact base match. Returns -1.0 when nothing is covered, which the caller maps to
+// the empty AIRR field -- 0.0 would be a real identity of zero and is a different statement.
+double aln_identity(const std::string& qaln, const std::string& taln,
+                    int tstart, int t_lo, int t_hi) {
+    int t = tstart, covered = 0, ident = 0;
+    const size_t n = std::min(qaln.size(), taln.size());
+    for (size_t i = 0; i < n; ++i) {
+        const char ta = taln[i];
+        if (ta == '-') continue;                     // query-only column: no germline position
+        if (t >= t_lo && t <= t_hi) {
+            ++covered;
+            const char qa = qaln[i];
+            if (qa != '-' && std::toupper((unsigned char)qa) == std::toupper((unsigned char)ta))
+                ++ident;
+        }
+        ++t;
+    }
+    return covered ? double(ident) / double(covered) : -1.0;
+}
+
 PYBIND11_MODULE(_markup, m) {
     m.doc() = "arda markup-transfer hot path (C++/pybind11)";
-    m.attr("__version__") = "0.3.0";
+    m.attr("__version__") = "0.4.0";
     m.def("project_region", &project_region,
           py::arg("qaln"), py::arg("taln"), py::arg("ref_aln_offset"),
           py::arg("qry_aln_offset"), py::arg("ref_start"), py::arg("ref_end"),
@@ -380,6 +491,15 @@ PYBIND11_MODULE(_markup, m) {
     m.def("back_translate", &back_translate, py::arg("aa"), py::arg("unknown") = "NNN",
           "Mock back-translation using the most-frequent human (Kazusa) codon per "
           "amino acid; unknown residues -> `unknown` (default 'NNN').");
+    m.def("segment_cigars", &segment_cigars,
+          py::arg("qaln"), py::arg("taln"), py::arg("qstart"), py::arg("tstart"),
+          py::arg("qlen"), py::arg("t_vend"), py::arg("t_jstart"), py::arg("t_vjend"),
+          "Per-segment AIRR CIGARs {v_cigar, j_cigar, c_cigar} for the segments with a body. "
+          "Boundaries are 1-based scaffold positions; 0 means the segment is absent.");
+    m.def("aln_identity", &aln_identity,
+          py::arg("qaln"), py::arg("taln"), py::arg("tstart"), py::arg("t_lo"), py::arg("t_hi"),
+          "Fractional identity over germline positions in target range [t_lo, t_hi]; "
+          "-1.0 when no germline position is covered.");
     m.def("d_local_align", &d_local_align, py::arg("interior"), py::arg("d"),
           "Gapless local alignment (match=+1, mismatch=-1) of a short D germline "
           "against a query interior. Returns (score, i_start, i_end, d_start, d_end) "
