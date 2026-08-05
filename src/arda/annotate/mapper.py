@@ -741,19 +741,11 @@ def _annotate_chunk(
     combos: dict[tuple[str, str], str] | None = None,
     report: dict | None = None,
     adaptive: bool = False,
-    prefilter: bool = False,
-    prefilter_report: dict | None = None,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
     ``mapped_only`` skips the empty record for non-hits (the RNA-seq filter path,
     where 95-99 % of reads have no hit and building throwaway records dominates).
-
-    ``prefilter`` drops reads sharing no exact 16-mer with the reference before the FASTA is
-    written (:mod:`arda.prefilter`). It runs *before* ``createdb`` on purpose: MMseqs2's own
-    prefilter can only act on reads already in a DB, so without this the FASTA write and the DB
-    build are paid for every read whatever the search then decides. Costs ~0.5 % of real reads;
-    off by default.
 
     ``segment_db`` opts into the two-pass segment search (:func:`_segment_best_hits`): search the
     1,244-target segment reference, then align only the one V×J scaffold each read's V+J pair
@@ -766,22 +758,9 @@ def _annotate_chunk(
         return []
     if kmer == -1:  # sentinel: caller did not override, use the seqtype default
         kmer = _KMER[seqtype]
-    # The reads actually handed to MMseqs2. `records` stays whole: the rows below are built by
-    # looking each id up in `best`, and a prefiltered-out read simply has no entry -- exactly the
-    # same shape as a read the search rejected. So nothing downstream needs to know this happened.
-    searched = records
-    if prefilter and seqtype == "nt":
-        from ..prefilter import keep_mask  # noqa: PLC0415 — optional native extension
-        mask = keep_mask(records, ref.target_fasta, threads=threads)
-        searched = [r for r, keep in zip(records, mask) if keep]
-        if prefilter_report is not None:
-            prefilter_report["seen"] = prefilter_report.get("seen", 0) + len(records)
-            prefilter_report["passed"] = prefilter_report.get("passed", 0) + len(searched)
-        if not searched:
-            return []
     with tempfile.TemporaryDirectory(prefix="arda_") as td:
         tmp = Path(td)
-        query_fa = seqio.write_fasta(iter(searched), tmp / "query.fasta")
+        query_fa = seqio.write_fasta(iter(records), tmp / "query.fasta")
         query_db = tmp / "queryDB"
         res_db = tmp / "resDB"
         out_tsv = tmp / "hits.tsv"
@@ -790,7 +769,7 @@ def _annotate_chunk(
             best, seg_report = _segment_best_hits(
                 query_db, segment_db, target_db, tmp, ref, threads=threads,
                 sensitivity=sensitivity, mm_strand=mm_strand, max_seqs=max_seqs, kmer=kmer,
-                search_type=_SEARCH_TYPE[seqtype], seqs=dict(searched), combos=combos)
+                search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos)
             if report is not None:
                 _merge_segment_report(report, seg_report)
         else:
@@ -812,7 +791,7 @@ def _annotate_chunk(
             best = _best_hits(out_tsv)
             if adaptive:
                 best, n_re = _extend_uncertain(
-                    best, searched, target_db, tmp, threads=threads, sensitivity=sensitivity,
+                    best, records, target_db, tmp, threads=threads, sensitivity=sensitivity,
                     max_seqs=max_seqs, kmer=kmer, seqtype=seqtype, strand=strand)
                 if report is not None:
                     report["adaptive_rechecked"] = report.get("adaptive_rechecked", 0) + n_re

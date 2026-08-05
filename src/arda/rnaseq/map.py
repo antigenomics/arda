@@ -418,20 +418,14 @@ def map_rnaseq(
     try:
         with open(output, "w") as fh:
             fh.write(airr_header() + "\n")
-            while True:
-                chunk = chunks.get()
-                if chunk is None:
-                    if reader_exc:
-                        raise reader_exc[0]
-                    break
-                report.total_reads += len(chunk)
+
+            def flush(batch: list) -> None:
+                """Search one batch and write its mapped reads."""
                 keep = mapper._annotate_chunk(
-                    chunk, ref, target_db, seqtype, threads=threads,
+                    batch, ref, target_db, seqtype, threads=threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
-                    prefilter=prefilter,
-                    prefilter_report=report.prefilter_stats if prefilter else None,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
@@ -441,7 +435,7 @@ def map_rnaseq(
                     keep = [r for r in keep
                             if float(r.get("mmseqs2_score") or 0) >= min_score]
                 if not keep:
-                    continue
+                    return
                 fh.write(format_rows(keep))
                 report.mapped_reads += len(keep)
                 for r in keep:
@@ -449,6 +443,41 @@ def map_rnaseq(
                     report.per_locus[loc] = report.per_locus.get(loc, 0) + 1
                     if reads_fh is not None:
                         reads_fh.write(f">{r['sequence_id']}\n{r['sequence']}\n")
+
+            # READ chunk size and SEARCH batch size are not the same thing once the prefilter is
+            # on. Reading stays chunked to bound memory, but a prefiltered chunk is tiny -- 0.47 %
+            # of reads survive on a 0.024 %-receptor library -- and every `mmseqs search` call
+            # costs ~0.7 s of fixed setup whatever it is given. Ten near-empty searches were 25.8 s
+            # against 13.4 s for one (SRR10611239). So survivors accumulate until they amount to a
+            # full chunk's worth of work, and only then is MMseqs2 invoked.
+            #
+            # Flushing only ever happens on a chunk boundary, never inside one: `chunked_fragments`
+            # guarantees a fragment's mates land in the same chunk, and splitting them is a bug
+            # this pipeline has already shipped once under --reconstruct.
+            pending: list = []
+            while True:
+                chunk = chunks.get()
+                if chunk is None:
+                    if reader_exc:
+                        raise reader_exc[0]
+                    break
+                report.total_reads += len(chunk)
+                if prefilter and seqtype == "nt":
+                    from ..prefilter import keep_mask  # noqa: PLC0415 — optional native ext
+                    mask = keep_mask(chunk, ref.target_fasta, threads=threads)
+                    survivors = [r for r, m in zip(chunk, mask) if m]
+                    report.prefilter_stats["seen"] = (
+                        report.prefilter_stats.get("seen", 0) + len(chunk))
+                    report.prefilter_stats["passed"] = (
+                        report.prefilter_stats.get("passed", 0) + len(survivors))
+                else:
+                    survivors = chunk
+                pending.extend(survivors)
+                if len(pending) >= chunk_size:
+                    flush(pending)
+                    pending = []
+            if pending:
+                flush(pending)
     finally:
         if reads_fh is not None:
             reads_fh.close()
