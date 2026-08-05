@@ -5,6 +5,35 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## 2.6.3
 
+### Fixed — the mmseqs auto-fetch could publish a half-written binary
+
+arda runs concurrently against one cache **by design** — a Nextflow process per sample, a SLURM
+array task per shard — and on a cold cache every one of them calls the fetch in the same moment.
+That path installed with `shutil.copy2` straight onto `bin/mmseqs`, which is this repo's
+signature bug in its purest form. Two silent failures:
+
+* `copy2` writes **in place**, so two processes doing it at once interleave their bytes and
+  produce a corrupt binary that nothing reported an error about;
+* `dest.exists()` — the gate deciding the work is already done — goes true on the **first byte**
+  `copy2` writes. A third process therefore finds an mmseqs, trusts it, and executes a truncated
+  file. The `chmod` came *after* the copy as well, leaving a second window in which the file
+  existed but was not executable.
+
+Now there is one downloader under `build_lock`, the binary is made executable while still under
+a private name, and a single `os.replace` publishes it. A rename is atomic within a filesystem,
+so `bin/mmseqs` only ever exists as a complete, executable binary — which is what makes
+`dest.exists()` a legitimate gate instead of a bug. (`os.replace` is a rename only within one
+filesystem, which is why 2.6.2's move of the staging directory next to the destination is a
+prerequisite, not a separate fix.)
+
+The two new tests were checked against the old implementation and **both fail there** — a
+concurrency test that passes on the broken code pins nothing. The decisive one interrupts the
+copy *after* it has written bytes, which is what a full disk, an OOM kill or a SLURM timeout
+does, and asserts no partial binary is left for the next process to run.
+
+The reference fetch (`_database_fetch`) and the new IgBLAST fetch already worked this way; this
+brings the third one into line.
+
 ### Fixed — `pip install 'arda-mapper[mmseqs]'` was a hard failure
 
 The `mmseqs` extra depended on `arda-mmseqs`, a companion distribution that is built by CI but
