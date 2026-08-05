@@ -55,6 +55,13 @@ _SENSITIVITY = {"nt": 7.0, "aa": 7.0}
 # `--max-seqs` if memory-bound.
 _MAX_SEQS = 300
 
+# How many exactly-tied V alleles may contribute a scaffold to the two-pass alignment. V alleles of
+# one gene differ by a nucleotide or two, so a 100 nt read commonly cannot separate them; aligning
+# all of the tied ones lets `_best_hits` break the tie by the same rule the one-pass search uses.
+# 8 is a degeneracy guard, not a tuning knob -- a read tying against more than that is not
+# resolvable at allele level by any means.
+_MAX_TIED_V = 8
+
 # MMseqs2's nucleotide prefilter allocates a k-mer index table of 4**k entries, so peak RSS tracks
 # 4**k * 8 B almost exactly and is INDEPENDENT of database size, --max-seqs, --chunk-size and
 # --threads. Measured on the V+J | J+C reference, 100 k reads, 8 threads:
@@ -370,11 +377,18 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
     tkey = _db_keys(full_db)
 
     fwd, rc, skipped = [], [], set()
+    targets: dict[str, list[str]] = {}
     for qid in want:
         seg = seg_rows.get((qid, side))
-        if seg is None or qid not in qkey or implied[qid] not in tkey:
+        want_t = implied[qid]
+        want_t = [want_t] if isinstance(want_t, str) else list(want_t)
+        # A scaffold missing from the target DB is dropped from the candidate list rather than
+        # failing the read -- only a read left with NO candidate is handed to the rescue pass.
+        want_t = [x for x in want_t if x in tkey]
+        if seg is None or qid not in qkey or not want_t:
             skipped.add(qid)
             continue
+        targets[qid] = want_t
         qs, qe, ts = int(seg["qstart"]), int(seg["qend"]), int(seg["tstart"])
         (rc if qs > qe else fwd).append((qid, qs, qe, ts, float(seg["bits"])))
 
@@ -403,7 +417,11 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
                 # 1-based position p on a length-L read maps to L - p + 1 on its reverse
                 # complement, so a minus-strand hit (qs > qe) becomes a plus-strand one.
                 qs = len(seqs[qid]) - qs + 1
-            rows.append(f"{keys[qid]}\t{tkey[implied[qid]]}\t{int(bits)}\t{qs - ts}")
+            # One prefilter line per candidate. The diagonal is shared: a V×J scaffold is
+            # `V + pad + J`, so the read sits at the same offset in every scaffold built from a
+            # V allele it aligned to at the same position.
+            for tgt in targets[qid]:
+                rows.append(f"{keys[qid]}\t{tkey[tgt]}\t{int(bits)}\t{qs - ts}")
         pref_tsv = tmp / f"implied_{tag}.pref.tsv"
         pref_tsv.write_text("\n".join(rows) + "\n")
         pref_db = tmp / f"impPref_{tag}"
@@ -495,6 +513,13 @@ def _segment_best_hits(
     # Reads whose best J-side evidence came from a `JC|` target, mapped to that J+C scaffold.
     # `JC|` targets are named by scaffold id, so the name IS the competing target.
     jc_scaffold: dict[str, str] = {}
+    # Every V allele tied at the read's best segment score. V alleles of one gene differ by a
+    # nucleotide or two, so a short read routinely cannot separate them and several tie exactly --
+    # and picking one by segment score alone diverged from the one-pass V CALL on 38 % of amplicon
+    # reads. Since the clonotype key is `(locus, v_call, j_call, junction)` at ALLELE level
+    # (`rnaseq.correct`), that silently splits and merges clonotypes. All tied alleles' scaffolds
+    # are aligned instead, so `_best_hits` applies the same rule the one-pass search does.
+    tied_v: dict[str, list[str]] = {}
     for row in _segment_rows(seg_tsv):
         q, t, bits = row["query"], row["target"], float(row["bits"])
         kind, sep, name = t.partition("|")
@@ -502,11 +527,18 @@ def _segment_best_hits(
             continue                      # unrecognised target: never silently treat it as a J
         side = "V" if kind == "V" else "J"
         if (q, side) in top:              # rows arrive pre-sorted by (bits desc, target asc)
+            # Keep the ties, drop everything below them. Capped: a read that ties against dozens
+            # of alleles is degenerate, and the cap bounds the alignment work without affecting
+            # the answer in any non-degenerate case.
+            if side == "V" and bits == top[(q, side)] and len(tied_v[q]) < _MAX_TIED_V:
+                tied_v[q].append(name)
             continue
         top[(q, side)] = bits
         seg_rows[(q, side)] = row
         allele = ref.segment_j_call(name) if kind == "JC" else name
         (best_v if side == "V" else best_j)[q] = allele
+        if kind == "V":
+            tied_v[q] = [name]
         if kind == "JC":
             jc_scaffold[q] = name
 
@@ -516,7 +548,15 @@ def _segment_best_hits(
 
     best, failed = ({}, set())
     if sl.implied:
-        best, failed = _align_implied(query_db, full_db, sl.implied, seg_rows, seqs, tmp,
+        # Expand each read's single implied scaffold to every scaffold its exactly-tied V alleles
+        # imply against the same best J. `dict.fromkeys` keeps order and de-duplicates; the
+        # shortlist's own choice stays first so a read with no ties is unchanged.
+        candidates = {
+            q: list(dict.fromkeys(
+                [sid] + [combos[(v, best_j[q])] for v in tied_v.get(q, ())
+                         if (v, best_j[q]) in combos]))
+            for q, sid in sl.implied.items()}
+        best, failed = _align_implied(query_db, full_db, candidates, seg_rows, seqs, tmp,
                                       threads=threads)
 
     # A read that reaches its J and keeps going into C has TWO plausible homes: the V×J scaffold
