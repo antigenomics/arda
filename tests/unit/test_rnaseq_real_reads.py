@@ -156,13 +156,37 @@ def test_report_carries_resources_and_provenance(tmp_path):
 # ---------------------------------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def two_pass(tmp_path_factory):
+def segment_reference():
+    """The segment reference is DERIVED, so a checkout does not have one until it is built.
+
+    Without this every two-pass test here silently degrades: `_cached_segment_db` returns None,
+    `map_rnaseq` falls back to the one-pass search with a warning, and the comparison tests then
+    compare the one-pass output *to itself* and pass. That is the exact "silent success over
+    nothing" failure this repo has hit three times, and it is why `test_two_pass_is_actually_
+    engaged` below asserts the fast path ran rather than trusting the output to prove it.
+    """
+    from arda.refbuild.segments import build_segment_reference
+
+    return build_segment_reference("human")
+
+
+@pytest.fixture(scope="module")
+def two_pass(tmp_path_factory, segment_reference):
     from arda.rnaseq.map import map_rnaseq
 
     d = tmp_path_factory.mktemp("real_tp")
     out = d / "tp.airr.tsv"
     rep = map_rnaseq(READS_1, out, r2=READS_2, threads=2, two_pass=True)
     return out, rep
+
+
+def test_two_pass_is_actually_engaged(two_pass):
+    """Guard the guard: every comparison below is vacuous if the two-pass silently fell back."""
+    _, rep = two_pass
+    assert rep.segment_search, (
+        "two_pass=True produced no segment_search accounting -- it fell back to the one-pass "
+        "search, so every other two-pass assertion in this module is comparing one-pass to itself")
+    assert rep.segment_search["implied"] > 0, "the fast path resolved nothing; nothing was tested"
 
 
 def _by_id(path):
