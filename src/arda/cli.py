@@ -332,6 +332,16 @@ def rnaseq_map(
              "so the FASTA write and DB build are skipped too. Costs ~0.5% of real reads "
              "(concentrated in J->C and hypermutated IGH), which is why it is OFF by default. "
              "Pointless on amplicon (46-49% receptor: almost everything passes)."),
+    adaptive: bool = typer.Option(
+        False, "--adaptive/--no-adaptive",
+        help="Cap alignments per read at --max-accept 40, then re-search UNCAPPED only the reads "
+             "whose capped best score is under 90 bits. Attacks the align term, which is what is "
+             "left once --prefilter has removed the scan term: on a 0.78%-receptor bulk library "
+             "the search is 7.35s of a 12.25s map. Measured 2.17x on 1M bulk reads with zero "
+             "reads lost. ⚠ Read survival is NOT the whole guarantee: on the real-read fixture it "
+             "also moves junction_aa on 3 of 453 reads, two of them scoring 128 and 131 — far "
+             "above the trigger — so a high score does not certify the best alignment was found. "
+             "Opt in only where a junction-level difference is acceptable."),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -345,6 +355,7 @@ def rnaseq_map(
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
                      limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
+                     adaptive=adaptive,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
