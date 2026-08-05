@@ -343,9 +343,21 @@ def _db_keys(db: Path) -> dict[str, str]:
     return out
 
 
+def _v_end(ref: Reference | None, scaffold_id: str) -> int:
+    """Scaffold nt position where the V germline ends, or 0 if unknown.
+
+    This is what makes two scaffolds built from different-length alleles of one gene comparable:
+    the read's offset into the scaffold differs by exactly this much.
+    """
+    if ref is None:
+        return 0
+    entry = ref.get(scaffold_id)
+    return getattr(entry, "v_sequence_end", 0) if entry is not None else 0
+
+
 def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
                    seg_rows: dict[tuple[str, str], dict], seqs: dict[str, str], tmp: Path, *,
-                   threads: int, side: str = "V",
+                   threads: int, side: str = "V", ref: Reference | None = None,
                    tag_prefix: str = "") -> tuple[dict[str, dict], set[str]]:
     """Align each read against ONLY the scaffold its (best V, best J) implies.
 
@@ -378,6 +390,7 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
 
     fwd, rc, skipped = [], [], set()
     targets: dict[str, list[str]] = {}
+    base: dict[str, str] = {}
     for qid in want:
         seg = seg_rows.get((qid, side))
         want_t = implied[qid]
@@ -389,6 +402,7 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
             skipped.add(qid)
             continue
         targets[qid] = want_t
+        base[qid] = want_t[0]        # the diagonal below is measured against this one
         qs, qe, ts = int(seg["qstart"]), int(seg["qend"]), int(seg["tstart"])
         (rc if qs > qe else fwd).append((qid, qs, qe, ts, float(seg["bits"])))
 
@@ -417,11 +431,28 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
                 # 1-based position p on a length-L read maps to L - p + 1 on its reverse
                 # complement, so a minus-strand hit (qs > qe) becomes a plus-strand one.
                 qs = len(seqs[qid]) - qs + 1
-            # One prefilter line per candidate. The diagonal is shared: a V×J scaffold is
-            # `V + pad + J`, so the read sits at the same offset in every scaffold built from a
-            # V allele it aligned to at the same position.
+            # One prefilter line per candidate, each with ITS OWN diagonal.
+            #
+            # A V×J scaffold is `V + pad + J` with the V left-aligned, so a read sits at the same
+            # offset only in scaffolds whose V allele has the same length. Alleles of one gene do
+            # NOT: 11 human V genes carry alleles of differing length, 8 of them differing by
+            # >= 35 nt and one by 72. `mmseqs align` returns NOTHING once the diagonal is off by
+            # more than ~35 nt, so a single shared diagonal silently drops the sibling scaffold --
+            # including, on a real read, the very scaffold the one-pass search wins on
+            # (TRBV29-1*03 at bits 121 lost, leaving *01 at 113).
+            #
+            # Shifting by the V-end difference corrects it. The correction is not always exact --
+            # alleles can differ by more than pure 5' truncation, measured 2 nt of residual on the
+            # TRBV29-1 case -- but the tolerance band is ~35 nt, so landing within a few nt is
+            # what matters. A candidate whose geometry is unknown keeps the unshifted diagonal;
+            # it is no worse off than before, and a miss costs a rescue, never a read.
+            v_end0 = _v_end(ref, base[qid])
             for tgt in targets[qid]:
-                rows.append(f"{keys[qid]}\t{tkey[tgt]}\t{int(bits)}\t{qs - ts}")
+                shift = 0
+                v_end = _v_end(ref, tgt)
+                if v_end and v_end0:
+                    shift = v_end - v_end0
+                rows.append(f"{keys[qid]}\t{tkey[tgt]}\t{int(bits)}\t{qs - ts + shift}")
         pref_tsv = tmp / f"implied_{tag}.pref.tsv"
         pref_tsv.write_text("\n".join(rows) + "\n")
         pref_db = tmp / f"impPref_{tag}"
@@ -431,13 +462,16 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
         mmseqs.run(["align", str(sub), str(full_db), str(pref_db), str(aln),
                     "-a", "--alignment-mode", "3", "--threads", str(threads)])
         out_tsv = tmp / f"implied_{tag}.tsv"
-        # Reduce to one alignment per query BEFORE materialising it as text, for exactly the reason
-        # the one-pass path does: `convertalis` writes `cigar`/`qaln`/`taln` per row, and aligning
-        # every exactly-tied V allele emits a **measured mean of 3.45 rows per read** (2.88x after
-        # the `_MAX_TIED_V` cap). Converting all of them would rebuild a fraction of the 194 MB ->
-        # 877 MB peak-RSS regression `top_hit` exists to prevent. mmseqs stores each query's results
-        # score-descending, so line 1 is the best-scoring candidate -- which is the whole point of
-        # offering several.
+        # Reduce to one alignment per query BEFORE materialising it as text, as the one-pass path
+        # does: `convertalis` writes `cigar`/`qaln`/`taln` per row, and offering every tied V
+        # allele emits a measured mean of 3.45 rows per read (2.88x after the `_MAX_TIED_V` cap),
+        # which rebuilds a fraction of the 194 MB -> 877 MB regression `top_hit` exists to prevent.
+        #
+        # `mmseqs align` DOES emit each query's results score-descending even from a hand-built
+        # prefilter DB -- verified by removing this call: agreement fell 0.9956 -> 0.9735, i.e.
+        # `_best_hits`' lexicographic tie-break disagrees with mmseqs' own ordering more often
+        # than positional selection does. Keeping `top_hit` on both paths is what makes them
+        # break exact ties by the SAME rule.
         mmseqs.convertalis(sub, full_db, mmseqs.top_hit(aln, tmp / f"impBest_{tag}"),
                            out_tsv, threads=threads, search_type=_SEARCH_TYPE["nt"])
         got = _best_hits(out_tsv)
@@ -564,7 +598,7 @@ def _segment_best_hits(
                          if (v, best_j[q]) in combos]))
             for q, sid in sl.implied.items()}
         best, failed = _align_implied(query_db, full_db, candidates, seg_rows, seqs, tmp,
-                                      threads=threads)
+                                      threads=threads, ref=ref)
 
     # A read that reaches its J and keeps going into C has TWO plausible homes: the V×J scaffold
     # its (V, J) pair names, and the J+C scaffold the segment pass actually hit. The one-pass rule
@@ -577,7 +611,7 @@ def _segment_best_hits(
     contest = {q: s for q, s in jc_scaffold.items() if q in sl.implied}
     if contest:
         jc_hits, _ = _align_implied(query_db, full_db, contest, seg_rows, seqs, tmp,
-                                    threads=threads, side="J", tag_prefix="jc")
+                                    threads=threads, side="J", ref=ref, tag_prefix="jc")
         for q, row in jc_hits.items():
             cur = best.get(q)
             if cur is None or float(row["bits"]) > float(cur["bits"]):
