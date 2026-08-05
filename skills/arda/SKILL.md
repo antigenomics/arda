@@ -309,6 +309,37 @@ Read [references/reference-build.md](references/reference-build.md) for the
 `arda.refbuild` pipeline (IMGT germlines → V×J scaffolds → IgBLAST → markup TSVs)
 and `build-db` / `build-index`.
 
+### The segment reference and the rescue guarantee
+
+`build-index` also writes `segments.fasta` + `segments.markup.tsv` (`arda.refbuild.segments`):
+every V, J and J+C allele as its own target — **1,244 human targets against 15,414 V×J
+scaffolds**, 12.4× fewer. It is *derived* from `alleles.fasta` + `markup.tsv` in under a second,
+so it is neither committed nor shipped in the release tarball, exactly like the mmseqs indexes.
+
+The two-pass search uses it: hit the segment reference, take each read's best V and best J, look
+the pair up in `combinations.tsv` — that names exactly **one** V×J scaffold, so the second
+alignment is one target per read instead of ~277.
+
+**Reads are never dropped by the fast path.** `arda.annotate.shortlist.shortlist()` partitions
+every read into `implied` (took the fast path) or `rescue` (goes back to the full reference), and
+asserts the partition is total. Anything that does not resolve — V only, J only, a V×J pair the
+reference does not contain, a failed second alignment — is realigned, not discarded.
+
+Two traps, each of which produced *correct output that was silently no faster*:
+
+- **`JC|` targets are named by scaffold id, not by allele.** Feed the raw target name to
+  `shortlist()` and every J→C read returns `no_such_combination`. Resolve through
+  `Reference.segment_j_call()`. Measured cost of getting this wrong: the fast path collapsed
+  from 85.3 % to 0.1 %.
+- **Never `top_hit` the segment pass.** One best hit per read destroys the V+J pairing the whole
+  scheme depends on — `implied` goes to 0.
+
+**TRD is TRAV/DV + TRDJ; the J (and C) decides the locus, not the V.** arda's reference already
+encodes it — of 1,050 scaffolds built from a TRAV/DV segment, 1,005 are locus TRA (with a TRAJ)
+and 45 are locus TRD (with a TRDJ). There is deliberately no "α/δ is ambiguous" rule:
+`combinations.tsv` is the arbiter, a pair it contains is real biology and one it does not is a
+genuine chimera.
+
 ## Sequence primitives
 
 `arda.refbuild.translate` exposes fast C++-backed helpers, mirpy-API-compatible:

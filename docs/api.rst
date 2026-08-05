@@ -47,6 +47,11 @@ Runtime annotation
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: arda.annotate.shortlist
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Junction markup and repair
 --------------------------
 
@@ -86,6 +91,11 @@ Bulk RNA-seq
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: arda.rnaseq._res
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Cluster sharding
 ----------------
 
@@ -103,6 +113,11 @@ Reference build
    :show-inheritance:
 
 .. automodule:: arda.refbuild.combinations
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.refbuild.segments
    :members:
    :undoc-members:
    :show-inheritance:
@@ -126,6 +141,21 @@ External tool wrappers
    :show-inheritance:
 
 .. automodule:: arda.igblast
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Cache layout and reference fetch
+--------------------------------
+
+Where arda keeps its reference and how a plain ``pip install`` acquires one.
+
+.. automodule:: arda.paths
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda._database_fetch
    :members:
    :undoc-members:
    :show-inheritance:
