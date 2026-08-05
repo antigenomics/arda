@@ -19,3 +19,12 @@ pybind11_add_module(_markup src/_markup/markup.cpp)
 target_compile_options(_markup PRIVATE -O3)
 
 install(TARGETS _markup DESTINATION arda)
+
+# Exact k-mer prefilter: reject reads that cannot align before MMseqs2 sees them.
+# See src/_prefilter/prefilter.cpp and OPTIMIZATION.md sections 3-4.
+pybind11_add_module(_prefilter src/_prefilter/prefilter.cpp)
+target_compile_options(_prefilter PRIVATE -O3)
+find_package(Threads REQUIRED)
+target_link_libraries(_prefilter PRIVATE Threads::Threads)
+
+install(TARGETS _prefilter DESTINATION arda)

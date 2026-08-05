@@ -322,6 +322,16 @@ def rnaseq_map(
     two_pass: bool = typer.Option(
         False, "--two-pass/--one-pass",
         help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score, both regimes). **Amplicon only.** It needs a read to hit BOTH a V and a J, which primer-anchored amplicon reads do (85%) and bulk RNA-seq reads do not (5%): measured 3.51x on a 48%-receptor TCR amplicon and 0.762x -- i.e. 31% SLOWER -- on a 2.74%-receptor bulk library, where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
+    prefilter: bool = typer.Option(
+        False, "--prefilter/--no-prefilter",
+        help="Drop reads sharing no exact 16-mer with the reference BEFORE they reach MMseqs2. "
+             "**Bulk only, and it is the bulk lever.** On a 0.024%-receptor library MMseqs2 "
+             "spends 48.9s of a 82.6s run proving 4M reads are not receptor reads; the fitted "
+             "cost model (wall ~ reads/46,353 + hits/350) says the dominant term is the READ "
+             "COUNT, not the answer. Unlike MMseqs2's own prefilter this runs before `createdb`, "
+             "so the FASTA write and DB build are skipped too. Costs ~0.5% of real reads "
+             "(concentrated in J->C and hypermutated IGH), which is why it is OFF by default. "
+             "Pointless on amplicon (46-49% receptor: almost everything passes)."),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -334,7 +344,7 @@ def rnaseq_map(
                      map_d=map_d, reconstruct=reconstruct, min_score=min_score,
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
-                     limit=(limit or None), two_pass=two_pass,
+                     limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "

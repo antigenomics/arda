@@ -300,6 +300,9 @@ class RnaseqReport:
     # Two-pass segment search accounting, empty when it is off. `rescued` reads cost a full-
     # reference realignment; they are the price of the fast path never dropping one.
     segment_search: dict = field(default_factory=dict)
+    # k-mer prefilter accounting, empty when it is off. `prefilter_passed / prefilter_seen` is the
+    # only number that says whether it earned its keep on this library.
+    prefilter_stats: dict = field(default_factory=dict)
 
     @property
     def mapped_fraction(self) -> float:
@@ -333,6 +336,7 @@ def map_rnaseq(
     report_path: str | Path | None = None,
     two_pass: bool = False,
     adaptive: bool = False,
+    prefilter: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -426,6 +430,8 @@ def map_rnaseq(
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
+                    prefilter=prefilter,
+                    prefilter_report=report.prefilter_stats if prefilter else None,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
