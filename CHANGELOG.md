@@ -146,13 +146,20 @@ Both scaffolds now compete on bit score, exactly as they do in the one-pass sear
 per read is still ~138x fewer alignments than the full reference. On real reads `locus`,
 `c_call`, `junction_aa` and `productive` are now byte-identical to the one-pass output.
 
-The one remaining approximation is stated rather than smoothed over: the scaffold is chosen from
-the best V *segment* hit, which is not always the allele whose whole scaffold scores highest, so
-**15 of 453 reads (3.3 %) land on a sibling allele** and 5 score a few bits lower. Gene, locus and
-junction are unchanged in every case — the difference lives entirely in the `*NN` suffix, which
-short reads cannot resolve anyway. Where the *gene* differs (2 reads, both exact ties) the
-two-pass picks the functional gene where the one-pass picked an orphon and a duplicate-locus
-paralog.
+Two further corrections came out of wiring it up. V alleles of one gene differ by a nucleotide or
+two, so a short read routinely cannot separate them — **a measured mean of 3.45 tie exactly** on
+segment bit score. Picking one of them by segment score alone diverged from the one-pass V *call*
+on 38 % of TRA amplicon reads, and since the clonotype key is `(locus, v_call, j_call, junction)`
+at ALLELE level, that silently splits and merges clonotypes. Every tied allele's scaffold is now a
+candidate (capped at 8; they share a diagonal, so it is one extra prefilter line each, not an
+extra search).
+
+That made the alignment TSV 2.88x larger — and it was being written with the full 17-column
+format, `cigar`/`qaln`/`taln` included, rebuilding a fraction of the 194 MB -> 877 MB peak-RSS
+regression `top_hit` exists to prevent. Reducing to one row per query first fixes the memory and,
+unexpectedly, the calls: both paths now break exact ties by mmseqs' own ordering rather than by
+two different rules, so **allele-level `v_call` agreement went 0.9735 -> 0.9956** and `junction_aa`,
+`locus` and `c_call` are byte-identical. Deterministic across 2, 4 and 8 threads.
 
 `--two-pass` is now reachable: it is wired into `arda rnaseq map` and `arda rnaseq run` (and so
 through the SLURM and Nextflow paths, which call the same function), with the segment DB and

@@ -431,8 +431,15 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
         mmseqs.run(["align", str(sub), str(full_db), str(pref_db), str(aln),
                     "-a", "--alignment-mode", "3", "--threads", str(threads)])
         out_tsv = tmp / f"implied_{tag}.tsv"
-        mmseqs.convertalis(sub, full_db, aln, out_tsv, threads=threads,
-                           search_type=_SEARCH_TYPE["nt"])
+        # Reduce to one alignment per query BEFORE materialising it as text, for exactly the reason
+        # the one-pass path does: `convertalis` writes `cigar`/`qaln`/`taln` per row, and aligning
+        # every exactly-tied V allele emits a **measured mean of 3.45 rows per read** (2.88x after
+        # the `_MAX_TIED_V` cap). Converting all of them would rebuild a fraction of the 194 MB ->
+        # 877 MB peak-RSS regression `top_hit` exists to prevent. mmseqs stores each query's results
+        # score-descending, so line 1 is the best-scoring candidate -- which is the whole point of
+        # offering several.
+        mmseqs.convertalis(sub, full_db, mmseqs.top_hit(aln, tmp / f"impBest_{tag}"),
+                           out_tsv, threads=threads, search_type=_SEARCH_TYPE["nt"])
         got = _best_hits(out_tsv)
         if flip:
             for qid, row in got.items():

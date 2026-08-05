@@ -224,6 +224,13 @@ def test_two_pass_disagrees_only_on_the_allele_suffix(mapped, two_pass):
                 f"{one[q][col]}@{one[q]['mmseqs2_score']} -> {two[q][col]}@{two[q]['mmseqs2_score']}")
         assert len(bad) <= 0.01 * len(one), (
             f"{col} gene-level agreement fell below 99 %: {len(bad)}/{len(one)} differ")
+    # Allele level too, now that both paths break ties by the same rule (mmseqs' own ordering,
+    # via `top_hit`). Before that the two-pass sorted `_best_hits` lexicographically while the
+    # one-pass took mmseqs' first line, and the two disagreed on 12 of 453 reads.
+    for col in ("v_call", "j_call"):
+        exact = sum(1 for q in one if (one[q][col] or "") == (two[q][col] or ""))
+        assert exact >= 0.99 * len(one), (
+            f"{col} allele-level agreement fell below 99 %: {exact}/{len(one)}")
 
 
 def test_two_pass_accounts_for_every_read_in_the_report(two_pass):
