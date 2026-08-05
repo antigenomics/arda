@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.6.3"
+version = "2.7.0"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,6 +28,14 @@ dependencies = [
     # the same 12 wheels on the same platforms as arda (py3.10-3.13, linux/mac/win) and pulls no
     # runtime deps of its own, so requiring it costs nothing.
     "seqtree>=0.4",
+    # C-accelerated FASTQ/FASTA parsing (cutadapt's parser). Once `--prefilter` removed the search,
+    # reading became the largest single cost of a bulk run -- 65 % of a 0.024 %-receptor library --
+    # and dnaio is 2x the reworked pure-Python loop including mate tagging. Required rather than
+    # optional because it makes the two assertions the pure-Python reader makes, and both are
+    # load-bearing: a truncated mate file and a shuffled one each produced a published false
+    # discovery in this project's benchmark that had to be retracted. A fallback path is kept so a
+    # source checkout without it still runs, but a release should not silently be 2x slower.
+    "dnaio>=1.2",
 ]
 
 [project.optional-dependencies]

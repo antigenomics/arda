@@ -315,6 +315,41 @@ Read [references/reference-build.md](references/reference-build.md) for the
 `arda.refbuild` pipeline (IMGT germlines → V×J scaffolds → IgBLAST → markup TSVs)
 and `build-db` / `build-index`.
 
+### `--prefilter`: the bulk lever
+
+`arda rnaseq map --prefilter` drops reads that share no exact 16-mer with the reference **before**
+they reach MMseqs2. On bulk RNA-seq the receptor fraction is 0.02–3 %, so `mmseqs search` spends
+essentially all of its time proving reads are *not* receptor reads; the fitted cost model says so
+directly — `wall ≈ reads/46,353 + hits/350`, dominated by the **read count**, not the answer.
+
+| sample | receptor % | before | after | speedup | vs TRUST4 |
+|---|---|---|---|---|---|
+| SRR10611239 | 0.024 | 82.58 s | 7.79 s | **10.6×** | **0.332** |
+| SRR6926533 | 0.123 | 39.11 s | 5.26 s | **7.4×** | 0.603 |
+| SRR8363894 | 0.772 | 46.86 s | 13.19 s | **3.6×** | 1.149 |
+
+**Off by default**, because it costs ~0.5 % of real reads. The shape of that loss is what makes it
+usable: every lost read scored **75–79 bits** against the `--min-score 75` cutoff (nothing
+confident is ever dropped), `junction_aa` moved on **zero** shared reads, and the loss is
+**entirely IG with zero across all four TR loci** — one substitution destroys k consecutive exact
+windows, and SHM supplies substitutions. Check `prefilter_stats` (`seen`/`passed`) in the run
+report to see whether it earned its keep on a given library.
+
+⚠ **Bulk only.** Amplicon runs 46–49 % receptor, so almost everything passes and the scan is pure
+overhead. ⚠ **The index is built from `Reference.target_fasta`, the same FASTA MMseqs2 searches.**
+Never build it from a hand-listed segment set: against a `V+pad+J`-only reference the loss is
+16.29 %, **69.27 % of it J→C reads**. Deriving it from the search target makes that unreachable.
+
+⚠ **Do not reach for an MMseqs2 flag instead.** A 15-setting sweep found **no lossless candidate
+above 1.05×**. `--min-ungapped-score 30` is free and gives *zero* speedup — which is the proof
+that the cost is the k-mer stage, not the ungapped extension. And MMseqs2 can only prefilter reads
+already in a DB, so the FASTA write and `createdb` (19.6 % of a 4 M-read run) are paid regardless.
+
+⚠ **`--adaptive` and `--two-pass` are both WORSE on top of `--prefilter`** (measured: 11.13/16.01/
+8.19 s and 14.69/22.84/9.17 s against 10.20/14.66/6.42). Once the scan term is gone, `--adaptive`'s
+re-search is pure overhead, and prefiltered survivors being 84 % hitting does *not* put them in
+`--two-pass`'s amplicon regime.
+
 ### The segment reference and the rescue guarantee
 
 `build-index` also writes `segments.fasta` + `segments.markup.tsv` (`arda.refbuild.segments`):

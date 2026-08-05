@@ -3,6 +3,95 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.7.0
+
+### Added — `--prefilter`: an exact k-mer gate in front of MMseqs2
+
+On bulk RNA-seq the receptor fraction is 0.02–3 %, so `mmseqs search` spends essentially all of
+its time proving that reads are *not* receptor reads. Measured on 4 M reads of SRR10611239 (947
+map, 0.024 %): the search alone is 48.9 s. The fitted cost model says why —
+`wall ≈ reads/46,353 + hits/350`, so the dominant term is the **read count**, not the answer.
+
+A read can only align to a V(D)J scaffold if it shares an exact 16-mer with one. Testing that is a
+lookup; proving it is Smith-Waterman. `src/_prefilter/` (pybind11, sibling of `_markup`) does the
+cheap test first: exact 16-mers, both strands, ≥ 1 hit, two-level lookup (a 4^12 bitset — 2 MB and
+L2-resident — then a binary search into a sorted `uint64` array), `std::thread` fan-out, early
+exit on the first hit. Against the real human reference: **157,838 seeds / 1.3 MB**, built in
+0.21 s, scanning at **36.4 M reads/s** on 8 threads.
+
+`arda rnaseq map --prefilter`, **off by default**. Measured on aldan3 (`map` wall from the run
+report, 32 threads), against TRUST4 on the same reads:
+
+| sample | receptor % | before | after | speedup | TRUST4 | ratio |
+|---|---|---|---|---|---|---|
+| SRR10611239 | 0.024 | 82.58 s | 7.79 s | **10.6×** | 23.46 s | **0.332** |
+| SRR6926533 | 0.123 | 39.11 s | 5.26 s | **7.4×** | 8.71 s | 0.603 |
+| SRR8363894 | 0.772 | 46.86 s | 13.19 s | **3.6×** | 11.48 s | 1.149 |
+
+**Why not an MMseqs2 flag.** Its own prefilter cannot be tuned into this and cannot act early
+enough. A 15-setting sweep found **no lossless candidate above 1.05×**; the informative row is
+`--min-ungapped-score 30`, which is free (0 reads lost) and gives *no speedup* — so the cost is
+the k-mer stage, which no flag exposes. And MMseqs2 can only prefilter reads already in a DB, so
+the FASTA write and `createdb` (12.0 s, 19.6 % of the 4 M-read profile) are paid for every read
+regardless. This runs before both.
+
+**What it costs.** ~0.5 % of real reads, and the shape matters more than the number:
+
+* every lost read scored **75–79 bits** against the `--min-score 75` cutoff — max lost score 79,
+  so nothing confident is ever dropped;
+* **`junction_aa` moved on zero shared reads** — the clonotype key is
+  `(locus, v_call, j_call, junction)`, so a moved junction splits a clonotype, and none moved;
+* the loss is **entirely IG, zero across all four TR loci** — the predicted signature, since one
+  substitution destroys k consecutive exact windows and SHM supplies substitutions.
+
+The index is built from `Reference.target_fasta`, the **same FASTA MMseqs2 searches**. That is
+load-bearing: against a `V+pad+J`-only reference the design measured 16.29 % loss, **69.27 % of it
+J→C reads**, and indexing the constant region took it to 0.53 %. Deriving the index from the
+search target makes that hole structurally unreachable. `prefilter_stats` in the run report gives
+`seen`/`passed`, the only number that says whether it earned its keep on a given library.
+
+### Changed — search batches are no longer read chunks
+
+Every `mmseqs search` call costs ~0.7 s of fixed setup whatever it is handed (10 chunks = 42.73 s
+of search against 36.45 s for one), and a prefiltered 400 k-read chunk holds ~1,900 reads. Reading
+stays chunked so memory is bounded; survivors now accumulate until they amount to a chunk's worth
+of work. Raising `--chunk-size` to 4 M reaches the same wall at **741–1642 MB** RSS — batching
+gets it at a quarter of that. Flushing only ever happens on a chunk boundary, never inside one:
+`chunked_fragments` keeps a fragment's mates together, and splitting them is a bug this pipeline
+has shipped once already under `--reconstruct`.
+
+### Changed — FASTQ parsing moved to C (new dependency: `dnaio`)
+
+Once the prefilter removed the search, **reading became the largest single cost** of a bulk run —
+65 % of a 0.024 %-receptor library, where before it was 3 % and explicitly not worth touching.
+Reworking the pure-Python loop (`zip(*[iter(fh)] * 4)` rather than four `readline()` calls) bought
+1.43×; dnaio is 2× on top of that including mate tagging.
+
+It is adopted because it makes the **same two assertions** the pure-Python reader makes, and both
+are load-bearing — a truncated mate file and a shuffled one each produced a published false
+discovery in arda's benchmark that had to be retracted. Its errors are re-worded so callers still
+see "mate mismatch" and "truncated" as distinct failures, and a truncated gzip still surfaces as
+`ValueError` rather than the bare `EOFError` Typer prints as "Aborted.". It is **not** used when
+`--limit` is set: limit is a head, so a truncation beyond it must never be reached, and dnaio
+validates pairing while filling its own buffers. The pure-Python reader remains as a fallback, and
+a test asserts the two produce identical streams.
+
+### Added — `--adaptive` on `rnaseq map`
+
+`_extend_uncertain` has implemented the align-term lever since 2.6.0 (`--max-accept 40`, then
+re-search uncapped only the reads scoring under 90 bits; 2.17× on 1 M bulk reads, zero reads lost)
+but it was reachable only from the Python API. Off by default: on the real-read fixture it moves
+`junction_aa` on 3 of 453 reads, two of them at 128 and 131 bits, so the trigger cannot be
+calibrated on score alone. **Measured worse than plain `--prefilter` in the prefiltered regime**
+(11.13 / 16.01 / 8.19 s against 10.20 / 14.66 / 6.42) — once the scan term is gone the re-search
+is pure overhead.
+
+### Measured and rejected
+
+`--two-pass` on top of `--prefilter`. The theory was that prefiltered survivors are amplicon-like
+(34,582 of 41,145 hit — 84 %) and so land in its 3.51× regime rather than the 0.762× bulk one.
+They do not: 14.69 / 22.84 / 9.17 s against 10.20 / 14.66 / 6.42. Its cost is not the hit rate.
+
 ## 2.6.3
 
 ### Fixed — the mmseqs auto-fetch could publish a half-written binary

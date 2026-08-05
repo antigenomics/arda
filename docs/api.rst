@@ -52,6 +52,11 @@ Runtime annotation
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: arda.prefilter
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Junction markup and repair
 --------------------------
 

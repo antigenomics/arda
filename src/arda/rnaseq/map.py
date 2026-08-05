@@ -15,6 +15,7 @@ recovers the pair).
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import queue
@@ -23,6 +24,11 @@ from itertools import islice, zip_longest
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
+
+try:                      # C-accelerated FASTQ/FASTA parsing; see _read_pairs_dnaio
+    import dnaio as _dnaio
+except ImportError:       # pure-Python fallback below keeps a source checkout working
+    _dnaio = None
 
 from ._res import Stage
 from ..annotate import io as seqio
@@ -242,6 +248,15 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
             own data and produced a *published* false discovery (a spurious R2-only blind spot) that
             had to be retracted. A pair of FASTQs is an assertion; check it.
     """
+    # dnaio only on the unlimited path. `limit` is a HEAD: a truncation beyond it must never be
+    # reached, which is why `read_pairs(r1, r2, limit=2)` succeeds on a file pair that diverges at
+    # record 3. dnaio validates pairing as it fills its own buffers, so it sees -- and raises on --
+    # a divergence the caller asked never to reach. A limited run is small by construction, so it
+    # gives up nothing that matters to take the pure-Python path here.
+    if _dnaio is not None and limit is None:
+        yield from _read_pairs_dnaio(r1, r2, reconstruct=reconstruct)
+        return
+
     if r2 is None:
         it = seqio.read_sequences(r1)
         yield from islice(it, limit) if limit is not None else it
@@ -278,6 +293,53 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         yield f"{i2}/2", s2
 
 
+def _read_pairs_dnaio(r1, r2, *, reconstruct: bool) -> Iterator[tuple[str, str]]:
+    """The same stream, parsed in C.
+
+    Once ``--prefilter`` removed the search, reading became the largest single cost of a bulk run
+    -- 65 % of a 0.024 %-receptor library, where before it was 3 % and explicitly not worth
+    touching. Reworking the pure-Python loop bought 1.43x; dnaio is 2x on top of that including
+    the mate tagging (3.25 vs 1.63 M records/s on a 1 M-pair fixture).
+
+    It is used only because it makes the SAME two assertions this function has always made, and
+    both are load-bearing: a truncated mate file and a shuffled mate file each produced a
+    *published* false discovery in this project (a spurious R2-only blind spot) that had to be
+    retracted. dnaio raises on both -- "There are more reads in file 1 than in file 2" and "Read
+    name 'b' in file 1 does not match 'zzz'" -- and they are re-raised as ``ValueError`` here so
+    callers and tests see the error type they always have.
+    """
+    try:
+        if r2 is None:
+            with _dnaio.open(str(r1)) as fh:
+                for rec in fh:
+                    yield rec.id, rec.sequence
+            return
+        with _dnaio.open(str(r1), str(r2)) as fh:
+            for a, b in fh:
+                if reconstruct:
+                    merged = merge_pair(a.sequence, b.sequence,
+                                        q1=a.qualities, q2=b.qualities)
+                    if merged is not None:
+                        yield a.id, merged
+                        continue
+                yield f"{a.id}/1", a.sequence
+                yield f"{b.id}/2", b.sequence
+    except _dnaio.FileFormatError as exc:
+        # Re-word to the two phrases callers and tests match on. dnaio says "Reads are improperly
+        # paired. There are more reads in file 1 than in file 2" and "Read name 'b' in file 1 does
+        # not match 'zzz'"; this pipeline has always distinguished a TRUNCATED mate file from a
+        # SHUFFLED one, because they are different data-integrity failures with different fixes.
+        msg = str(exc)
+        if "does not match" in msg:
+            raise ValueError(f"R1/R2 mate mismatch: {msg}. "
+                             f"The FASTQs are not in the same order.") from exc
+        raise ValueError(f"R1 and R2 differ in length; one file is truncated. {msg}") from exc
+    except (EOFError, gzip.BadGzipFile) as exc:
+        # Same surfacing as `seqio.read_sequences`: a bare EOFError from the gzip layer reaches
+        # Typer as "Aborted." with no cause, which reads like a Ctrl-D rather than a bad input.
+        raise ValueError(f"truncated or corrupt gzip input: {r1} / {r2}") from exc
+
+
 @dataclass
 class RnaseqReport:
     """Counts + timing for one ``map`` run (written as JSON with ``--report``)."""
@@ -300,6 +362,9 @@ class RnaseqReport:
     # Two-pass segment search accounting, empty when it is off. `rescued` reads cost a full-
     # reference realignment; they are the price of the fast path never dropping one.
     segment_search: dict = field(default_factory=dict)
+    # k-mer prefilter accounting, empty when it is off. `prefilter_passed / prefilter_seen` is the
+    # only number that says whether it earned its keep on this library.
+    prefilter_stats: dict = field(default_factory=dict)
 
     @property
     def mapped_fraction(self) -> float:
@@ -333,6 +398,7 @@ def map_rnaseq(
     report_path: str | Path | None = None,
     two_pass: bool = False,
     adaptive: bool = False,
+    prefilter: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -414,15 +480,11 @@ def map_rnaseq(
     try:
         with open(output, "w") as fh:
             fh.write(airr_header() + "\n")
-            while True:
-                chunk = chunks.get()
-                if chunk is None:
-                    if reader_exc:
-                        raise reader_exc[0]
-                    break
-                report.total_reads += len(chunk)
+
+            def flush(batch: list) -> None:
+                """Search one batch and write its mapped reads."""
                 keep = mapper._annotate_chunk(
-                    chunk, ref, target_db, seqtype, threads=threads,
+                    batch, ref, target_db, seqtype, threads=threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
@@ -435,7 +497,7 @@ def map_rnaseq(
                     keep = [r for r in keep
                             if float(r.get("mmseqs2_score") or 0) >= min_score]
                 if not keep:
-                    continue
+                    return
                 fh.write(format_rows(keep))
                 report.mapped_reads += len(keep)
                 for r in keep:
@@ -443,6 +505,52 @@ def map_rnaseq(
                     report.per_locus[loc] = report.per_locus.get(loc, 0) + 1
                     if reads_fh is not None:
                         reads_fh.write(f">{r['sequence_id']}\n{r['sequence']}\n")
+
+            # The prefilter runs HERE, in the consumer, not in the reader thread. Moving it into
+            # the reader to overlap it with `mmseqs search` was tried and measured WORSE
+            # (SRR10611239 7.79 -> 9.12 s), for two reasons worth writing down:
+            #
+            #   * the overlap already exists, just split differently -- parsing is in the reader
+            #     thread and the prefilter here, so the two run concurrently. Putting both in one
+            #     thread serialises them, and on a cold library the prefilter (1.3 s) dwarfs the
+            #     search (1.35 s of a 7.79 s run), so that loss is the bigger term.
+            #   * at a 2 % pass rate there is only ever ONE batch to overlap. Filling 400 k
+            #     survivors on SRR8363894 takes 19.4 M reads scanned -- more than the whole file --
+            #     so the reader must consume everything before the first search can start.
+            #
+            # READ chunk size and SEARCH batch size are not the same thing once the prefilter is
+            # on. Reading stays chunked to bound memory, but a prefiltered chunk is tiny -- 0.47 %
+            # of reads survive on a 0.024 %-receptor library -- and every `mmseqs search` call
+            # costs ~0.7 s of fixed setup whatever it is given. Ten near-empty searches were 25.8 s
+            # against 13.4 s for one (SRR10611239). So survivors accumulate until they amount to a
+            # full chunk's worth of work, and only then is MMseqs2 invoked.
+            #
+            # Flushing only ever happens on a chunk boundary, never inside one: `chunked_fragments`
+            # guarantees a fragment's mates land in the same chunk, and splitting them is a bug
+            # this pipeline has already shipped once under --reconstruct.
+            pending: list = []
+            while True:
+                chunk = chunks.get()
+                if chunk is None:
+                    if reader_exc:
+                        raise reader_exc[0]
+                    break
+                report.total_reads += len(chunk)
+                if prefilter and seqtype == "nt":
+                    from ..prefilter import keep_records  # noqa: PLC0415 — optional native ext
+                    survivors = keep_records(chunk, ref.target_fasta, threads=threads)
+                    report.prefilter_stats["seen"] = (
+                        report.prefilter_stats.get("seen", 0) + len(chunk))
+                    report.prefilter_stats["passed"] = (
+                        report.prefilter_stats.get("passed", 0) + len(survivors))
+                else:
+                    survivors = chunk
+                pending.extend(survivors)
+                if len(pending) >= chunk_size:
+                    flush(pending)
+                    pending = []
+            if pending:
+                flush(pending)
     finally:
         if reads_fh is not None:
             reads_fh.close()

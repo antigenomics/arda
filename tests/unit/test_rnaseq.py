@@ -835,3 +835,30 @@ def test_seqtree_is_a_hard_dependency():
     meta = tomllib.loads(pyproject.read_text())["project"]
     assert any(d.startswith("seqtree") for d in meta["dependencies"]), \
         "seqtree must be a core dependency, not an extra"
+
+
+def test_dnaio_and_the_pure_python_reader_produce_the_same_stream(tmp_path, monkeypatch):
+    """Two readers, one contract. dnaio is used for speed, not for different behaviour, and a
+    silent divergence between them would be invisible in every other test -- the fallback only
+    runs where dnaio is absent."""
+    from arda.rnaseq import map as rmap
+
+    r1 = _write_fastq(tmp_path / "r1.fastq", [("a", "ACGTACGT"), ("b", "TTTTGGGG")])
+    r2 = _write_fastq(tmp_path / "r2.fastq", [("a", "CCCCAAAA"), ("b", "GGGGTTTT")])
+    fast = list(rmap.read_pairs(r1, r2))
+    monkeypatch.setattr(rmap, "_dnaio", None)
+    assert list(rmap.read_pairs(r1, r2)) == fast
+
+
+def test_a_truncated_gzip_is_a_valueerror_not_an_eoferror(tmp_path):
+    """A bare EOFError out of the gzip layer reaches Typer as "Aborted." with no cause, which reads
+    like a Ctrl-D rather than a bad input file. dnaio lets it through; this asserts arda does not."""
+    import gzip as _gz
+
+    from arda.rnaseq.map import read_pairs
+
+    good = _write_fastq(tmp_path / "r1.fastq", [("a", "ACGT")])
+    bad = tmp_path / "r2.fastq.gz"
+    bad.write_bytes(_gz.compress(b"@a\nACGT\n+\nIIII\n")[:12])   # cut mid-stream
+    with pytest.raises(ValueError, match="gzip"):
+        list(read_pairs(good, bad))
