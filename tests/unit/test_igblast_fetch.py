@@ -5,6 +5,8 @@ unreachable from a plain ``pip install``, and a test that skips without a refere
 would have skipped on exactly the installation where the bug lives.
 """
 
+from pathlib import Path
+
 import pytest
 
 from arda import _igblast_fetch, igblast
@@ -118,3 +120,31 @@ def test_staging_is_a_sibling_of_the_destination(tmp_path, monkeypatch):
     assert _igblast_fetch.is_complete(dest)
     assert _igblast_fetch.installed_version(dest) == "1.22.0"
     assert not seen["staging"].exists(), "staging must not survive a successful install"
+
+
+def test_the_download_does_not_land_in_the_system_temp_dir(tmp_path, monkeypatch):
+    """The ~400 MB archive must be staged on the DESTINATION filesystem.
+
+    On a cluster /tmp is routinely a small node-local disk — aldan3's is 2.0 GB with 29 MB free,
+    where this failed with `OSError: [Errno 28] No space left on device` on the first real run.
+    Invisible on any developer machine with a roomy /tmp, so it is asserted rather than assumed.
+    """
+    dest = tmp_path / "cache" / "igblast"
+    downloaded_to = {}
+
+    monkeypatch.setattr(_igblast_fetch, "find_tarball", lambda s: "ncbi-igblast-1.22.0-x64-linux.tar.gz")
+    monkeypatch.setattr(_igblast_fetch, "_safe_extract", lambda t, i: i)
+    monkeypatch.setattr(_igblast_fetch, "lay_out", lambda r, s: _fake_release(s, complete=False))
+
+    def fake_download(url, path, **kw):
+        downloaded_to["path"] = path
+        path.write_bytes(b"")
+
+    monkeypatch.setattr(_igblast_fetch, "_download", fake_download)
+    _igblast_fetch.fetch(dest)
+
+    # "not under the system temp dir" is not assertable here — pytest's tmp_path IS under it.
+    # Being under the destination is the invariant that actually prevents the failure, and it
+    # is decisive: the default `TemporaryDirectory()` cannot land there.
+    got = downloaded_to["path"].resolve()
+    assert dest.parent.resolve() in got.parents, f"archive staged outside the cache: {got}"

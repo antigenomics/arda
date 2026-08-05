@@ -3,6 +3,23 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.6.2
+
+### Fixed — auto-fetch staged its download in the system temp dir, and died on a cluster
+
+Both auto-fetches unpacked into `tempfile.TemporaryDirectory()`, i.e. `/tmp`. On a cluster `/tmp`
+is routinely a small node-local disk: aldan3's is **2.0 GB with 29 MB free**, and the IgBLAST
+fetch — a ~400 MB archive that extracts to more — died there on the first real run with
+`OSError: [Errno 28] No space left on device`.
+
+Both now stage on the **destination filesystem** (`dir=dest.parent`), which also makes the
+download → extract → lay out → `os.replace` sequence single-filesystem by construction rather
+than by assumption. MMseqs2 is fixed the same way; it had the identical bug and would have hit
+it next.
+
+Invisible on any developer machine with a roomy `/tmp`, so a test asserts *where the archive is
+written*, not merely that the install succeeded.
+
 ## 2.6.1
 
 ### Fixed — `arda igblast` did not work from a `pip install`, at all
