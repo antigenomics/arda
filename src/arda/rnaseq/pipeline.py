@@ -122,7 +122,8 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
         r2: str | Path | None = None, organism: str = "human", threads: int = 0,
         reconstruct: bool = False, min_score: float = 75.0, kmer: int | None = 12,
         assemble: bool = True, complete_only: bool = True, map_d: bool = True,
-        limit: int | None = None, two_pass: bool = False, echo=None) -> dict:
+        limit: int | None = None, two_pass: bool = False, adaptive: bool = False,
+        echo=None) -> dict:
     """Single-node map -> assemble -> correct."""
     from .map import map_rnaseq
 
@@ -134,7 +135,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
     whole = Stage()
     mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
                       reconstruct=reconstruct, min_score=min_score, map_d=map_d,
-                      kmer=kmer, limit=limit, two_pass=two_pass)
+                      kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive)
     say(f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
         f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
 

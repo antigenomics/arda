@@ -62,6 +62,35 @@ _MAX_SEQS = 300
 # resolvable at allele level by any means.
 _MAX_TIED_V = 8
 
+# Adaptive search. `--max-accept` bounds how many alignments mmseqs performs per query before it
+# stops; it is UNBOUNDED by default, so arda aligns every hitting read against all ~300 of its
+# prefilter candidates and then keeps exactly one. Capping it is the single largest lever on the
+# align term, which is 75 % of bulk search wall (`wall = reads/46,353 + hits/350`).
+#
+# The cap is not free on its own: mmseqs orders candidates by prefilter score, which predicts the
+# true best alignment only 55.8 % of the time, so a capped search can stop before reaching a read's
+# real scaffold. But the reads that suffer are identifiable from the output -- every read lost at
+# `--max-accept 40` scored 75-83, i.e. just above the `--min-score 75` cutoff. A read returning 300
+# bits has plainly found its scaffold; one returning 76 may not have.
+#
+# So: cap everything, then re-search UNCAPPED only the reads whose capped best score is below
+# `_ADAPTIVE_TRIGGER`. Measured on 1 M real bulk reads: 2.17x end to end with **zero reads lost**,
+# where the uncertain set was 4,816 reads (0.5 % of the library) costing 3.9 s against a 50 s
+# saving. No single `--max-accept` value achieves this -- its own lossless point is 1.25x.
+#
+# ⚠ OFF BY DEFAULT, because preserving the read SET is not the whole guarantee. On the real-read
+# fixture the adaptive search also changes `junction_aa` on 3 of 453 reads -- and two of them
+# scored **128 and 131**, far above the 90-bit trigger. A high score therefore does NOT certify
+# that the best alignment was found: a read can be comfortably above threshold on a scaffold that
+# is not its best, and the junction moves even though the read is kept. The bulk measurement did
+# not catch this because it compared read sets and winning targets, not junctions.
+#
+# Any future calibration of `_ADAPTIVE_TRIGGER` has to be judged on junction identity, not on
+# read survival -- and since the counter-examples sit at 128-131 bits, a score-only trigger may
+# not be calibratable at all.
+_MAX_ACCEPT = 40
+_ADAPTIVE_TRIGGER = 90.0
+
 # MMseqs2's nucleotide prefilter allocates a k-mer index table of 4**k entries, so peak RSS tracks
 # 4**k * 8 B almost exactly and is INDEPENDENT of database size, --max-seqs, --chunk-size and
 # --threads. Measured on the V+J | J+C reference, 100 k reads, 8 threads:
@@ -641,6 +670,45 @@ def _segment_best_hits(
     return best, report
 
 
+def _extend_uncertain(best: dict[str, dict], records: list[tuple[str, str]], target_db: Path,
+                      tmp: Path, *, threads: int, sensitivity: float, max_seqs: int,
+                      kmer: int | None, seqtype: str,
+                      strand: list[str]) -> tuple[dict[str, dict], int]:
+    """Re-search, uncapped, the reads whose capped best score is low. Returns (hits, n_rechecked).
+
+    A capped search can stop before reaching a read's true scaffold, and the reads that suffer are
+    exactly the low-scoring ones (see `_ADAPTIVE_TRIGGER`). Re-running those without a cap is
+    authoritative -- it is precisely the search arda does today -- so its answer replaces the
+    capped one unconditionally rather than being compared to it.
+
+    The uncertain set is small (measured 0.5 % of a bulk library), so this costs a few percent of
+    the saving. If it is ever NOT small the adaptive path degrades to two full searches, which is
+    slower than one; that is the failure mode to watch if the trigger is ever raised.
+    """
+    uncertain = {q for q, v in best.items() if float(v["bits"]) < _ADAPTIVE_TRIGGER}
+    if not uncertain:
+        return best, 0
+    sub = [(q, s) for q, s in records if q in uncertain]
+    if not sub:
+        return best, 0
+    d = tmp / "adaptive"
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    fa = seqio.write_fasta(iter(sub), d / "q.fasta")
+    qdb = d / "qDB"
+    mmseqs.createdb(fa, qdb, dbtype=2 if seqtype == "nt" else 1)
+    mmseqs.search(qdb, target_db, d / "res", d / "mt", search_type=_SEARCH_TYPE[seqtype],
+                  sensitivity=sensitivity, max_seqs=max_seqs, threads=threads, kmer=kmer,
+                  extra=strand or None)
+    out_tsv = d / "hits.tsv"
+    mmseqs.convertalis(qdb, target_db, mmseqs.top_hit(d / "res", d / "best"), out_tsv,
+                       threads=threads, search_type=_SEARCH_TYPE[seqtype])
+    best = dict(best)
+    best.update(_best_hits(out_tsv))
+    shutil.rmtree(d, ignore_errors=True)
+    return best, len(sub)
+
+
 def _merge_segment_report(acc: dict, chunk: dict) -> None:
     """Accumulate per-chunk shortlist counters into the run report.
 
@@ -672,6 +740,7 @@ def _annotate_chunk(
     segment_db: Path | None = None,
     combos: dict[tuple[str, str], str] | None = None,
     report: dict | None = None,
+    adaptive: bool = False,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -704,11 +773,13 @@ def _annotate_chunk(
             if report is not None:
                 _merge_segment_report(report, seg_report)
         else:
+            strand = ["--strand", str(mm_strand)] if mm_strand is not None else []
+            capped = ["--max-accept", str(_MAX_ACCEPT)] if adaptive else []
             mmseqs.search(
                 query_db, target_db, res_db, tmp / "mmseqs_tmp",
                 search_type=_SEARCH_TYPE[seqtype], sensitivity=sensitivity,
                 max_seqs=max_seqs, threads=threads, kmer=kmer,
-                extra=(["--strand", str(mm_strand)] if mm_strand is not None else None),
+                extra=(strand + capped) or None,
             )
             # Reduce to one alignment per query BEFORE materialising it as text. With --max-seqs 300
             # a 100 k-read chunk emits ~804 k alignment rows -- 194 MB of cigar/qaln/taln -- of which
@@ -718,6 +789,12 @@ def _annotate_chunk(
             mmseqs.convertalis(query_db, target_db, mmseqs.top_hit(res_db, tmp / "bestDB"),
                                out_tsv, threads=threads, search_type=_SEARCH_TYPE[seqtype])
             best = _best_hits(out_tsv)
+            if adaptive:
+                best, n_re = _extend_uncertain(
+                    best, records, target_db, tmp, threads=threads, sensitivity=sensitivity,
+                    max_seqs=max_seqs, kmer=kmer, seqtype=seqtype, strand=strand)
+                if report is not None:
+                    report["adaptive_rechecked"] = report.get("adaptive_rechecked", 0) + n_re
 
     out: list[dict] = []
     for qid, qseq in records:

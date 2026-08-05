@@ -38,7 +38,11 @@ def mapped(tmp_path_factory):
 
     d = tmp_path_factory.mktemp("real")
     out = d / "m.airr.tsv"
-    rep = map_rnaseq(READS_1, out, r2=READS_2, threads=2)
+    # `adaptive=False` on purpose: this fixture is the UNCAPPED reference every two-pass test
+    # below compares against, so it must be the exhaustive search, not the (default) adaptive one.
+    # Adaptive search has its own tests; mixing the two would make a two-pass assertion fail for
+    # a reason that has nothing to do with the two-pass.
+    rep = map_rnaseq(READS_1, out, r2=READS_2, threads=2, adaptive=False)
     return out, rep
 
 
@@ -176,7 +180,7 @@ def two_pass(tmp_path_factory, segment_reference):
 
     d = tmp_path_factory.mktemp("real_tp")
     out = d / "tp.airr.tsv"
-    rep = map_rnaseq(READS_1, out, r2=READS_2, threads=2, two_pass=True)
+    rep = map_rnaseq(READS_1, out, r2=READS_2, threads=2, two_pass=True, adaptive=False)
     return out, rep
 
 
@@ -308,3 +312,39 @@ def test_productive_is_empty_when_no_junction_was_observed(mapped):
     # stop_codon is NOT gated this way: a stop in the V-side regions is observed regardless.
     assert any((r["stop_codon"] or "").strip() and not (r["junction_aa"] or "").strip()
                for r in rows), "stop_codon should stay evaluable for a junctionless read"
+
+
+def test_adaptive_search_loses_no_read_the_uncapped_search_keeps(tmp_path):
+    """The adaptive search caps alignments per read, then re-searches the uncertain ones uncapped.
+
+    `--max-accept` alone is fast and lossy: mmseqs orders candidates by prefilter score, which
+    predicts the true best alignment only 55.8 % of the time, so a capped search can stop before
+    reaching a read's real scaffold. The reads that suffer are identifiable -- every read lost at
+    `--max-accept 40` on 1 M real bulk reads scored 75-83, just above `--min-score 75` -- so
+    re-searching only those recovers them. Measured there: 2.17x with LOST = 0, against a
+    single-knob lossless point of 1.25x.
+
+    The assertion is the guarantee, not the speed: no read the exhaustive search keeps may be
+    missing, and none may be invented.
+    """
+    from arda.rnaseq.map import map_rnaseq
+
+    exact = map_rnaseq(READS_1, tmp_path / "exact.tsv", r2=READS_2, threads=2, adaptive=False)
+    adap = map_rnaseq(READS_1, tmp_path / "adap.tsv", r2=READS_2, threads=2, adaptive=True)
+    a, b = _by_id(tmp_path / "exact.tsv"), _by_id(tmp_path / "adap.tsv")
+    assert set(a) - set(b) == set(), "the adaptive search lost reads the uncapped search keeps"
+    assert set(b) - set(a) == set(), "the adaptive search invented reads"
+    assert exact.per_locus == adap.per_locus
+    # KNOWN LIMITATION, asserted so it cannot silently grow. The read set is preserved, but the
+    # junction is NOT always: 3 of 453 reads get a different `junction_aa`, and two of them score
+    # 128 and 131 -- far above the 90-bit trigger. A high score does not certify that the best
+    # alignment was found, which is why `adaptive` is off by default. If this count rises, the
+    # trigger or the whole score-based premise needs revisiting.
+    moved = [q for q in a if (a[q]["junction_aa"] or "") != (b[q]["junction_aa"] or "")]
+    assert len(moved) <= 3, (
+        f"adaptive search moved {len(moved)} junctions, was 3: {moved[:5]}")
+    # c_call moves with the junction on the same read (a different scaffold carries a different
+    # constant region), so it is bounded by the same count rather than required to be zero.
+    for col in ("locus", "c_call"):
+        bad = [q for q in a if (a[q][col] or "") != (b[q][col] or "")]
+        assert len(bad) <= 3, f"{col} differs on {len(bad)} read(s), was <=3: {bad[:3]}"

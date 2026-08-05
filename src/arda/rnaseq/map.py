@@ -332,6 +332,7 @@ def map_rnaseq(
     emit_reads: str | Path | None = None,
     report_path: str | Path | None = None,
     two_pass: bool = False,
+    adaptive: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -352,6 +353,13 @@ def map_rnaseq(
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
+        adaptive: cap alignments per read and re-search only the reads whose capped score is
+            low (:func:`arda.annotate.mapper._extend_uncertain`). Measured 2.17x on 1 M bulk reads
+            with **zero reads lost** — but read preservation is not the whole guarantee.
+            **OFF by default**: on the real-read fixture it also changes `junction_aa` on 3 of 453
+            reads, and two of them scored 128 and 131, far above the 90-bit trigger. So a high
+            score does NOT certify that the best alignment was found, and the trigger cannot be
+            calibrated on score alone. Opt in only where a junction-level difference is acceptable.
         two_pass: use the segment reference to shortlist a single V×J scaffold per read before
             aligning (:func:`arda.annotate.mapper._segment_best_hits`). Reads it cannot resolve
             are realigned against the full reference, so nothing is dropped — see
@@ -417,7 +425,7 @@ def map_rnaseq(
                     chunk, ref, target_db, seqtype, threads=threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
-                    segment_db=segment_db, combos=combos,
+                    segment_db=segment_db, combos=combos, adaptive=adaptive,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
