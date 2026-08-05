@@ -1,29 +1,43 @@
-"""Wrapper around the downloaded IgBLAST release.
+"""Wrapper around an IgBLAST release, fetched on demand.
 
-Used only at *build time* (Phase 1) to construct the curated reference DB; the
-runtime annotator does not depend on IgBLAST.
+Used at *build time* (Phase 1) to construct the curated reference DB, and by ``arda igblast``,
+which is how every gold-standard comparison in the benchmark is produced. The runtime annotator
+does not depend on IgBLAST.
 
-The IgBLAST release is expected under ``<project>/bin`` (placed there by
-``setup.sh``), laid out as::
+The release is a flat directory -- executables plus the ``internal_data`` and ``optional_file``
+trees, with ``$IGDATA`` pointed at it::
 
-    bin/
-      igblastn  igblastp  makeblastdb  edit_imgt_file.pl
-      internal_data/   optional_file/
+    igblastn  igblastp  makeblastdb  edit_imgt_file.pl
+    internal_data/   optional_file/
 
-``$IGDATA`` is pointed at ``bin/`` so IgBLAST finds ``internal_data`` and the
-per-organism ``optional_file/<organism>_gl.aux`` auxiliary files.
+Resolved by :func:`igblast_root`, in order:
+
+1. ``$ARDA_IGBLAST`` -- an explicit directory, never fetched;
+2. ``<project>/bin`` if it already holds an IgBLAST (what ``setup.sh`` produces in a checkout);
+3. ``<project>/igblast``, **auto-fetched from NCBI on first use**.
+
+Step 3 is why this module changed shape. It used to resolve only through ``<project>/bin``, so a
+plain ``pip install arda-mapper`` -- which has no checkout and never runs ``setup.sh`` -- could
+not run ``arda igblast`` at all. The failure was also misleading: it surfaced as
+``IgBlastError: IgBLAST ships no internal annotation for organism 'human'``, which names a
+missing data file rather than a missing install, and so reads as a broken reference rather than
+as "IgBLAST was never installed here".
 """
 
 from __future__ import annotations
 
 import os
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
-from .paths import bin_dir
+from ._igblast_fetch import fetch, installed_version
+from .paths import bin_dir, project_root
 
 __all__ = [
     "IgBlastError",
+    "igblast_root",
+    "igblast_version",
     "igdata_env",
     "tool",
     "edit_imgt_file",
@@ -40,13 +54,39 @@ class IgBlastError(RuntimeError):
     """Raised when an IgBLAST tool invocation fails or is missing."""
 
 
+@lru_cache(maxsize=1)
+def igblast_root() -> Path:
+    """The directory holding the IgBLAST executables and ``internal_data``.
+
+    Fetches a release on first use; ``$ARDA_NO_AUTO_FETCH`` turns that into an error instead.
+    """
+    override = os.environ.get("ARDA_IGBLAST")
+    if override:
+        root = Path(override)
+        if not (root / "igblastn").exists():
+            raise IgBlastError(
+                f"$ARDA_IGBLAST={override} does not contain igblastn. Point it at the directory "
+                "holding the IgBLAST executables and internal_data/."
+            )
+        return root
+    if (bin_dir() / "igblastn").exists():  # setup.sh layout, in a source checkout
+        return bin_dir()
+    return fetch(project_root() / "igblast")  # returns immediately if already complete
+
+
+def igblast_version() -> str | None:
+    """The auto-fetched IgBLAST release version, or None if it was not fetched by arda."""
+    return installed_version(igblast_root())
+
+
 def tool(name: str) -> Path:
-    """Resolve an IgBLAST tool path under ``bin/``."""
-    p = bin_dir() / name
+    """Resolve an IgBLAST executable, fetching the release if it is not installed yet."""
+    p = igblast_root() / name
     if not p.exists():
         raise IgBlastError(
-            f"IgBLAST tool {name!r} not found at {p}. Run setup.sh to download "
-            "the IgBLAST release."
+            f"IgBLAST tool {name!r} not found at {p}. The IgBLAST release at "
+            f"{igblast_root()} looks incomplete; remove it to force a re-fetch, or point "
+            "$ARDA_IGBLAST at a complete one."
         )
     return p
 
@@ -59,13 +99,13 @@ def has_internal_annotation(organism: str, group: str) -> bool:
     regions for that group, so the locus must be skipped during the build.
     """
     stem = f"{organism}_TR_V" if group == "TR" else f"{organism}_V"
-    return (bin_dir() / "internal_data" / organism / f"{stem}.nin").exists()
+    return (igblast_root() / "internal_data" / organism / f"{stem}.nin").exists()
 
 
 def igdata_env() -> dict[str, str]:
     """Environment with ``IGDATA`` pointing at the IgBLAST data root."""
     env = dict(os.environ)
-    env["IGDATA"] = str(bin_dir())
+    env["IGDATA"] = str(igblast_root())
     return env
 
 

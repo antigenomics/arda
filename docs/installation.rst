@@ -22,8 +22,9 @@ What gets installed
 -------------------
 
 * The ``arda`` conda env (Python, ``mmseqs2``, a C++ compiler, perl).
-* The latest IgBLAST release into ``bin/`` (gitignored) — only needed to rebuild
-  references, not at annotation time.
+* The latest IgBLAST release into ``bin/`` (gitignored) — needed to rebuild references and to
+  run ``arda igblast``, never for annotation. A plain ``pip install`` fetches it on first use
+  instead; see `IgBLAST without a checkout`_.
 * The ``arda`` package + the ``arda._markup`` C++ extension (editable install).
 
 MMseqs2 without conda
@@ -64,6 +65,36 @@ MMseqs2 indexes** under ``mmseqs/`` — mean a source checkout needs no build. T
 indexes are used when the local MMseqs2 version matches; otherwise arda rebuilds a private
 cache on first run. ``arda build-index`` (re)builds the shipped indexes for your MMseqs2
 version.
+
+.. _IgBLAST without a checkout:
+
+IgBLAST without a checkout
+--------------------------
+
+``arda igblast`` runs IgBLAST and emits AIRR — it is how the gold-standard comparisons in the
+benchmark are produced, and it is the only part of arda that needs IgBLAST at all. Annotation
+does not.
+
+It needs no setup. arda downloads the current NCBI release on first use, the same way it
+handles MMseqs2::
+
+    pip install arda-mapper
+    arda igblast -i reads.fq -o truth.tsv    # fetches IgBLAST once, then runs
+
+Resolution order: ``$ARDA_IGBLAST`` → ``<project>/bin`` if a checkout already has one (what
+``setup.sh`` produces) → ``<cache>/igblast``, auto-fetched.
+
+Controls:
+
+* ``$ARDA_IGBLAST`` — a directory holding ``igblastn`` and ``internal_data/`` (highest
+  priority, never fetched). Point this at a conda or system IgBLAST to reuse it.
+* ``$ARDA_IGBLAST_ASSET`` — override the NCBI asset suffix (``x64-linux``, ``x64-macosx``,
+  ``x64-win64``).
+* ``$ARDA_NO_AUTO_FETCH`` — refuse to download; arda then errors and names the fix rather
+  than proceeding without IgBLAST.
+
+``arda.igblast.igblast_version()`` reports which NCBI release is installed, so a benchmark can
+record it. Fetch eagerly with ``python scripts/fetch_igblast.py --dest <dir>``.
 
 **PyPI install (no source tree).** ``pip install arda-mapper`` ships code only. On first use
 it **auto-fetches** the curated ``vdj/`` references (the ``arda-reference-vdj.tar.gz`` release

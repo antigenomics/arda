@@ -297,7 +297,13 @@ indexes, and version-mismatch handling.
 
 Most users never build anything — `database/vdj/<organism>/` ships with
 precompiled markup and MMseqs2 indexes. Rebuild only when adding/refreshing an
-organism (needs IgBLAST, fetched by `setup.sh` into `bin/`).
+organism (needs IgBLAST).
+
+IgBLAST needs no setup step. `setup.sh` puts a release in `bin/`; every other install —
+including a plain `pip install` — fetches one into `<cache>/igblast` on first use. So
+`arda igblast`, the gold standard every benchmark is scored against, works out of the box.
+`$ARDA_IGBLAST` reuses an existing install, and `arda.igblast.igblast_version()` reports which
+NCBI release is in play, which belongs in any results record.
 
 Every build writes `loci_manifest.tsv` — one row per defined locus (V-J / J+C
 scaffold counts, D germlines, unreachable-D count, `ok`/`EMPTY` status) — and warns at

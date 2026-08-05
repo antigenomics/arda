@@ -3,6 +3,48 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.6.1
+
+### Fixed — `arda igblast` did not work from a `pip install`, at all
+
+IgBLAST resolved only through `<project>/bin`, which is populated by `setup.sh`. A plain
+`pip install arda-mapper` has no source checkout and never runs `setup.sh`, so **every**
+`arda igblast` invocation failed. It is the command that produces the gold standard the
+benchmark scores against, so on a fresh install the accuracy arm of a 27-dataset panel run
+returned nothing on all 27 — the tool runs themselves were fine.
+
+The error also pointed at the wrong thing:
+
+```
+IgBlastError: IgBLAST ships no internal annotation for organism 'human'
+```
+
+That names a missing data file inside a present install. The actual state was that IgBLAST had
+never been installed, and `has_internal_annotation` was resolving `internal_data/human/` under a
+directory that did not exist. Reading it as a broken or unsupported reference costs an hour.
+
+IgBLAST is now fetched from NCBI on first use, exactly as MMseqs2 already was:
+
+```sh
+pip install arda-mapper
+arda igblast -i reads.fq -o truth.tsv     # fetches the release once, then runs
+```
+
+Resolution order is `$ARDA_IGBLAST` → `<project>/bin` if a checkout already has one →
+`<cache>/igblast`, auto-fetched. `$ARDA_IGBLAST_ASSET` overrides the platform asset and
+`$ARDA_NO_AUTO_FETCH` refuses the download with an error that names the fix. Windows resolves
+an asset now too (`x64-win64`), where the old script raised `SystemExit`.
+
+The install is **atomic and concurrency-safe**, because arda runs concurrently against one
+cache by design. The release is laid out in a *sibling* staging directory and moved with a
+single `os.replace`, and the readiness gate is a marker written last rather than
+`igblastn.exists()` — this repo has shipped that exact bug twice, and here it would surface as
+executables present with `internal_data/` still copying, i.e. as the misleading error above.
+
+`scripts/fetch_igblast.py` is now a wrapper over the packaged module instead of a second copy
+of the logic; keeping two is what let the runtime path go missing. `igblast_version()` reports
+the installed NCBI release (1.22.0 at time of writing) so a benchmark can record it.
+
 ## 2.6.0
 
 ### Fixed — a run was not reproducible
