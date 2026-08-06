@@ -51,10 +51,16 @@ class Locus:
         d: D gene-type file stem, or ``None`` for VJ loci.
         ig_seqtype: Value for IgBLAST ``-ig_seqtype`` (``"Ig"`` or ``"TCR"``).
         v_shared: Optional ``(gene_stem, name_substring)`` — also pull V alleles from another gene
-            file whose name contains ``name_substring``. TRA and TRD share V genes (the loci are
-            interleaved on chr14): IMGT files them under ``TRAV`` with a ``.../DV...`` designation
-            (e.g. ``TRAV14/DV4``). Without this, a δ rearrangement on such a V gene has no TRD scaffold
-            to match and is miscalled TRA (the locus is set by J/D/C, never the V).
+            file whose name contains ``name_substring``; an **empty** substring takes the whole
+            stem. TRA and TRD share V genes (the loci are interleaved on chr14): IMGT files the
+            shared ones under ``TRAV`` with a ``.../DV...`` designation (e.g. ``TRAV14/DV4``).
+            Without this, a δ rearrangement on such a V gene has no TRD scaffold to match and is
+            miscalled TRA (the locus is set by J/D/C, never the V).
+
+            ⛔ The sharing runs **both ways**, and only one direction was wired. TRDV1/2/3 are
+            dedicated δ V genes but lie *inside* the TRA locus, between the TRAV genes and the TRAJ
+            cluster, so an α rearrangement can join one to a TRAJ. Without a ``TRDV × TRAJ``
+            scaffold such a read gets its J called and **no V at all**, hence no junction.
     """
 
     name: str
@@ -77,7 +83,12 @@ class Locus:
 
 LOCI: tuple[Locus, ...] = (
     # VJ loci
-    Locus("TRA", "TR", "TRAV", "TRAJ", None, "TCR"),
+    # The inverse of TRD's `v_shared` below, and leaving it out was a measured gap: on the
+    # PRJNA371303 TRA amplicon IgBLAST calls 147 of 9,300 truth reads `TRDV1*01` + a TRAJ with a
+    # real junction, and arda gets every one of those J calls right while emitting `v_call = null`
+    # and therefore no junction — `junction_aa` accuracy 0.0952 on that stratum against 0.9049 on
+    # TRA overall. `""` means the whole TRDV stem, not a name-substring subset.
+    Locus("TRA", "TR", "TRAV", "TRAJ", None, "TCR", v_shared=("TRDV", "")),
     Locus("TRG", "TR", "TRGV", "TRGJ", None, "TCR"),
     Locus("IGK", "IG", "IGKV", "IGKJ", None, "Ig"),
     Locus("IGL", "IG", "IGLV", "IGLJ", None, "Ig"),

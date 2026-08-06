@@ -47,6 +47,27 @@ def test_trd_configured_to_share_trav_dv_v_genes():
     assert sc[0].v_calls == ["TRAV14/DV4*01"]
 
 
+def test_tra_configured_to_share_trdv_v_genes():
+    """The INVERSE of the rule above, which was missing and cost real junctions.
+
+    TRDV1/2/3 are dedicated delta V genes but lie *inside* the TRA locus on chr14, between the TRAV
+    genes and the TRAJ cluster, so an alpha rearrangement can join one to a TRAJ. Without a
+    TRDV x TRAJ scaffold such a read has nowhere to land: measured on the PRJNA371303 TRA amplicon,
+    IgBLAST calls **147 of 9,300** truth reads `TRDV1*01` + a TRAJ with a real junction, and arda
+    calls every one of those J genes correctly while emitting `v_call = null` and therefore no
+    junction -- `junction_aa` accuracy **0.0952** on that stratum against 0.9049 on TRA overall.
+
+    DB-free, so it runs in CI. The locus follows the J, so the scaffold must be labelled TRA.
+    """
+    tra = _locus("TRA")
+    assert tra.v_shared == ("TRDV", ""), "TRA must pull the whole TRDV stem"
+    v = {"TRDV1*01": "ATG" * 10}
+    j = {"TRAJ7*01": "TGGGGGCAGGGG"}
+    sc = combinations.build_locus_scaffolds(tra, v, j, {"TRAJ7*01": 0})
+    assert len(sc) == 1 and sc[0].locus == "TRA"
+    assert sc[0].v_calls == ["TRDV1*01"]
+
+
 def test_dedup_collapses_identical_scaffolds():
     # Two V alleles with identical sequence collapse to one scaffold.
     v = {"V1": "ATG" * 10, "V2": "ATG" * 10}
