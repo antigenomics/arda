@@ -158,7 +158,7 @@ def test_segmap_wiring_matches_the_mmseqs_path_it_replaces():
       exactly and the end-to-end AIRR delta fell from 30 lost reads to 6.
     * **the side mapping.** `C` must be its own group: a constant-region hit says what the isotype
       is and nothing about which J the read carries, and folding it into the J side is precisely
-      what the pre-2.7.3 `JC|` targets did wrong.
+      what the pre-2.8.0 `JC|` targets did wrong.
     """
     from arda import segmap
     from arda.annotate.mapper import _KMER, _MAX_TIED, _SEGMENT_SIDE

@@ -83,7 +83,7 @@ class Reference:
         to agree at all.
 
         ⛔ **Segment targets are excluded by their `|` prefix.** `load_reference` loads
-        `segments.markup.tsv` into this same key space *after* `markup.tsv`, so a pre-2.7.3 file --
+        `segments.markup.tsv` into this same key space *after* `markup.tsv`, so a pre-2.8.0 file --
         whose 345 rows are J+C scaffolds copied verbatim as ``JC|<sid>`` with the same `j_call` and
         `c_call` -- would collide with each base scaffold and, being later, win. Every value would
         become an id the full target DB does not contain, `_align_implied` would drop them all as

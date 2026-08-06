@@ -3,7 +3,88 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## 2.7.3
+## 2.8.0
+
+### Added — `--fast-segments`: the segment pass answered structurally, not by homology search
+
+The two-pass path searched a 924-target segment reference purely to learn, per read, its best V
+allele and its best J allele with coordinates — no cigar, no backtrace. That is a **structural**
+question about a fixed 236 kb germline reference, not a homology search. `arda._segmap` (new C++
+extension) answers it by seeding, voting by diagonal and extending ungapped. Measured on 100,000
+amplicon reads against the shipped reference, 8 threads:
+
+| | wall | agreement with `mmseqs search` |
+|---|---|---|
+| `mmseqs search` | 2,770 ms | — |
+| `_segmap` | **74 ms** | V allele .9997, J allele .9998, C allele 1.0000 |
+
+End to end on 50,000 pairs, `--two-pass` with and without the flag: **9.10 s → 6.12 s (1.49×)**,
+`locus` identical on every read, `v_call` .999794, `junction_aa` .999938, 6 reads lost of 48,620.
+
+⛔ **Off by default, and the residual delta is why.** Six reads and ten V calls of ~48,600 is small
+but is not zero, and the shipped path does not move them at all. It only *nominates*: every
+candidate is still aligned against the full V+pad+J scaffold and scored by MMseqs2.
+
+What made it equivalent were two constants, both wrong at first and both caught by measurement:
+
+* **k = 12**, the `-k` arda already passes MMseqs2 — not 16, which was inherited from `prefilter`
+  where it is calibrated for *rejection*. Seed length sets sensitivity to mismatches: at k=16 the
+  mapper seeded 53,048 reads against mmseqs' 53,121, and a read with no segment hit is assumed
+  non-receptor and is **never rescued**, so those 73 were simply lost. At k=12 `no_segment_hit`
+  matches mmseqs exactly and the AIRR delta fell from 30 lost reads to 6.
+* **a significance floor of 40.** mmseqs applies `-e 1e-3`; this scheme has no e-value, so without
+  a floor 43,010 reads pick up a constant-region hit against mmseqs' 473. Half of those score
+  exactly 38 — a bare seed plus a couple of flanking matches.
+
+### Fixed — IgBLAST was run without its J-frame table, so every truth had NO junctions
+
+`optional_file/<organism>_gl.aux` tells `igblastn` each J allele's reading frame; without it there
+is nothing to place the Phe/Trp 118 anchor against, so it emits no `cdr3`, no `junction` and no
+`junction_aa` **on any read** — while still calling V and J, reporting a normal `v_score` and
+exiting 0.
+
+Both callers looked for the file under `paths.bin_dir()`; it lives beside the executables under
+`igblast.igblast_root()`. Those are **the same directory in a source checkout** (`setup.sh`
+installs IgBLAST into `<repo>/bin`) and different on every auto-fetched install, so it worked
+everywhere it was developed. And `auxiliary_data=aux if aux.exists() else None` made the miss
+silent.
+
+Measured cost: a 10,000-read amplicon truth with `j_call` on 9,070 of 9,300 reads and `junction_aa`
+on **zero**, written up as an IgBLAST limitation at 151 bp before it was traced here. With the file
+passed, 437 of 449 reads carry one, 4–19 aa. `igblast.auxiliary_data()` now **raises** rather than
+degrading: "no junctions" is indistinguishable from a truth that genuinely has none.
+
+⚠ Any IgBLAST truth built with an auto-fetched install before 2.8.0 has this defect. Check
+`junction_aa` fill before scoring against it.
+
+### Fixed — a misleading FASTQ diagnostic
+
+`_read_pairs_dnaio` reported every dnaio `FileFormatError` as "R1 and R2 differ in length; one file
+is truncated". dnaio raises that type for malformed *records* too — a real case here is a `+` line
+that kept its original SRA description after the `@` line was renamed to carry a mate suffix. It
+now only claims a truncation when dnaio actually reported a pairing or length problem.
+
+### Changed — `TRA` shares `TRDV` genes (takes effect on reference rebuild)
+
+`TRD` already declares `v_shared=("TRAV", "/DV")`; the inverse was never wired. TRDV1/2/3 are
+dedicated δ V genes but lie *inside* the TRA locus, so an α rearrangement can join one to a TRAJ —
+and with no `TRDV × TRAJ` scaffold such a read gets its J called and **no V at all**, hence no
+junction. Measured on the PRJNA371303 TRA amplicon: IgBLAST calls **147 of 9,300** truth reads
+`TRDV1*01` + a TRAJ with a real junction, arda calls every one of those J genes correctly and
+emits `v_call = null`, and `junction_aa` accuracy on that stratum is **0.0952** against 0.9049 for
+TRA overall.
+
+⚠ This changes what `build-index` produces (+~483 scaffolds of 15,414). The **shipped reference is
+unchanged** and `_REFERENCE_TAG` stays at 2.5.7, so the fix takes effect only for users who rebuild
+from IMGT. Republishing the reference asset is deliberately a separate step.
+
+### Added — tests for FASTA input and `--limit`
+
+Both features already worked and neither was tested. 17 cases, covering the paths that actually
+differ: `read_pairs` sends the *unlimited* case to dnaio and the *limited* case to a pure-Python
+reader. Includes format detection by content rather than extension, paired FASTA agreeing with
+paired FASTQ record for record, a truncated FASTA mate still raising, `--limit` counting **pairs**
+rather than reads, and a limit not failing on a divergence beyond it.
 
 ### Changed — the segment reference collapses the J×C product too
 
@@ -81,7 +162,7 @@ human reference before being touched.
   *different* rules — a J+C scaffold collapses identical J sequence, a `J|` target inherits the V×J
   collapse of identical assembled `V+pad+J` plus reading frame. **24 J+C scaffolds** were
   unreachable from any J hit, including every IGLJ2/IGLJ3 read. Now keyed per allele on both sides.
-* **A pre-2.7.3 `segments.markup.tsv` poisoned that lookup.** It loads into the same `entries` dict
+* **A pre-2.8.0 `segments.markup.tsv` poisoned that lookup.** It loads into the same `entries` dict
   *after* `markup.tsv`, and its `JC|` rows collide with their base scaffolds on `(j_call, c_call)`;
   the later insertion wins, so every value became an id the full target DB does not contain and the
   contest was off for the whole run. Reachable on the first run after any upgrade.

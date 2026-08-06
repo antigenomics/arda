@@ -61,7 +61,7 @@ MIN_SCORE = 40
 #:
 #: ⛔ These are the same three sides as ``mapper._SEGMENT_SIDE`` and must stay that way: `C` is its
 #: OWN group because a constant-region hit says what the isotype is and nothing about which J the
-#: read carries, and `JC` (the pre-2.7.3 kind) stays J-side. ``test_segmap_wiring`` asserts the two
+#: read carries, and `JC` (the pre-2.8.0 kind) stays J-side. ``test_segmap_wiring`` asserts the two
 #: mappings agree rather than trusting this comment.
 SIDE_GROUP = {"V": 0, "J": 1, "JC": 1, "C": 2}
 

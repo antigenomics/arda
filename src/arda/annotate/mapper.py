@@ -249,10 +249,10 @@ def _has_jc_targets(fasta: Path) -> bool:
 
 
 def _regenerate_segments(fasta: Path, organism: str) -> None:
-    """Rewrite a pre-2.7.3 ``segments.fasta`` (+ markup), safely under concurrency.
+    """Rewrite a pre-2.8.0 ``segments.fasta`` (+ markup), safely under concurrency.
 
     ``build_segment_reference`` truncates both artifacts **in place**. That was fine while it only
-    ran from ``build-index``; 2.7.3 put it on the map path, where arda is concurrent by design
+    ran from ``build-index``; 2.8.0 put it on the map path, where arda is concurrent by design
     (Nextflow process-per-sample, SLURM task-per-shard). N array tasks would all see ``JC|``, all
     truncate the same file, and ``_createdb_atomic``'s **mtime** gate would then happily compile an
     mmseqs DB from whatever bytes were on disk -- a short or interleaved reference, exit 0, targets
@@ -278,7 +278,7 @@ def _regenerate_segments(fasta: Path, organism: str) -> None:
             build_segment_reference(organism, out_dir=fasta.parent)
     except OSError as exc:
         logger.warning("could not regenerate segments.fasta for %s (%s); --two-pass will use the "
-                       "pre-2.7.3 reference, which is correct but ~1.9x slower", organism, exc)
+                       "pre-2.8.0 reference, which is correct but ~1.9x slower", organism, exc)
 
 
 def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
@@ -293,8 +293,8 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     Returns ``None`` rather than raising when `segments.fasta` is absent: the two-pass is then
     simply unavailable and the caller falls back to the one-pass search.
 
-    **A pre-2.7.3 `segments.fasta` is regenerated, not used.** Upgrading arda does not rewrite a
-    generated artifact, and this one changed shape in 2.7.3: the 345 `JC|` scaffolds became 25 `C|`
+    **A pre-2.8.0 `segments.fasta` is regenerated, not used.** Upgrading arda does not rewrite a
+    generated artifact, and this one changed shape in 2.8.0: the 345 `JC|` scaffolds became 25 `C|`
     targets. The mapper still reads `JC|` (so a mixed-vintage install is correct, not broken),
     which is exactly what makes the stale case invisible -- an upgraded user passing ``--two-pass``
     would get correct output, no error, and none of the 1.89x, forever. Detecting it by FORMAT

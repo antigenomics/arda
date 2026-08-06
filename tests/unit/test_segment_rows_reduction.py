@@ -143,7 +143,7 @@ def test_a_pre_split_segments_fasta_is_detected_by_format(tmp_path):
     """`_has_jc_targets` is the self-healing gate for an upgraded install.
 
     Upgrading arda does not rewrite a generated artifact, and `segments.fasta` changed shape in
-    2.7.3 (345 `JC|` scaffolds -> 25 `C|` targets). The mapper still READS `JC|`, so a stale file
+    2.8.0 (345 `JC|` scaffolds -> 25 `C|` targets). The mapper still READS `JC|`, so a stale file
     produces correct output with no error and none of the speedup -- invisible forever. Detecting
     it by format rather than by mtime or version is what makes the repair automatic.
     """

@@ -392,7 +392,7 @@ Traps, each of which produced *correct output* while quietly breaking something:
 - **`JC|` targets are named by scaffold id, not by allele.** Feed the raw target name to
   `shortlist()` and every J→C read returns `no_such_combination`. Resolve through
   `Reference.segment_j_call()`. Measured cost of getting this wrong: the fast path collapsed
-  from 85.3 % to 0.1 %. (Only reachable on a pre-2.7.3 reference; `C|` targets are named by allele.)
+  from 85.3 % to 0.1 %. (Only reachable on a pre-2.8.0 reference; `C|` targets are named by allele.)
 - **Never `top_hit` the segment pass.** One best hit per read destroys the V+J pairing the whole
   scheme depends on — `implied` goes to 0.
 - **`_SEGMENT_SIDE` is ONE mapping shared by `_segment_rows` and `_segment_best_hits`.** Spell the
