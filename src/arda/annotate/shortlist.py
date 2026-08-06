@@ -102,8 +102,34 @@ def load_combinations(path: str | Path) -> dict[tuple[str, str], str]:
     return out
 
 
-def _locus(call: str) -> str:
-    return (call or "")[:3]
+def _lookup(combos: dict[tuple[str, str], str], v: str, j: str) -> str | None:
+    """``combos[(v, j)]``, tolerating a call that names SEVERAL alleles.
+
+    ⛔ A segment target inherits its scaffold's `v_call`/`j_call` verbatim, and those are sometimes
+    ambiguity lists -- alleles arda could not tell apart, comma-joined. `load_combinations` splits
+    such a cell and registers only the individual members, so a composite name never matches and
+    the read is reported as a chimera the reference does not contain.
+
+    Measured on the shipped human reference: **23 of 775 `V|` targets and 2 of 124 `J|` targets**
+    carry composite names, and **all 2,852** (composite V x any J) pairs were absent from
+    `combinations.tsv` -- zero hits. The list includes `IGHV3-23*01,IGHV3-23D*01`,
+    `IGHV1-69*01,IGHV1-69D*01`, `IGKV1-39*01,IGKV1D-39*01` and `IGLJ2*01,IGLJ3*01`: the most-used
+    human IGHV gene, the most-used IGKV gene, and roughly half of IGL J usage. Every read whose
+    best segment V was one of those fell to `_full_rescue` with reason `no_such_combination` --
+    correct output, and a usage-weighted slice of every IG library silently off the fast path.
+
+    First member that resolves wins, tried in the order the reference names them, so the choice is
+    deterministic.
+    """
+    sid = combos.get((v, j))
+    if sid is not None or ("," not in v and "," not in j):
+        return sid
+    for vi in (s.strip() for s in v.split(",")):
+        for ji in (s.strip() for s in j.split(",")):
+            sid = combos.get((vi, ji))
+            if sid is not None:
+                return sid
+    return None
 
 
 def shortlist(best_v: dict[str, str], best_j: dict[str, str],
@@ -138,7 +164,7 @@ def shortlist(best_v: dict[str, str], best_j: dict[str, str],
         elif not j:
             sl._mark(rid, "v_only")            # never reached a J; baseline picks arbitrarily
         else:
-            sid = combos.get((v, j))
+            sid = _lookup(combos, v, j)
             if sid is None:
                 sl._mark(rid, "no_such_combination")
             else:

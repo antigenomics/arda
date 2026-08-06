@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from arda.annotate.mapper import _MAX_TIED_V, _SEGMENT_FORMAT, _segment_rows
+from arda.annotate.mapper import _MAX_TIED, _MAX_TIED_J, _MAX_TIED_V, _SEGMENT_FORMAT, _segment_rows
 
 
 def _write(tmp_path, rows):
@@ -35,14 +35,16 @@ def _brute(rows):
             continue
         side = kind if kind in ("V", "C") else "J"
         if (r["query"], side) in top:
-            if side == "V" and r["bits"] == top[(r["query"], side)] \
-                    and len(tied[r["query"]]) < _MAX_TIED_V:
-                tied[r["query"]].append(r)
+            # A side absent from `_MAX_TIED` (C) collects no ties at all: its cap is effectively 1,
+            # which the `_rank == 0` clause already covers.
+            if side in _MAX_TIED and r["bits"] == top[(r["query"], side)] \
+                    and len(tied[(r["query"], side)]) < _MAX_TIED[side]:
+                tied[(r["query"], side)].append(r)
                 kept.append(r)
             continue
         top[(r["query"], side)] = r["bits"]
-        if side == "V":
-            tied[r["query"]] = [r]
+        if side in _MAX_TIED:
+            tied[(r["query"], side)] = [r]
         kept.append(r)
     return kept
 
@@ -61,9 +63,16 @@ def _key(rows):
      ("r1", "V|TRAV2*01", 99, 1, 50, 1), ("r1", "V|TRAV3*01", 10, 1, 50, 1)],
     # more ties than the cap
     [("r1", f"V|TRAV{i}*01", 100, 1, 50, 1) for i in range(_MAX_TIED_V + 5)],
-    # both sides for one read; J ties are NOT collected (only V ties are)
+    # both sides for one read; J ties ARE collected now -- an exact tie between two `J|` targets
+    # used to be broken lexicographically, and that decided which V×J scaffold the read was
+    # aligned against. Measured: SRR5233639.3589/2 ties IGLJ2*01,IGLJ3*01 and IGLJ2A*01 at 54 bits,
+    # the comma sorts before `A`, and the read landed on a scaffold scoring 93 instead of 96.
     [("r1", "V|TRAV1*01", 100, 1, 50, 1), ("r1", "J|TRAJ1*01", 80, 51, 90, 1),
      ("r1", "J|TRAJ2*01", 80, 51, 90, 1), ("r1", "JC|TRA_5", 70, 51, 99, 1)],
+    # more J ties than the J cap (which is smaller than the V cap: J targets are ~40-60 nt)
+    [("r1", f"J|TRAJ{i}*01", 80, 51, 90, 1) for i in range(_MAX_TIED_J + 3)],
+    # a J tie one bit below the top is NOT a tie and must be dropped
+    [("r1", "J|TRAJ1*01", 80, 51, 90, 1), ("r1", "J|TRAJ2*01", 79, 51, 90, 1)],
     # unrecognised prefix must be dropped, never treated as a J
     [("r1", "junk", 500, 1, 50, 1), ("r1", "V|TRAV1*01", 100, 1, 50, 1)],
     # `C|` is its OWN side, so a C row does not compete with the J row and neither hides the other.

@@ -59,7 +59,7 @@ class Reference:
     _jc_combos: dict[tuple[str, str], str] | None = field(default=None, repr=False)
 
     def jc_combinations(self) -> dict[tuple[str, str], str]:
-        """``(j_call, c_call) -> J+C scaffold id``, the C-side twin of ``combinations.tsv``.
+        """``(j_allele, c_allele) -> J+C scaffold id``, the C-side twin of ``combinations.tsv``.
 
         The segment reference carries the J and the constant region as SEPARATE targets, because a
         constant sequence shared across a locus' J+C scaffolds is a cross-product and copying it
@@ -68,11 +68,40 @@ class Reference:
 
         Derived from the loaded markup rather than from a file: the J+C scaffolds are already
         there, and a second generated artifact is one more thing that can go stale against it.
+
+        ⛔ **Keyed per ALLELE, never by the comma-joined group string.** A `j_call` is a group of
+        alleles arda could not tell apart, and the two sides of this lookup group them by different
+        rules: a J+C scaffold's `j_call` collapses alleles with an identical **J sequence**
+        (`refbuild.constant`), while a `J|` segment target inherits the V×J scaffold's `j_call`,
+        which collapses alleles with an identical assembled **V + pad + J** and folds in reading
+        frame (`refbuild.combinations`). They genuinely disagree: human IGL yields
+        ``J|IGLJ2*01,IGLJ3*01`` and ``J|IGLJ2A*01`` on one side against
+        ``IGLJ2*01,IGLJ2A*01,IGLJ3*01`` on the other, so a group-string key leaves **24 J+C
+        scaffolds unreachable from any J hit** — and an unreachable scaffold means the J→C contest
+        never fires for those reads, which is exactly the invented-junction/destroyed-`c_call` bug
+        the contest exists to prevent. Splitting both sides removes the need for the two collapses
+        to agree at all.
+
+        ⛔ **Segment targets are excluded by their `|` prefix.** `load_reference` loads
+        `segments.markup.tsv` into this same key space *after* `markup.tsv`, so a pre-2.7.3 file --
+        whose 345 rows are J+C scaffolds copied verbatim as ``JC|<sid>`` with the same `j_call` and
+        `c_call` -- would collide with each base scaffold and, being later, win. Every value would
+        become an id the full target DB does not contain, `_align_implied` would drop them all as
+        unknown targets, and the contest would be silently off for the whole run: no error, plausible
+        output. Reachable on the first run after any upgrade, because the self-heal regenerates the
+        files without reloading `entries`.
         """
         if self._jc_combos is None:
-            self._jc_combos = {
-                (e.j_call, e.c_call): sid
-                for sid, e in self.entries.items() if e.is_jc and e.j_call and e.c_call}
+            combos: dict[tuple[str, str], str] = {}
+            for sid, e in self.entries.items():
+                if "|" in sid or not (e.is_jc and e.j_call and e.c_call):
+                    continue
+                for j in e.j_call.split(","):
+                    for c in e.c_call.split(","):
+                        # `setdefault`: first insertion wins, and `entries` is insertion-ordered
+                        # from a file read in order, so the choice is deterministic across runs.
+                        combos.setdefault((j.strip(), c.strip()), sid)
+            self._jc_combos = combos
         return self._jc_combos
 
     def segment_j_call(self, name: str) -> str:
