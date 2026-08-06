@@ -59,6 +59,55 @@ one rule in two languages. Adding `C|` to the loop alone made the reduction disc
 `best_c` was always empty and 15 J→C reads vanished with **`no_segment_hit` not even moving** — the
 rows were dropped before anything counted them.
 
+### Fixed — six silent two-pass defects, found by audit
+
+All six produce correct-looking output and none raises. Each was reproduced against the shipped
+human reference before being touched.
+
+* **`_segment_rows` had no unusable-row filter.** polars sorts nulls FIRST under
+  `descending=True`, so a row with an empty `bits` field became rank 0 for its `(query, side)` and
+  **evicted the read's real best hit** — reproduced with `V|A*01 <empty bits>` beside `V|B*01 120`,
+  where the reduction returns `V|A*01` and the 120-bit row is gone. The null then reached
+  `float(row["bits"])` and raised mid-chunk, after earlier chunks were written: a partial AIRR file
+  that looks complete. `_best_hits` has had this filter since 2.7.2; the segment path never got it.
+* **Composite allele names could never match `combinations.tsv`.** A segment target inherits its
+  scaffold's `v_call`/`j_call` verbatim and those are sometimes ambiguity lists, while
+  `load_combinations` registers only individual members. Measured: 23 of 775 `V|` and 2 of 124 `J|`
+  targets are composite, and **all 2,852** (composite V × any J) pairs were absent — zero hits.
+  `IGHV3-23*01,IGHV3-23D*01` and `IGKV1-39*01,IGKV1D-39*01` are on that list, i.e. the most-used
+  human IGHV and IGKV genes: every such read fell to rescue, reported as a chimera the reference
+  does not contain.
+* **`jc_combinations` keyed on the comma-joined group string**, and the two sides group alleles by
+  *different* rules — a J+C scaffold collapses identical J sequence, a `J|` target inherits the V×J
+  collapse of identical assembled `V+pad+J` plus reading frame. **24 J+C scaffolds** were
+  unreachable from any J hit, including every IGLJ2/IGLJ3 read. Now keyed per allele on both sides.
+* **A pre-2.7.3 `segments.markup.tsv` poisoned that lookup.** It loads into the same `entries` dict
+  *after* `markup.tsv`, and its `JC|` rows collide with their base scaffolds on `(j_call, c_call)`;
+  the later insertion wins, so every value became an id the full target DB does not contain and the
+  contest was off for the whole run. Reachable on the first run after any upgrade.
+* **The J+C contest accepted a walkover.** When the V×J alignment produced nothing, its row was
+  taken unconditionally and the read dropped from the rescue set — keeping a V-less answer (no
+  `v_call`, no junction, no clonotype) the full reference was never asked about. The read now stays
+  in `failed`.
+* **`build_segment_reference` truncated in place on the concurrent runtime path.** Now under the
+  same `arda._locking.build_lock` the mmseqs DB build uses, with the format re-checked after
+  acquiring it, and a read-only reference tree degrades to a warning instead of killing the run.
+
+### Fixed — an exact J tie was broken lexicographically
+
+Found by the test suite, not the audit. J alleles of one gene are short and differ by a base or
+two, so a read routinely ties EXACTLY between two `J|` targets — and the tie was resolved by target
+name, which silently decided which V×J scaffold the read was aligned against.
+`SRR5233639.3589/2` ties `J|IGLJ2*01,IGLJ3*01` and `J|IGLJ2A*01` at **54 bits each**; the comma
+sorts before `A`, so the composite won and the read was seated on a scaffold scoring **93** while
+its true home scores **96**. `_MAX_TIED_J` mirrors `_MAX_TIED_V`: tied J alleles now contribute
+candidates and `_best_hits` decides on whole-scaffold bit score, as the one-pass does. Candidates
+are the two axes (tied V × best J, best V × tied J), bounded by the sum of the caps, not the
+product.
+
+Measured on 50 k TRA amplicon pairs against the one-pass output: `j_call` disagreements
+**296 → 214**, `v_call` 85 → 90, `c_call`/`junction_aa` unchanged.
+
 **Blast radius: `--two-pass` only.** `segments.fasta` is reached solely under `if two_pass:` in
 `rnaseq.map`, so the shipped default path — the one-pass search against the full V×J reference — is
 byte-for-byte unaffected by everything above. `--two-pass` is off by default and is documented as an
