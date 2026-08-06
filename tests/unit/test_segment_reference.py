@@ -49,10 +49,10 @@ def built(tmp_path_factory):
 
 def test_stats_arithmetic_without_a_reference():
     """SegmentStats is pure arithmetic — no DB needed, so this never skips."""
-    s = SegmentStats(v_targets=775, j_targets=124, jc_targets=345, source_scaffolds=15414)
-    assert s.total == 1244
-    assert round(s.reduction, 2) == 12.39
-    assert s.as_dict()["total"] == 1244
+    s = SegmentStats(v_targets=775, j_targets=124, c_targets=25, source_scaffolds=15414)
+    assert s.total == 924
+    assert round(s.reduction, 2) == 16.68
+    assert s.as_dict()["total"] == 924
     assert SegmentStats().reduction == 0.0          # no divide-by-zero on an empty build
 
 
@@ -62,7 +62,10 @@ def test_collapses_the_vxj_product(built):
     assert stats.total < stats.source_scaffolds / 5, (
         f"expected a large reduction, got {stats.source_scaffolds} -> {stats.total}")
     assert stats.v_targets > 100 and stats.j_targets > 10
-    assert stats.jc_targets == 345, "the shipped J+C scaffolds must be carried through"
+    # The 345 J+C scaffolds are a J x C product over 25 distinct C alleles, in which every scaffold
+    # of a locus ends in the SAME constant sequence -- 27.7 % of the targets drawing 76.4 % of the
+    # alignments. One target per C allele is what is left once that product is collapsed too.
+    assert stats.c_targets == 25, "the J+C product must collapse to one target per C allele"
     fasta = _read_fasta(d / "segments.fasta")
     assert len(fasta) == stats.total
 
@@ -132,15 +135,49 @@ def test_ighj1_fr4_is_the_textbook_sequence(built):
 
 
 @requires_human_db
-def test_jc_targets_are_carried_through_v_less(built):
-    """J+C targets already have no V; `RefEntry.is_jc` and transfer's `t0 > 0` guard rely on it."""
+def test_c_targets_are_the_constant_region_alone(built):
+    """A C target carries `c_call` and nothing else — no V, no J, no regions.
+
+    It replaces the 345 J+C scaffolds, which were a J x C product: every scaffold of a locus ends
+    in the SAME constant sequence, so a read reaching C was aligned against all of them to learn
+    one `c_call`. The J half is already covered by the `J|` targets, and a read spanning J into C
+    hits both.
+    """
+    d, stats = built
+    m = pl.read_csv(d / "segments.markup.tsv", separator="\t", infer_schema_length=0)
+    c = m.filter(pl.col("segment") == "C")
+    assert c.height == stats.c_targets == 25
+    assert not m.filter(pl.col("segment") == "JC").height, "J+C scaffolds must not be copied through"
+    fasta = _read_fasta(d / "segments.fasta")
+    for r in c.iter_rows(named=True):
+        assert not r["v_call"], f"{r['scaffold_id']} has a v_call"
+        assert not r["j_call"], f"{r['scaffold_id']} has a j_call — the J is its own target"
+        assert r["c_call"], f"{r['scaffold_id']} lost its c_call"
+        assert r["scaffold_id"] == f"C|{r['c_call']}"
+        assert fasta[r["scaffold_id"]], f"{r['scaffold_id']} is empty"
+        for reg in ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4"):
+            assert int(r[f"{reg}_start"]) == -1, f"{r['scaffold_id']} claims a {reg}"
+
+
+@requires_human_db
+def test_every_c_allele_of_every_locus_gets_a_target(built):
+    """Not only the loci where the C call is informative — coverage is the other job.
+
+    Only IGH's constant genes separate anything worth reporting (11 alleles, 7 classes = the
+    isotype); TRA/TRD/IGK have one C allele each, TRB/TRG two, and IGL's seven are all one class.
+    Dropping those 14 targets is measurably faster. It also deletes the only segment target a read
+    lying wholly inside the constant region can hit, so such a read hits nothing, never enters
+    `seen`, and is never rescued: **14 of 453 reads vanish** on the real-read fixture, all of them
+    V-less J->C reads.
+    """
     d, _ = built
     m = pl.read_csv(d / "segments.markup.tsv", separator="\t", infer_schema_length=0)
-    jc = m.filter(pl.col("segment") == "JC")
-    assert jc.height == 345
-    for r in jc.iter_rows(named=True):
-        assert not r["v_call"], f"{r['scaffold_id']} has a v_call"
-        assert r["c_call"], f"{r['scaffold_id']} lost its c_call"
+    src = pl.read_csv(d / "markup.tsv", separator="\t", infer_schema_length=0)
+    want = {r["c_call"] for r in src.iter_rows(named=True)
+            if (r["c_call"] or "") and not (r["v_call"] or "")}
+    got = {r["c_call"] for r in m.filter(pl.col("segment") == "C").iter_rows(named=True)}
+    assert got == want, f"missing C targets: {sorted(want - got)}"
+    assert len({a[:3] for a in got}) > 1, "every locus with a constant region must be represented"
 
 
 @requires_human_db

@@ -382,11 +382,19 @@ def _segment_rows(tsv: Path) -> list[dict]:
     # silently undid the determinism fix -- 25/25 tied queries flipped when rows were reversed.
     df = df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
 
-    # `V|`/`J|`/`JC|` prefix -> which side of the scaffold this row is evidence for. An
+    # `V|`/`J|`/`JC|`/`C|` prefix -> which side of the scaffold this row is evidence for. An
     # unrecognised prefix is dropped, matching the loop, which never treats one as a J.
+    #
+    # ⛔ This filter and `_segment_best_hits`' own `kind not in (...)` guard MUST list the same
+    # kinds, and the `_side` expression must match its `side` line. They are two statements of one
+    # rule in two languages, and when `C|` targets were added to the reference only the loop was
+    # updated: the reduction silently dropped every C row, so `best_c` was always empty, no
+    # constant-only read was ever rescued, and 15 J->C reads vanished with the report showing
+    # nothing wrong -- `no_segment_hit` did not even move, because the rows were discarded before
+    # anything counted them.
     kind = pl.col("target").str.split("|").list.first()
-    df = df.filter(kind.is_in(["V", "J", "JC"])).with_columns(
-        _side=pl.when(kind == "V").then(pl.lit("V")).otherwise(pl.lit("J")))
+    df = df.filter(kind.is_in(["V", "J", "JC", "C"])).with_columns(
+        _side=pl.when(kind.is_in(["V", "C"])).then(kind).otherwise(pl.lit("J")))
 
     # ⛔ `over`, NOT `group_by`. A window function maps its result back to the ORIGINAL row
     # positions, so on an already-sorted frame it is deterministic; `group_by` is a multithreaded
@@ -679,12 +687,19 @@ def _segment_best_hits(
     # (`rnaseq.correct`), that silently splits and merges clonotypes. All tied alleles' scaffolds
     # are aligned instead, so `_best_hits` applies the same rule the one-pass search does.
     tied_v: dict[str, list[str]] = {}
+    # Best constant-region hit per read, from the `C|` targets. Its own side, NOT the J side: a C
+    # hit is evidence about the isotype and none whatsoever about which J the read carries, and
+    # folding it into `best_j` is what the old `JC|` targets did -- they won the J side on the
+    # strength of their constant half.
+    best_c: dict[str, str] = {}
     for row in _segment_rows(seg_tsv):
         q, t, bits = row["query"], row["target"], float(row["bits"])
         kind, sep, name = t.partition("|")
-        if not sep or kind not in ("V", "J", "JC"):
+        if not sep or kind not in ("V", "J", "JC", "C"):
             continue                      # unrecognised target: never silently treat it as a J
-        side = "V" if kind == "V" else "J"
+        # `JC` is the pre-split target kind and still counts as J evidence, so a mapper of this
+        # vintage keeps working against a reference built before the split.
+        side = kind if kind in ("V", "C") else "J"
         if (q, side) in top:              # rows arrive pre-sorted by (bits desc, target asc)
             # Keep the ties, drop everything below them. Capped: a read that ties against dozens
             # of alleles is degenerate, and the cap bounds the alignment work without affecting
@@ -695,11 +710,21 @@ def _segment_best_hits(
         top[(q, side)] = bits
         seg_rows[(q, side)] = row
         allele = ref.segment_j_call(name) if kind == "JC" else name
-        (best_v if side == "V" else best_j)[q] = allele
+        {"V": best_v, "J": best_j, "C": best_c}[side][q] = allele
         if kind == "V":
             tied_v[q] = [name]
         if kind == "JC":
             jc_scaffold[q] = name
+
+    # A read with both a J and a C hit names its J+C scaffold by that pair, exactly as a V→J read
+    # names its V×J scaffold through `combinations.tsv`. `setdefault` so a pre-split `JC|` hit,
+    # which already knows its scaffold, is never overwritten.
+    if best_c:
+        jc_combos = ref.jc_combinations()
+        for q, c in best_c.items():
+            sid = jc_combos.get((best_j.get(q, ""), c))
+            if sid:
+                jc_scaffold.setdefault(q, sid)
 
     if combos is None:
         combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
@@ -726,7 +751,31 @@ def _segment_best_hits(
     # threshold among 775). It also destroyed the `c_call`, i.e. the isotype. Measured on real
     # reads: 4 of 453 mapped reads, 3 of them gaining an invented junction_aa.
     # Two targets per read is still ~138x fewer alignments than the full reference.
-    contest = {q: s for q, s in jc_scaffold.items() if q in sl.implied}
+    #
+    # ⛔ **Nominate from the J, not from a C hit.** Before the constant region became its own
+    # target, a J->C read's best J-side hit WAS a `JC|` scaffold, so it named its own contestant.
+    # It no longer does, and requiring a `C|` hit instead is not equivalent: such a read spans the
+    # J/C boundary, so its constant overlap is often too short to clear the search threshold on its
+    # own while the concatenated J+C scaffold it used to hit cleared it easily. Measured on the
+    # real-read fixture, gating the contest on C evidence let exactly the bug this contest exists
+    # to prevent back in on SRR5233639.12648/1 -- `TRBV12-3*02` invented, `c_call` TRBC2*01
+    # destroyed, and `junction_aa` CASSFAGLVNIDEQFF fabricated on a read the one-pass calls V-less.
+    #
+    # So every implied read offers the J+C scaffolds of its best J, and bit score decides, exactly
+    # as the one-pass does. That is 1 extra candidate for TRA/TRD/IGK, 2 for TRB/TRG, 7 for IGL and
+    # 11 for IGH. The diagonal transfers cleanly because a J+C scaffold starts AT its J
+    # (`j_sequence_start` = 1), which is the same frame the `J|` segment hit is measured in -- the
+    # per-scaffold offset that makes this wrong on a V×J scaffold (`len(V) + pad`) does not exist
+    # here.
+    jc_by_j: dict[str, list[str]] = {}
+    for (j_allele, _c), sid in ref.jc_combinations().items():
+        jc_by_j.setdefault(j_allele, []).append(sid)
+    contest: dict[str, str | list[str]] = {}
+    for q in sl.implied:
+        named = jc_scaffold.get(q)            # a pre-split `JC|` hit already knows its scaffold
+        cands = [named] if named else jc_by_j.get(best_j.get(q, ""), [])
+        if cands:
+            contest[q] = list(cands)
     if contest:
         jc_hits, _ = _align_implied(query_db, full_db, contest, seg_rows, seqs, tmp,
                                     threads=threads, side="J", ref=ref, tag_prefix="jc")
@@ -736,14 +785,19 @@ def _segment_best_hits(
                 best[q] = row
                 failed.discard(q)         # the J+C alignment succeeded where V×J may not have
 
-    rescue = sorted(set(sl.rescue) | failed)
+    # A read whose ONLY segment evidence is a constant-region hit has no (V, J) pair, so the
+    # shortlist never sees it. It is real receptor mRNA carrying no V(D)J -- rescue it against the
+    # full reference rather than letting it fall out of `seen`, which is how a read gets lost with
+    # no error: the partition assertion below only checks what the shortlist was told about.
+    c_only = set(best_c) - set(best_v) - set(best_j)
+    rescue = sorted(set(sl.rescue) | failed | c_only)
     if rescue:
         best.update(_full_rescue(query_db, full_db, rescue, tmp, threads=threads,
                                  sensitivity=sensitivity, mm_strand=mm_strand,
                                  max_seqs=max_seqs, kmer=kmer, search_type=search_type))
 
-    seen = set(best_v) | set(best_j)
-    assert set(sl.implied) | set(sl.rescue) == seen, "a read was lost during shortlisting"
+    seen = set(best_v) | set(best_j) | set(best_c)
+    assert set(sl.implied) | set(sl.rescue) | c_only == seen, "a read was lost during shortlisting"
     n_fast = len(sl.implied) - len(failed & set(sl.implied))
     # Reads the segment pass never hit at all. Nearly all are genuinely non-receptor -- on bulk
     # that is ~97% of the library, which is the entire point -- but a few are real: a
@@ -755,7 +809,9 @@ def _segment_best_hits(
     n_unseen = max(0, len(_db_keys(query_db)) - len(seen))
     report = {"implied": n_fast, "rescued": len(rescue), "no_segment_hit": n_unseen,
               "fast_fraction": round(n_fast / len(seen), 4) if seen else 0.0,
-              "reasons": {**sl.reasons, **({"second_pass_failed": len(failed)} if failed else {})}}
+              "reasons": {**sl.reasons,
+                          **({"second_pass_failed": len(failed)} if failed else {}),
+                          **({"c_only": len(c_only)} if c_only else {})}}
     return best, report
 
 

@@ -56,12 +56,33 @@ class Reference:
     # translated-frame entries per allele when seqtype == "aa" (a trimmed D has no known frame).
     d_germlines: dict[str, list[tuple[str, str]]]
     anchors: dict = field(default_factory=dict)    # (segment, allele) -> cdr3fix.Anchor
+    _jc_combos: dict[tuple[str, str], str] | None = field(default=None, repr=False)
+
+    def jc_combinations(self) -> dict[tuple[str, str], str]:
+        """``(j_call, c_call) -> J+C scaffold id``, the C-side twin of ``combinations.tsv``.
+
+        The segment reference carries the J and the constant region as SEPARATE targets, because a
+        constant sequence shared across a locus' J+C scaffolds is a cross-product and copying it
+        through cost **76.4 %** of the segment search's alignments. So a J→C read now names its
+        home the same way a V→J read does — by the pair it hit, resolved through this table.
+
+        Derived from the loaded markup rather than from a file: the J+C scaffolds are already
+        there, and a second generated artifact is one more thing that can go stale against it.
+        """
+        if self._jc_combos is None:
+            self._jc_combos = {
+                (e.j_call, e.c_call): sid
+                for sid, e in self.entries.items() if e.is_jc and e.j_call and e.c_call}
+        return self._jc_combos
 
     def segment_j_call(self, name: str) -> str:
         """J allele for a ``JC|`` segment target, which is named by SCAFFOLD id, not by allele.
 
         Feeding the raw target name into a (V, J) combination lookup silently fails for every
         J->C read; measured, that collapsed the two-pass fast path from 85.3 % to 0.1 %.
+
+        Retained for references built before the constant region became its own ``C|`` target —
+        a build and a mapper of different vintages must not silently mis-resolve a J call.
         """
         entry = self.entries.get(name)
         return entry.j_call if entry else name
