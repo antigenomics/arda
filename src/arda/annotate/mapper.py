@@ -308,11 +308,18 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     # mapping falls into `set(want) - set(hits)` in the caller and is realigned against the full
     # reference, which is the exactness guarantee the two-pass path is built around. It is warned
     # about rather than passed over, because a large count means the sub-DB is malformed.
+    #
+    # `bits` is cast with `strict=False`, so an unparseable score becomes null rather than raising
+    # at parse time -- and a null then reaches `float(row["bits"])` in the J+C contest and dies
+    # there instead. Both symptoms are the same malformed row, so both are filtered here, at the
+    # one place that knows the row is unusable.
     n_before = df.height
-    df = df.filter(pl.col("query").is_not_null() & (pl.col("query") != ""))
+    df = df.filter(pl.col("query").is_not_null() & (pl.col("query") != "")
+                   & pl.col("bits").is_not_null())
     if df.height != n_before:
-        logger.warning("%d alignment rows had no query id and were routed to the full-reference "
-                       "rescue (hand-built sub-DB is missing lookup entries)", n_before - df.height)
+        logger.warning("%d alignment rows were unusable (no query id or no score) and were routed "
+                       "to the full-reference rescue; a large count means the hand-built sub-DB "
+                       "is missing lookup entries", n_before - df.height)
     if df.height == 0:
         return {}
     df = (df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
