@@ -3,6 +3,40 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.7.1
+
+### Fixed — `--two-pass` crashed on amplicon after writing a partial output
+
+`arda rnaseq map --two-pass` died with `KeyError: None` roughly 90 % of the way through a 1 M-pair
+TCR amplicon run, having already written ~872 k of ~969 k rows. A truncated AIRR TSV plus a
+non-zero exit is the worst shape of failure here: the output file looks like a finished one, and a
+pipeline that only checks for the file's existence sees a completed run.
+
+Cause: `_align_implied` searches a hand-built prefilter sub-DB, and `mmseqs createsubdb` does not
+carry header/`.lookup` entries for everything in it, so `convertalis` emits rows with a **blank
+query field**. `_best_hits` turned that into a `None` dict key and `seqs[None]` raised.
+
+Such a row cannot be attributed to any read, so it is now dropped and logged. That is the correct
+repair rather than a workaround: a read absent from the hit mapping is realigned against the full
+reference by the caller, which is exactly the exactness guarantee the two-pass path is built on.
+
+Found by running `--two-pass` on amplicon for the first time since the J->C contest fix, the
+tied-V fix and `top_hit`.
+
+### Performance — the record builder and the chunker
+
+* `segment_cigars` and `_aln_identity`, the two per-alignment-column Python loops in
+  `transfer_hit`, move into the C++ extension: **23.03 -> 0.69 us** (33x) and `transfer_hit`
+  **130 -> 27 us** per mapped read (4.8x). Both keep their Python originals as the reference the
+  ports are differentially tested against, and as the fallback when the extension is not built.
+* `format_rows` no longer looks up each column twice (1.22x on that term).
+* `chunked_fragments` computes `frag_stem` only at a possible cut point instead of once per
+  record -- 1.2 M calls became ~10 on a 1.2 M-read run. Cut decisions verified identical over 300
+  randomised trials including the `--reconstruct` parity case.
+
+Context for the sizes: on a receptor-rich library the record builder is ~6 % of a run and
+`mmseqs search` is ~78 %, so these are real but bounded. On amplicon the search is **96.9 %**.
+
 ## 2.7.0
 
 ### Added — `--prefilter`: an exact k-mer gate in front of MMseqs2

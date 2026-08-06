@@ -7,6 +7,7 @@ hot path) -> AIRR TSV.
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import shutil
@@ -24,6 +25,8 @@ from . import io as seqio
 from .reference import load_reference, Reference
 from .transfer import transfer_hit, AIRR_COLUMNS
 from .airr_out import airr_header, format_rows
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["annotate_file", "annotate_records", "build_index"]
 
@@ -294,6 +297,24 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     # That makes a run irreproducible, and it makes byte-identity between the single-node,
     # sharded and Nextflow paths unprovable -- a shard boundary changes row order, nothing else.
     # Lexicographically smallest target among exact ties: arbitrary, but the same everywhere.
+    # An alignment row whose query NAME is empty cannot be attributed to a read. It happens on the
+    # two-pass path: `_align_implied` searches a hand-built prefilter sub-DB, and `createsubdb`
+    # does not carry the header/`.lookup` entries for everything in it, so `convertalis` emits a
+    # blank query field for the uncovered ones. Left in, the null became a dict key and
+    # `seqs[None]` raised `KeyError: None` -- `--two-pass` died ~90 % of the way through a 1 M-pair
+    # amplicon run, after writing a partial output that looked like a completed one.
+    #
+    # Dropping them is the CORRECT repair, not a silent workaround: a read absent from this
+    # mapping falls into `set(want) - set(hits)` in the caller and is realigned against the full
+    # reference, which is the exactness guarantee the two-pass path is built around. It is warned
+    # about rather than passed over, because a large count means the sub-DB is malformed.
+    n_before = df.height
+    df = df.filter(pl.col("query").is_not_null() & (pl.col("query") != ""))
+    if df.height != n_before:
+        logger.warning("%d alignment rows had no query id and were routed to the full-reference "
+                       "rescue (hand-built sub-DB is missing lookup entries)", n_before - df.height)
+    if df.height == 0:
+        return {}
     df = (df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
             .unique(subset="query", keep="first", maintain_order=True))
     return {row["query"]: row for row in df.iter_rows(named=True)}

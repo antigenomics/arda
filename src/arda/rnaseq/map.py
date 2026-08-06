@@ -210,16 +210,19 @@ def chunked_fragments(records: Iterator[tuple], size: int) -> Iterator[list]:
     Nextflow paths are supposed to guarantee.
 
     A chunk may exceed ``size`` by at most one fragment.
+
+    ``frag_stem`` runs ONLY at a possible cut point, i.e. once the batch is already full. It used
+    to run per record -- 1.2 M calls on a 1.2 M-read run, each doing a ``split()`` that allocates a
+    list, to make about ten decisions. Profiled at 1.35 s, which is real now that the prefilter has
+    removed the search it used to hide behind. The cut decisions are unchanged: the previous
+    record's stem is read back off ``batch[-1]`` at the moment it is actually needed.
     """
     batch: list = []
-    prev: str | None = None
     for rec in records:
-        stem = frag_stem(rec[0])
-        if batch and len(batch) >= size and stem != prev:
+        if len(batch) >= size and frag_stem(rec[0]) != frag_stem(batch[-1][0]):
             yield batch
             batch = []
         batch.append(rec)
-        prev = stem
     if batch:
         yield batch
 

@@ -862,3 +862,45 @@ def test_a_truncated_gzip_is_a_valueerror_not_an_eoferror(tmp_path):
     bad.write_bytes(_gz.compress(b"@a\nACGT\n+\nIIII\n")[:12])   # cut mid-stream
     with pytest.raises(ValueError, match="gzip"):
         list(read_pairs(good, bad))
+
+
+def test_an_alignment_row_with_no_query_id_does_not_crash_the_two_pass(tmp_path):
+    """`--two-pass` died with `KeyError: None` ~90 % through a 1 M-pair amplicon run.
+
+    `_align_implied` searches a hand-built prefilter sub-DB, and `createsubdb` does not carry the
+    header/`.lookup` entries for everything in it, so `convertalis` emits a BLANK query field for
+    the uncovered rows. That null became a dict key and `seqs[None]` raised — after a partial
+    output had already been written, which looks exactly like a completed run.
+
+    Dropping the row is the correct repair, not a workaround: a read absent from this mapping is
+    realigned against the full reference by the caller, which is the exactness guarantee the
+    two-pass path is built on. What must never happen is the crash, or a null leaking through.
+    """
+    from arda import mmseqs
+    from arda.annotate.mapper import _best_hits
+
+    cols = mmseqs.DEFAULT_FORMAT_OUTPUT.split(",")
+
+    def row(q, t, bits):
+        vals = []
+        for c in cols:
+            if c == "query":
+                vals.append(q)
+            elif c == "target":
+                vals.append(t)
+            elif c == "bits":
+                vals.append(str(bits))
+            elif c in ("cigar", "qaln", "taln"):
+                vals.append("100M")
+            else:
+                vals.append("1")
+        return "\t".join(vals)
+
+    tsv = tmp_path / "hits.tsv"
+    # The blank-query row scores HIGHEST, so a naive implementation picks it as the winner.
+    tsv.write_text(row("readA", "T1", 200) + "\n" + row("", "T2", 300) + "\n"
+                   + row("readB", "T3", 150) + "\n")
+    out = _best_hits(tsv)
+    assert None not in out and "" not in out
+    assert sorted(out) == ["readA", "readB"]
+    assert out["readA"]["target"] == "T1"
