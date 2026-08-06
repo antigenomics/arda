@@ -219,6 +219,16 @@ def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
     return db
 
 
+def _has_jc_targets(fasta: Path) -> bool:
+    """Was this ``segments.fasta`` written before the constant region became its own target?
+
+    Scans headers only, and stops at the first ``>JC|``. The whole file is ~250 KB, so this costs
+    nothing next to the mmseqs build it guards.
+    """
+    with open(fasta) as fh:
+        return any(line.startswith(">JC|") for line in fh)
+
+
 def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     """The mmseqs DB for the segment reference, or ``None`` if it has not been built.
 
@@ -230,10 +240,23 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
 
     Returns ``None`` rather than raising when `segments.fasta` is absent: the two-pass is then
     simply unavailable and the caller falls back to the one-pass search.
+
+    **A pre-2.7.3 `segments.fasta` is regenerated, not used.** Upgrading arda does not rewrite a
+    generated artifact, and this one changed shape in 2.7.3: the 345 `JC|` scaffolds became 25 `C|`
+    targets. The mapper still reads `JC|` (so a mixed-vintage install is correct, not broken),
+    which is exactly what makes the stale case invisible -- an upgraded user passing ``--two-pass``
+    would get correct output, no error, and none of the 1.89x, forever. Detecting it by FORMAT
+    rather than by mtime or version is what makes that self-healing: the marker is the thing that
+    actually changed.
     """
     fasta = ref.target_fasta.parent / "segments.fasta"
     if not fasta.exists():
         return None
+    if _has_jc_targets(fasta):
+        from ..refbuild.segments import build_segment_reference
+
+        logger.info("segments.fasta predates the J+C collapse; regenerating for %s", organism)
+        build_segment_reference(organism, out_dir=fasta.parent)
     cache = data_dir() / "mmseqs_db" / f"{organism}_segments"
     cache.mkdir(parents=True, exist_ok=True)
     db = cache / "db"

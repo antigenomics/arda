@@ -128,3 +128,28 @@ def test_the_side_mapping_is_the_one_the_two_pass_depends_on():
         "built before the constant region became its own target")
     assert _SEGMENT_SIDE["V"] == "V" and _SEGMENT_SIDE["J"] == "J"
     assert set(_SEGMENT_SIDE.values()) == {"V", "J", "C"}
+
+
+def test_a_pre_split_segments_fasta_is_detected_by_format(tmp_path):
+    """`_has_jc_targets` is the self-healing gate for an upgraded install.
+
+    Upgrading arda does not rewrite a generated artifact, and `segments.fasta` changed shape in
+    2.7.3 (345 `JC|` scaffolds -> 25 `C|` targets). The mapper still READS `JC|`, so a stale file
+    produces correct output with no error and none of the speedup -- invisible forever. Detecting
+    it by format rather than by mtime or version is what makes the repair automatic.
+    """
+    from arda.annotate.mapper import _has_jc_targets
+
+    old = tmp_path / "old.fasta"
+    old.write_text(">V|TRAV1*01\nACGT\n>J|TRAJ1*01\nACGT\n>JC|TRA_JC_0\nACGTACGT\n")
+    assert _has_jc_targets(old)
+
+    new = tmp_path / "new.fasta"
+    new.write_text(">V|TRAV1*01\nACGT\n>J|TRAJ1*01\nACGT\n>C|TRAC*01\nACGTACGT\n")
+    assert not _has_jc_targets(new)
+
+    # `C|` must not be mistaken for `JC|` in either direction, and a sequence line that happens to
+    # start with the marker text is not a header.
+    tricky = tmp_path / "tricky.fasta"
+    tricky.write_text(">C|IGHG1*01\nACGT\n>V|IGHV1*01\nACGT\n")
+    assert not _has_jc_targets(tricky)
