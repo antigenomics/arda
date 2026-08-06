@@ -367,6 +367,13 @@ def _subset_db(src_db: Path, ids: list[str], dst: Path,
     both calls go through numeric keys taken from the source DB's lookup. ``createsubdb``
     preserves those keys, which is why the caller can keep using the source mapping afterwards.
 
+    It also writes ``<dst>.lookup`` itself -- verified against mmseqs 18-8cc5c, which emits
+    ``dst``, ``dst.index``, ``dst.dbtype``, ``dst.lookup``, ``dst.source`` and the ``_h`` pair.
+    An earlier version of this note claimed otherwise; writing the file by hand here on that
+    assumption OVERWROTE mmseqs' own and broke the rescue path (490 ids "absent from lookup").
+    So: the blank query names seen on the two-pass path do **not** come from a missing lookup,
+    and their cause is still open.
+
     Raises:
         MMseqsError: if any id is absent from the source lookup. Dropping them silently is what
             would lose reads, and this function sits on the no-read-lost path.
@@ -380,6 +387,7 @@ def _subset_db(src_db: Path, ids: list[str], dst: Path,
     listing.write_text("\n".join(keys[i] for i in ids) + "\n")
     mmseqs.run(["createsubdb", str(listing), str(src_db), str(dst)])
     mmseqs.run(["createsubdb", str(listing), f"{src_db}_h", f"{dst}_h"])
+
     return dst
 
 
