@@ -336,7 +336,20 @@ _SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart"
 
 
 def _segment_rows(tsv: Path) -> list[dict]:
-    """Every alignment row from a segment-pass convertalis TSV, five columns wide."""
+    """The alignment rows from a segment-pass convertalis TSV that can affect the answer.
+
+    The segment search runs at the same ``--max-seqs`` as the full search, so an amplicon read
+    covering its V emits a row for **every** V allele it clears threshold against -- measured at
+    tens of rows per read. :func:`_segment_best_hits` consumes at most the top row per
+    ``(query, side)`` plus up to ``_MAX_TIED_V`` exactly-tied V rows, and ``continue``s on all the
+    rest, so materialising the whole file as Python dicts builds tens of millions of objects to
+    throw nearly all of them away. That is why ``--two-pass`` peaked at **3.3 GB** on a 1 M-pair
+    amplicon while the one-pass baseline it beats used 2.5 GB -- a mode doing strictly *less*
+    alignment work should not cost more memory, and that was the tell.
+
+    The reduction happens in polars instead, so only the rows the loop can act on are converted.
+    **The loop's semantics are unchanged**: everything dropped here is a row it would have skipped.
+    """
     if not tsv.exists() or tsv.stat().st_size == 0:
         return []
     cols = _SEGMENT_FORMAT.split(",")
@@ -347,6 +360,24 @@ def _segment_rows(tsv: Path) -> list[dict]:
     # the same rule `_best_hits` uses. Resolving them by TSV row order (as an earlier draft did)
     # silently undid the determinism fix -- 25/25 tied queries flipped when rows were reversed.
     df = df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
+
+    # `V|`/`J|`/`JC|` prefix -> which side of the scaffold this row is evidence for. An
+    # unrecognised prefix is dropped, matching the loop, which never treats one as a J.
+    kind = pl.col("target").str.split("|").list.first()
+    df = df.filter(kind.is_in(["V", "J", "JC"])).with_columns(
+        _side=pl.when(kind == "V").then(pl.lit("V")).otherwise(pl.lit("J")))
+
+    # ⛔ `over`, NOT `group_by`. A window function maps its result back to the ORIGINAL row
+    # positions, so on an already-sorted frame it is deterministic; `group_by` is a multithreaded
+    # hash aggregation, and using it unordered is precisely what made `correct` nondeterministic
+    # across runs while the row count stayed stable.
+    df = df.with_columns(
+        _rank=pl.int_range(pl.len()).over(["query", "_side"]),
+        _top=pl.col("bits").first().over(["query", "_side"]))
+    keep = (pl.col("_rank") == 0) | (
+        (pl.col("_side") == "V") & (pl.col("bits") == pl.col("_top"))
+        & (pl.col("_rank") < _MAX_TIED_V))
+    df = df.filter(keep).drop("_side", "_rank", "_top")
     return list(df.iter_rows(named=True))
 
 
