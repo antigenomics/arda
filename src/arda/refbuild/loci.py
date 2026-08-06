@@ -83,12 +83,19 @@ class Locus:
 
 LOCI: tuple[Locus, ...] = (
     # VJ loci
-    # The inverse of TRD's `v_shared` below, and leaving it out was a measured gap: on the
-    # PRJNA371303 TRA amplicon IgBLAST calls 147 of 9,300 truth reads `TRDV1*01` + a TRAJ with a
-    # real junction, and arda gets every one of those J calls right while emitting `v_call = null`
-    # and therefore no junction — `junction_aa` accuracy 0.0952 on that stratum against 0.9049 on
-    # TRA overall. `""` means the whole TRDV stem, not a name-substring subset.
-    Locus("TRA", "TR", "TRAV", "TRAJ", None, "TCR", v_shared=("TRDV", "")),
+    # ⛔ TRA does NOT pull the TRDV stem, and a previous attempt to make it do so was biologically
+    # wrong. The sharing is not symmetric:
+    #
+    #   * **TRDV1/2/3 are dedicated delta V genes.** They rearrange to TRDJ. A `TRDV1 + TRAJ`
+    #     scaffold is not a rearrangement that happens, so building one invites reads onto a
+    #     chimera the biology does not contain.
+    #   * **TRAV/DV genes pair with EITHER**, and which J they took is what defines the locus.
+    #     Those are already covered from both sides: `TRAV/DV x TRAJ` comes free with the TRA
+    #     build because IMGT files them under TRAV, and `TRAV/DV x TRDJ` is exactly what TRD's
+    #     `v_shared=("TRAV", "/DV")` below exists to add.
+    #
+    # So the asymmetry in this table is the correct encoding of the biology, not an oversight.
+    Locus("TRA", "TR", "TRAV", "TRAJ", None, "TCR"),
     Locus("TRG", "TR", "TRGV", "TRGJ", None, "TCR"),
     Locus("IGK", "IG", "IGKV", "IGKJ", None, "Ig"),
     Locus("IGL", "IG", "IGLV", "IGLJ", None, "Ig"),

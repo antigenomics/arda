@@ -446,10 +446,16 @@ def map_rnaseq(
         two_pass: use the segment reference to shortlist a single V×J scaffold per read before
             aligning (:func:`arda.annotate.mapper._segment_best_hits`). Reads it cannot resolve
             are realigned against the full reference, so nothing is dropped — see
-            :mod:`arda.annotate.shortlist`. Off by default: the win scales with the library's
-            receptor fraction, so it pays on amplicon and barely moves a 0.0003 %-receptor
-            negative. Requires ``segments.fasta`` (written by ``arda build-index``); silently
-            falls back to the one-pass search when it is absent.
+            :mod:`arda.annotate.shortlist`. Requires ``segments.fasta`` (written by
+            ``arda build-index``); silently falls back to the one-pass search when it is absent.
+
+            ⛔ **The win is set by whether reads SPAN V INTO J, not by the library type**, and the
+            predictor is ``fast_fraction`` in the report. Measured: 3.51× on a TCR amplicon (fast
+            path 85 %), 2.96× on a 100 %-receptor human TRB set (95.6 %), 2.64× on mouse TRA
+            (89 %) — but **1.03× slower** on the human IGH leg of that *same* 100 %-receptor
+            dataset (16.3 %: those reads cover V and stop short of the short IGHJ target), and
+            0.762× on 2.74 %-receptor bulk (5 %). Off by default because no library type predicts
+            it; run a sample and read ``fast_fraction``.
 
     Returns:
         The run :class:`RnaseqReport` (also printed by the CLI).

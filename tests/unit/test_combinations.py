@@ -47,25 +47,22 @@ def test_trd_configured_to_share_trav_dv_v_genes():
     assert sc[0].v_calls == ["TRAV14/DV4*01"]
 
 
-def test_tra_configured_to_share_trdv_v_genes():
-    """The INVERSE of the rule above, which was missing and cost real junctions.
+def test_tra_does_NOT_share_the_trdv_stem():
+    """The V-gene sharing between TRA and TRD is ASYMMETRIC, and that is the biology.
 
-    TRDV1/2/3 are dedicated delta V genes but lie *inside* the TRA locus on chr14, between the TRAV
-    genes and the TRAJ cluster, so an alpha rearrangement can join one to a TRAJ. Without a
-    TRDV x TRAJ scaffold such a read has nowhere to land: measured on the PRJNA371303 TRA amplicon,
-    IgBLAST calls **147 of 9,300** truth reads `TRDV1*01` + a TRAJ with a real junction, and arda
-    calls every one of those J genes correctly while emitting `v_call = null` and therefore no
-    junction -- `junction_aa` accuracy **0.0952** on that stratum against 0.9049 on TRA overall.
+    * **TRDV1/2/3 are dedicated delta V genes** and rearrange to TRDJ. A ``TRDV1 + TRAJ`` scaffold
+      is not a rearrangement that occurs, so building one invites reads onto a chimera.
+    * **TRAV/DV genes pair with either**, and which J they took is what defines the locus. Both
+      directions are already covered: ``TRAV/DV x TRAJ`` comes free with the TRA build (IMGT files
+      those genes under TRAV), and ``TRAV/DV x TRDJ`` is what TRD's ``v_shared`` adds.
 
-    DB-free, so it runs in CI. The locus follows the J, so the scaffold must be labelled TRA.
+    Pinned because the symmetric-looking version was tried, and the thing that made it look
+    justified was an IgBLAST truth calling 147 amplicon reads ``TRDV1*01`` + a TRAJ. arda declining
+    to build that scaffold is arda being right about the biology, not a recall gap.
     """
-    tra = _locus("TRA")
-    assert tra.v_shared == ("TRDV", ""), "TRA must pull the whole TRDV stem"
-    v = {"TRDV1*01": "ATG" * 10}
-    j = {"TRAJ7*01": "TGGGGGCAGGGG"}
-    sc = combinations.build_locus_scaffolds(tra, v, j, {"TRAJ7*01": 0})
-    assert len(sc) == 1 and sc[0].locus == "TRA"
-    assert sc[0].v_calls == ["TRDV1*01"]
+    assert _locus("TRA").v_shared is None, (
+        "TRA must not pull the TRDV stem: TRDV1/2/3 rearrange to TRDJ, and the shared TRAV/DV "
+        "genes are already covered from both sides")
 
 
 def test_dedup_collapses_identical_scaffolds():

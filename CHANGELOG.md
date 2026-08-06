@@ -64,19 +64,26 @@ is truncated". dnaio raises that type for malformed *records* too — a real cas
 that kept its original SRA description after the `@` line was renamed to carry a mate suffix. It
 now only claims a truncation when dnaio actually reported a pairing or length problem.
 
-### Changed — `TRA` shares `TRDV` genes (takes effect on reference rebuild)
+### Reference — the TRA/TRD V-gene sharing is ASYMMETRIC, and that is deliberate
 
-`TRD` already declares `v_shared=("TRAV", "/DV")`; the inverse was never wired. TRDV1/2/3 are
-dedicated δ V genes but lie *inside* the TRA locus, so an α rearrangement can join one to a TRAJ —
-and with no `TRDV × TRAJ` scaffold such a read gets its J called and **no V at all**, hence no
-junction. Measured on the PRJNA371303 TRA amplicon: IgBLAST calls **147 of 9,300** truth reads
-`TRDV1*01` + a TRAJ with a real junction, arda calls every one of those J genes correctly and
-emits `v_call = null`, and `junction_aa` accuracy on that stratum is **0.0952** against 0.9049 for
-TRA overall.
+`TRD` declares `v_shared=("TRAV", "/DV")`; `TRA` declares nothing, and a symmetric-looking
+"fix" for that was built, measured and **reverted**. The sharing is not symmetric because the
+biology is not:
 
-⚠ This changes what `build-index` produces (+~483 scaffolds of 15,414). The **shipped reference is
-unchanged** and `_REFERENCE_TAG` stays at 2.5.7, so the fix takes effect only for users who rebuild
-from IMGT. Republishing the reference asset is deliberately a separate step.
+* **TRDV1/2/3 are dedicated δ V genes** and rearrange to **TRDJ**. `TRDV1 + TRAJ` is not a
+  rearrangement that occurs, so building that scaffold invites reads onto a chimera.
+* **TRAV/DV genes pair with either, and which J they took is what defines the locus.** Both real
+  directions are already covered: `TRAV/DV × TRAJ` comes free with the TRA build (IMGT files those
+  genes under TRAV) and `TRAV/DV × TRDJ` is what `TRD`'s `v_shared` adds.
+
+What made the wrong version look justified was an IgBLAST truth calling 147 amplicon reads
+`TRDV1*01` + a TRAJ with a real junction, against which arda scored 0.0952 on that stratum. arda
+declining to call a V there is **arda being right about the biology**; the truth is wrong.
+
+The shipped reference is therefore **unchanged** — a full `build-db` + `build-index` from IMGT
+reproduces the committed `markup.tsv`, `alleles.fasta` and `combinations.tsv` byte for byte
+(15,414 human scaffolds) — and `_REFERENCE_TAG` stays at 2.5.7. `test_tra_does_NOT_share_the_trdv_stem`
+pins the asymmetry so the symmetric version cannot be reintroduced by inspection.
 
 ### Added — tests for FASTA input and `--limit`
 

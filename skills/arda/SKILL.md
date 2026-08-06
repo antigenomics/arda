@@ -376,11 +376,26 @@ separate anything reportable (7 classes = the isotype), but a C target is also t
 target a read lying wholly inside the constant region can hit, and dropping the other 14 makes 14
 of 453 fixture reads vanish.
 
-⚠ **`--two-pass` is an amplicon optimisation. Do not reach for it on bulk RNA-seq.** It needs a
-read to hit BOTH a V and a J. Primer-anchored amplicon reads do (85 %) → **3.51x**; bulk reads
-land anywhere in a transcript and do not (5 %) → **0.762x, i.e. 31 % slower**, because the
-segment search becomes overhead on top of a rescue that is nearly the whole library. Off by
-default for this reason. Bulk is a *scan-term* problem; this lever only touches the align term.
+⚠ **`--two-pass` pays off when reads SPAN V INTO J — not by library type.** It needs a read to hit
+both a V and a J segment, and the predictor is **`fast_fraction` in the report**, nothing else:
+
+| library | receptor | fast path | vs one-pass |
+|---|---|---|---|
+| TCR amplicon (TRA) | 48 % | 85 % | **3.51×** |
+| 5′-RACE human TRB | 100 % | **95.6 %** | **2.96×** |
+| 5′-RACE mouse TRA | 100 % | 89 % | **2.64×** |
+| 5′-RACE human **IGH** | 100 % | **16.3 %** | **1.03× slower** |
+| bulk RNA-seq | 2.74 % | 5 % | **0.762×, 31 % slower** |
+
+⛔ This was documented as "an amplicon optimisation, do not reach for it on bulk" and that framing
+is **wrong in both directions**. The two 100 %-receptor rows are the *same dataset, same tool*: IGH
+reads there cover V and stop short of the short IGHJ target, so they hit a V and no J and the fast
+path collapses, while TRB reads span the junction. Read as amplicon-only, the flag gets left off
+exactly where it is worth 3×. Bulk is separately a *scan-term* problem, which is `--prefilter`'s
+job; this lever only touches the align term.
+
+Off by default because there is no library type that predicts it — run a sample and read
+`fast_fraction`.
 
 **Reads are never dropped by the fast path.** `arda.annotate.shortlist.shortlist()` partitions
 every read into `implied` (took the fast path) or `rescue` (goes back to the full reference), and
