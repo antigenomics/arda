@@ -28,3 +28,13 @@ find_package(Threads REQUIRED)
 target_link_libraries(_prefilter PRIVATE Threads::Threads)
 
 install(TARGETS _prefilter DESTINATION arda)
+
+# Structure-aware segment mapper: best V and best J per read WITHOUT a homology search.
+# Deliberately a SEPARATE module from _prefilter -- that one is shipped, measured and load-bearing,
+# and this is opt-in until it is proven not to move the output.
+# See src/_segmap/segmap.cpp and results/round10/aligner_options.md in the benchmark repo.
+pybind11_add_module(_segmap src/_segmap/segmap.cpp)
+target_compile_options(_segmap PRIVATE -O3)
+target_link_libraries(_segmap PRIVATE Threads::Threads)
+
+install(TARGETS _segmap DESTINATION arda)
