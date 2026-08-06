@@ -15,7 +15,7 @@ from pathlib import Path
 
 import polars as pl
 
-from ..paths import data_dir, bin_dir
+from ..paths import data_dir
 from ..annotate import io as seqio
 from .. import igblast
 from . import imgt
@@ -67,11 +67,15 @@ def _run_group(query_fa: Path, organism: str, species_dir: str, group: str,
     d_stems = [loc.d for loc in loci if loc.has_d]
     d = (_combined_db(species_dir, group, "D", d_stems)  # type: ignore[arg-type]
          if d_stems else _dummy_d_db(species_dir))
-    aux = bin_dir() / "optional_file" / f"{organism}_gl.aux"
+    # Resolved through `igblast.auxiliary_data`, which raises when it is missing. It used to be
+    # looked up under `bin_dir()` and passed as None when absent -- the same directory in a
+    # source checkout, a different one on every auto-fetched install, and the silent result is
+    # an IgBLAST run with NO junction on any read.
+    aux = igblast.auxiliary_data(organism)
     igblast.igblastn_airr(
         query_fa, out_tsv, organism=organism,
         germline_db_v=v, germline_db_j=j, germline_db_d=d,
-        auxiliary_data=aux if aux.exists() else None,
+        auxiliary_data=aux,
         ig_seqtype=_IG_SEQTYPE[group], num_threads=num_threads)
     return out_tsv
 
