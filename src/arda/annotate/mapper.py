@@ -65,6 +65,27 @@ _MAX_SEQS = 300
 # resolvable at allele level by any means.
 _MAX_TIED_V = 8
 
+# `--max-seqs` for the SEGMENT pass, which is a structurally different database from the one 300
+# was calibrated on and must not inherit its value.
+#
+# 300 exists because the full reference is a CROSS-PRODUCT: 15,414 V×J scaffolds from 1,244
+# distinct segments, so a read covering its V matches ~277 scaffolds at near-identical scores and
+# truncating that list truncates the true one. Measured on the TRA amplicon, `--max-seqs` against
+# the full reference: at 150 `junction_aa` agreement is already 98.20 %, at 75 it is 85.30 %, and
+# at 25 it is 56.17 % -- 44 % of junctions moved while the mapped read count falls 0.013 %, which
+# hides the whole thing.
+#
+# The segment reference has no cross-product. A read's V competes only against the alleles of its
+# own gene and its close paralogs, and the pass needs exactly three things: the best V, the best J,
+# and up to `_MAX_TIED_V` exactly-tied V alleles. 300 of 1,244 targets is 24 % of the whole
+# database per query to answer that -- against 1.9 % for 300 of 15,414 on the full reference. The
+# two knobs share a name and nothing else.
+#
+# Anything wrong here is bounded rather than silent: a mis-implied scaffold either loses the
+# `(V, J)` lookup and goes to `_full_rescue`, or is caught by the tied-V expansion. Set to a value
+# that comfortably clears `_MAX_TIED_V` on both sides.
+_SEGMENT_MAX_SEQS = 50
+
 # Adaptive search. `--max-accept` bounds how many alignments mmseqs performs per query before it
 # stops; it is UNBOUNDED by default, so arda aligns every hitting read against all ~300 of its
 # prefilter candidates and then keeps exactly one. Capping it is the single largest lever on the
@@ -631,7 +652,8 @@ def _segment_best_hits(
 
     seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
     mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
-                  search_type=search_type, sensitivity=sensitivity, max_seqs=max_seqs,
+                  search_type=search_type, sensitivity=sensitivity,
+                  max_seqs=min(max_seqs, _SEGMENT_MAX_SEQS),
                   threads=threads, kmer=kmer,
                   extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
     # NOT `top_hit` here. `filterdb --extract-lines 1` keeps ONE row per query, which destroys
