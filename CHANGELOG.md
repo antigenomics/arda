@@ -3,6 +3,36 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.7.2
+
+### Fixed — a second `--two-pass` crash, on alignment rows with no score
+
+2.7.1 dropped rows with a blank query id; the amplicon run then died at the next site instead:
+``TypeError: float() argument must be a string or a real number, not 'NoneType'``. ``bits`` is cast
+with ``strict=False``, so an unparseable score becomes null rather than raising at parse time, and
+that null reached ``float(row["bits"])`` in the J+C contest. Same malformed row, second crash site.
+Both are now filtered in one place and both route the affected read to the full-reference rescue —
+the guarantee ``--two-pass`` is built on.
+
+With the two fixes, ``--two-pass`` completes on amplicon for the first time. Measured on 1 M pairs
+(PRJNA371303, `map` stage): **455.33 s vs 804.69 s (1.77×)** on TRA and **479.35 s vs 825.83 s
+(1.73×)** on TRB, losing **10 and 16 reads** of ~1 M, with `junction_aa` concordance **.9995** and
+**.9984** against the one-pass output. It is the only amplicon lever measured so far that preserves
+calls — `--adaptive` is 3.15× but moves 34 % of V-gene calls in that regime, and a
+one-allele-per-gene reference costs 42 % of allele-level V calls on TR data by construction.
+
+⚠ These are defensive fixes, not a root cause. 16–30 % of reads still fall through to the
+full-reference rescue on amplicon, which is most of what ``--two-pass`` gives back in speed, and
+the malformed rows suggest the same origin. The sub-DB construction still needs an audit.
+
+### Fixed — a stale claim about `createsubdb`, and the code written on top of it
+
+``_subset_db``'s docstring said ``createsubdb`` does not write a ``.lookup`` for the destination.
+It does (verified against mmseqs 18-8cc5c, which also copies it WHOLE rather than subsetting it).
+Writing the file by hand on that assumption overwrote mmseqs' own and broke the rescue path.
+New ``tests/unit/test_subset_db.py`` pins the real behaviour — four invariants, each of which has
+shipped broken at least once and every one of which fails **silently**.
+
 ## 2.7.1
 
 ### Fixed — `--two-pass` crashed on amplicon after writing a partial output

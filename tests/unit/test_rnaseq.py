@@ -889,7 +889,7 @@ def test_an_alignment_row_with_no_query_id_does_not_crash_the_two_pass(tmp_path)
             elif c == "target":
                 vals.append(t)
             elif c == "bits":
-                vals.append(str(bits))
+                vals.append(str(bits))   # may be "" — an unparseable score, see below
             elif c in ("cigar", "qaln", "taln"):
                 vals.append("100M")
             else:
@@ -898,9 +898,13 @@ def test_an_alignment_row_with_no_query_id_does_not_crash_the_two_pass(tmp_path)
 
     tsv = tmp_path / "hits.tsv"
     # The blank-query row scores HIGHEST, so a naive implementation picks it as the winner.
+    # `readC` has an EMPTY score: `bits` is cast with strict=False, so that becomes null rather
+    # than raising at parse time, and the null then died later at `float(row["bits"])` in the J+C
+    # contest. Same malformed row, second crash site — both must be filtered here.
     tsv.write_text(row("readA", "T1", 200) + "\n" + row("", "T2", 300) + "\n"
-                   + row("readB", "T3", 150) + "\n")
+                   + row("readC", "T3", "") + "\n" + row("readB", "T4", 150) + "\n")
     out = _best_hits(tsv)
     assert None not in out and "" not in out
     assert sorted(out) == ["readA", "readB"]
     assert out["readA"]["target"] == "T1"
+    assert all(r["bits"] is not None for r in out.values())
