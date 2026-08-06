@@ -332,6 +332,16 @@ def rnaseq_map(
              "so the FASTA write and DB build are skipped too. Costs ~0.5% of real reads "
              "(concentrated in J->C and hypermutated IGH), which is why it is OFF by default. "
              "Pointless on amplicon (46-49% receptor: almost everything passes)."),
+    fast_segments: bool = typer.Option(
+        False, "--fast-segments/--mmseqs-segments",
+        help="With --two-pass, answer the segment pass structurally instead of with an MMseqs2 "
+             "search. That pass exists only to learn each read's best V and best J with "
+             "coordinates against a fixed 236kb germline reference -- a structural question, not a "
+             "homology search. Measured on 100k amplicon reads: 74ms against MMseqs2's 2770ms "
+             "(37x), agreeing with it on .9997 of V alleles and .9998 of J. It only NOMINATES: "
+             "every candidate is still aligned against the full V+pad+J scaffold and scored by "
+             "MMseqs2, so the AIRR output should not move. EXPERIMENTAL and off by default until "
+             "that is proven end to end. Ignored without --two-pass."),
     adaptive: bool = typer.Option(
         False, "--adaptive/--no-adaptive",
         help="Cap alignments per read at --max-accept 40, then re-search UNCAPPED only the reads "
@@ -355,6 +365,7 @@ def rnaseq_map(
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
                      limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
+                     fast_segments=fast_segments,
                      adaptive=adaptive,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(

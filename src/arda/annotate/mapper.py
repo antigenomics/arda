@@ -751,6 +751,7 @@ def _segment_best_hits(
     threads: int, sensitivity: float, mm_strand: int | None, max_seqs: int, kmer: int | None,
     search_type: int, seqs: dict[str, str],
     combos: dict[tuple[str, str], str] | None = None,
+    fast_segments: bool = False,
 ) -> tuple[dict[str, dict], dict]:
     """Two-pass best hits: cheap segment pass, then align only the implied scaffold.
 
@@ -764,17 +765,29 @@ def _segment_best_hits(
     """
     from .shortlist import _lookup, load_combinations, shortlist
 
-    seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
-    mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
-                  search_type=search_type, sensitivity=sensitivity,
-                  max_seqs=min(max_seqs, _SEGMENT_MAX_SEQS),
-                  threads=threads, kmer=kmer,
-                  extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
-    # NOT `top_hit` here. `filterdb --extract-lines 1` keeps ONE row per query, which destroys
-    # exactly the pairing this pass exists to find: a junction-spanning read must contribute its
-    # best V AND its best J. Reducing first left `implied` at 0 -- correct output, zero speedup.
-    mmseqs.convertalis(query_db, seg_db, seg_res, seg_tsv, threads=threads,
-                       search_type=search_type, format_output=_SEGMENT_FORMAT)
+    if fast_segments:
+        # Structure-aware path: seed, vote by diagonal, extend ungapped. 37x the search below on
+        # the same reads and reference, agreeing with it on .9997 of V alleles and .9998 of J.
+        # It only NOMINATES: every candidate is still aligned against the full scaffold and scored
+        # by MMseqs2 below, which is why a different score scale here is not a correctness problem.
+        from .. import segmap
+        # The same file `_cached_segment_db` compiles for MMseqs2, read directly. Derived from
+        # `ref`, not from `seg_db`, so there is one definition of where the segment reference lives.
+        rows = segmap.segment_rows(ref.target_fasta.parent / "segments.fasta",
+                                   seqs, max_tied=max(_MAX_TIED.values()), threads=threads)
+    else:
+        seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
+        mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
+                      search_type=search_type, sensitivity=sensitivity,
+                      max_seqs=min(max_seqs, _SEGMENT_MAX_SEQS),
+                      threads=threads, kmer=kmer,
+                      extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
+        # NOT `top_hit` here. `filterdb --extract-lines 1` keeps ONE row per query, which destroys
+        # exactly the pairing this pass exists to find: a junction-spanning read must contribute its
+        # best V AND its best J. Reducing first left `implied` at 0 -- correct output, zero speedup.
+        mmseqs.convertalis(query_db, seg_db, seg_res, seg_tsv, threads=threads,
+                           search_type=search_type, format_output=_SEGMENT_FORMAT)
+        rows = _segment_rows(seg_tsv)
 
     # Best V and best J per read. `JC|` targets are named by SCAFFOLD id, not by allele, so they
     # are resolved through the segment markup -- feeding the raw name into the combination lookup
@@ -802,7 +815,7 @@ def _segment_best_hits(
     # strength of their constant half.
     best_c: dict[str, str] = {}
     tied = {"V": tied_v, "J": tied_j}
-    for row in _segment_rows(seg_tsv):
+    for row in rows:
         q, t, bits = row["query"], row["target"], float(row["bits"])
         kind, sep, name = t.partition("|")
         side = _SEGMENT_SIDE.get(kind) if sep else None
@@ -1044,6 +1057,7 @@ def _annotate_chunk(
     combos: dict[tuple[str, str], str] | None = None,
     report: dict | None = None,
     adaptive: bool = False,
+    fast_segments: bool = False,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1072,7 +1086,8 @@ def _annotate_chunk(
             best, seg_report = _segment_best_hits(
                 query_db, segment_db, target_db, tmp, ref, threads=threads,
                 sensitivity=sensitivity, mm_strand=mm_strand, max_seqs=max_seqs, kmer=kmer,
-                search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos)
+                search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos,
+                fast_segments=fast_segments)
             if report is not None:
                 _merge_segment_report(report, seg_report)
         else:

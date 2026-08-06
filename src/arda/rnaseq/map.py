@@ -336,7 +336,15 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool) -> Iterator[tuple[str, str]]
         if "does not match" in msg:
             raise ValueError(f"R1/R2 mate mismatch: {msg}. "
                              f"The FASTQs are not in the same order.") from exc
-        raise ValueError(f"R1 and R2 differ in length; one file is truncated. {msg}") from exc
+        # ⛔ Only claim a truncation when dnaio actually reported one. It raises the same exception
+        # type for a malformed RECORD, and a real example from this project's own data is a `+`
+        # line that kept the original SRA description after the `@` line was renamed to carry a
+        # mate suffix (`@SRR5233635.1/2` against `+SRR5233635.1 1 length=151`). Calling that "one
+        # file is truncated" sends the reader hunting for a truncation that does not exist -- and a
+        # fabricated data-integrity finding has already cost this project a retraction once.
+        if "improperly paired" in msg or "more reads in file" in msg:
+            raise ValueError(f"R1 and R2 differ in length; one file is truncated. {msg}") from exc
+        raise ValueError(f"malformed FASTQ in {r1} / {r2}: {msg}") from exc
     except (EOFError, gzip.BadGzipFile) as exc:
         # Same surfacing as `seqio.read_sequences`: a bare EOFError from the gzip layer reaches
         # Typer as "Aborted." with no cause, which reads like a Ctrl-D rather than a bad input.
@@ -401,6 +409,7 @@ def map_rnaseq(
     report_path: str | Path | None = None,
     two_pass: bool = False,
     adaptive: bool = False,
+    fast_segments: bool = False,
     prefilter: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
@@ -422,6 +431,11 @@ def map_rnaseq(
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
+        fast_segments: with ``two_pass``, answer the segment pass structurally instead of with
+            `mmseqs search` -- 37x on that step, agreeing with it on .9997 of V alleles and .9998
+            of J. It only NOMINATES candidates; the winner is still aligned against the full
+            scaffold by MMseqs2, so the contract is that the AIRR output does not move. Ignored
+            without ``two_pass``, since there is no segment pass to replace.
         adaptive: cap alignments per read and re-search only the reads whose capped score is
             low (:func:`arda.annotate.mapper._extend_uncertain`). Measured 2.17x on 1 M bulk reads
             with **zero reads lost** — but read preservation is not the whole guarantee.
@@ -491,6 +505,7 @@ def map_rnaseq(
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
+                    fast_segments=fast_segments,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)

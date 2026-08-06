@@ -142,3 +142,34 @@ def test_k_is_bounded():
     for k in (4, 40):
         with pytest.raises(Exception):
             _segmap.SegmentMapper([V1], [0], k)
+
+
+# ---------------------------------------------------------------- wiring into the mapper
+
+def test_segmap_wiring_matches_the_mmseqs_path_it_replaces():
+    """The two constants that decide whether this path is equivalent, pinned to their counterparts.
+
+    Both were wrong at first and both were caught by measurement, not by review:
+
+    * **k.** 16 was inherited from `prefilter`, where it is calibrated for REJECTION. Seed length
+      sets sensitivity to mismatches, and at k=16 the mapper seeded 53,048 reads against mmseqs'
+      53,121 — those 73 reads are never rescued, because a read with no segment hit is assumed
+      non-receptor. At k=12, the `-k` arda actually passes MMseqs2, `no_segment_hit` matches it
+      exactly and the end-to-end AIRR delta fell from 30 lost reads to 6.
+    * **the side mapping.** `C` must be its own group: a constant-region hit says what the isotype
+      is and nothing about which J the read carries, and folding it into the J side is precisely
+      what the pre-2.7.3 `JC|` targets did wrong.
+    """
+    from arda import segmap
+    from arda.annotate.mapper import _KMER, _MAX_TIED, _SEGMENT_SIDE
+
+    assert segmap.K == _KMER["nt"], (
+        "the segment mapper must seed at the same k arda passes MMseqs2, or it is less sensitive "
+        "than the search it replaces and silently drops reads that are never rescued")
+    assert segmap.SIDE_GROUP.keys() == _SEGMENT_SIDE.keys(), (
+        "segmap and the consuming loop disagree about which target kinds exist")
+    # Same partition, whatever the group labels are called on each side.
+    pairs = {(segmap.SIDE_GROUP[k], _SEGMENT_SIDE[k]) for k in _SEGMENT_SIDE}
+    assert len({g for g, _ in pairs}) == len({s for _, s in pairs}) == 3
+    assert len(pairs) == 3, "the two side mappings do not induce the same partition"
+    assert max(_MAX_TIED.values()) >= _MAX_TIED["V"]
