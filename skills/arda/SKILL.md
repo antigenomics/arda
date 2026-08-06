@@ -353,13 +353,28 @@ re-search is pure overhead, and prefiltered survivors being 84 % hitting does *n
 ### The segment reference and the rescue guarantee
 
 `build-index` also writes `segments.fasta` + `segments.markup.tsv` (`arda.refbuild.segments`):
-every V, J and J+C allele as its own target — **1,244 human targets against 15,414 V×J
-scaffolds**, 12.4× fewer. It is *derived* from `alleles.fasta` + `markup.tsv` in under a second,
-so it is neither committed nor shipped in the release tarball, exactly like the mmseqs indexes.
+every V allele, every J allele and every **C** allele as its own target — **924 human targets
+(775 V + 124 J + 25 C) against 15,414 V×J scaffolds**, 16.7× fewer. It is *derived* from
+`alleles.fasta` + `markup.tsv` in under a second, so it is neither committed nor shipped in the
+release tarball, exactly like the mmseqs indexes.
 
 The two-pass search uses it: hit the segment reference, take each read's best V and best J, look
 the pair up in `combinations.tsv` — that names exactly **one** V×J scaffold, so the second
-alignment is one target per read instead of ~277.
+alignment is one target per read instead of ~277. A read running J into C names its J+C scaffold
+the same way, through `Reference.jc_combinations()` — `(j_call, c_call) → scaffold id`.
+
+⚠ **The constant region is its own target, and that was not always so.** Through 2.7.2 the 345 J+C
+scaffolds were copied through verbatim, and they are a J×C product (IGH 14 J × 11 C, IGL 9 × 7,
+TRB 16 × 2) in which every scaffold of a locus ends in the *same* constant sequence. A read
+reaching C was therefore aligned against all of them to learn one `c_call`: measured on a TRA
+amplicon, **27.7 % of the targets drew 76.4 % of the alignments**, 4,977 per target against 603 for
+a V. Collapsing it (345 → 25) is **1.89× on the segment search and 1.33× on the whole `map`**, and
+it *improves* the calls — a J call decided by a whole-scaffold bit score whose constant half is
+arbitrary is a worse J call (`v_call` disagreements vs the one-pass 147 → 85, `j_call` 401 → 296).
+A C target is kept for **every** locus, not only the informative ones: only IGH's 11 alleles
+separate anything reportable (7 classes = the isotype), but a C target is also the sole segment
+target a read lying wholly inside the constant region can hit, and dropping the other 14 makes 14
+of 453 fixture reads vanish.
 
 ⚠ **`--two-pass` is an amplicon optimisation. Do not reach for it on bulk RNA-seq.** It needs a
 read to hit BOTH a V and a J. Primer-anchored amplicon reads do (85 %) → **3.51x**; bulk reads
@@ -372,14 +387,26 @@ every read into `implied` (took the fast path) or `rescue` (goes back to the ful
 asserts the partition is total. Anything that does not resolve — V only, J only, a V×J pair the
 reference does not contain, a failed second alignment — is realigned, not discarded.
 
-Two traps, each of which produced *correct output that was silently no faster*:
+Traps, each of which produced *correct output* while quietly breaking something:
 
 - **`JC|` targets are named by scaffold id, not by allele.** Feed the raw target name to
   `shortlist()` and every J→C read returns `no_such_combination`. Resolve through
   `Reference.segment_j_call()`. Measured cost of getting this wrong: the fast path collapsed
-  from 85.3 % to 0.1 %.
+  from 85.3 % to 0.1 %. (Only reachable on a pre-2.7.3 reference; `C|` targets are named by allele.)
 - **Never `top_hit` the segment pass.** One best hit per read destroys the V+J pairing the whole
   scheme depends on — `implied` goes to 0.
+- **`_SEGMENT_SIDE` is ONE mapping shared by `_segment_rows` and `_segment_best_hits`.** Spell the
+  target-kind rule out twice — once in polars, once in Python — and they drift: when `C|` was added
+  to the loop alone, the polars reduction discarded every C row, `best_c` stayed empty, no
+  constant-only read was rescued, and 15 J→C reads vanished **without `no_segment_hit` moving**,
+  because the rows were gone before any counter saw them.
+- **Nominate the J+C contest from the J, never from a C hit.** A J→C read spans the J/C boundary,
+  so its constant overlap is often below the search threshold on its own even though the
+  concatenated scaffold cleared it. Gating on C evidence re-invented `TRBV12-3*02`, destroyed a
+  `c_call`, and fabricated a `junction_aa` on a read the one-pass calls V-less.
+- **`segments.fasta` is generated, and a deploy does not regenerate it.** A new mapper reads stale
+  `JC|` targets through its back-compat path and *succeeds* while measuring the old reference.
+  Assert the target composition, not the file's existence.
 
 **TRD is TRAV/DV + TRDJ; the J (and C) decides the locus, not the V.** arda's reference already
 encodes it — of 1,050 scaffolds built from a TRAV/DV segment, 1,005 are locus TRA (with a TRAJ)

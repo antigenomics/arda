@@ -31,9 +31,9 @@ def _brute(rows):
     top, tied, kept = {}, {}, []
     for r in recs:
         kind, sep, _name = r["target"].partition("|")
-        if not sep or kind not in ("V", "J", "JC"):
+        if not sep or kind not in ("V", "J", "JC", "C"):
             continue
-        side = "V" if kind == "V" else "J"
+        side = kind if kind in ("V", "C") else "J"
         if (r["query"], side) in top:
             if side == "V" and r["bits"] == top[(r["query"], side)] \
                     and len(tied[r["query"]]) < _MAX_TIED_V:
@@ -66,6 +66,25 @@ def _key(rows):
      ("r1", "J|TRAJ2*01", 80, 51, 90, 1), ("r1", "JC|TRA_5", 70, 51, 99, 1)],
     # unrecognised prefix must be dropped, never treated as a J
     [("r1", "junk", 500, 1, 50, 1), ("r1", "V|TRAV1*01", 100, 1, 50, 1)],
+    # `C|` is its OWN side, so a C row does not compete with the J row and neither hides the other.
+    # This is the case the reduction silently dropped when `C|` targets were added: the filter kept
+    # only V/J/JC, so `best_c` was always empty, no constant-only read was ever rescued, and 15
+    # J->C reads vanished without `no_segment_hit` moving -- the rows were gone before any counter
+    # saw them.
+    [("r1", "C|IGHG1*01", 150, 20, 100, 1), ("r1", "J|IGHJ4*02", 60, 1, 19, 1)],
+    # a C row that outscores everything must not displace the V or the J
+    [("r1", "C|TRBC2*01", 300, 30, 100, 1), ("r1", "V|TRBV1*01", 100, 1, 29, 1),
+     ("r1", "J|TRBJ1*01", 90, 25, 40, 1)],
+    # only the best C survives; C ties are NOT collected (that is a V-only rule)
+    [("r1", "C|IGHG1*01", 150, 1, 50, 1), ("r1", "C|IGHG3*01", 150, 1, 50, 1),
+     ("r1", "C|IGHM*01", 80, 1, 50, 1)],
+    # a constant-region-only read: C is its only evidence, and it must survive the reduction or
+    # the read never enters `seen` and is never rescued
+    [("r1", "C|IGKC*01", 170, 1, 90, 1)],
+    # pre-split `JC|` and post-split `C|` in one frame -- a mapper of this vintage must read a
+    # reference of either, and JC stays on the J side while C does not
+    [("r1", "JC|IGH_12", 200, 1, 90, 1), ("r1", "C|IGHG1*01", 150, 20, 100, 1),
+     ("r1", "V|IGHV1*01", 90, 1, 19, 1)],
     # two reads interleaved by score, so the global sort splits each read's rows apart
     [("r1", "V|TRAV1*01", 100, 1, 50, 1), ("r2", "V|TRBV1*01", 99, 1, 50, 1),
      ("r1", "V|TRAV2*01", 98, 1, 50, 1), ("r2", "V|TRBV1*02", 99, 1, 50, 1),
@@ -89,3 +108,23 @@ def test_reduction_is_invariant_to_input_row_order(tmp_path):
 def test_empty_and_missing(tmp_path):
     assert _segment_rows(tmp_path / "nope.tsv") == []
     assert _segment_rows(_write(tmp_path, [])) == []
+
+
+def test_the_side_mapping_is_the_one_the_two_pass_depends_on():
+    """`_SEGMENT_SIDE` is shared by the reduction and the loop, so it is the whole contract.
+
+    Spelling this rule out twice -- once in polars, once in Python -- is what let `C|` targets be
+    added to the loop but not the filter: the reduction discarded every C row, `best_c` stayed
+    empty, no constant-only read was rescued, and 15 J->C reads vanished **without
+    `no_segment_hit` moving**, because the rows were gone before any counter saw them.
+    """
+    from arda.annotate.mapper import _SEGMENT_SIDE
+
+    assert _SEGMENT_SIDE["C"] == "C", (
+        "a constant-region hit says what the isotype is and NOTHING about which J the read "
+        "carries; folding it into the J side is what the old JC| targets did wrong")
+    assert _SEGMENT_SIDE["JC"] == "J", (
+        "JC| is the pre-split kind and must stay J-side, or this mapper mis-reads a reference "
+        "built before the constant region became its own target")
+    assert _SEGMENT_SIDE["V"] == "V" and _SEGMENT_SIDE["J"] == "J"
+    assert set(_SEGMENT_SIDE.values()) == {"V", "J", "C"}

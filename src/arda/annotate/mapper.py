@@ -355,6 +355,21 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
 # only lever is asking for fewer columns.
 _SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart"
 
+#: Segment target prefix -> which side of a scaffold that row is evidence for. Anything not listed
+#: is dropped and is NEVER silently treated as a J.
+#:
+#: ⛔ ONE mapping, used by both `_segment_rows` (which reduces the alignment TSV in polars) and the
+#: loop in `_segment_best_hits` (which consumes it). They are the same rule, and when they were
+#: written out separately, adding `C|` targets to the reference and updating only the loop made the
+#: reduction discard every C row: `best_c` stayed empty, no constant-only read was ever rescued,
+#: and 15 J->C reads vanished **without `no_segment_hit` moving**, because the rows were gone
+#: before any counter saw them. Sharing the mapping makes that divergence unrepresentable.
+#:
+#: `C` is its OWN side, not the J side: a constant-region hit says what the isotype is and nothing
+#: at all about which J the read carries. `JC` is the pre-split kind, kept on the J side so this
+#: mapper still works against a reference built before the constant region became its own target.
+_SEGMENT_SIDE = {"V": "V", "J": "J", "JC": "J", "C": "C"}
+
 
 def _segment_rows(tsv: Path) -> list[dict]:
     """The alignment rows from a segment-pass convertalis TSV that can affect the answer.
@@ -382,19 +397,11 @@ def _segment_rows(tsv: Path) -> list[dict]:
     # silently undid the determinism fix -- 25/25 tied queries flipped when rows were reversed.
     df = df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
 
-    # `V|`/`J|`/`JC|`/`C|` prefix -> which side of the scaffold this row is evidence for. An
-    # unrecognised prefix is dropped, matching the loop, which never treats one as a J.
-    #
-    # ⛔ This filter and `_segment_best_hits`' own `kind not in (...)` guard MUST list the same
-    # kinds, and the `_side` expression must match its `side` line. They are two statements of one
-    # rule in two languages, and when `C|` targets were added to the reference only the loop was
-    # updated: the reduction silently dropped every C row, so `best_c` was always empty, no
-    # constant-only read was ever rescued, and 15 J->C reads vanished with the report showing
-    # nothing wrong -- `no_segment_hit` did not even move, because the rows were discarded before
-    # anything counted them.
+    # Which side of a scaffold each row is evidence for, from the SHARED `_SEGMENT_SIDE` mapping --
+    # see its comment for why this must not be spelled out separately here.
     kind = pl.col("target").str.split("|").list.first()
-    df = df.filter(kind.is_in(["V", "J", "JC", "C"])).with_columns(
-        _side=pl.when(kind.is_in(["V", "C"])).then(kind).otherwise(pl.lit("J")))
+    df = df.filter(kind.is_in(list(_SEGMENT_SIDE))).with_columns(
+        _side=kind.replace_strict(_SEGMENT_SIDE))
 
     # ⛔ `over`, NOT `group_by`. A window function maps its result back to the ORIGINAL row
     # positions, so on an already-sorted frame it is deterministic; `group_by` is a multithreaded
@@ -695,11 +702,9 @@ def _segment_best_hits(
     for row in _segment_rows(seg_tsv):
         q, t, bits = row["query"], row["target"], float(row["bits"])
         kind, sep, name = t.partition("|")
-        if not sep or kind not in ("V", "J", "JC", "C"):
+        side = _SEGMENT_SIDE.get(kind) if sep else None
+        if side is None:
             continue                      # unrecognised target: never silently treat it as a J
-        # `JC` is the pre-split target kind and still counts as J evidence, so a mapper of this
-        # vintage keeps working against a reference built before the split.
-        side = kind if kind in ("V", "C") else "J"
         if (q, side) in top:              # rows arrive pre-sorted by (bits desc, target asc)
             # Keep the ties, drop everything below them. Capped: a read that ties against dozens
             # of alleles is degenerate, and the cap bounds the alignment work without affecting

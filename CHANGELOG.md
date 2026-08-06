@@ -3,7 +3,7 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.7.3
 
 ### Changed — the segment reference collapses the J×C product too
 
