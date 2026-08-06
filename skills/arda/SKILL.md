@@ -397,6 +397,52 @@ job; this lever only touches the align term.
 Off by default because there is no library type that predicts it — run a sample and read
 `fast_fraction`.
 
+### `--fast-segments`: the segment pass without a homology search
+
+`arda rnaseq map --two-pass --fast-segments` replaces the segment `mmseqs search` with
+`arda._segmap`, a C++ seed → vote-by-diagonal → ungapped-extension mapper over the same
+`segments.fasta`. It only **nominates**: every candidate is still aligned against the full
+`V+pad+J` scaffold and scored by MMseqs2, so this is not a second aligner.
+
+Why it can be exact: the segment pass asks only for the best V allele, the best J allele and their
+coordinates (`_SEGMENT_FORMAT`) over a fixed 236 kb germline reference — **no cigar, no backtrace,
+no gaps**. Germline V/J carry no indels relative to a read except sequencing error and IG SHM, so
+ungapped extension is sufficient, and matches are near-identical to germline rather than remote
+homologs.
+
+| | segment step, 100 k amplicon reads, 8 threads | agreement with `mmseqs search` |
+|---|---|---|
+| `mmseqs search` | 2,770 ms | — |
+| `_segmap` | **74 ms** | V allele .9997, J allele .9998, C allele 1.0000 |
+
+End to end it is **1.49×** on `--two-pass` (50 k pairs, 9.10 s → 6.12 s) with `locus` identical on
+every read, and on the 13-dataset benchmark panel **1.22× the default at identical recall, with
+FP 62 → 59 and zero control FP** — better on every accuracy axis measured there. Still off by
+default: 6 reads and ~10 V calls of 48,620 differ, and the shipped path does not move them at all.
+
+Requires the extension — check `arda.segmap.available()`. Without it the flag is a silent no-op, so
+assert it in any job that claims to measure it.
+
+⛔ **`_segmap` CANNOT rank `V×J` scaffolds — only segments.** Pointed at the 15,414-scaffold
+reference it indexes and maps fine and calls garbage (`v_gene` agreement **.3430**): a
+junction-spanning read sits on a scaffold at **two** diagonals, V at one offset and J shifted by the
+N-pad plus the non-templated junction, so one ungapped extension scores `max(V, J)` and never their
+sum. The true scaffold therefore does not outscore a wrong one sharing its better-covered half.
+That is the same fact that makes the segment reference work, read backwards — and it is why the
+rescue stays MMseqs2's job. Do **not** retry it with chaining or a banded aligner "to fix the
+diagonal": chaining two anchors across a non-templated insert is precisely the general-aligner cost
+the whole approach exists to avoid.
+
+Two constants make it equivalent, and both were wrong first:
+
+- **`K = 12`**, the `-k` arda already passes MMseqs2 — *not* 16, which is `prefilter`'s value and is
+  calibrated for **rejection**. Seed length sets sensitivity to mismatches: at k=16 the mapper
+  seeded 53,048 reads against mmseqs' 53,121, and a read with no segment hit is assumed
+  non-receptor and **never rescued**, so those 73 were lost outright.
+- **`MIN_SCORE = 40`.** mmseqs applies `-e 1e-3`; this scheme has no e-value, so with no floor
+  43,010 reads pick up a constant-region hit against mmseqs' 473 — half of them scoring exactly 38,
+  a bare seed plus a couple of flanking matches.
+
 **Reads are never dropped by the fast path.** `arda.annotate.shortlist.shortlist()` partitions
 every read into `implied` (took the fast path) or `rescue` (goes back to the full reference), and
 asserts the partition is total. Anything that does not resolve — V only, J only, a V×J pair the
