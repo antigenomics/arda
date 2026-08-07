@@ -746,6 +746,61 @@ def _full_rescue(query_db: Path, full_db: Path, ids: list[str], tmp: Path, *,
     return _best_hits(out_tsv)
 
 
+#: Header of the ``ARDA_VONLY_DUMP`` calibration table. Order is the contract the offline fit reads.
+_VONLY_COLS = ("read_id", "v_allele", "seg_bits", "seg_qstart", "seg_qend", "seg_tstart",
+               "read_len", "scaffold", "scaffold_bits")
+
+
+def _dump_vonly(rescue: list[str], best_v: dict[str, str], best_j: dict[str, str],
+                seg_rows: dict[tuple[str, str], dict], best: dict[str, dict],
+                seqs: dict[str, str]) -> None:
+    """Append one row per ``v_only`` read: its SEGMENT score beside its SCAFFOLD score.
+
+    A ``v_only`` read hit a V and never reached a J, because on a 5'RACE amplicon **there is no J
+    in the read**. It is 43 % of amplicon mates and 93.4 % of the rescue set, and the only reason
+    it goes to the full 15,414-scaffold reference at all is to obtain a score on the scale
+    ``--min-score`` is defined in. Skipping that search is worth ~2.5x (measured, round 14 step 1),
+    but only if a segment-scale threshold can reproduce the same kept set.
+
+    This writes the raw pair of scores and nothing else. It deliberately does **not** fit or apply
+    a threshold: the fit belongs offline, where it can be cross-validated per locus against the
+    round-12/13 truth, and where getting it wrong cannot silently change a shipped call. Round 6
+    measured ``--min-score 60`` taking precision 94.3 % -> 65.5 %, which is the cost of guessing.
+
+    ⚠ The two scores are **not** on one scale and are not meant to be: ``seg_bits`` is an ungapped
+    ``MATCH 2 / MISMATCH -3`` score (``src/_segmap/segmap.cpp``) that grows with aligned length,
+    while ``scaffold_bits`` is an MMseqs2 bit score. Finding the map between them is the experiment.
+    ``seg_qstart``/``seg_qend``/``read_len`` are emitted so the fit can normalise by aligned length
+    rather than assuming a single global cut -- V genes differ in length across loci, so a raw
+    ungapped score is not comparable between them.
+
+    No-op unless ``ARDA_VONLY_DUMP`` names a path. Appends, because ``map`` runs per chunk.
+    """
+    path = os.environ.get("ARDA_VONLY_DUMP")
+    if not path:
+        return
+    p = Path(path)
+    rows = []
+    for q in rescue:
+        # The `v_only` predicate, restated from `shortlist()`: a V but no J. `Shortlist.reasons`
+        # only carries counts, so recomputing here is what keeps this out of the shipped partition.
+        if not best_v.get(q) or best_j.get(q):
+            continue
+        seg = seg_rows.get((q, "V")) or {}
+        hit = best.get(q) or {}
+        rows.append("\t".join(str(x) for x in (
+            q, best_v[q], seg.get("bits", ""), seg.get("qstart", ""), seg.get("qend", ""),
+            seg.get("tstart", ""), len(seqs.get(q, "")),
+            hit.get("target", ""), hit.get("bits", ""))))
+    if not rows:
+        return
+    new = not p.exists()
+    with p.open("a") as fh:
+        if new:
+            fh.write("\t".join(_VONLY_COLS) + "\n")
+        fh.write("\n".join(rows) + "\n")
+
+
 def _segment_best_hits(
     query_db: Path, seg_db: Path, full_db: Path, tmp: Path, ref: Reference, *,
     threads: int, sensitivity: float, mm_strand: int | None, max_seqs: int, kmer: int | None,
@@ -980,6 +1035,7 @@ def _segment_best_hits(
         best.update(_full_rescue(query_db, full_db, rescue, tmp, threads=threads,
                                  sensitivity=sensitivity, mm_strand=mm_strand,
                                  max_seqs=max_seqs, kmer=kmer, search_type=search_type))
+        _dump_vonly(rescue, best_v, best_j, seg_rows, best, seqs)
 
     seen = set(best_v) | set(best_j) | set(best_c)
     # ⛔ Assert what actually matters: every read the segment pass SAW either came back with a hit

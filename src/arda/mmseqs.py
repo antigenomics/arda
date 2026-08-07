@@ -304,6 +304,13 @@ def search(
         args += ["-k", str(kmer)]
     if extra:
         args += extra
+    # Escape hatch for A/B-ing aligner options against a LIVE reference, without a rebuild per leg.
+    # Not a supported interface -- MMseqs2 flags are not part of arda's contract, and several of
+    # them (`--min-seq-id`, `-e`) silently change which reads are reported. It exists because every
+    # recorded flag measurement in this project was taken against a reference that has since been
+    # rebuilt twice, so re-measuring has to be cheaper than editing the source.
+    if opts := os.environ.get("ARDA_MMSEQS_SEARCH_OPTS", "").split():
+        args += opts
     run(args)
     return Path(result_db)
 
