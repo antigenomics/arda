@@ -547,6 +547,55 @@ and 45 are locus TRD (with a TRDJ). There is deliberately no "α/δ is ambiguous
 `combinations.tsv` is the arbiter, a pair it contains is real biology and one it does not is a
 genuine chimera.
 
+### `annotate.project`: the junction from coordinates, no alignment
+
+```python
+from arda.annotate.project import project_junction, UNVALIDATED_LOCI
+
+proj, refusal = project_junction(strand_seq, qlen, v_row=v_row, j_row=j_row,
+                                 v_call=..., j_call=..., anchors=ref.anchors)
+if proj:
+    proj.junction   # AIRR: Cys104 .. [FW]118 INCLUSIVE
+    proj.cdr3       # IMGT: anchors excluded, two residues shorter
+```
+
+AIRR `junction` runs Cys104 -> [FW]118. The segment pass already returns `(target, tstart, qstart)`
+per read per side and `cdr3_anchors.tsv` already records `anchor_nt`, so the position is arithmetic:
+
+```
+offset = (anchor_nt + 1) - tstart
+pos    = qstart + offset                    # forward
+pos    = (qlen - qstart + 1) + offset       # reverse complement
+```
+
+⛔ **Three coordinate systems disagree about their origin here.** `tstart` is **1-based** on the
+forward target (`segmap.cpp`), `anchor_nt` is **0-based** in the germline (`cdr3fix.Anchor`), and a
+minus-strand `qstart` is in **forward** coordinates while the sequence it indexes is the reverse
+complement. Each is an off-by-one that still yields a plausible-looking junction — right length,
+starts with a codon, ends with a codon. `strand_seq` must be the strand the hits were MEASURED on;
+pass `revcomp(read)` for a minus-strand hit rather than reflecting coordinates afterwards.
+
+Measured vs IgBLAST at `v_score >= 70` on 254,867 reads: IGH .99977 (naive) / .99634 (91.77 % median
+V identity), TRA .99947, TRB .99949, IGK and IGL exact. >= .993 in every V-identity stratum.
+
+**It refuses rather than degrades** — `no_anchor`, `unvalidated_locus`, `indel_split`,
+`strand_mismatch`, `order`, `off_read`, `bad_codon`. A well-formed junction that is wrong is worse
+than no junction: the reference-geometry bug shipped junctions that started `C`, ended `[FW]`,
+passed `--complete-only`, and were short by exactly the allele's truncation.
+
+⛔ **`UNVALIDATED_LOCI = {"TRD"}`.** Not because TRD is known bad — because it has **zero** coverage.
+Across two TR amplicons the segment pass never handed a TRD read both anchors, so all 767 TRD
+truth junctions went to the aligner and TRD never appeared. Absent reads like fine in every
+aggregate. The locus is taken from the **J** anchor, never the V: TRAV/DV rearranges to either TRAJ
+or TRDJ and the J decides.
+
+⛔ **A `[FW]GXG` motif check is NOT equivalent to reading `anchor_nt`.** `TRAJ35*01`'s anchor codon
+decodes **Cys (TGC)** — it is `status = ok` and a functional IMGT `F` gene, with a real Cys six
+codons past the FGXG. A motif check deletes the gene silently (33/33 amplicon reads lost).
+
+⚠ Yield, not accuracy, sets the scope: 87.0 % / 77.3 % of hit amplicon reads carry both anchors
+against **7.2 % of bulk** reads, which mostly do not span a junction at all.
+
 ## Sequence primitives
 
 `arda.refbuild.translate` exposes fast C++-backed helpers, mirpy-API-compatible:
