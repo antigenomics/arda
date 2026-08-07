@@ -49,7 +49,7 @@ def scene():
 
 
 def test_the_projected_junction_is_the_one_that_is_actually_there(scene):
-    p, why = project_junction(READ, len(READ), **scene)
+    p, why = project_junction(READ, len(READ), split_checked=True, **scene)
     assert why == ""
     assert p.junction == JUNCTION
     assert READ[p.start - 1:p.end] == JUNCTION
@@ -58,7 +58,7 @@ def test_the_projected_junction_is_the_one_that_is_actually_there(scene):
 def test_it_returns_the_AIRR_junction_not_the_IMGT_cdr3(scene):
     # These differ by exactly the two anchor codons, and confusing them corrupts every downstream
     # comparison silently -- junction_aa is two residues longer than cdr3_aa.
-    p, _ = project_junction(READ, len(READ), **scene)
+    p, _ = project_junction(READ, len(READ), split_checked=True, **scene)
     assert p.junction.startswith("TGT") and p.junction.endswith("TTT")
     assert p.cdr3 == NDN
     assert len(p.junction) == len(p.cdr3) + 6
@@ -77,7 +77,7 @@ def test_a_reverse_complement_hit_lands_on_the_same_junction(scene):
     v_row = {"qstart": n - 0, "qend": n - 32, "tstart": 1, "split": False}
     # The [FW] codon begins at READ 0-based 45; the J hit runs to the end of FR4 at 0-based 62.
     j_row = {"qstart": n - 45, "qend": n - 62, "tstart": 1, "split": False}
-    p, why = project_junction(READ, n, **{**scene, "v_row": v_row, "j_row": j_row})
+    p, why = project_junction(READ, n, split_checked=True, **{**scene, "v_row": v_row, "j_row": j_row})
     assert why == ""
     assert p.rev_comp is True
     assert p.junction == JUNCTION
@@ -90,7 +90,7 @@ def test_a_hit_starting_mid_germline_still_projects(scene):
     trimmed = READ[10:]
     v_row = {"qstart": 1, "qend": 23, "tstart": 11, "split": False}
     j_row = {"qstart": 36, "qend": 51, "tstart": 1, "split": False}   # shifted with the read
-    p, why = project_junction(trimmed, len(trimmed),
+    p, why = project_junction(trimmed, len(trimmed), split_checked=True,
                               **{**scene, "v_row": v_row, "j_row": j_row})
     assert why == ""
     assert p.junction == JUNCTION
@@ -105,7 +105,7 @@ def test_a_hit_starting_mid_germline_still_projects(scene):
     (lambda s: {**s, "j_row": {**s["j_row"], "tstart": 400}}, "order"),
 ])
 def test_every_refusal_returns_no_junction_and_names_itself(scene, mutate, expected):
-    p, why = project_junction(READ, len(READ), **mutate(scene))
+    p, why = project_junction(READ, len(READ), split_checked=True, **mutate(scene))
     assert p is None and why == expected
 
 
@@ -113,14 +113,14 @@ def test_an_anchor_projected_past_the_end_of_the_read_is_refused(scene):
     # The read stops before FR4, so the J anchor projects off the end. Returning a truncated
     # junction here is exactly the "well-formed but systematically short" failure that shipped once.
     short = READ[:40]        # junction ends at 48, so the J anchor projects past the end
-    p, why = project_junction(short, len(short), **scene)
+    p, why = project_junction(short, len(short), split_checked=True, **scene)
     assert p is None and why == "off_read"
 
 
 def test_the_composite_allele_names_a_segment_target_can_carry_resolve(scene):
     # 23 of 775 human V targets are comma-joined duplicate sequences. A bare dict lookup on the
     # composite string misses them, which would refuse a read that is perfectly placeable.
-    p, why = project_junction(READ, len(READ),
+    p, why = project_junction(READ, len(READ), split_checked=True,
                               **{**scene, "v_call": "TRBV1*01,TRBV1D*01"})
     assert why == "" and p.junction == JUNCTION
 
@@ -186,7 +186,7 @@ def test_an_unvalidated_locus_is_declined_rather_than_guessed(scene):
     trd = Anchor(locus="TRD", segment="J", templated_aa="F", functionality="F", status="ok",
                  source="test", anchor_nt=0, partial_nt=0, germline_nt="TTT")
     anchors = {("V", "TRBV1*01"): anchor(30), ("J", "TRBJ1*01"): trd}
-    p, why = project_junction(READ, len(READ), **{**scene, "anchors": anchors})
+    p, why = project_junction(READ, len(READ), split_checked=True, **{**scene, "anchors": anchors})
     assert p is None and why == "unvalidated_locus"
 
 
@@ -197,5 +197,20 @@ def test_the_locus_is_read_off_the_J_anchor_not_the_V(scene):
     v_trd = Anchor(locus="TRD", segment="V", templated_aa="C", functionality="F", status="ok",
                    source="test", anchor_nt=30, partial_nt=0, germline_nt="TGT")
     anchors = {("V", "TRBV1*01"): v_trd, ("J", "TRBJ1*01"): anchor(0)}
-    p, why = project_junction(READ, len(READ), **{**scene, "anchors": anchors})
+    p, why = project_junction(READ, len(READ), split_checked=True, **{**scene, "anchors": anchors})
     assert why == "" and p.junction == JUNCTION
+
+
+def test_an_unchecked_indel_gate_refuses_instead_of_passing_silently(scene):
+    """`split` is 0 both when there is no indel and when nobody looked. Those must not be the same.
+
+    `segment_rows` only populates `split` when `max_indel > 0`, i.e. when `--indel-rescue` is on.
+    Without it every `split` is 0 and a projection would run with its indel protection INERT --
+    this codebase's most repeated failure shape, and the reason `split_checked` has no default.
+
+    It is worth a refusal because the gate is worth something: on IGH_repertoire (91.77 % median V
+    identity) it takes byte-exact accuracy from .99634 to .99915 -- 332 wrong junctions down to 74 --
+    for 3.97 % of fast-path yield.
+    """
+    p, why = project_junction(READ, len(READ), split_checked=False, **scene)
+    assert p is None and why == "indel_unchecked"

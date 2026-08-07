@@ -44,8 +44,8 @@ __all__ = ["Projection", "project_junction", "REFUSALS"]
 #: Every reason a read is handed back to the scaffold aligner. Counted in the run report so the
 #: fast-path yield is auditable rather than inferred -- 87.0 % of hit TRA-amplicon reads carry both
 #: anchors against 7.2 % of bulk reads, and a silent fast path would hide that difference entirely.
-REFUSALS = ("no_anchor", "unvalidated_locus", "indel_split", "strand_mismatch", "order",
-            "off_read", "bad_codon")
+REFUSALS = ("no_anchor", "unvalidated_locus", "indel_unchecked", "indel_split",
+            "strand_mismatch", "order", "off_read", "bad_codon")
 
 #: Loci the projection declines regardless of how well the arithmetic works on them.
 #:
@@ -95,7 +95,8 @@ def _anchor(anchors: dict, side: str, call: str):
 
 
 def project_junction(strand_seq: str, qlen: int, *, v_row: dict, j_row: dict,
-                     v_call: str, j_call: str, anchors: dict) -> tuple[Projection | None, str]:
+                     v_call: str, j_call: str, anchors: dict,
+                     split_checked: bool) -> tuple[Projection | None, str]:
     """Project the junction from two segment hits. Returns ``(projection, refusal_reason)``.
 
     Args:
@@ -106,6 +107,9 @@ def project_junction(strand_seq: str, qlen: int, *, v_row: dict, j_row: dict,
             ``qstart``. Equal to ``len(strand_seq)``; passed explicitly so a caller that trims cannot
             silently disagree with the mapper.
         v_row, j_row: segment rows -- ``qstart``, ``qend``, ``tstart``, ``split``.
+        split_checked: did indel detection actually run? ``segment_rows`` only populates ``split``
+            when ``max_indel > 0``, so a ``False`` here means every ``split`` is 0 for want of
+            checking, not for want of indels. **No default** -- the caller must state it.
 
     Exactly one of the return slots is set: a ``Projection`` and ``""``, or ``None`` and a member of
     :data:`REFUSALS`.
@@ -121,8 +125,21 @@ def project_junction(strand_seq: str, qlen: int, *, v_row: dict, j_row: dict,
 
     # An indel between the read and the germline shifts every downstream base, so a projection that
     # assumes a constant offset is wrong by exactly the indel length. `segmap`'s two-diagonal
-    # signature is what detects that, and it is the load-bearing refusal here: the measured indel
-    # rate on 341,294 real IGH mates is 3.18 % pooled and 8.00 % below 90 % V identity.
+    # signature is what detects that, and it is the load-bearing refusal here.
+    #
+    # ⛔ `split` IS ONLY POPULATED WHEN INDEL DETECTION RAN. `segment_rows` passes `max_indel = 0`
+    # unless `--indel-rescue` is on, and then every `split` is 0 -- indistinguishable from "checked
+    # and clean". A caller that forgets would get the projection with its indel protection SILENTLY
+    # INERT, which is this codebase's most repeated failure shape (mmseqs `createdb` on its first
+    # byte, `fetch_database` across a filesystem boundary, a reference swap into the wrong cache).
+    # So the caller must SAY whether the check ran; there is no default.
+    #
+    # It matters, measured: on IGH_repertoire (91.77 % median V identity) the gate costs 3.97 % of
+    # fast-path yield and takes byte-exact accuracy from **.99634 to .99915** -- 332 wrong junctions
+    # down to 74. On IGH_naive (99.41 %) it costs 2.92 % and buys +0.00002. Like `--indel-rescue`
+    # itself, its value tracks SHM load, so the right default is per-library, not global.
+    if not split_checked:
+        return None, "indel_unchecked"
     if v_row.get("split") or j_row.get("split"):
         return None, "indel_split"
 

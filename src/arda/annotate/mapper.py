@@ -757,7 +757,7 @@ _PROJECT_COLS = ("read_id", "locus", "v_call", "j_call", "refusal",
 
 def _dump_projection(best_v: dict[str, str], best_j: dict[str, str],
                      seg_rows: dict[tuple[str, str], dict], seqs: dict[str, str],
-                     ref: Reference) -> None:
+                     ref: Reference, *, split_checked: bool) -> None:
     """Append the ARITHMETIC junction for every read carrying both anchors, or why it was refused.
 
     Validation only, and deliberately **out of the output path**: the projection is not yet what
@@ -791,7 +791,8 @@ def _dump_projection(best_v: dict[str, str], best_j: dict[str, str],
         rc = v_row["qstart"] > v_row["qend"]
         strand_seq = reverse_complement(seq) if rc else seq
         proj, why = project_junction(strand_seq, len(seq), v_row=v_row, j_row=j_row,
-                                     v_call=best_v[q], j_call=best_j[q], anchors=ref.anchors)
+                                     v_call=best_v[q], j_call=best_j[q], anchors=ref.anchors,
+                                     split_checked=split_checked)
         # Locus from the J anchor, not the V: TRAV/DV alleles pair with either TRAJ or TRDJ and
         # **the J decides the locus**. Taking it from the V would mislabel every TRD read.
         ja = _anchor(ref.anchors, "J", best_j[q])
@@ -981,7 +982,9 @@ def _segment_best_hits(
     # Before the shortlist, so the dump sees every read carrying both anchors -- including those the
     # shortlist will send to rescue for a reason unrelated to the junction (an unknown V*J pair, an
     # indel). Dumping after would silently under-report fast-path yield.
-    _dump_projection(best_v, best_j, seg_rows, seqs, ref)
+    # `indel_rescue` is exactly the flag that makes `segment_rows` compute `split`, so it IS the
+    # answer to "did the indel check run" -- passed explicitly rather than re-derived.
+    _dump_projection(best_v, best_j, seg_rows, seqs, ref, split_checked=indel_rescue)
 
     if combos is None:
         combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
