@@ -474,6 +474,47 @@ Two constants make it equivalent, and both were wrong first:
   43,010 reads pick up a constant-region hit against mmseqs' 473 — half of them scoring exactly 38,
   a bare seed plus a couple of flanking matches.
 
+### `--indel-rescue`: what an ungapped extension structurally cannot score
+
+`arda rnaseq map --two-pass --fast-segments --indel-rescue`. An ungapped extension follows ONE
+diagonal, so a read carrying an indel relative to germline scores only up to the indel — measured
+in the unit test: a 120 nt read scores **240** clean and **120**, exactly half, with one base
+deleted. Its scaffold is then chosen on truncated evidence.
+
+Measured on **341,294 real IGH mates** (IgBLAST gapped-alignment strings; a `-` in either row *is*
+an indel, so nothing is inferred):
+
+| V identity | `>=98` | `95-98` | `90-95` | `<90` |
+|---|---|---|---|---|
+| reads carrying a V indel | 0.74 % | 1.63 % | 3.56 % | **8.00 %** |
+
+3.18 % pooled, tracking SHM load because AID makes indels and not only substitutions.
+
+The signature is in the seed votes before any extension runs — two well-supported diagonals on the
+**same** target, offset by the indel length — and the votes are already sorted by
+`(target, diagonal)`, so one pass reads it.
+
+**Rerouted, never dropped.** A flagged read is demoted from `implied` to `rescue` and realigned
+gapped, so a false positive costs a little speed and *cannot* cost a read. That asymmetry is why
+`MIN_DIAG_SEEDS` is deliberately low. Counted as `indel_rescued` in the report.
+
+⚠ **Recall cannot measure this flag.** Recall is identical with and without it (174,066 of 174,226
+amplicon fragments either way) because these reads are found regardless. What moves is the CALL,
+which is load-bearing: the clonotype key is `(locus, v_call, j_call, junction)` at allele level.
+Adjudicated against IgBLAST at gene level on exactly the reads whose call moved:
+
+| sample | v_call moved | correct without | correct with |
+|---|---|---|---|
+| IGH_repertoire (hypermutated) | 586 | 53.24 % | **84.13 %** |
+| IGH_naive (low SHM) | 100 | **77.00 %** | 63.00 % |
+| **pooled** | **686** | 56.71 % | **81.05 %** |
+
+**+167 reads, +24.3 points** — and the sign flip is the mechanism confirming itself. Where real
+indels are common the flag fixes truncated calls; where they are rare its false positives (repeats
+read as two diagonals) dominate. So **turn it on for hypermutated IG and leave it off elsewhere**:
+on 13 bulk RNA-seq datasets it demotes **zero** reads and the output is byte-identical, which is
+correct — bulk TR carries ~0 indels.
+
 **Reads are never dropped by the fast path.** `arda.annotate.shortlist.shortlist()` partitions
 every read into `implied` (took the fast path) or `rescue` (goes back to the full reference), and
 asserts the partition is total. Anything that does not resolve — V only, J only, a V×J pair the

@@ -3,6 +3,67 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.9.0
+
+### Added — `--indel-rescue`: an ungapped extension cannot score a read that has an indel
+
+An ungapped extension follows ONE diagonal, so a read carrying an insertion or deletion relative to
+germline scores only up to the indel. The unit test measures it directly: a 120 nt read scores
+**240** against its germline target, and **120** — exactly half — with a single base deleted. Its
+scaffold then gets chosen on truncated evidence.
+
+That is not a corner case. Measured on **341,294 real IGH mates** (two IGH RepSeq amplicons,
+IgBLAST truth, `v_sequence_alignment`/`v_germline_alignment` gaps — no cigar, nothing inferred):
+
+| V identity | `>=98` | `95-98` | `90-95` | `<90` |
+|---|---|---|---|---|
+| reads carrying a V indel | 0.74 % | 1.63 % | 3.56 % | **8.00 %** |
+
+3.18 % pooled, and the rate tracks SHM load because AID produces indels, not only substitutions.
+
+The signature is in the seed votes before any extension runs: two well-supported diagonals on the
+**same** target, offset by the indel length. Votes are already sorted by `(target, diagonal)`, so
+one pass reads it.
+
+**A flagged read is REROUTED to the gapped rescue, never dropped** — so a false positive costs a
+little speed and cannot cost a read. The demotion happens after `shortlist()` has asserted its
+partition is total, so the no-read-is-lost invariant is untouched. Counted as `indel_rescued` in
+the run report.
+
+**What it changes, measured.** Recall is *identical* with and without it (174,066 of 174,226 real
+amplicon fragments either way), because recall asks whether a read was found and these were found
+regardless. What moves is which allele and which junction they get — which is load-bearing, since
+the clonotype key is `(locus, v_call, j_call, junction)` at allele level. Adjudicated against
+IgBLAST at gene level on exactly the reads whose call moved:
+
+| sample | v_call moved | correct without | correct with |
+|---|---|---|---|
+| IGH_repertoire (hypermutated) | 586 | 53.24 % | **84.13 %** |
+| IGH_naive (low SHM) | 100 | **77.00 %** | 63.00 % |
+| **pooled** | **686** | 56.71 % | **81.05 %** |
+
+**+167 reads corrected, +24.3 points.** The sign flip is the mechanism confirming itself: where
+real indels are common the flag fixes calls truncated at the indel; where they are rare its false
+positives — repeats read as two diagonals — dominate. `locus` never moves.
+
+⛔ **Off by default, and it is `--fast-segments`-only.** On 13 bulk RNA-seq datasets it demotes
+**zero** reads and the AIRR output is byte-identical, which is correct: bulk TR carries ~0 indels.
+Turn it on for hypermutated IG work; it does nothing elsewhere.
+
+### Measured — `--fast-segments` on real IGH amplicon
+
+**1.87x at 41 % less memory** (100,000 pairs, ~90 % receptor: 319.74 s → 170.77 s, RSS 4,016 →
+2,382 MB), because it raises `fast_fraction` from **0.052 to 0.5018** on the same reads.
+
+⛔ **Every `fast path` figure in the `--two-pass` documentation is MMseqs2-specific.**
+`fast_fraction` is a property of *(reads x segment mapper)*, not of the reads: MMseqs2 misses the
+short IGHJ on 95 % of these 5'RACE reads and `_segmap`'s ungapped extension finds it on half.
+`v_only` rescues fall 169,004 → 85,933. Read the old table as-is and you leave the fast path off on
+exactly the library where it is worth 1.87x.
+
+Recall cost, against an independent IgBLAST truth on 344,554 real mates: **.99525** vs the
+default's .99582 — 197 reads, of which **200 are below 90 % V identity and 0 are above 90 %**.
+
 ## 2.8.0
 
 ### Added — `--fast-segments`: the segment pass answered structurally, not by homology search
