@@ -172,3 +172,30 @@ def test_the_anchor_offsets_decode_to_real_anchor_codons_in_the_shipped_referenc
     # right, which a systematic off-by-one would blow straight through.
     assert ok["V"] >= 700, f"V anchors decoding to Cys: {ok['V']}, misses {bad['V'][:5]}"
     assert ok["J"] >= 115, f"J anchors decoding to F/W: {ok['J']}, misses {bad['J'][:5]}"
+
+
+def test_an_unvalidated_locus_is_declined_rather_than_guessed(scene):
+    """TRD is refused because it has ZERO coverage, not because it is known wrong.
+
+    The pre-registered bar was "byte-exact >= 0.99 at n >= 2,000 per locus, or the locus goes on
+    the refusal list". Across two TR amplicons the segment pass never handed a single TRD read both
+    anchors, so all 767 TRD junctions in the IgBLAST truth went to the aligner untouched -- n = 0,
+    which is not a pass. Declining costs nothing today and stops a future reference change from
+    routing TRD through arithmetic nobody has measured.
+    """
+    trd = Anchor(locus="TRD", segment="J", templated_aa="F", functionality="F", status="ok",
+                 source="test", anchor_nt=0, partial_nt=0, germline_nt="TTT")
+    anchors = {("V", "TRBV1*01"): anchor(30), ("J", "TRBJ1*01"): trd}
+    p, why = project_junction(READ, len(READ), **{**scene, "anchors": anchors})
+    assert p is None and why == "unvalidated_locus"
+
+
+def test_the_locus_is_read_off_the_J_anchor_not_the_V(scene):
+    # TRAV/DV alleles rearrange to either TRAJ or TRDJ and the J decides the locus. A V-derived
+    # locus would let a TRD read through under a TRA label -- the exact asymmetry refbuild/loci.py
+    # encodes and that this project has already built, measured and reverted once.
+    v_trd = Anchor(locus="TRD", segment="V", templated_aa="C", functionality="F", status="ok",
+                   source="test", anchor_nt=30, partial_nt=0, germline_nt="TGT")
+    anchors = {("V", "TRBV1*01"): v_trd, ("J", "TRBJ1*01"): anchor(0)}
+    p, why = project_junction(READ, len(READ), **{**scene, "anchors": anchors})
+    assert why == "" and p.junction == JUNCTION

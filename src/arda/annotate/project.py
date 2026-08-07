@@ -44,7 +44,23 @@ __all__ = ["Projection", "project_junction", "REFUSALS"]
 #: Every reason a read is handed back to the scaffold aligner. Counted in the run report so the
 #: fast-path yield is auditable rather than inferred -- 87.0 % of hit TRA-amplicon reads carry both
 #: anchors against 7.2 % of bulk reads, and a silent fast path would hide that difference entirely.
-REFUSALS = ("no_anchor", "indel_split", "strand_mismatch", "order", "off_read", "bad_codon")
+REFUSALS = ("no_anchor", "unvalidated_locus", "indel_split", "strand_mismatch", "order",
+            "off_read", "bad_codon")
+
+#: Loci the projection declines regardless of how well the arithmetic works on them.
+#:
+#: ⛔ TRD is here because it is UNVALIDATED, not because it is known bad. The pre-registered bar for
+#: shipping a locus was "byte-exact >= 0.99 at n >= 2,000, or the locus goes on the refusal list",
+#: and TRD came back at **n = 0**: across two TR amplicons the segment pass never handed a single
+#: TRD read both anchors, so all 767 TRD junctions in the IgBLAST truth fell through to the aligner
+#: untouched. Zero coverage is not a pass. The one measurement that does exist is the design pass's
+#: 43/51 = 0.843, against .999 pooled -- far too small to be a rate and far too poor to ignore.
+#:
+#: TRD is also the locus most likely to break a projection: TRAV/DV alleles rearrange to either TRAJ
+#: or TRDJ and **the J decides the locus**, so a V-derived coordinate can be read in the wrong
+#: frame of reference. Declining costs nothing today (the path never fires) and stops a future
+#: reference change from silently routing TRD reads through untested arithmetic.
+UNVALIDATED_LOCI = frozenset({"TRD"})
 
 
 @dataclass(frozen=True)
@@ -97,6 +113,11 @@ def project_junction(strand_seq: str, qlen: int, *, v_row: dict, j_row: dict,
     va, ja = _anchor(anchors, "V", v_call), _anchor(anchors, "J", j_call)
     if va is None or ja is None:
         return None, "no_anchor"
+
+    # Locus from the J, never the V -- TRAV/DV alleles pair with either TRAJ or TRDJ and the J
+    # decides which, so a V-derived locus would mislabel exactly the reads this check protects.
+    if ja.locus in UNVALIDATED_LOCI:
+        return None, "unvalidated_locus"
 
     # An indel between the read and the germline shifts every downstream base, so a projection that
     # assumes a constant offset is wrong by exactly the indel length. `segmap`'s two-diagonal
