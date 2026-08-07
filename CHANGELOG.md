@@ -3,6 +3,71 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Added — `annotate.project`: the junction placed by arithmetic, not by alignment
+
+AIRR `junction` runs from the Cys104 codon to the [FW]118 that opens FR4. Today arda learns those
+two positions by aligning the read against a `V + pad + J` scaffold, and the **15,414-scaffold
+reference exists for that and essentially nothing else** — the V and J *gene* calls already come out
+of the 924-target segment pass at .9997 / .9998 agreement.
+
+But the segment pass already returns `(target, tstart, qstart)` per read per side, and
+`cdr3_anchors.tsv` already records `anchor_nt`. `refbuild.segments` writes each segment target so
+its germline starts at offset 0, so target coordinates *are* germline coordinates:
+
+```
+offset = (anchor_nt + 1) - tstart
+pos    = qstart + offset                    # forward hit
+pos    = (qlen - qstart + 1) + offset       # reverse-complement hit
+```
+
+Two integer adds. Measured against IgBLAST truths at `v_score >= 70` on **254,867 scored reads**:
+
+| sample | locus | n | accuracy |
+|---|---|---|---|
+| IGH_naive | IGH | 78,394 | **.99977** |
+| IGH_repertoire (91.77 % median V identity) | IGH | 90,663 | **.99634** |
+| SRR5233635 | TRA | 41,881 | **.99947** |
+| SRR5233641 | TRB | 43,520 | **.99949** |
+| IGH_repertoire | IGK | 143 | **1.00000** |
+| IGH_repertoire | IGL | 17 | **1.00000** |
+
+Accuracy is >= .993 in **every** V-identity stratum, including `<90 %` at n = 38,007.
+
+**Not wired into the output path.** It yields `junction` and its coordinates; it does *not* yield
+`v_identity`, `sequence_alignment`, `germline_alignment`, the per-segment CIGARs or the `mmseqs2_*`
+block, all of which `annotate.transfer` derives from the alignment's `qaln`/`taln`, and
+`_align_implied` also decides the allele. Whether removing junction placement from the critical path
+recovers wall time is a separate measurement.
+
+**It refuses rather than degrades**, on six conditions: missing or non-`ok` anchor, an unvalidated
+locus, `segmap`'s two-diagonal indel signature, V and J on opposite strands, an order violation, a
+projection landing off the read, and a junction length that is not a multiple of 3. A well-formed
+junction that is wrong is the worst output this codebase can produce — the reference-geometry bug
+shipped junctions that started `C`, ended `[FW]`, passed `--complete-only` and were short by exactly
+the allele's truncation.
+
+⛔ **TRD is declined, because it has ZERO coverage.** The per-locus bar was ">= .99 at n >= 2,000, or
+the locus goes on the refusal list". Across two TR amplicons the segment pass never handed a single
+TRD read both anchors, so all 767 TRD junctions in the truths fell through to the aligner and TRD
+never appears at all. *Absent* is not *validated*, and the only TRD number that exists is 43/51 =
+0.843. `UNVALIDATED_LOCI` declines it, keyed off the **J** anchor — TRAV/DV alleles rearrange to
+either TRAJ or TRDJ and the J decides the locus.
+
+⚠ Scope is set by yield, not accuracy: **87.0 % of hit TRA-amplicon reads and 77.3 % of TRB carry
+both anchors, against 7.2 % of bulk reads** (bulk is 53.0 % `V_only`, 31.4 % `C_only`). Bulk reads
+mostly do not span a junction at all, so this is an amplicon lever.
+
+### Added — two off-by-default measurement hooks
+
+`ARDA_MMSEQS_SEARCH_OPTS` appends flags to every `mmseqs.search` argv, and `ARDA_PROJECT_DUMP` /
+`ARDA_VONLY_DUMP` write per-read diagnostic tables. None is a supported interface; they exist
+because every recorded flag measurement in the benchmark was taken against a reference that has
+since been rebuilt twice, so re-measuring had to become cheaper than editing source. The first
+immediately earned its keep: `--exact-kmer-matching 1` turns out to flip allele-level calls on
+IGH_naive at an *identical* clonotype count, which no count-based metric can see.
+
 ## 2.9.0
 
 ### Added — `--indel-rescue`: an ungapped extension cannot score a read that has an indel
