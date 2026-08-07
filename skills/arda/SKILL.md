@@ -335,8 +335,17 @@ confident is ever dropped), `junction_aa` moved on **zero** shared reads, and th
 windows, and SHM supplies substitutions. Check `prefilter_stats` (`seen`/`passed`) in the run
 report to see whether it earned its keep on a given library.
 
-⚠ **Bulk only.** Amplicon runs 46–49 % receptor, so almost everything passes and the scan is pure
-overhead. ⚠ **The index is built from `Reference.target_fasta`, the same FASTA MMseqs2 searches.**
+**Measured against an independent IgBLAST truth on 344,554 real IGH-amplicon mates**, the loss is
+now on the axis that causes it rather than a locus label: recall **.99209** vs the default's .99582,
+and **1,283 of the 1,285 lost reads are in the `<90 %` V-identity bin** — 0 above 95 %, 2 in
+90–95 %. On the cell lines the two reads it drops from Raji sit at 89.66 % and 77.78 % identity
+(mean identity lost 83.72 vs 93.01 kept), and the 77.78 % read is the most mutated in the sample.
+So it is safe for germline-proximal work and progressively costly with SHM load.
+
+⚠ **Bulk only, and that is now quantitative.** Amplicon runs 46–90 % receptor, so almost everything
+passes and the scan is pure overhead: on a 90 %-receptor IGH amplicon it is worth **exactly 1.00×**
+(319.15 s vs 319.74 s) while still losing those 1,285 reads. Its value is confined to cold bulk
+(**3.17×** on a 0.15 %-receptor library), where IG content is negligible anyway. ⚠ **The index is built from `Reference.target_fasta`, the same FASTA MMseqs2 searches.**
 Never build it from a hand-listed segment set: against a `V+pad+J`-only reference the loss is
 16.29 %, **69.27 % of it J→C reads**. Deriving it from the search target makes that unreachable.
 
@@ -385,6 +394,7 @@ both a V and a J segment, and the predictor is **`fast_fraction` in the report**
 | 5′-RACE human TRB | 100 % | **95.6 %** | **2.96×** |
 | 5′-RACE mouse TRA | 100 % | 89 % | **2.64×** |
 | 5′-RACE human **IGH** | 100 % | **16.3 %** | **1.03× slower** |
+| IGH RepSeq amplicon | 90 % | **5.2 %** | **0.89× slower** |
 | bulk RNA-seq | 2.74 % | 5 % | **0.762×, 31 % slower** |
 
 ⛔ This was documented as "an amplicon optimisation, do not reach for it on bulk" and that framing
@@ -393,6 +403,13 @@ reads there cover V and stop short of the short IGHJ target, so they hit a V and
 path collapses, while TRB reads span the junction. Read as amplicon-only, the flag gets left off
 exactly where it is worth 3×. Bulk is separately a *scan-term* problem, which is `--prefilter`'s
 job; this lever only touches the align term.
+
+⛔ **Every `fast path` number above is MMseqs2-specific.** `fast_fraction` is a property of
+**(reads × segment mapper)**, not of the reads. On the same 100,000 IGH RepSeq pairs it is **0.052**
+with the mmseqs segment search and **0.5018** with `--fast-segments` — 9.7×, from changing nothing
+but the mapper, with `v_only` rescues falling 169,004 → 85,933. MMseqs2 misses the short IGHJ on
+95 % of these reads and `_segmap`'s ungapped extension finds it on half. Re-read this table with
+`--fast-segments` on before concluding a library is a bad fit for the fast path.
 
 Off by default because there is no library type that predicts it — run a sample and read
 `fast_fraction`.
@@ -417,8 +434,22 @@ homologs.
 
 End to end it is **1.49×** on `--two-pass` (50 k pairs, 9.10 s → 6.12 s) with `locus` identical on
 every read, and on the 13-dataset benchmark panel **1.22× the default at identical recall, with
-FP 62 → 59 and zero control FP** — better on every accuracy axis measured there. Still off by
-default: 6 reads and ~10 V calls of 48,620 differ, and the shipped path does not move them at all.
+FP 62 → 59 and zero control FP** — better on every accuracy axis measured there.
+
+**Where it is worth the most: IGH amplicon, 1.87× at 41 % less memory** (100 k pairs, 90 % receptor,
+319.74 s → 170.77 s, RSS 4,016 → 2,382 MB), because it raises `fast_fraction` 0.052 → 0.5018 there.
+It also **reverses** `--two-pass`'s bulk penalty: 0.73× → **1.24×** on a 0.15 %-receptor library,
+where `no_segment_hit` is 99.87 % and those reads skip the full search entirely. `--two-pass` has
+always been a structure-preserving prefilter that keeps the V/J call; it just was not worth paying
+an `mmseqs search` for on bulk.
+
+⚠ **Cost, measured against an independent IgBLAST truth on 344,554 real mates** (two IGH RepSeq
+amplicons): recall **.99525** vs the default's .99582 — **197 reads**, of which **200 are in the
+`<90 %` V-identity bin and 0 are above 90 %**. Those losses are *not* a seeding failure: `_segmap`
+seeds more reads than mmseqs, not fewer (`no_segment_hit` 395,601 vs 395,682). It promotes ~100 more
+reads onto the fast path, so a hypermutated V-only read gets seated on an implied V×J scaffold via a
+weak J hit and the alignment then falls under `--min-score 75`. Same class as the round-5 narrowing
+refutation — **do not "fix" it by lowering k.** Still off by default for that reason.
 
 Requires the extension — check `arda.segmap.available()`. Without it the flag is a silent no-op, so
 assert it in any job that claims to measure it.
