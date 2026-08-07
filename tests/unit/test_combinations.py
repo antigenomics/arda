@@ -47,6 +47,24 @@ def test_trd_configured_to_share_trav_dv_v_genes():
     assert sc[0].v_calls == ["TRAV14/DV4*01"]
 
 
+def test_tra_does_NOT_share_the_trdv_stem():
+    """The V-gene sharing between TRA and TRD is ASYMMETRIC, and that is the biology.
+
+    * **TRDV1/2/3 are dedicated delta V genes** and rearrange to TRDJ. A ``TRDV1 + TRAJ`` scaffold
+      is not a rearrangement that occurs, so building one invites reads onto a chimera.
+    * **TRAV/DV genes pair with either**, and which J they took is what defines the locus. Both
+      directions are already covered: ``TRAV/DV x TRAJ`` comes free with the TRA build (IMGT files
+      those genes under TRAV), and ``TRAV/DV x TRDJ`` is what TRD's ``v_shared`` adds.
+
+    Pinned because the symmetric-looking version was tried, and the thing that made it look
+    justified was an IgBLAST truth calling 147 amplicon reads ``TRDV1*01`` + a TRAJ. arda declining
+    to build that scaffold is arda being right about the biology, not a recall gap.
+    """
+    assert _locus("TRA").v_shared is None, (
+        "TRA must not pull the TRDV stem: TRDV1/2/3 rearrange to TRDJ, and the shared TRAV/DV "
+        "genes are already covered from both sides")
+
+
 def test_dedup_collapses_identical_scaffolds():
     # Two V alleles with identical sequence collapse to one scaffold.
     v = {"V1": "ATG" * 10, "V2": "ATG" * 10}

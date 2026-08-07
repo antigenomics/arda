@@ -130,3 +130,4 @@ def test_shortlist_dataclass_defaults_are_independent():
     a.implied["x"] = "S"
     a.rescue.append("y")
     assert b.implied == {} and b.rescue == []
+

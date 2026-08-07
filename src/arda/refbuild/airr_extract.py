@@ -12,7 +12,7 @@ from pathlib import Path
 
 import polars as pl
 
-from ..paths import data_dir, bin_dir
+from ..paths import data_dir
 from .. import igblast
 from .imgt import ungap_gene
 from .loci import Locus
@@ -73,7 +73,11 @@ def annotate_scaffolds(
 ) -> pl.DataFrame:
     """Run IgBLAST on a scaffold FASTA and return the markup columns as polars."""
     dbs = build_germline_dbs(species_dir, locus)
-    aux = bin_dir() / "optional_file" / f"{organism}_gl.aux"
+    # Resolved through `igblast.auxiliary_data`, which raises when it is missing. It used to be
+    # looked up under `bin_dir()` and passed as None when absent -- the same directory in a
+    # source checkout, a different one on every auto-fetched install, and the silent result is
+    # an IgBLAST run with NO junction on any read.
+    aux = igblast.auxiliary_data(organism)
     out_tsv = scaffold_fasta.with_suffix(".airr.tsv")
     igblast.igblastn_airr(
         scaffold_fasta,
@@ -82,7 +86,7 @@ def annotate_scaffolds(
         germline_db_v=dbs["V"],
         germline_db_j=dbs["J"],
         germline_db_d=dbs.get("D") or _dummy_d_db(species_dir),
-        auxiliary_data=aux if aux.exists() else None,
+        auxiliary_data=aux,
         ig_seqtype=locus.ig_seqtype,
         num_threads=num_threads,
     )

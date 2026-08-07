@@ -3,6 +3,207 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.8.0
+
+### Added — `--fast-segments`: the segment pass answered structurally, not by homology search
+
+The two-pass path searched a 924-target segment reference purely to learn, per read, its best V
+allele and its best J allele with coordinates — no cigar, no backtrace. That is a **structural**
+question about a fixed 236 kb germline reference, not a homology search. `arda._segmap` (new C++
+extension) answers it by seeding, voting by diagonal and extending ungapped. Measured on 100,000
+amplicon reads against the shipped reference, 8 threads:
+
+| | wall | agreement with `mmseqs search` |
+|---|---|---|
+| `mmseqs search` | 2,770 ms | — |
+| `_segmap` | **74 ms** | V allele .9997, J allele .9998, C allele 1.0000 |
+
+End to end on 50,000 pairs, `--two-pass` with and without the flag: **9.10 s → 6.12 s (1.49×)**,
+`locus` identical on every read, `v_call` .999794, `junction_aa` .999938, 6 reads lost of 48,620.
+
+⛔ **Off by default, and the residual delta is why.** Six reads and ten V calls of ~48,600 is small
+but is not zero, and the shipped path does not move them at all. It only *nominates*: every
+candidate is still aligned against the full V+pad+J scaffold and scored by MMseqs2.
+
+What made it equivalent were two constants, both wrong at first and both caught by measurement:
+
+* **k = 12**, the `-k` arda already passes MMseqs2 — not 16, which was inherited from `prefilter`
+  where it is calibrated for *rejection*. Seed length sets sensitivity to mismatches: at k=16 the
+  mapper seeded 53,048 reads against mmseqs' 53,121, and a read with no segment hit is assumed
+  non-receptor and is **never rescued**, so those 73 were simply lost. At k=12 `no_segment_hit`
+  matches mmseqs exactly and the AIRR delta fell from 30 lost reads to 6.
+* **a significance floor of 40.** mmseqs applies `-e 1e-3`; this scheme has no e-value, so without
+  a floor 43,010 reads pick up a constant-region hit against mmseqs' 473. Half of those score
+  exactly 38 — a bare seed plus a couple of flanking matches.
+
+### Fixed — IgBLAST was run without its J-frame table, so every truth had NO junctions
+
+`optional_file/<organism>_gl.aux` tells `igblastn` each J allele's reading frame; without it there
+is nothing to place the Phe/Trp 118 anchor against, so it emits no `cdr3`, no `junction` and no
+`junction_aa` **on any read** — while still calling V and J, reporting a normal `v_score` and
+exiting 0.
+
+Both callers looked for the file under `paths.bin_dir()`; it lives beside the executables under
+`igblast.igblast_root()`. Those are **the same directory in a source checkout** (`setup.sh`
+installs IgBLAST into `<repo>/bin`) and different on every auto-fetched install, so it worked
+everywhere it was developed. And `auxiliary_data=aux if aux.exists() else None` made the miss
+silent.
+
+Measured cost: a 10,000-read amplicon truth with `j_call` on 9,070 of 9,300 reads and `junction_aa`
+on **zero**, written up as an IgBLAST limitation at 151 bp before it was traced here. With the file
+passed, 437 of 449 reads carry one, 4–19 aa. `igblast.auxiliary_data()` now **raises** rather than
+degrading: "no junctions" is indistinguishable from a truth that genuinely has none.
+
+⚠ Any IgBLAST truth built with an auto-fetched install before 2.8.0 has this defect. Check
+`junction_aa` fill before scoring against it.
+
+### Fixed — a misleading FASTQ diagnostic
+
+`_read_pairs_dnaio` reported every dnaio `FileFormatError` as "R1 and R2 differ in length; one file
+is truncated". dnaio raises that type for malformed *records* too — a real case here is a `+` line
+that kept its original SRA description after the `@` line was renamed to carry a mate suffix. It
+now only claims a truncation when dnaio actually reported a pairing or length problem.
+
+### Reference — the TRA/TRD V-gene sharing is ASYMMETRIC, and that is deliberate
+
+`TRD` declares `v_shared=("TRAV", "/DV")`; `TRA` declares nothing, and a symmetric-looking
+"fix" for that was built, measured and **reverted**. The sharing is not symmetric because the
+biology is not:
+
+* **TRDV1/2/3 are dedicated δ V genes** and rearrange to **TRDJ**. `TRDV1 + TRAJ` is not a
+  rearrangement that occurs, so building that scaffold invites reads onto a chimera.
+* **TRAV/DV genes pair with either, and which J they took is what defines the locus.** Both real
+  directions are already covered: `TRAV/DV × TRAJ` comes free with the TRA build (IMGT files those
+  genes under TRAV) and `TRAV/DV × TRDJ` is what `TRD`'s `v_shared` adds.
+
+What made the wrong version look justified was an IgBLAST truth calling 147 amplicon reads
+`TRDV1*01` + a TRAJ with a real junction, against which arda scored 0.0952 on that stratum. arda
+declining to call a V there is **arda being right about the biology**; the truth is wrong.
+
+The shipped reference is therefore **unchanged** — a full `build-db` + `build-index` from IMGT
+reproduces the committed `markup.tsv`, `alleles.fasta` and `combinations.tsv` byte for byte
+(15,414 human scaffolds) — and `_REFERENCE_TAG` stays at 2.5.7. `test_tra_does_NOT_share_the_trdv_stem`
+pins the asymmetry so the symmetric version cannot be reintroduced by inspection.
+
+### Added — tests for FASTA input and `--limit`
+
+Both features already worked and neither was tested. 17 cases, covering the paths that actually
+differ: `read_pairs` sends the *unlimited* case to dnaio and the *limited* case to a pure-Python
+reader. Includes format detection by content rather than extension, paired FASTA agreeing with
+paired FASTQ record for record, a truncated FASTA mate still raising, `--limit` counting **pairs**
+rather than reads, and a limit not failing on a divergence beyond it.
+
+### Changed — the segment reference collapses the J×C product too
+
+`refbuild/segments.py` exists to remove a cross-product: it replaced 15,414 V×J scaffolds with 775
+V + 124 J targets. It did that on the V side and **copied the 345 J+C scaffolds through verbatim**,
+which are themselves a J×C product (IGH 14 J × 11 C, IGL 9 × 7, TRB 16 × 2). Every J+C scaffold of
+a locus ends in the *same* constant sequence, so a read reaching C was aligned against all of them
+to learn one `c_call`, at a redundancy factor equal to the locus' J-allele count — **69× on TRA**.
+
+Measured on a TRA amplicon: those 345 targets were **27.7 % of the database and 76.4 % of its
+alignments**, 4,977 alignments per target against 603 for a V target.
+
+The constant region is now its own target, exactly as V and J are — one `C|<allele>` target per
+distinct C allele, **345 → 25**, whole reference **1,244 → 924**. A read spanning J into C hits its
+`J|` and its `C|` target separately and names its J+C scaffold through
+`Reference.jc_combinations()`, the C-side twin of `combinations.tsv`.
+
+**This is faster and more accurate**, the same way the V×J collapse was — a J call decided by a
+whole-scaffold bit score whose *constant* half is arbitrary is a worse J call. On 50 k TRA amplicon
+pairs, scored against the one-pass output on the same reads:
+
+| | before (1,244 targets) | after (924 targets) |
+|---|---|---|
+| segment search | 6.00 s | **3.18 s** (1.89×) |
+| whole `map --two-pass` | 11.87 s | **8.92 s** (1.33×) |
+| segment alignments | 2,248,847 | **531,703** (4.23×) |
+| `v_call` disagreements | 147 | **85** |
+| `j_call` disagreements | 401 | **296** |
+| `c_call` disagreements | 13 | 13 |
+| `junction_aa` disagreements | 18 | 18 |
+| reads lost | 2 of 48,627 | 7 of 48,627 |
+
+The five extra losses are V-less J→C reads carrying **no junction**, so no clonotype is affected: a
+read spanning the J/C boundary can fall below the search threshold on each half where the
+concatenated scaffold cleared it. They are counted as `no_segment_hit`, not silently dropped.
+
+⚠ **A C target is kept for every locus, including the six where the C call carries nothing.** Only
+IGH's constant genes separate anything reportable — its 11 alleles are 7 classes, i.e. the isotype;
+TRA/TRD/IGK have one C allele each, TRB/TRG two, and IGL's seven IGLC are all one class. Dropping
+those 14 targets is measurably faster (2.89 s vs 3.18 s) and costs no fast-path read. They are kept
+because a C target does a second job unrelated to information content: it is the only segment
+target a read lying wholly inside the constant region can hit, and without it such a read hits
+nothing, never enters `seen`, and is never rescued — **14 of 453 reads vanish** on the real-read
+fixture, every one a V-less J→C read.
+
+⛔ The J+C contest is nominated **from the J, not from a C hit**. Requiring C evidence is not
+equivalent, and it let the exact bug the contest exists to prevent back in: on
+`SRR5233639.12648/1` it invented `TRBV12-3*02`, destroyed `c_call` TRBC2*01, and fabricated
+`junction_aa` CASSFAGLVNIDEQFF on a read the one-pass calls V-less.
+
+⛔ `_segment_rows`' polars filter and `_segment_best_hits`' own kind guard are two statements of
+one rule in two languages. Adding `C|` to the loop alone made the reduction discard every C row, so
+`best_c` was always empty and 15 J→C reads vanished with **`no_segment_hit` not even moving** — the
+rows were dropped before anything counted them.
+
+### Fixed — six silent two-pass defects, found by audit
+
+All six produce correct-looking output and none raises. Each was reproduced against the shipped
+human reference before being touched.
+
+* **`_segment_rows` had no unusable-row filter.** polars sorts nulls FIRST under
+  `descending=True`, so a row with an empty `bits` field became rank 0 for its `(query, side)` and
+  **evicted the read's real best hit** — reproduced with `V|A*01 <empty bits>` beside `V|B*01 120`,
+  where the reduction returns `V|A*01` and the 120-bit row is gone. The null then reached
+  `float(row["bits"])` and raised mid-chunk, after earlier chunks were written: a partial AIRR file
+  that looks complete. `_best_hits` has had this filter since 2.7.2; the segment path never got it.
+* **Composite allele names could never match `combinations.tsv`.** A segment target inherits its
+  scaffold's `v_call`/`j_call` verbatim and those are sometimes ambiguity lists, while
+  `load_combinations` registers only individual members. Measured: 23 of 775 `V|` and 2 of 124 `J|`
+  targets are composite, and **all 2,852** (composite V × any J) pairs were absent — zero hits.
+  `IGHV3-23*01,IGHV3-23D*01` and `IGKV1-39*01,IGKV1D-39*01` are on that list, i.e. the most-used
+  human IGHV and IGKV genes: every such read fell to rescue, reported as a chimera the reference
+  does not contain.
+* **`jc_combinations` keyed on the comma-joined group string**, and the two sides group alleles by
+  *different* rules — a J+C scaffold collapses identical J sequence, a `J|` target inherits the V×J
+  collapse of identical assembled `V+pad+J` plus reading frame. **24 J+C scaffolds** were
+  unreachable from any J hit, including every IGLJ2/IGLJ3 read. Now keyed per allele on both sides.
+* **A pre-2.8.0 `segments.markup.tsv` poisoned that lookup.** It loads into the same `entries` dict
+  *after* `markup.tsv`, and its `JC|` rows collide with their base scaffolds on `(j_call, c_call)`;
+  the later insertion wins, so every value became an id the full target DB does not contain and the
+  contest was off for the whole run. Reachable on the first run after any upgrade.
+* **The J+C contest accepted a walkover.** When the V×J alignment produced nothing, its row was
+  taken unconditionally and the read dropped from the rescue set — keeping a V-less answer (no
+  `v_call`, no junction, no clonotype) the full reference was never asked about. The read now stays
+  in `failed`.
+* **`build_segment_reference` truncated in place on the concurrent runtime path.** Now under the
+  same `arda._locking.build_lock` the mmseqs DB build uses, with the format re-checked after
+  acquiring it, and a read-only reference tree degrades to a warning instead of killing the run.
+
+### Fixed — an exact J tie was broken lexicographically
+
+Found by the test suite, not the audit. J alleles of one gene are short and differ by a base or
+two, so a read routinely ties EXACTLY between two `J|` targets — and the tie was resolved by target
+name, which silently decided which V×J scaffold the read was aligned against.
+`SRR5233639.3589/2` ties `J|IGLJ2*01,IGLJ3*01` and `J|IGLJ2A*01` at **54 bits each**; the comma
+sorts before `A`, so the composite won and the read was seated on a scaffold scoring **93** while
+its true home scores **96**. `_MAX_TIED_J` mirrors `_MAX_TIED_V`: tied J alleles now contribute
+candidates and `_best_hits` decides on whole-scaffold bit score, as the one-pass does. Candidates
+are the two axes (tied V × best J, best V × tied J), bounded by the sum of the caps, not the
+product.
+
+Measured on 50 k TRA amplicon pairs against the one-pass output: `j_call` disagreements
+**296 → 214**, `v_call` 85 → 90, `c_call`/`junction_aa` unchanged.
+
+**Blast radius: `--two-pass` only.** `segments.fasta` is reached solely under `if two_pass:` in
+`rnaseq.map`, so the shipped default path — the one-pass search against the full V×J reference — is
+byte-for-byte unaffected by everything above. `--two-pass` is off by default and is documented as an
+amplicon lever.
+
+`SegmentStats.jc_targets` is now `SegmentStats.c_targets`. `segments.fasta` is generated by
+`build-index`, not shipped, so no reference asset changes.
+
 ## 2.7.2
 
 ### Fixed — a second `--two-pass` crash, on alignment rows with no score

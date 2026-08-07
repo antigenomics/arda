@@ -65,6 +65,46 @@ _MAX_SEQS = 300
 # resolvable at allele level by any means.
 _MAX_TIED_V = 8
 
+# The same problem exists on the J side and had no handling at all: J alleles of one gene are short
+# and differ by a base or two, so a read routinely ties EXACTLY between two `J|` targets, and the
+# tie was then broken lexicographically -- an arbitrary rule that decides which V×J scaffold the
+# read is aligned against. Measured on the real-read fixture: SRR5233639.3589/2 ties
+# `J|IGLJ2*01,IGLJ3*01` and `J|IGLJ2A*01` at **54 bits each**; the comma sorts before `A`, so the
+# composite won and the read was seated on a scaffold scoring **93** while its true home scores
+# **96**. Offering both lets `_best_hits` decide on whole-scaffold bit score, exactly as the
+# one-pass search does and exactly as `_MAX_TIED_V` already does for V.
+#
+# Smaller than the V cap because J targets are ~40-60 nt: past a handful of exact ties the read
+# carries no information that could separate them.
+_MAX_TIED_J = 4
+
+#: side -> how many exactly-tied rows may be kept for it. ⛔ ONE mapping, read by both
+#: `_segment_rows` (polars) and `_segment_best_hits` (Python) -- see `_SEGMENT_SIDE` for what
+#: happens when a rule about segment rows is spelled out twice. `C` is absent: a constant-region
+#: hit nominates nothing that could be tied.
+_MAX_TIED = {"V": _MAX_TIED_V, "J": _MAX_TIED_J}
+
+# `--max-seqs` for the SEGMENT pass, which is a structurally different database from the one 300
+# was calibrated on and must not inherit its value.
+#
+# 300 exists because the full reference is a CROSS-PRODUCT: 15,414 V×J scaffolds from 1,244
+# distinct segments, so a read covering its V matches ~277 scaffolds at near-identical scores and
+# truncating that list truncates the true one. Measured on the TRA amplicon, `--max-seqs` against
+# the full reference: at 150 `junction_aa` agreement is already 98.20 %, at 75 it is 85.30 %, and
+# at 25 it is 56.17 % -- 44 % of junctions moved while the mapped read count falls 0.013 %, which
+# hides the whole thing.
+#
+# The segment reference has no cross-product. A read's V competes only against the alleles of its
+# own gene and its close paralogs, and the pass needs exactly three things: the best V, the best J,
+# and up to `_MAX_TIED_V` exactly-tied V alleles. 300 of 1,244 targets is 24 % of the whole
+# database per query to answer that -- against 1.9 % for 300 of 15,414 on the full reference. The
+# two knobs share a name and nothing else.
+#
+# Anything wrong here is bounded rather than silent: a mis-implied scaffold either loses the
+# `(V, J)` lookup and goes to `_full_rescue`, or is caught by the tied-V expansion. Set to a value
+# that comfortably clears `_MAX_TIED_V` on both sides.
+_SEGMENT_MAX_SEQS = 50
+
 # Adaptive search. `--max-accept` bounds how many alignments mmseqs performs per query before it
 # stops; it is UNBOUNDED by default, so arda aligns every hitting read against all ~300 of its
 # prefilter candidates and then keeps exactly one. Capping it is the single largest lever on the
@@ -198,6 +238,49 @@ def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
     return db
 
 
+def _has_jc_targets(fasta: Path) -> bool:
+    """Was this ``segments.fasta`` written before the constant region became its own target?
+
+    Scans headers only, and stops at the first ``>JC|``. The whole file is ~250 KB, so this costs
+    nothing next to the mmseqs build it guards.
+    """
+    with open(fasta) as fh:
+        return any(line.startswith(">JC|") for line in fh)
+
+
+def _regenerate_segments(fasta: Path, organism: str) -> None:
+    """Rewrite a pre-2.8.0 ``segments.fasta`` (+ markup), safely under concurrency.
+
+    ``build_segment_reference`` truncates both artifacts **in place**. That was fine while it only
+    ran from ``build-index``; 2.8.0 put it on the map path, where arda is concurrent by design
+    (Nextflow process-per-sample, SLURM task-per-shard). N array tasks would all see ``JC|``, all
+    truncate the same file, and ``_createdb_atomic``'s **mtime** gate would then happily compile an
+    mmseqs DB from whatever bytes were on disk -- a short or interleaved reference, exit 0, targets
+    quietly missing, every affected read pushed to rescue forever. Exactly the class of
+    ``mmseqs createdb`` (0-byte ``db``) and ``fetch_database`` (cross-filesystem ``shutil.move``).
+
+    So: take the same build lock the DB build takes, and re-check the format after acquiring it --
+    the common case is not contention over the work, it is that the process we queued behind
+    already did it.
+
+    A read-only reference tree (container image, HPC module) is not an error either: the two-pass
+    is simply unavailable, which is the contract ``_cached_segment_db`` already documents.
+    """
+    from .._locking import build_lock
+    from ..refbuild.segments import build_segment_reference
+
+    lock = fasta.parent / ".segments.build.lock"
+    try:
+        with build_lock(lock, done=lambda: not _has_jc_targets(fasta)) as mine:
+            if not mine:
+                return
+            logger.info("segments.fasta predates the J+C collapse; regenerating for %s", organism)
+            build_segment_reference(organism, out_dir=fasta.parent)
+    except OSError as exc:
+        logger.warning("could not regenerate segments.fasta for %s (%s); --two-pass will use the "
+                       "pre-2.8.0 reference, which is correct but ~1.9x slower", organism, exc)
+
+
 def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     """The mmseqs DB for the segment reference, or ``None`` if it has not been built.
 
@@ -209,10 +292,20 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
 
     Returns ``None`` rather than raising when `segments.fasta` is absent: the two-pass is then
     simply unavailable and the caller falls back to the one-pass search.
+
+    **A pre-2.8.0 `segments.fasta` is regenerated, not used.** Upgrading arda does not rewrite a
+    generated artifact, and this one changed shape in 2.8.0: the 345 `JC|` scaffolds became 25 `C|`
+    targets. The mapper still reads `JC|` (so a mixed-vintage install is correct, not broken),
+    which is exactly what makes the stale case invisible -- an upgraded user passing ``--two-pass``
+    would get correct output, no error, and none of the 1.89x, forever. Detecting it by FORMAT
+    rather than by mtime or version is what makes that self-healing: the marker is the thing that
+    actually changed.
     """
     fasta = ref.target_fasta.parent / "segments.fasta"
     if not fasta.exists():
         return None
+    if _has_jc_targets(fasta):
+        _regenerate_segments(fasta, organism)
     cache = data_dir() / "mmseqs_db" / f"{organism}_segments"
     cache.mkdir(parents=True, exist_ok=True)
     db = cache / "db"
@@ -334,19 +427,92 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
 # only lever is asking for fewer columns.
 _SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart"
 
+#: Segment target prefix -> which side of a scaffold that row is evidence for. Anything not listed
+#: is dropped and is NEVER silently treated as a J.
+#:
+#: ⛔ ONE mapping, used by both `_segment_rows` (which reduces the alignment TSV in polars) and the
+#: loop in `_segment_best_hits` (which consumes it). They are the same rule, and when they were
+#: written out separately, adding `C|` targets to the reference and updating only the loop made the
+#: reduction discard every C row: `best_c` stayed empty, no constant-only read was ever rescued,
+#: and 15 J->C reads vanished **without `no_segment_hit` moving**, because the rows were gone
+#: before any counter saw them. Sharing the mapping makes that divergence unrepresentable.
+#:
+#: `C` is its OWN side, not the J side: a constant-region hit says what the isotype is and nothing
+#: at all about which J the read carries. `JC` is the pre-split kind, kept on the J side so this
+#: mapper still works against a reference built before the constant region became its own target.
+_SEGMENT_SIDE = {"V": "V", "J": "J", "JC": "J", "C": "C"}
+
+
+def _alleles(call: str) -> list[str]:
+    """Split a possibly comma-joined call into individual alleles.
+
+    A `v_call`/`j_call`/`c_call` names a GROUP of alleles arda could not tell apart, and different
+    parts of the reference build group them by different rules. Anything matching one call against
+    another must compare alleles, not the joined strings.
+    """
+    return [a for a in (s.strip() for s in call.split(",")) if a]
+
 
 def _segment_rows(tsv: Path) -> list[dict]:
-    """Every alignment row from a segment-pass convertalis TSV, five columns wide."""
+    """The alignment rows from a segment-pass convertalis TSV that can affect the answer.
+
+    The segment search runs at the same ``--max-seqs`` as the full search, so an amplicon read
+    covering its V emits a row for **every** V allele it clears threshold against -- measured at
+    tens of rows per read. :func:`_segment_best_hits` consumes at most the top row per
+    ``(query, side)`` plus up to ``_MAX_TIED_V`` exactly-tied V rows, and ``continue``s on all the
+    rest, so materialising the whole file as Python dicts builds tens of millions of objects to
+    throw nearly all of them away. That is why ``--two-pass`` peaked at **3.3 GB** on a 1 M-pair
+    amplicon while the one-pass baseline it beats used 2.5 GB -- a mode doing strictly *less*
+    alignment work should not cost more memory, and that was the tell.
+
+    The reduction happens in polars instead, so only the rows the loop can act on are converted.
+    **The loop's semantics are unchanged**: everything dropped here is a row it would have skipped.
+    """
     if not tsv.exists() or tsv.stat().st_size == 0:
         return []
     cols = _SEGMENT_FORMAT.split(",")
     schema = {c: (pl.Utf8 if c in _STR_COLS else pl.Float64) for c in cols}
     df = pl.read_csv(tsv, separator="\t", has_header=False, new_columns=cols,
                      schema_overrides=schema)
+    # ⛔ The SAME unusable-row filter `_best_hits` applies, for a sharper reason: polars sorts
+    # nulls FIRST under `descending=True`, so a row with an empty `bits` field becomes `_rank == 0`
+    # for its `(query, side)` and **evicts the read's real best hit**. Reproduced: with rows
+    # `V|A*01 <empty bits>` and `V|B*01 120` for one read, the reduction returns `V|A*01` and
+    # `V|B*01` is gone. The null then reaches `float(row["bits"])` in `_segment_best_hits` and
+    # raises mid-chunk -- after earlier chunks were already written, i.e. a partial AIRR file that
+    # looks complete. An empty query id is the same malformed row and would key every downstream
+    # dict on `None`. Both route the read to the full-reference rescue instead, which is the
+    # guarantee `--two-pass` is built on.
+    n_before = df.height
+    df = df.filter(pl.col("query").is_not_null() & (pl.col("query") != "")
+                   & pl.col("bits").is_not_null())
+    if df.height != n_before:
+        logger.warning("%d segment alignment rows were unusable (no query id or no score) and were "
+                       "dropped before best-hit selection", n_before - df.height)
     # Deterministic: exact bit-score ties between paralogous targets are broken on `target`,
     # the same rule `_best_hits` uses. Resolving them by TSV row order (as an earlier draft did)
     # silently undid the determinism fix -- 25/25 tied queries flipped when rows were reversed.
     df = df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
+
+    # Which side of a scaffold each row is evidence for, from the SHARED `_SEGMENT_SIDE` mapping --
+    # see its comment for why this must not be spelled out separately here.
+    kind = pl.col("target").str.split("|").list.first()
+    df = df.filter(kind.is_in(list(_SEGMENT_SIDE))).with_columns(
+        _side=kind.replace_strict(_SEGMENT_SIDE))
+
+    # ⛔ `over`, NOT `group_by`. A window function maps its result back to the ORIGINAL row
+    # positions, so on an already-sorted frame it is deterministic; `group_by` is a multithreaded
+    # hash aggregation, and using it unordered is precisely what made `correct` nondeterministic
+    # across runs while the row count stayed stable.
+    df = df.with_columns(
+        _rank=pl.int_range(pl.len()).over(["query", "_side"]),
+        _top=pl.col("bits").first().over(["query", "_side"]))
+    # Top row per (query, side), plus exactly-tied rows up to that side's cap -- from the shared
+    # `_MAX_TIED`, so the reduction and the consuming loop cannot disagree about it.
+    keep = (pl.col("_rank") == 0) | (
+        (pl.col("bits") == pl.col("_top"))
+        & (pl.col("_rank") < pl.col("_side").replace_strict(_MAX_TIED, default=1)))
+    df = df.filter(keep).drop("_side", "_rank", "_top")
     return list(df.iter_rows(named=True))
 
 
@@ -585,6 +751,8 @@ def _segment_best_hits(
     threads: int, sensitivity: float, mm_strand: int | None, max_seqs: int, kmer: int | None,
     search_type: int, seqs: dict[str, str],
     combos: dict[tuple[str, str], str] | None = None,
+    fast_segments: bool = False,
+    indel_rescue: bool = False,
 ) -> tuple[dict[str, dict], dict]:
     """Two-pass best hits: cheap segment pass, then align only the implied scaffold.
 
@@ -596,18 +764,32 @@ def _segment_best_hits(
     miss -- is realigned against the FULL reference exactly as today. The partition is asserted,
     not assumed, and `_full_rescue` raises rather than returning empty.
     """
-    from .shortlist import load_combinations, shortlist
+    from .shortlist import _lookup, load_combinations, shortlist
 
-    seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
-    mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
-                  search_type=search_type, sensitivity=sensitivity, max_seqs=max_seqs,
-                  threads=threads, kmer=kmer,
-                  extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
-    # NOT `top_hit` here. `filterdb --extract-lines 1` keeps ONE row per query, which destroys
-    # exactly the pairing this pass exists to find: a junction-spanning read must contribute its
-    # best V AND its best J. Reducing first left `implied` at 0 -- correct output, zero speedup.
-    mmseqs.convertalis(query_db, seg_db, seg_res, seg_tsv, threads=threads,
-                       search_type=search_type, format_output=_SEGMENT_FORMAT)
+    if fast_segments:
+        # Structure-aware path: seed, vote by diagonal, extend ungapped. 37x the search below on
+        # the same reads and reference, agreeing with it on .9997 of V alleles and .9998 of J.
+        # It only NOMINATES: every candidate is still aligned against the full scaffold and scored
+        # by MMseqs2 below, which is why a different score scale here is not a correctness problem.
+        from .. import segmap
+        # The same file `_cached_segment_db` compiles for MMseqs2, read directly. Derived from
+        # `ref`, not from `seg_db`, so there is one definition of where the segment reference lives.
+        rows = segmap.segment_rows(ref.target_fasta.parent / "segments.fasta",
+                                   seqs, max_tied=max(_MAX_TIED.values()), threads=threads,
+                                   max_indel=segmap.MAX_INDEL_NT if indel_rescue else 0)
+    else:
+        seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
+        mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
+                      search_type=search_type, sensitivity=sensitivity,
+                      max_seqs=min(max_seqs, _SEGMENT_MAX_SEQS),
+                      threads=threads, kmer=kmer,
+                      extra=(["--strand", str(mm_strand)] if mm_strand is not None else None))
+        # NOT `top_hit` here. `filterdb --extract-lines 1` keeps ONE row per query, which destroys
+        # exactly the pairing this pass exists to find: a junction-spanning read must contribute its
+        # best V AND its best J. Reducing first left `implied` at 0 -- correct output, zero speedup.
+        mmseqs.convertalis(query_db, seg_db, seg_res, seg_tsv, threads=threads,
+                           search_type=search_type, format_output=_SEGMENT_FORMAT)
+        rows = _segment_rows(seg_tsv)
 
     # Best V and best J per read. `JC|` targets are named by SCAFFOLD id, not by allele, so they
     # are resolved through the segment markup -- feeding the raw name into the combination lookup
@@ -626,42 +808,106 @@ def _segment_best_hits(
     # (`rnaseq.correct`), that silently splits and merges clonotypes. All tied alleles' scaffolds
     # are aligned instead, so `_best_hits` applies the same rule the one-pass search does.
     tied_v: dict[str, list[str]] = {}
-    for row in _segment_rows(seg_tsv):
+    # ...and the same on the J side, which had no handling at all. See `_MAX_TIED_J`: an exact tie
+    # between two `J|` targets was being broken lexicographically, which decided the scaffold.
+    tied_j: dict[str, list[str]] = {}
+    # Best constant-region hit per read, from the `C|` targets. Its own side, NOT the J side: a C
+    # hit is evidence about the isotype and none whatsoever about which J the read carries, and
+    # folding it into `best_j` is what the old `JC|` targets did -- they won the J side on the
+    # strength of their constant half.
+    best_c: dict[str, str] = {}
+    # Reads whose best segment evidence sits on two diagonals of one target -- the signature of an
+    # indel, which a single ungapped extension scores only up to. Such a read's segment score is
+    # systematically low, so letting it take the fast path decides its scaffold on truncated
+    # evidence. They are demoted to `rescue` below and realigned GAPPED against the full reference.
+    split_reads: set[str] = set()
+    tied = {"V": tied_v, "J": tied_j}
+    for row in rows:
         q, t, bits = row["query"], row["target"], float(row["bits"])
         kind, sep, name = t.partition("|")
-        if not sep or kind not in ("V", "J", "JC"):
+        side = _SEGMENT_SIDE.get(kind) if sep else None
+        if side is None:
             continue                      # unrecognised target: never silently treat it as a J
-        side = "V" if kind == "V" else "J"
+        if row.get("split"):
+            split_reads.add(q)
         if (q, side) in top:              # rows arrive pre-sorted by (bits desc, target asc)
             # Keep the ties, drop everything below them. Capped: a read that ties against dozens
             # of alleles is degenerate, and the cap bounds the alignment work without affecting
             # the answer in any non-degenerate case.
-            if side == "V" and bits == top[(q, side)] and len(tied_v[q]) < _MAX_TIED_V:
-                tied_v[q].append(name)
+            bucket = tied.get(side)
+            if bucket is not None and bits == top[(q, side)] and len(bucket[q]) < _MAX_TIED[side]:
+                bucket[q].append(name)
             continue
         top[(q, side)] = bits
         seg_rows[(q, side)] = row
         allele = ref.segment_j_call(name) if kind == "JC" else name
-        (best_v if side == "V" else best_j)[q] = allele
-        if kind == "V":
-            tied_v[q] = [name]
+        {"V": best_v, "J": best_j, "C": best_c}[side][q] = allele
+        if side in tied:
+            # A `JC|` target is J-side but is named by scaffold id, so it can never be a J ALLELE
+            # candidate for `combinations.tsv`; seed the bucket empty rather than with its name.
+            tied[side][q] = [] if kind == "JC" else [name]
         if kind == "JC":
             jc_scaffold[q] = name
+
+    # A read with both a J and a C hit names its J+C scaffold by that pair, exactly as a V→J read
+    # names its V×J scaffold through `combinations.tsv`. `setdefault` so a pre-split `JC|` hit,
+    # which already knows its scaffold, is never overwritten.
+    #
+    # ⛔ Both calls are expanded to individual ALLELES before the lookup. A `j_call` is a group of
+    # alleles arda cannot separate, and the two sides group them by different rules -- see
+    # `Reference.jc_combinations`. Matching the comma-joined strings leaves 24 human J+C scaffolds
+    # unreachable, including every IGLJ2/IGLJ3 read, which turns the contest off for exactly the
+    # reads it exists to protect.
+    if best_c:
+        jc_combos = ref.jc_combinations()
+        for q, c in best_c.items():
+            sid = next((s for j in _alleles(best_j.get(q, "")) for ca in _alleles(c)
+                        if (s := jc_combos.get((j, ca))) is not None), None)
+            if sid:
+                jc_scaffold.setdefault(q, sid)
 
     if combos is None:
         combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
     sl = shortlist(best_v, best_j, combos)
+
+    # Demote indel-bearing reads from the fast path to the rescue set. This is a REROUTE, never a
+    # drop: `rescue` is realigned against the full reference by MMseqs2, which gaps, so these reads
+    # get a better answer than the fast path could give them -- not a worse one. Doing it here,
+    # after `shortlist` has asserted its partition is total, keeps that invariant intact and keeps
+    # the whole mechanism to one place.
+    if split_reads:
+        demoted = [q for q in sl.implied if q in split_reads]
+        for q in demoted:
+            del sl.implied[q]
+            sl.rescue.append(q)
+        seg_report_split = len(demoted)
+    else:
+        seg_report_split = 0
 
     best, failed = ({}, set())
     if sl.implied:
         # Expand each read's single implied scaffold to every scaffold its exactly-tied V alleles
         # imply against the same best J. `dict.fromkeys` keeps order and de-duplicates; the
         # shortlist's own choice stays first so a read with no ties is unchanged.
-        candidates = {
-            q: list(dict.fromkeys(
-                [sid] + [combos[(v, best_j[q])] for v in tied_v.get(q, ())
-                         if (v, best_j[q]) in combos]))
-            for q, sid in sl.implied.items()}
+        #
+        # Resolved through `shortlist._lookup`, not a bare `combos[...]`: a tied V can carry a
+        # composite (comma-joined) allele name, which `combinations.tsv` only ever registers by
+        # individual member -- 23 of 775 human `V|` targets do, `IGHV3-23*01,IGHV3-23D*01` among
+        # them. A bare lookup drops exactly those siblings from the candidate set, so the read is
+        # aligned against fewer scaffolds than it ties against and the allele call is decided by
+        # which ones happened to survive.
+        # Two AXES, not the cross product: the tied V alleles against the best J, and the tied J
+        # alleles against the best V. Bounded by `_MAX_TIED_V + _MAX_TIED_J` rather than their
+        # product, and a read tied simultaneously on both sides is vanishingly rare -- either axis
+        # surfaces the scaffold that then wins on whole-scaffold bit score.
+        def _cands(q: str, sid: str) -> list[str]:
+            out = [sid]
+            bj, bv = best_j[q], best_v[q]
+            out += [s for v in tied_v.get(q, ()) if (s := _lookup(combos, v, bj)) is not None]
+            out += [s for j in tied_j.get(q, ()) if (s := _lookup(combos, bv, j)) is not None]
+            return list(dict.fromkeys(out))
+
+        candidates = {q: _cands(q, sid) for q, sid in sl.implied.items()}
         best, failed = _align_implied(query_db, full_db, candidates, seg_rows, seqs, tmp,
                                       threads=threads, ref=ref)
 
@@ -673,24 +919,79 @@ def _segment_best_hits(
     # threshold among 775). It also destroyed the `c_call`, i.e. the isotype. Measured on real
     # reads: 4 of 453 mapped reads, 3 of them gaining an invented junction_aa.
     # Two targets per read is still ~138x fewer alignments than the full reference.
-    contest = {q: s for q, s in jc_scaffold.items() if q in sl.implied}
+    #
+    # ⛔ **Nominate from the J, not from a C hit.** Before the constant region became its own
+    # target, a J->C read's best J-side hit WAS a `JC|` scaffold, so it named its own contestant.
+    # It no longer does, and requiring a `C|` hit instead is not equivalent: such a read spans the
+    # J/C boundary, so its constant overlap is often too short to clear the search threshold on its
+    # own while the concatenated J+C scaffold it used to hit cleared it easily. Measured on the
+    # real-read fixture, gating the contest on C evidence let exactly the bug this contest exists
+    # to prevent back in on SRR5233639.12648/1 -- `TRBV12-3*02` invented, `c_call` TRBC2*01
+    # destroyed, and `junction_aa` CASSFAGLVNIDEQFF fabricated on a read the one-pass calls V-less.
+    #
+    # So every implied read offers the J+C scaffolds of its best J, and bit score decides, exactly
+    # as the one-pass does. That is 1 extra candidate for TRA/TRD/IGK, 2 for TRB/TRG, 7 for IGL and
+    # 11 for IGH. The diagonal transfers cleanly because a J+C scaffold starts AT its J
+    # (`j_sequence_start` = 1), which is the same frame the `J|` segment hit is measured in -- the
+    # per-scaffold offset that makes this wrong on a V×J scaffold (`len(V) + pad`) does not exist
+    # here.
+    jc_by_j: dict[str, list[str]] = {}
+    for (j_allele, _c), sid in ref.jc_combinations().items():
+        jc_by_j.setdefault(j_allele, []).append(sid)
+    contest: dict[str, str | list[str]] = {}
+    for q in sl.implied:
+        named = jc_scaffold.get(q)            # a pre-split `JC|` hit already knows its scaffold
+        if named:
+            contest[q] = [named]
+            continue
+        # Per allele, for the same reason as the lookup above; `dict.fromkeys` de-duplicates while
+        # keeping order, so the candidate list is deterministic.
+        cands = list(dict.fromkeys(
+            s for j in _alleles(best_j.get(q, "")) for s in jc_by_j.get(j, ())))
+        if cands:
+            contest[q] = cands
     if contest:
         jc_hits, _ = _align_implied(query_db, full_db, contest, seg_rows, seqs, tmp,
                                     threads=threads, side="J", ref=ref, tag_prefix="jc")
         for q, row in jc_hits.items():
             cur = best.get(q)
-            if cur is None or float(row["bits"]) > float(cur["bits"]):
+            if cur is None:
+                # The V×J alignment produced NOTHING for this read, so there is no score to
+                # compete against and this is not a contest -- it is a walkover. Taking the J+C
+                # row here and dropping the read from `failed` would hand it a V-less answer (no
+                # `v_call`, no junction, no clonotype) that the full reference was never asked
+                # about, and the one-pass may well score its V×J scaffold higher. The read stays
+                # in `failed`, so `_full_rescue` decides against the WHOLE reference -- which
+                # contains these J+C scaffolds too, and will pick one if it really is the best
+                # home. The "no read lost" invariant holds either way; what this protects is the
+                # clonotype, which no counter in the report would have shown going missing.
+                continue
+            if float(row["bits"]) > float(cur["bits"]):
                 best[q] = row
-                failed.discard(q)         # the J+C alignment succeeded where V×J may not have
+                failed.discard(q)         # a real contest: the J+C scaffold outscored the V×J one
 
-    rescue = sorted(set(sl.rescue) | failed)
+    # A read whose ONLY segment evidence is a constant-region hit has no (V, J) pair, so the
+    # shortlist never sees it. It is real receptor mRNA carrying no V(D)J -- rescue it against the
+    # full reference rather than letting it fall out of `seen`, which is how a read gets lost with
+    # no error: the partition assertion below only checks what the shortlist was told about.
+    c_only = set(best_c) - set(best_v) - set(best_j)
+    rescue = sorted(set(sl.rescue) | failed | c_only)
     if rescue:
         best.update(_full_rescue(query_db, full_db, rescue, tmp, threads=threads,
                                  sensitivity=sensitivity, mm_strand=mm_strand,
                                  max_seqs=max_seqs, kmer=kmer, search_type=search_type))
 
-    seen = set(best_v) | set(best_j)
-    assert set(sl.implied) | set(sl.rescue) == seen, "a read was lost during shortlisting"
+    seen = set(best_v) | set(best_j) | set(best_c)
+    # ⛔ Assert what actually matters: every read the segment pass SAW either came back with a hit
+    # or was handed to the full-reference rescue. The obvious form of this check --
+    # `implied | rescue | c_only == seen` -- is a TAUTOLOGY: `shortlist` already asserts
+    # `implied | rescue == set(best_v) | set(best_j)` internally, and `c_only` is defined three
+    # lines up as `set(best_c) - set(best_v) - set(best_j)`, so the two sides are equal by
+    # construction and it can never fire. It was standing in for this one, which can.
+    unaccounted = seen - set(best) - set(rescue)
+    assert not unaccounted, (
+        f"{len(unaccounted)} read(s) hit a segment target but were neither aligned nor rescued, "
+        f"e.g. {sorted(unaccounted)[:3]}")
     n_fast = len(sl.implied) - len(failed & set(sl.implied))
     # Reads the segment pass never hit at all. Nearly all are genuinely non-receptor -- on bulk
     # that is ~97% of the library, which is the entire point -- but a few are real: a
@@ -702,7 +1003,10 @@ def _segment_best_hits(
     n_unseen = max(0, len(_db_keys(query_db)) - len(seen))
     report = {"implied": n_fast, "rescued": len(rescue), "no_segment_hit": n_unseen,
               "fast_fraction": round(n_fast / len(seen), 4) if seen else 0.0,
-              "reasons": {**sl.reasons, **({"second_pass_failed": len(failed)} if failed else {})}}
+              "reasons": {**sl.reasons,
+                          **({"second_pass_failed": len(failed)} if failed else {}),
+                          **({"indel_rescued": seg_report_split} if seg_report_split else {}),
+                          **({"c_only": len(c_only)} if c_only else {})}}
     return best, report
 
 
@@ -777,6 +1081,8 @@ def _annotate_chunk(
     combos: dict[tuple[str, str], str] | None = None,
     report: dict | None = None,
     adaptive: bool = False,
+    fast_segments: bool = False,
+    indel_rescue: bool = False,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -805,7 +1111,8 @@ def _annotate_chunk(
             best, seg_report = _segment_best_hits(
                 query_db, segment_db, target_db, tmp, ref, threads=threads,
                 sensitivity=sensitivity, mm_strand=mm_strand, max_seqs=max_seqs, kmer=kmer,
-                search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos)
+                search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos,
+                fast_segments=fast_segments, indel_rescue=indel_rescue)
             if report is not None:
                 _merge_segment_report(report, seg_report)
         else:

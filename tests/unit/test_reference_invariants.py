@@ -140,3 +140,57 @@ def test_human_has_the_jc_constant_scaffolds():
     """A read spanning the J→C splice carries no V; it needs J+C scaffolds or it cannot map."""
     jc = [r for r in _rows("human", "markup.tsv") if not r["v_call"] and r.get("c_call")]
     assert len(jc) == 345, f"expected 345 J+C scaffolds, got {len(jc)}"
+
+
+@pytest.mark.parametrize("org", ORGANISMS)
+def test_jc_combinations_names_every_jc_scaffold_uniquely(org):
+    """`(j_call, c_call) -> J+C scaffold id` must be a function, not a lossy lookup.
+
+    It is how a J->C read names its home now that the constant region is its own segment target
+    (the J+C scaffolds are a J x C product and were 76.4 % of the segment search's alignments).
+    Two scaffolds sharing a (j, c) key would make the mapping order-dependent and would silently
+    seat some reads on whichever one happened to be loaded last.
+
+    Reads the committed markup directly, so it runs in CI with no build -- the two reference bugs
+    found in this project were both invisible to CI because their only tests needed a built DB.
+    """
+    rows = _rows(org, "markup.tsv")
+    keys = [(r["j_call"], r["c_call"]) for r in rows
+            if not (r.get("v_call") or "") and (r.get("c_call") or "") and (r.get("j_call") or "")]
+    if not keys:
+        pytest.skip(f"{org} has no J+C scaffolds")
+    dupes = {k for k in keys if keys.count(k) > 1}
+    assert not dupes, f"{org}: (j_call, c_call) is not unique across J+C scaffolds: {sorted(dupes)}"
+
+
+@pytest.mark.parametrize("org", ORGANISMS)
+def test_every_jc_scaffold_carries_a_constant_region_after_its_j(org):
+    """A C segment target is cut as `scaffold[vj_end:]`, so `vj_end` must leave something behind.
+
+    A J+C scaffold whose `vj_end` runs to the end of the sequence yields an EMPTY C target, which
+    `build_segment_reference` skips -- so that C allele would silently have no target at all, and
+    every read lying inside its constant region would map to nothing.
+    """
+    rows = _rows(org, "markup.tsv")
+    seqs, sid = {}, None
+    p = vdj_dir(org) / "alleles.fasta"
+    if not p.is_file():
+        pytest.skip(f"no alleles.fasta for {org}")
+    for line in p.read_text().splitlines():
+        if line.startswith(">"):
+            sid = line[1:].split()[0]
+            seqs[sid] = []
+        elif sid:
+            seqs[sid].append(line)
+    seqs = {k: "".join(v) for k, v in seqs.items()}
+
+    bad = []
+    for r in rows:
+        if (r.get("v_call") or "") or not (r.get("c_call") or ""):
+            continue
+        seq = seqs.get(r["scaffold_id"])
+        if seq is None:
+            continue
+        if len(seq) - int(r["vj_end"] or 0) <= 0:
+            bad.append(r["scaffold_id"])
+    assert not bad, f"{org}: J+C scaffolds with no constant region after vj_end: {bad[:5]}"

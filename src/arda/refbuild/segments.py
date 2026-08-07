@@ -24,9 +24,18 @@ Coordinates carry over almost for free, which is why this is cheap to build corr
   ever sees the V-side stub of the junction here).
 * a **J** target is `scaffold[j_sequence_start-1:vj_end]`, so every coordinate shifts by
   `j_sequence_start - 1`. It carries fwr4 and the J-side stub of `cdr3`.
-* **J+C** targets are copied through untouched — they already have no V, and
-  `RefEntry.is_jc` / the `t0 > 0` guard in `transfer` already handle V-less targets. That path
-  ships today with 345 scaffolds, so it is exercised, not speculative.
+* a **C** target is `scaffold[vj_end:]` of a J+C scaffold — the constant region alone, one per
+  distinct C allele. It carries no regions (a constant region has none of fwr1..fwr4) and no V or
+  J call, only `c_call`.
+
+**The C side was the same cross-product, and this module used to leave it in place.** The 345 J+C
+scaffolds were copied through verbatim, and they are a J×C product (IGH 14 J × 11 C, IGL 9 × 7,
+TRB 16 × 2) in which every scaffold of a locus ends in the *same* constant sequence. So a read
+reaching C was aligned against all of them to learn one `c_call`, at a redundancy factor equal to
+the locus' J-allele count — 69× on TRA. Measured on a TRA amplicon: **345 of 1,244 targets (27.7 %)
+produced 76.4 % of all segment alignments**, 4,977 alignments per target against 603 for a V
+target. Splitting them into the existing `J|` targets plus 25 `C|` targets takes the segment search
+to **1.89×** and the alignment count to **4.23×** fewer, with the V-and-J fast path down 0.81 %.
 
 ⚠ **What this does NOT do.** A read that spans the junction hits a V target and a J target
 separately, and something must merge the two into one AIRR record. That is
@@ -54,12 +63,12 @@ class SegmentStats:
 
     v_targets: int = 0
     j_targets: int = 0
-    jc_targets: int = 0
+    c_targets: int = 0
     source_scaffolds: int = 0
 
     @property
     def total(self) -> int:
-        return self.v_targets + self.j_targets + self.jc_targets
+        return self.v_targets + self.j_targets + self.c_targets
 
     @property
     def reduction(self) -> float:
@@ -139,6 +148,48 @@ def build_segment_reference(organism: str = "human", *, out_dir: Path | None = N
             if prev is None or jlen > prev[0]:
                 j_best[j_allele] = (jlen, row)
 
+    # ── J+C: the SECOND cross-product, and the one this module used to leave in place ──────────
+    #
+    # A J+C scaffold is `J + CH1`, and every scaffold of a locus ends in the SAME constant
+    # sequence. Copying the 345 of them through verbatim therefore reproduced, on the C side,
+    # exactly the redundancy the V×J collapse removes on the V side: a read reaching C was aligned
+    # against all of them to learn one `c_call`, and the redundancy factor is the locus' J-allele
+    # count -- 69x on TRA, 14x on IGH. Measured on a TRA amplicon: 345 of 1,244 targets (27.7 %)
+    # produced **76.4 %** of all segment alignments, at 4,977 alignments per target against 603 for
+    # a V target.
+    #
+    # So the C region becomes its own target, exactly as V and J are: the J half is already
+    # covered by the `J|` targets above, and a read spanning J into C hits both.
+    #
+    # ⚠ **One target per C ALLELE, every locus -- including the loci where the C call carries no
+    #    information.** Only IGH's constant genes separate anything worth reporting: its 11 alleles
+    #    are 7 classes (IGHA/IGHD/IGHE/IGHEP/IGHG/IGHGP/IGHM), i.e. the isotype. TRA, TRD and IGK
+    #    have exactly ONE C allele each, so such a target answers a question with one possible
+    #    answer; TRB and TRG have two; IGL's seven IGLC alleles are all one class. Dropping those
+    #    14 targets is measurably faster -- 2.89 s vs 3.18 s per 50 k amplicon pairs, and the
+    #    V-and-J fast path is 45,944 reads either way.
+    #
+    #    They are kept anyway, because a C target does a SECOND job that has nothing to do with
+    #    information content: it is the only segment target a read lying wholly inside the constant
+    #    region can hit at all. Drop them and such a read hits nothing, never enters `seen`, and is
+    #    never rescued -- measured on the real-read fixture, **14 of 453 reads vanish** (TRB 7,
+    #    IGK 4, IGL 2, TRA 1), every one of them a V-less J->C read. With all 25 the two-pass
+    #    output set is the one-pass set exactly: LOST 0, GAINED 0.
+    #
+    # allele -> (donor row, constant-region sequence). Longest wins, same rule as V and J.
+    c_best: dict[str, tuple[dict, str]] = {}
+    for row in jc_rows:
+        allele = row.get("c_call") or ""
+        if not allele:
+            continue
+        # `vj_end` is where the J part ends, so everything after it is the constant region.
+        cseq = seqs[row["scaffold_id"]][_i(row, "vj_end"):]
+        if not cseq:
+            continue
+        prev = c_best.get(allele)
+        if prev is None or len(cseq) > len(prev[1]):
+            c_best[allele] = (row, cseq)
+
     out_fa = base / "segments.fasta"
     out_tsv = base / "segments.markup.tsv"
     cols = ["scaffold_id", "locus", "v_call", "j_call", "productive",
@@ -184,13 +235,17 @@ def build_segment_reference(organism: str = "human", *, out_dir: Path | None = N
             rows.append(rec)
             stats.j_targets += 1
 
-        for row in jc_rows:                            # J+C: verbatim, already V-less
-            sid = f"JC|{row['scaffold_id']}"
-            fa.write(f">{sid}\n{seqs[row['scaffold_id']]}\n")
-            rec = {c: str(row.get(c) or "") for c in cols if c != "segment"}
-            rec["scaffold_id"], rec["segment"] = sid, "JC"
+        for allele, (row, cseq) in sorted(c_best.items()):
+            sid = f"C|{allele}"
+            fa.write(f">{sid}\n{cseq}\n")
+            rec = {c: "" for c in cols}
+            rec.update(scaffold_id=sid, locus=row["locus"], v_call="", j_call="",
+                       productive="", v_sequence_end="0", j_sequence_start="0",
+                       c_call=allele, vj_end="0", segment="C")
+            for sc, ec in zip(_START_COLS, _END_COLS):
+                rec[sc], rec[ec] = "-1", "-1"
             rows.append(rec)
-            stats.jc_targets += 1
+            stats.c_targets += 1
 
     pl.DataFrame(rows, schema={c: pl.Utf8 for c in cols}).write_csv(out_tsv, separator="\t")
     return stats

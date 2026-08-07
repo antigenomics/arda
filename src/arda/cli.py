@@ -321,7 +321,7 @@ def rnaseq_map(
              "0 = whole file."),
     two_pass: bool = typer.Option(
         False, "--two-pass/--one-pass",
-        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score, both regimes). **Amplicon only.** It needs a read to hit BOTH a V and a J, which primer-anchored amplicon reads do (85%) and bulk RNA-seq reads do not (5%): measured 3.51x on a 48%-receptor TCR amplicon and 0.762x -- i.e. 31% SLOWER -- on a 2.74%-receptor bulk library, where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
+        help="Shortlist ONE VxJ scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score). **Reach for it when reads SPAN V INTO J, not by library type.** It needs a read to hit both a V and a J segment, and `fast_fraction` in the report is the predictor -- not whether the library is amplicon. Measured across regimes: 3.51x on a 48%-receptor TCR amplicon (fast path 85%), 2.96x on a 100%-receptor human TRB set (95.6%), 2.64x on mouse TRA (89%), but 1.03x SLOWER on a human IGH set of the SAME 100%-receptor data (16.3%, because those reads cover V and stop short of the short IGHJ target) and 0.762x on a 2.74%-receptor bulk library (5%), where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
     prefilter: bool = typer.Option(
         False, "--prefilter/--no-prefilter",
         help="Drop reads sharing no exact 16-mer with the reference BEFORE they reach MMseqs2. "
@@ -332,6 +332,27 @@ def rnaseq_map(
              "so the FASTA write and DB build are skipped too. Costs ~0.5% of real reads "
              "(concentrated in J->C and hypermutated IGH), which is why it is OFF by default. "
              "Pointless on amplicon (46-49% receptor: almost everything passes)."),
+    fast_segments: bool = typer.Option(
+        False, "--fast-segments/--mmseqs-segments",
+        help="With --two-pass, answer the segment pass structurally instead of with an MMseqs2 "
+             "search. That pass exists only to learn each read's best V and best J with "
+             "coordinates against a fixed 236kb germline reference -- a structural question, not a "
+             "homology search. Measured on 100k amplicon reads: 74ms against MMseqs2's 2770ms "
+             "(37x), agreeing with it on .9997 of V alleles and .9998 of J. It only NOMINATES: "
+             "every candidate is still aligned against the full V+pad+J scaffold and scored by "
+             "MMseqs2, so the AIRR output should not move. EXPERIMENTAL and off by default until "
+             "that is proven end to end. Ignored without --two-pass."),
+    indel_rescue: bool = typer.Option(
+        False, "--indel-rescue/--no-indel-rescue",
+        help="With --fast-segments, route reads that look like they carry an indel to the GAPPED "
+             "rescue path instead of deciding them on the fast path. An ungapped extension follows "
+             "ONE diagonal, so an indel-bearing read scores only up to the indel and its two "
+             "halves land on two diagonals of the same target -- a signature visible in the seed "
+             "votes before any extension runs. Measured on 341,294 real IGH mates: 3.18% of reads "
+             "carry a V indel, and the rate tracks SHM load (0.74% at >=98% V identity, 8.00% "
+             "below 90%), because AID makes indels and not only substitutions. These reads are "
+             "REROUTED, never dropped, so a false positive costs a little speed and cannot cost a "
+             "read. Ignored without --fast-segments."),
     adaptive: bool = typer.Option(
         False, "--adaptive/--no-adaptive",
         help="Cap alignments per read at --max-accept 40, then re-search UNCAPPED only the reads "
@@ -355,6 +376,8 @@ def rnaseq_map(
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
                      limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
+                     fast_segments=fast_segments,
+                     indel_rescue=indel_rescue,
                      adaptive=adaptive,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
@@ -479,7 +502,7 @@ def rnaseq_run(
              "0 = whole file."),
     two_pass: bool = typer.Option(
         False, "--two-pass/--one-pass",
-        help="Shortlist ONE V*J scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score, both regimes). **Amplicon only.** It needs a read to hit BOTH a V and a J, which primer-anchored amplicon reads do (85%) and bulk RNA-seq reads do not (5%): measured 3.51x on a 48%-receptor TCR amplicon and 0.762x -- i.e. 31% SLOWER -- on a 2.74%-receptor bulk library, where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
+        help="Shortlist ONE VxJ scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score). **Reach for it when reads SPAN V INTO J, not by library type.** It needs a read to hit both a V and a J segment, and `fast_fraction` in the report is the predictor -- not whether the library is amplicon. Measured across regimes: 3.51x on a 48%-receptor TCR amplicon (fast path 85%), 2.96x on a 100%-receptor human TRB set (95.6%), 2.64x on mouse TRA (89%), but 1.03x SLOWER on a human IGH set of the SAME 100%-receptor data (16.3%, because those reads cover V and stop short of the short IGHJ target) and 0.762x on a 2.74%-receptor bulk library (5%), where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 

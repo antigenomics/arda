@@ -43,6 +43,7 @@ __all__ = [
     "edit_imgt_file",
     "makeblastdb",
     "igblastn_airr",
+    "auxiliary_data",
     "SUPPORTED_ORGANISMS",
 ]
 
@@ -52,6 +53,39 @@ SUPPORTED_ORGANISMS = ("human", "mouse", "rat", "rabbit", "rhesus_monkey")
 
 class IgBlastError(RuntimeError):
     """Raised when an IgBLAST tool invocation fails or is missing."""
+
+
+def auxiliary_data(organism: str) -> Path:
+    """``optional_file/<organism>_gl.aux`` — IgBLAST's J-gene coding frames.
+
+    ⛔ **Without this file IgBLAST silently emits no CDR3 and no junction.** It is what tells
+    igblastn each J allele's reading frame, and with no frame there is nothing to place the
+    Phe/Trp 118 anchor against. Everything else still works: V and J are called, `v_score` is
+    normal, the process exits 0 — only `cdr3*`, `junction` and `junction_aa` come back empty, on
+    every read.
+
+    It lives beside the executables, under :func:`igblast_root`. Both callers used to look under
+    ``paths.bin_dir()`` and then fall back to passing nothing when the file was not there. Those
+    two are THE SAME directory in a source checkout (``setup.sh`` installs IgBLAST into
+    ``<repo>/bin``), so it worked everywhere it was developed and failed on every auto-fetched
+    install, where the root is ``$XDG_CACHE_HOME/arda/igblast`` while ``bin_dir()`` is
+    ``$XDG_CACHE_HOME/arda/bin``. Measured cost: a 10,000-read amplicon IgBLAST truth carrying
+    `j_call` on 9,070 of 9,300 reads and `junction_aa` on **zero** — written up as an IgBLAST
+    limitation at 151 bp before it was traced to here.
+
+    Raises:
+        IgBlastError: if the file is absent. A missing frame table must not degrade to "no
+            junctions": that is indistinguishable from a truth set which genuinely has none, which
+            is exactly how this went unnoticed.
+    """
+    aux = igblast_root() / "optional_file" / f"{organism}_gl.aux"
+    if not aux.exists():
+        raise IgBlastError(
+            f"IgBLAST auxiliary data not found at {aux}. Without it igblastn emits no CDR3 and no "
+            f"junction for any read, and reports no error. It ships inside the IgBLAST release: "
+            f"re-fetch it, or point $ARDA_IGBLAST at a directory containing optional_file/."
+        )
+    return aux
 
 
 @lru_cache(maxsize=1)
