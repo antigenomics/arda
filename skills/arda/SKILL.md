@@ -553,7 +553,8 @@ genuine chimera.
 from arda.annotate.project import project_junction, UNVALIDATED_LOCI
 
 proj, refusal = project_junction(strand_seq, qlen, v_row=v_row, j_row=j_row,
-                                 v_call=..., j_call=..., anchors=ref.anchors)
+                                 v_call=..., j_call=..., anchors=ref.anchors,
+                                 split_checked=...)   # REQUIRED keyword, deliberately no default
 if proj:
     proj.junction   # AIRR: Cys104 .. [FW]118 INCLUSIVE
     proj.cdr3       # IMGT: anchors excluded, two residues shorter

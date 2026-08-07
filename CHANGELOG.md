@@ -3,7 +3,70 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.10.0
+
+### Fixed — a target-inverted alignment row silently produced a phantom clonotype
+
+arda detects a reverse-strand nt hit only from the **query** side (`rev = qstart > qend`,
+`annotate/mapper.py`). When MMseqs2 expresses the minus strand on the **target** side instead —
+`tstart > tend`, with `taln` reverse-complemented — the row reads as forward. `transfer_regions`
+then walks the target strictly forward from `tstart` (`_markup/markup.cpp:185-201`), which slides
+the whole scaffold markup by `(tlen + 1 - tstart) - tstart` nt and takes the junction window off
+Cys104 onto whatever codon lands there.
+
+Nothing downstream catches it. The only gate on a re-annotated contig is `assemble._CANON`'s
+`^C…[FW]$` — a conserved-motif test, not an anchor — so a window that happens to open on a
+spurious `TGT` and close on `TGG` passes, in frame, with no stop codon.
+
+Measured on a delivered **Jurkat** run (`ERR3003543`, arda 2.5.6 — Jurkat is a monoclonal T-cell
+line and must yield essentially one TRB and one TRA):
+
+| | junction_aa | reads |
+|---|---|---|
+| true clone | `CASSFSTCSANYGYTF` | 15,380 |
+| **phantom** | `CVLLCQQFLDLFGSLW` | **7,408** |
+
+`tlen` 349, true `tstart` 170, reported `tstart` 180 → the window slid **exactly 10 nt** into V
+framework 3. Ablating the two phantom contig rows and re-running `correct` moves the true clone
+**15,380 → 21,138**: the phantom had taken 5,758 reads from it. The same shape appears in the mouse
+sample (`CNVFLCSMVQHPF`, 1,239 reads, shifted +13 nt from `CALWYSTHYVF`) — two organisms, one bug.
+
+**These rows are not recoverable minus-strand hits to be reflected into forward coordinates.** They
+are internally inconsistent: on that read `germline_alignment` is the reverse complement of the
+scaffold while the query matches the plus strand at 91.4 % identity — the row's own reported
+`pident` — and `identity(qaln, taln)` is 0.232, which is why `v_identity` came out 0.216 against
+~0.98 for every normal record. They are now dropped in `_best_hits`, the one place that already
+knows a row is unusable, so the read routes to the full-reference rescue or stays unmapped. That is
+the only outcome that cannot ship a well-formed junction that is wrong.
+
+⚠ Emission is **MMseqs2-build dependent**: 120 such rows across the six delivered samples, **0** on
+the build in the local env at the same arda version. So this is a robustness gate rather than a
+regression fix, and comparing two arda versions on one machine cannot catch it. Blast radius when
+they do occur: 13 of 108,069 Jurkat reads (0.012 %), 3 of which emitted a junction.
+
+Regression tests: `tests/unit/test_best_hits.py::test_a_target_inverted_row_is_not_a_usable_hit`
+and `::test_an_inverted_row_never_beats_a_forward_one`. No reference DB, no MMseqs2 — the row is
+expressible directly as a TSV line, so the test cannot be skipped away.
+
+### Changed — `--max-subs` default 2 → 3
+
+`max_subs` is a seqtree **search radius**, not a threshold: the accept/reject decision is the
+length-scaled probability model (`count[parent] * (error_rate * L)**n >= count[child]`). A radius of
+2 truncated the search below what the model would already accept on a deep clone, leaving a
+sequencing-error trail uncollapsed in exactly the samples where the right answer is known.
+
+Measured on four delivered libraries, clonotypes out:
+
+| sample | kind | `max_subs=2` | `max_subs=3` | `max_subs=4` |
+|---|---|---|---|---|
+| Jurkat | monoclonal T line | 74 | **57** | 57 |
+| Raji | monoclonal B line | 91 | **58** | 58 |
+| GM12878 | oligoclonal B-LCL | 13 | **13** | 13 |
+| MouseSpleen_WT | polyclonal spleen | 7,942 | **7,942** | 7,942 |
+
+The polyclonal and oligoclonal repertoires are **unchanged** at 2, 3 and 4 — the model refuses those
+collapses on abundance regardless of radius — so this is not a diversity-destroying change. It
+saturates at 3.
 
 ### Added — `annotate.project`: the junction placed by arithmetic, not by alignment
 
@@ -41,9 +104,11 @@ block, all of which `annotate.transfer` derives from the alignment's `qaln`/`tal
 `_align_implied` also decides the allele. Whether removing junction placement from the critical path
 recovers wall time is a separate measurement.
 
-**It refuses rather than degrades**, on six conditions: missing or non-`ok` anchor, an unvalidated
-locus, `segmap`'s two-diagonal indel signature, V and J on opposite strands, an order violation, a
-projection landing off the read, and a junction length that is not a multiple of 3. A well-formed
+**It refuses rather than degrades**, on the eight conditions in `project.REFUSALS`: missing or
+non-`ok` anchor (`no_anchor`), an unvalidated locus (`unvalidated_locus`), an indel gate that was
+never run (`indel_unchecked`), `segmap`'s two-diagonal indel signature (`indel_split`), V and J on
+opposite strands (`strand_mismatch`), an order violation (`order`), a projection landing off the
+read (`off_read`), and a junction length that is not a multiple of 3 (`bad_codon`). A well-formed
 junction that is wrong is the worst output this codebase can produce — the reference-geometry bug
 shipped junctions that started `C`, ended `[FW]`, passed `--complete-only` and were short by exactly
 the allele's truncation.
@@ -67,6 +132,14 @@ because every recorded flag measurement in the benchmark was taken against a ref
 since been rebuilt twice, so re-measuring had to become cheaper than editing source. The first
 immediately earned its keep: `--exact-kmer-matching 1` turns out to flip allele-level calls on
 IGH_naive at an *identical* clonotype count, which no count-based metric can see.
+
+### Changed — `project_junction`'s `split_checked` is required, with no default
+
+An inert indel gate must be loud. `split_checked` tells `project_junction` whether the caller has
+already run `segmap`'s two-diagonal split check; a default would let a caller skip the check and
+still get a projection, which is the failure mode the `indel_split` refusal exists to prevent.
+Making it a keyword with no default turns that into a `TypeError` at the call site instead. The new
+`indel_unchecked` refusal covers the case where the caller passes `False`.
 
 ## 2.9.0
 

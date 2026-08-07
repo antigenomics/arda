@@ -390,7 +390,9 @@ def rnaseq_map(
 def rnaseq_correct(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(..., "--output", "-o", help="Corrected clonotype table TSV."),
-    max_subs: int = typer.Option(2, help="Max substitutions between an error child and its parent."),
+    max_subs: int = typer.Option(
+        3, help="Max substitutions between an error child and its parent. A search RADIUS, not a "
+                "threshold -- the length-scaled probability model still decides. Saturates at 3."),
     max_indel: int = typer.Option(
         0, help="Max indel bases searched (default 0). 1-2 bp indel errors are frameshifts already "
                 "dropped by --complete-only, so this only helps with --all-junctions; multi-bp SHM "

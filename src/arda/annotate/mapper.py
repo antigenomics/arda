@@ -406,13 +406,40 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     # at parse time -- and a null then reaches `float(row["bits"])` in the J+C contest and dies
     # there instead. Both symptoms are the same malformed row, so both are filtered here, at the
     # one place that knows the row is unusable.
+    #
+    # A TARGET-INVERTED row (`tstart > tend`) is the third shape of unusable, and the most
+    # dangerous, because it does not raise -- it silently produces a well-formed WRONG junction.
+    # arda detects a reverse-strand nt hit only from the QUERY side (`rev = qs > qe`, ~:1280), so
+    # when mmseqs expresses the minus strand on the TARGET instead, the row looks forward.
+    # `_markup.transfer_regions` then walks the target strictly forward from `tstart`
+    # (`_markup/markup.cpp:185-201`), sliding the whole scaffold markup by
+    # `(tlen + 1 - tstart) - tstart` nt and moving the junction window off Cys104 onto whatever
+    # codon lands there. Measured on a delivered Jurkat run (arda 2.5.6, ERR3003543): tlen 349,
+    # true tstart 170, reported tstart 180 -> the window slid exactly 10 nt into V framework 3,
+    # started on a spurious TGT, ended on TGG, passed `assemble._CANON`'s `^C...[FW]$` and became
+    # a 7,408-read phantom clonotype in a MONOCLONAL cell line -- 48 % of the true clone, from
+    # which it had stolen 5,758 reads (ablation: 15,380 -> 21,138).
+    #
+    # These are not recoverable minus-strand hits to be reflected into forward coordinates. They
+    # are internally inconsistent: on that read `germline_alignment` is the reverse complement of
+    # the scaffold while the query matches the PLUS strand at 91.4 % identity (the row's own
+    # reported `pident`), and `identity(qaln, taln)` is 0.232 -- which is why `v_identity` came out
+    # 0.216 against ~0.98 for every normal record. Reflecting the coordinates would keep a garbage
+    # alignment; dropping routes the read to the full-reference rescue, or leaves it unmapped, and
+    # that is the only option that cannot ship a well-formed junction that is wrong.
+    #
+    # Emission is mmseqs-BUILD dependent -- 120 such rows across six delivered samples, 0 on the
+    # build in the local env at the same arda version -- so this is a robustness gate, not a
+    # regression fix, and comparing two arda versions on one machine cannot catch it.
     n_before = df.height
     df = df.filter(pl.col("query").is_not_null() & (pl.col("query") != "")
-                   & pl.col("bits").is_not_null())
+                   & pl.col("bits").is_not_null()
+                   & (pl.col("tstart") <= pl.col("tend")))
     if df.height != n_before:
-        logger.warning("%d alignment rows were unusable (no query id or no score) and were routed "
-                       "to the full-reference rescue; a large count means the hand-built sub-DB "
-                       "is missing lookup entries", n_before - df.height)
+        logger.warning("%d alignment rows were unusable (no query id, no score, or an inverted "
+                       "target span) and were routed to the full-reference rescue; a large count "
+                       "means the hand-built sub-DB is missing lookup entries",
+                       n_before - df.height)
     if df.height == 0:
         return {}
     df = (df.sort(["bits", "target"], descending=[True, False], maintain_order=True)
