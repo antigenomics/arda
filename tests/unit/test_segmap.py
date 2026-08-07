@@ -33,10 +33,11 @@ def mapper(seqs, groups, k=16):
 def test_finds_the_target_a_read_came_from():
     sm = mapper([V1, J1], [0, 1])
     (hit,) = sm.map([V1], 8, 40, 1)
-    qi, ti, score, qstart, qend, tstart, is_rc = hit
+    qi, ti, score, qstart, qend, tstart, is_rc, split = hit
     assert (qi, ti, is_rc) == (0, 0, 0)
     assert (qstart, qend, tstart) == (1, len(V1), 1)
     assert score == 2 * len(V1)
+    assert split == 0          # indel detection is opt-in; `max_indel` defaults to 0
 
 
 def test_reverse_complement_keeps_the_mmseqs_strand_convention():
@@ -173,3 +174,100 @@ def test_segmap_wiring_matches_the_mmseqs_path_it_replaces():
     assert len({g for g, _ in pairs}) == len({s for _, s in pairs}) == 3
     assert len(pairs) == 3, "the two side mappings do not induce the same partition"
     assert max(_MAX_TIED.values()) >= _MAX_TIED["V"]
+
+
+# --- indel detection (`max_indel` > 0) -------------------------------------------------------
+#
+# An ungapped extension follows ONE diagonal, so a read carrying an indel relative to germline
+# scores only up to the indel. That is not a corner case: measured on 341,294 real IGH mates
+# (benchmark round 12), 3.18 % of reads carry a V indel and the rate tracks SHM load --
+# 0.74 % at >=98 % V identity, 8.00 % below 90 % -- because AID makes indels, not only
+# substitutions. Those reads are REROUTED to the gapped rescue path, never dropped.
+
+# 120 nt, germline-like, and every one of its 105 16-mers is distinct -- so any second diagonal
+# these tests see comes from the engineered indel and not from an internal repeat.
+IND_T = ("CAGGTGCAGCTGGTGGAGTCTGGGGGAGGCTTGGTACAGCCTGGGGGGTCCCTGAGACTCTCCTGTGCAGCC"
+         "TCTGGATTCACCTTTAGCAGCTATGCCATGAGCTGGGTCCGCCAGGCT")[:120]
+
+
+def test_the_16mers_of_the_indel_fixture_are_distinct():
+    """Guards the fixture itself: a repeat would make every case below pass for the wrong reason."""
+    kmers = [IND_T[i:i + 16] for i in range(len(IND_T) - 15)]
+    assert len(set(kmers)) == len(kmers)
+
+
+def test_an_indel_halves_the_ungapped_score_which_is_why_this_exists():
+    """The motivating measurement, in one assertion.
+
+    A clean read scores 2 x len. Delete a single base in the middle and the SAME read scores
+    half, because one diagonal covers only one half of it. Nothing is wrong with the extension --
+    it is the right answer to the wrong question, and it is why an indel-bearing read must not
+    have its scaffold decided on the fast path.
+    """
+    sm = mapper([IND_T], [0])
+    (clean,) = sm.map([IND_T], 8, 40, 1, 0)
+    (deleted,) = sm.map([IND_T[:60] + IND_T[61:]], 8, 40, 1, 0)
+    assert clean[2] == 2 * len(IND_T)
+    assert deleted[2] == pytest.approx(clean[2] / 2, abs=4)
+
+
+@pytest.mark.parametrize("read,label", [
+    (IND_T[:60] + IND_T[61:], "1 nt deletion"),
+    (IND_T[:60] + IND_T[62:], "2 nt deletion"),
+    (IND_T[:60] + "GGGG" + IND_T[60:], "4 nt insertion"),
+])
+def test_indel_reads_are_flagged_when_detection_is_on(read, label):
+    sm = mapper([IND_T], [0])
+    assert all(h[7] == 1 for h in sm.map([read], 8, 40, 1, 30)), label
+
+
+def test_a_clean_read_is_never_flagged():
+    sm = mapper([IND_T], [0])
+    assert all(h[7] == 0 for h in sm.map([IND_T], 8, 40, 1, 30))
+
+
+def test_detection_is_opt_in_and_off_by_default():
+    """`max_indel=0` must leave `split` at 0 even for a read that plainly carries an indel.
+
+    The flag is a routing decision with a speed cost, so the default has to be inert -- and the
+    default is expressed in the C++ signature, not only in the Python wrapper.
+    """
+    sm = mapper([IND_T], [0])
+    read = IND_T[:60] + IND_T[61:]
+    assert all(h[7] == 0 for h in sm.map([read], 8, 40, 1, 0))
+    assert all(h[7] == 0 for h in sm.map([read], 8, 40, 1))       # C++ default for max_indel
+
+
+def test_diagonals_further_apart_than_max_indel_are_not_an_indel():
+    """Two well-supported diagonals 40 nt apart are a rearrangement or a repeat, not one indel.
+
+    Routing those to a gapped realignment would cost time and tell us nothing, so the bound is
+    load-bearing rather than cosmetic -- and it is a BOUND, so raising it must flag the same read.
+    """
+    sm = mapper([IND_T], [0])
+    far = IND_T[:60] + IND_T[100:]
+    assert all(h[7] == 0 for h in sm.map([far], 8, 40, 1, 30))
+    assert any(h[7] == 1 for h in sm.map([far], 8, 40, 1, 50))
+
+
+def test_a_minus_strand_indel_read_is_flagged_and_keeps_the_strand_convention():
+    """Detection runs per strand, so it must survive the reverse-complement path.
+
+    `_align_implied` reads `qstart > qend` to know a read needs reverse-complementing; flagging
+    must not disturb that.
+    """
+    sm = mapper([IND_T], [0])
+    (hit,) = sm.map([rc(IND_T[:60] + IND_T[61:])], 8, 40, 1, 30)
+    assert hit[7] == 1
+    assert hit[3] > hit[4]
+
+
+def test_segment_rows_exposes_split_and_defaults_to_not_looking(tmp_path):
+    """The Python wrapper must carry the flag through and keep the same default as the extension."""
+    from arda import segmap
+    fa = tmp_path / "segments.fasta"
+    fa.write_text(f">V|IGHV1-1*01\n{IND_T}\n")
+    reads = {"r1": IND_T[:60] + IND_T[61:]}
+    assert all(r["split"] is False for r in segmap.segment_rows(fa, reads, max_tied=8))
+    flagged = segmap.segment_rows(fa, reads, max_tied=8, max_indel=segmap.MAX_INDEL_NT)
+    assert flagged and all(r["split"] is True for r in flagged)

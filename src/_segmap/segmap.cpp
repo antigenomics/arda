@@ -87,12 +87,31 @@ constexpr int XDROP = 20;      // stop extending once the score falls this far b
 // plus a couple of flanking matches -- a seed and nothing more. 40 is the first value above that.
 constexpr int MIN_SCORE = 40;
 
+// Indel detection. An ungapped extension follows ONE diagonal, so a read carrying an insertion or
+// deletion relative to germline scores only up to the indel, and its two halves land on two
+// diagonals of the SAME target offset by the indel length. That is a signature, not a nuisance --
+// it is present in the vote list before any extension runs and costs one pass to read.
+//
+// Measured on 341,294 real IGH mates (two IGH RepSeq amplicons, IgBLAST truth, benchmark round 12):
+// 3.18 % of reads carry a V indel, and the rate tracks SHM load, because AID produces indels and
+// not only substitutions --
+//
+//   V identity   >=98     95-98    90-95    <90
+//   indel reads  0.74 %   1.63 %   3.56 %   8.00 %
+//
+// On hypermutated IGH that is a 1-in-12 event, in exactly the population every fast path already
+// handles worst. A flagged read is sent for GAPPED realignment, never dropped, so a false positive
+// costs a little speed and cannot cost a read. That asymmetry is why the support threshold is set
+// low rather than tuned tight.
+constexpr uint32_t MIN_DIAG_SEEDS = 3;   // seeds a diagonal needs before it counts as real support
+
 struct Hit {
     int32_t target;
     int32_t score;
     int32_t qstart, qend;      // 1-based inclusive, in ORIGINAL read orientation
     int32_t tstart, tend;      // 1-based inclusive, on the forward target
     int32_t rc;                // 1 if the read matched as its reverse complement
+    int32_t split;             // 1 if this target carries the two-diagonal signature of an indel
 };
 
 std::string revcomp(const std::string& s) {
@@ -166,9 +185,12 @@ public:
     int n_groups() const { return n_groups_; }
 
     // Best hit per (read, group), plus exactly-tied hits up to `max_tied` for groups that allow
-    // them. Returns a flat list of tuples in `_SEGMENT_FORMAT` order plus the strand flag:
-    //   (query_index, target_index, score, qstart, qend, tstart, rc)
-    py::list map(py::sequence queries, int max_tied, int min_score, int threads) const {
+    // them. Returns a flat list of tuples in `_SEGMENT_FORMAT` order plus the strand and indel
+    // flags:
+    //   (query_index, target_index, score, qstart, qend, tstart, rc, split)
+    // `max_indel` = 0 disables indel detection and `split` is then always 0.
+    py::list map(py::sequence queries, int max_tied, int min_score, int threads,
+                 int max_indel) const {
         const size_t n = size_t(py::len(queries));
         py::list out;
         if (n == 0) return out;
@@ -194,7 +216,7 @@ public:
             std::vector<Hit> hits;
             for (size_t i = lo; i < hi; ++i)
                 per_read[i] = best_hits(views[i].first, views[i].second, max_tied, min_score,
-                                        votes, hits);
+                                        max_indel, votes, hits);
         };
         {
             py::gil_scoped_release rel;
@@ -214,20 +236,21 @@ public:
         }
         for (size_t i = 0; i < n; ++i)
             for (const Hit& h : per_read[i])
-                out.append(py::make_tuple(i, h.target, h.score, h.qstart, h.qend, h.tstart, h.rc));
+                out.append(py::make_tuple(i, h.target, h.score, h.qstart, h.qend, h.tstart, h.rc,
+                                          h.split));
         return out;
     }
 
 private:
     // Seed, vote by diagonal, extend the best diagonals ungapped, keep the best per group.
-    std::vector<Hit> best_hits(const char* s, size_t n, int max_tied, int min_score,
+    std::vector<Hit> best_hits(const char* s, size_t n, int max_tied, int min_score, int max_indel,
                                std::vector<uint64_t>& votes, std::vector<Hit>& hits) const {
         hits.clear();
         if (n < size_t(k_)) return {};
         const std::string fwd(s, n);
         const std::string rev = revcomp(fwd);
         for (int rc = 0; rc < 2; ++rc)
-            collect(rc ? rev : fwd, rc, min_score, votes, hits);
+            collect(rc ? rev : fwd, rc, min_score, max_indel, votes, hits);
 
         // Best per group, then exact ties on score. Ties break on target index, which is the
         // reference's own order -- the same shape of rule `_segment_rows` applies, so the choice
@@ -256,7 +279,7 @@ private:
     // ⛔ `min_score` is a PARAMETER, not a member. `map` is const and every worker thread shares
     // one SegmentMapper, so stashing per-call state on the object would be a data race that only
     // shows up under threads -- the class of bug this project has spent a lot of time removing.
-    void collect(const std::string& q, int rc, int min_score,
+    void collect(const std::string& q, int rc, int min_score, int max_indel,
                  std::vector<uint64_t>& votes, std::vector<Hit>& hits) const {
         votes.clear();
         const size_t n = q.size();
@@ -283,16 +306,48 @@ private:
         }
         if (votes.empty()) return;
         std::sort(votes.begin(), votes.end());
-        // One extension per distinct (target, diagonal). Reads are short, so this list is small.
-        for (size_t i = 0; i < votes.size();) {
-            const uint64_t key = votes[i];
-            size_t j = i;
-            while (j < votes.size() && votes[j] == key) ++j;
-            const uint32_t t = uint32_t(key >> 32);
-            const int32_t diag = int32_t(uint32_t(key & 0xFFFFFFFF)) - 0x8000;
-            Hit h;
-            if (extend(q, rc, t, diag, h) && h.score >= min_score) hits.push_back(h);
-            i = j;
+        // Votes sort by (target << 32 | biased diagonal), so every diagonal of a target is
+        // contiguous and ascending. One walk per target-run therefore yields both the per-diagonal
+        // seed support and the two-diagonal indel signature, without a second data structure.
+        for (size_t s = 0; s < votes.size();) {
+            const uint32_t t = uint32_t(votes[s] >> 32);
+            size_t e = s;
+            while (e < votes.size() && uint32_t(votes[e] >> 32) == t) ++e;
+
+            // Does this target carry two well-supported diagonals a plausible indel apart?
+            int32_t split = 0;
+            if (max_indel > 0) {
+                int32_t prev = 0;
+                bool have_prev = false;
+                for (size_t i = s; i < e;) {
+                    size_t j = i;
+                    while (j < e && votes[j] == votes[i]) ++j;
+                    if (uint32_t(j - i) >= MIN_DIAG_SEEDS) {
+                        const int32_t d = int32_t(uint32_t(votes[i] & 0xFFFFFFFF)) - 0x8000;
+                        // Ascending, so the gap is positive. Bound it: two diagonals far apart are
+                        // a repeat or a spurious seed, not one indel, and routing those to gapped
+                        // realignment would buy nothing at real cost.
+                        if (have_prev && d - prev <= max_indel) { split = 1; break; }
+                        prev = d;
+                        have_prev = true;
+                    }
+                    i = j;
+                }
+            }
+
+            // One extension per distinct (target, diagonal). Reads are short, so this list is small.
+            for (size_t i = s; i < e;) {
+                size_t j = i;
+                while (j < e && votes[j] == votes[i]) ++j;
+                const int32_t diag = int32_t(uint32_t(votes[i] & 0xFFFFFFFF)) - 0x8000;
+                Hit h;
+                if (extend(q, rc, t, diag, h) && h.score >= min_score) {
+                    h.split = split;
+                    hits.push_back(h);
+                }
+                i = j;
+            }
+            s = e;
         }
     }
 
@@ -354,8 +409,10 @@ PYBIND11_MODULE(_segmap, m) {
              "the mapper returns the best hit per (read, group).")
         .def("map", &SegmentMapper::map,
              py::arg("queries"), py::arg("max_tied") = 8, py::arg("min_score") = MIN_SCORE,
-             py::arg("threads") = 1,
-             "(query_index, target_index, score, qstart, qend, tstart, rc) per best/tied hit.")
+             py::arg("threads") = 1, py::arg("max_indel") = 0,
+             "(query_index, target_index, score, qstart, qend, tstart, rc, split) per best/tied "
+             "hit. `max_indel` > 0 flags targets carrying two well-supported diagonals that far "
+             "apart -- the signature of an indel, which one ungapped extension cannot score.")
         .def_property_readonly("size", &SegmentMapper::size, "Distinct indexed k-mers.")
         .def_property_readonly("postings", &SegmentMapper::postings, "Total (k-mer, position) entries.")
         .def_property_readonly("k", &SegmentMapper::k, "k-mer length.")

@@ -752,6 +752,7 @@ def _segment_best_hits(
     search_type: int, seqs: dict[str, str],
     combos: dict[tuple[str, str], str] | None = None,
     fast_segments: bool = False,
+    indel_rescue: bool = False,
 ) -> tuple[dict[str, dict], dict]:
     """Two-pass best hits: cheap segment pass, then align only the implied scaffold.
 
@@ -774,7 +775,8 @@ def _segment_best_hits(
         # The same file `_cached_segment_db` compiles for MMseqs2, read directly. Derived from
         # `ref`, not from `seg_db`, so there is one definition of where the segment reference lives.
         rows = segmap.segment_rows(ref.target_fasta.parent / "segments.fasta",
-                                   seqs, max_tied=max(_MAX_TIED.values()), threads=threads)
+                                   seqs, max_tied=max(_MAX_TIED.values()), threads=threads,
+                                   max_indel=segmap.MAX_INDEL_NT if indel_rescue else 0)
     else:
         seg_res, seg_tsv = tmp / "segRes", tmp / "seg.tsv"
         mmseqs.search(query_db, seg_db, seg_res, tmp / "seg_tmp",
@@ -814,6 +816,11 @@ def _segment_best_hits(
     # folding it into `best_j` is what the old `JC|` targets did -- they won the J side on the
     # strength of their constant half.
     best_c: dict[str, str] = {}
+    # Reads whose best segment evidence sits on two diagonals of one target -- the signature of an
+    # indel, which a single ungapped extension scores only up to. Such a read's segment score is
+    # systematically low, so letting it take the fast path decides its scaffold on truncated
+    # evidence. They are demoted to `rescue` below and realigned GAPPED against the full reference.
+    split_reads: set[str] = set()
     tied = {"V": tied_v, "J": tied_j}
     for row in rows:
         q, t, bits = row["query"], row["target"], float(row["bits"])
@@ -821,6 +828,8 @@ def _segment_best_hits(
         side = _SEGMENT_SIDE.get(kind) if sep else None
         if side is None:
             continue                      # unrecognised target: never silently treat it as a J
+        if row.get("split"):
+            split_reads.add(q)
         if (q, side) in top:              # rows arrive pre-sorted by (bits desc, target asc)
             # Keep the ties, drop everything below them. Capped: a read that ties against dozens
             # of alleles is degenerate, and the cap bounds the alignment work without affecting
@@ -860,6 +869,20 @@ def _segment_best_hits(
     if combos is None:
         combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
     sl = shortlist(best_v, best_j, combos)
+
+    # Demote indel-bearing reads from the fast path to the rescue set. This is a REROUTE, never a
+    # drop: `rescue` is realigned against the full reference by MMseqs2, which gaps, so these reads
+    # get a better answer than the fast path could give them -- not a worse one. Doing it here,
+    # after `shortlist` has asserted its partition is total, keeps that invariant intact and keeps
+    # the whole mechanism to one place.
+    if split_reads:
+        demoted = [q for q in sl.implied if q in split_reads]
+        for q in demoted:
+            del sl.implied[q]
+            sl.rescue.append(q)
+        seg_report_split = len(demoted)
+    else:
+        seg_report_split = 0
 
     best, failed = ({}, set())
     if sl.implied:
@@ -982,6 +1005,7 @@ def _segment_best_hits(
               "fast_fraction": round(n_fast / len(seen), 4) if seen else 0.0,
               "reasons": {**sl.reasons,
                           **({"second_pass_failed": len(failed)} if failed else {}),
+                          **({"indel_rescued": seg_report_split} if seg_report_split else {}),
                           **({"c_only": len(c_only)} if c_only else {})}}
     return best, report
 
@@ -1058,6 +1082,7 @@ def _annotate_chunk(
     report: dict | None = None,
     adaptive: bool = False,
     fast_segments: bool = False,
+    indel_rescue: bool = False,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1087,7 +1112,7 @@ def _annotate_chunk(
                 query_db, segment_db, target_db, tmp, ref, threads=threads,
                 sensitivity=sensitivity, mm_strand=mm_strand, max_seqs=max_seqs, kmer=kmer,
                 search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos,
-                fast_segments=fast_segments)
+                fast_segments=fast_segments, indel_rescue=indel_rescue)
             if report is not None:
                 _merge_segment_report(report, seg_report)
         else:

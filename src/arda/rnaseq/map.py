@@ -410,6 +410,7 @@ def map_rnaseq(
     two_pass: bool = False,
     adaptive: bool = False,
     fast_segments: bool = False,
+    indel_rescue: bool = False,
     prefilter: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
@@ -436,6 +437,11 @@ def map_rnaseq(
             of J. It only NOMINATES candidates; the winner is still aligned against the full
             scaffold by MMseqs2, so the contract is that the AIRR output does not move. Ignored
             without ``two_pass``, since there is no segment pass to replace.
+        indel_rescue: with ``fast_segments``, send reads carrying the two-diagonal signature of an
+            indel to the GAPPED rescue path instead of resolving them on the fast path. One
+            ungapped extension scores such a read only up to the indel, so its segment score is
+            systematically low. Measured on 341,294 real IGH mates: 3.18 % of reads carry a V
+            indel, rising to 8.00 % below 90 % V identity. Reroutes, never drops.
         adaptive: cap alignments per read and re-search only the reads whose capped score is
             low (:func:`arda.annotate.mapper._extend_uncertain`). Measured 2.17x on 1 M bulk reads
             with **zero reads lost** — but read preservation is not the whole guarantee.
@@ -512,6 +518,7 @@ def map_rnaseq(
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
                     fast_segments=fast_segments,
+                    indel_rescue=indel_rescue,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)

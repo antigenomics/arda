@@ -112,19 +112,30 @@ def build(segments_fasta: Path, k: int = K):
     return mapper, names
 
 
+#: Largest diagonal shift still read as one indel rather than a repeat or a stray seed, when indel
+#: detection is enabled. IMGT V genes are ~300 nt and SHM indels are typically codon-sized, so this
+#: is generous; the bound exists to stop two unrelated seeds on one target from routing a read to a
+#: gapped realignment that would tell us nothing.
+MAX_INDEL_NT = 30
+
+
 def segment_rows(segments_fasta: Path, reads: dict[str, str], *, max_tied: int,
-                 threads: int = 1, min_score: int = MIN_SCORE) -> list[dict]:
+                 threads: int = 1, min_score: int = MIN_SCORE,
+                 max_indel: int = 0) -> list[dict]:
     """Best V / best J / best C per read, in the shape ``mapper._segment_rows`` returns.
 
     Args:
         reads: ``{read_id: sequence}``. Insertion order is preserved and is the only thing tying a
             native row back to a read id.
         max_tied: exactly-tied targets to keep per side, i.e. ``_MAX_TIED``.
+        max_indel: if > 0, flag rows whose target carries two well-supported diagonals at most this
+            many nt apart — the signature of an indel, which a single ungapped extension cannot
+            score. 0 disables the check and every ``split`` is 0.
 
     Returns:
-        Row dicts with ``query``, ``target``, ``bits``, ``qstart``, ``qend``, ``tstart`` — the keys
-        ``_segment_best_hits`` consumes, and **per read in descending score order**, which is the
-        ordering its loop depends on.
+        Row dicts with ``query``, ``target``, ``bits``, ``qstart``, ``qend``, ``tstart``, ``split``
+        — the keys ``_segment_best_hits`` consumes, and **per read in descending score order**,
+        which is the ordering its loop depends on.
 
     ⚠ ``bits`` here is an ungapped match/mismatch score, not an MMseqs2 bit score. Nothing
     downstream compares the two: the value is used to rank candidates within a read and to detect
@@ -132,9 +143,9 @@ def segment_rows(segments_fasta: Path, reads: dict[str, str], *, max_tied: int,
     """
     mapper, names = build(Path(segments_fasta))
     ids = list(reads)
-    hits = mapper.map([reads[i] for i in ids], max_tied, min_score, threads)
+    hits = mapper.map([reads[i] for i in ids], max_tied, min_score, threads, max_indel)
     return [
         {"query": ids[qi], "target": names[ti], "bits": float(score),
-         "qstart": qstart, "qend": qend, "tstart": tstart}
-        for qi, ti, score, qstart, qend, tstart, _rc in hits
+         "qstart": qstart, "qend": qend, "tstart": tstart, "split": bool(split)}
+        for qi, ti, score, qstart, qend, tstart, _rc, split in hits
     ]
