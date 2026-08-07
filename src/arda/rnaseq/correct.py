@@ -432,7 +432,7 @@ def correct_airr(
     *,
     organism: str = "human",
     map_d: bool = True,
-    max_subs: int = 2,
+    max_subs: int = 3,
     max_indel: int = 0,
     error_rate: float = 0.001,
     indel_rate: float = 0.001,
@@ -461,6 +461,14 @@ def correct_airr(
             clonotype's dominant isotype CLASS (from ``c_class``: IGHG, IGHA, ...), preferring a
             resolved class over the ambiguous ``IGHC``; empty when no read carried a constant call.
         max_subs: max substitutions between an error child and its parent (seqtree neighbour search).
+            This is a SEARCH RADIUS, not a threshold -- the accept/reject decision is the
+            length-scaled probability model above, so widening it only lets the model SEE parents
+            it would already have accepted. The default was 2 through 2.9.0, which truncated the
+            search below what the model would take on a deep clone: on the two monoclonal cell
+            lines in the arda-benchmark set 2 -> 3 collapses Jurkat 74 -> 57 clonotypes and Raji
+            91 -> 58, while a polyclonal mouse spleen (7,942) and an oligoclonal B-LCL (13) are
+            UNCHANGED at 2, 3 and 4 -- the model refuses those collapses on abundance regardless
+            of radius. It saturates at 3 (4 gives the same four numbers), so 3 is the default.
         max_indel: max inserted/deleted bases searched for indel error children (default 0). A 1-2 bp
             instrument indel is a frameshift and is already dropped by ``complete_only``, so on
             complete junctions the indel search only costs time (~160x slower) and collapses nothing;
