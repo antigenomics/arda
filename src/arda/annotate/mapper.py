@@ -750,6 +750,63 @@ def _full_rescue(query_db: Path, full_db: Path, ids: list[str], tmp: Path, *,
 _VONLY_COLS = ("read_id", "v_allele", "seg_bits", "seg_qstart", "seg_qend", "seg_tstart",
                "read_len", "scaffold", "scaffold_bits")
 
+#: Header of the ``ARDA_PROJECT_DUMP`` validation table.
+_PROJECT_COLS = ("read_id", "locus", "v_call", "j_call", "refusal",
+                 "proj_junction", "proj_start", "proj_end", "rev_comp")
+
+
+def _dump_projection(best_v: dict[str, str], best_j: dict[str, str],
+                     seg_rows: dict[tuple[str, str], dict], seqs: dict[str, str],
+                     ref: Reference) -> None:
+    """Append the ARITHMETIC junction for every read carrying both anchors, or why it was refused.
+
+    Validation only, and deliberately **out of the output path**: the projection is not yet what
+    arda reports, so this writes it beside the scaffold-derived answer and lets an offline script
+    join the two on ``sequence_id``. Wiring it in first and comparing second would make a
+    disagreement look like a regression instead of a measurement.
+
+    The refusal counts are as interesting as the junctions. Fast-path yield is 87.0 % of hit
+    TRA-amplicon reads against 7.2 % of bulk reads, because bulk reads mostly do not span a junction
+    at all -- and a fast path that silently covered 7 % of a library while looking like a speedup is
+    exactly the "correct output, zero speedup" failure this project has shipped twice.
+
+    No-op unless ``ARDA_PROJECT_DUMP`` names a path. Appends, because ``map`` runs per chunk.
+    """
+    path = os.environ.get("ARDA_PROJECT_DUMP")
+    if not path:
+        return
+    from ..refbuild.translate import reverse_complement
+    from .project import _anchor, project_junction
+
+    p = Path(path)
+    rows = []
+    for q in sorted(set(best_v) & set(best_j)):
+        v_row, j_row = seg_rows.get((q, "V")), seg_rows.get((q, "J"))
+        seq = seqs.get(q)
+        if not v_row or not j_row or not seq:
+            continue
+        # `project_junction` works in the frame the hits were measured in, so a minus-strand read is
+        # handed its reverse complement. Reflecting coordinates afterwards instead is how sign
+        # errors get in -- see the module docstring.
+        rc = v_row["qstart"] > v_row["qend"]
+        strand_seq = reverse_complement(seq) if rc else seq
+        proj, why = project_junction(strand_seq, len(seq), v_row=v_row, j_row=j_row,
+                                     v_call=best_v[q], j_call=best_j[q], anchors=ref.anchors)
+        # Locus from the J anchor, not the V: TRAV/DV alleles pair with either TRAJ or TRDJ and
+        # **the J decides the locus**. Taking it from the V would mislabel every TRD read.
+        ja = _anchor(ref.anchors, "J", best_j[q])
+        rows.append("\t".join(str(x) for x in (
+            q, ja.locus if ja else "", best_v[q], best_j[q],
+            why, proj.junction if proj else "", proj.start if proj else "",
+            proj.end if proj else "", int(rc))))
+    if not rows:
+        return
+    new = not p.exists()
+    with p.open("a") as fh:
+        if new:
+            fh.write("\t".join(_PROJECT_COLS) + "\n")
+        fh.write("\n".join(rows) + "\n")
+
 
 def _dump_vonly(rescue: list[str], best_v: dict[str, str], best_j: dict[str, str],
                 seg_rows: dict[tuple[str, str], dict], best: dict[str, dict],
@@ -920,6 +977,11 @@ def _segment_best_hits(
                         if (s := jc_combos.get((j, ca))) is not None), None)
             if sid:
                 jc_scaffold.setdefault(q, sid)
+
+    # Before the shortlist, so the dump sees every read carrying both anchors -- including those the
+    # shortlist will send to rescue for a reason unrelated to the junction (an unknown V*J pair, an
+    # indel). Dumping after would silently under-report fast-path yield.
+    _dump_projection(best_v, best_j, seg_rows, seqs, ref)
 
     if combos is None:
         combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
