@@ -105,6 +105,29 @@ constexpr int MIN_SCORE = 40;
 // low rather than tuned tight.
 constexpr uint32_t MIN_DIAG_SEEDS = 3;   // seeds a diagonal needs before it counts as real support
 
+// Chained scoring, off by default (`chain_offset = 0`).
+//
+// A target whose two halves are separated by a non-templated insert -- a V+pad+J scaffold, where a
+// junction-spanning read matches V on one diagonal and J on another -- cannot be ranked by a single
+// ungapped extension. `collect` already extends BOTH diagonals; `best_hits` then takes the max
+// across them, so the read is scored `max(V_half, J_half)` instead of their sum, and any wrong
+// scaffold sharing the stronger half outranks the true one.
+//
+// Measured (arda-benchmark round 17, 15,414 V x J scaffolds, SRR5233635): the true V's best
+// scaffold ranks strictly BELOW a wrong-V scaffold on 1,361 of 2,000 reads (68.05 %), median score
+// gap 14 -- while the true scaffold is always in the pool (recall@250 = 1.0000). J+C scaffolds,
+// which carry no V at all, outrank the true V x J scaffold in 1,356 of those cases. That is the
+// `v_gene` .3430 recorded as a structural failure of this mapper; it is a scoring rule, not a
+// capability ceiling.
+//
+// Summing the two best compatible diagonals takes v_gene .3600 -> 1.0000 and j_gene .3267 -> .9800
+// on the same candidates, with ZERO added alignment work -- every extension already ran.
+//
+// ⛔ The score floor MUST be applied per TARGET, not per diagonal, when this is on: the shorter half
+// of a junction-spanning read routinely scores under MIN_SCORE alone, and filtering it before the
+// pairing is exactly the defect being fixed.
+constexpr int32_t CHAIN_OFF = 0;         // `chain_offset` value that keeps the shipped max-rule
+
 struct Hit {
     int32_t target;
     int32_t score;
@@ -190,7 +213,7 @@ public:
     //   (query_index, target_index, score, qstart, qend, tstart, rc, split)
     // `max_indel` = 0 disables indel detection and `split` is then always 0.
     py::list map(py::sequence queries, int max_tied, int min_score, int threads,
-                 int max_indel) const {
+                 int max_indel, int chain_offset) const {
         const size_t n = size_t(py::len(queries));
         py::list out;
         if (n == 0) return out;
@@ -216,7 +239,7 @@ public:
             std::vector<Hit> hits;
             for (size_t i = lo; i < hi; ++i)
                 per_read[i] = best_hits(views[i].first, views[i].second, max_tied, min_score,
-                                        max_indel, votes, hits);
+                                        max_indel, chain_offset, votes, hits);
         };
         {
             py::gil_scoped_release rel;
@@ -244,13 +267,14 @@ public:
 private:
     // Seed, vote by diagonal, extend the best diagonals ungapped, keep the best per group.
     std::vector<Hit> best_hits(const char* s, size_t n, int max_tied, int min_score, int max_indel,
+                               int32_t chain_offset,
                                std::vector<uint64_t>& votes, std::vector<Hit>& hits) const {
         hits.clear();
         if (n < size_t(k_)) return {};
         const std::string fwd(s, n);
         const std::string rev = revcomp(fwd);
         for (int rc = 0; rc < 2; ++rc)
-            collect(rc ? rev : fwd, rc, min_score, max_indel, votes, hits);
+            collect(rc ? rev : fwd, rc, min_score, max_indel, chain_offset, votes, hits);
 
         // Best per group, then exact ties on score. Ties break on target index, which is the
         // reference's own order -- the same shape of rule `_segment_rows` applies, so the choice
@@ -276,10 +300,20 @@ private:
         return out;
     }
 
+    // Do two extensions of one target cover disjoint stretches of the read? `qstart`/`qend` are in
+    // ORIGINAL read orientation, so on a reverse-complement hit they run backwards (qstart > qend);
+    // normalise before comparing or every rc pair reads as overlapping.
+    static bool disjoint_in_query(const Hit& a, const Hit& b) {
+        const int32_t a0 = std::min(a.qstart, a.qend), a1 = std::max(a.qstart, a.qend);
+        const int32_t b0 = std::min(b.qstart, b.qend), b1 = std::max(b.qstart, b.qend);
+        return a1 < b0 || b1 < a0;
+    }
+
     // ⛔ `min_score` is a PARAMETER, not a member. `map` is const and every worker thread shares
     // one SegmentMapper, so stashing per-call state on the object would be a data race that only
     // shows up under threads -- the class of bug this project has spent a lot of time removing.
-    void collect(const std::string& q, int rc, int min_score, int max_indel,
+    // `chain_offset` is a parameter for the same reason.
+    void collect(const std::string& q, int rc, int min_score, int max_indel, int32_t chain_offset,
                  std::vector<uint64_t>& votes, std::vector<Hit>& hits) const {
         votes.clear();
         const size_t n = q.size();
@@ -336,16 +370,51 @@ private:
             }
 
             // One extension per distinct (target, diagonal). Reads are short, so this list is small.
+            //
+            // The extensions are the SAME in both scoring modes -- `chain_offset` changes only how
+            // they are aggregated, which is why chaining costs no alignment work.
+            Hit best;  best.score = INT32_MIN;
+            Hit second; second.score = INT32_MIN;
+            int32_t best_diag = 0, second_diag = 0;
             for (size_t i = s; i < e;) {
                 size_t j = i;
                 while (j < e && votes[j] == votes[i]) ++j;
                 const int32_t diag = int32_t(uint32_t(votes[i] & 0xFFFFFFFF)) - 0x8000;
                 Hit h;
-                if (extend(q, rc, t, diag, h) && h.score >= min_score) {
-                    h.split = split;
-                    hits.push_back(h);
+                if (extend(q, rc, t, diag, h)) {
+                    if (chain_offset == CHAIN_OFF) {
+                        // Shipped rule: each diagonal stands alone, gated on its own score.
+                        if (h.score >= min_score) { h.split = split; hits.push_back(h); }
+                    } else if (h.score > best.score) {
+                        second = best; second_diag = best_diag;
+                        best = h;       best_diag = diag;
+                    } else if (h.score > second.score) {
+                        second = h;     second_diag = diag;
+                    }
                 }
                 i = j;
+            }
+            if (chain_offset != CHAIN_OFF && best.score != INT32_MIN) {
+                // Sum the two best diagonals when they are close enough to be the two halves of one
+                // rearrangement rather than a repeat, and cover DISJOINT parts of the read (an
+                // overlapping second diagonal would double-count the same bases).
+                int32_t score = best.score;
+                if (second.score != INT32_MIN
+                    && std::abs(int64_t(best_diag) - int64_t(second_diag)) <= chain_offset
+                    && disjoint_in_query(best, second)) {
+                    score += second.score;
+                }
+                // ⛔ Gate on the CHAINED score, per target. Applying `min_score` per diagonal above
+                // would drop the shorter half before it could be paired -- the original defect.
+                if (score >= min_score) {
+                    // Coordinates stay those of the BEST SINGLE diagonal, deliberately. `qstart`
+                    // and `tstart` must remain a matched pair on one diagonal: `annotate.project`
+                    // places the junction as `qstart + (anchor_nt + 1 - tstart)`, and a merged span
+                    // would silently corrupt that arithmetic. Only the RANKING changes here.
+                    best.split = split;
+                    best.score = score;
+                    hits.push_back(best);
+                }
             }
             s = e;
         }
@@ -410,9 +479,18 @@ PYBIND11_MODULE(_segmap, m) {
         .def("map", &SegmentMapper::map,
              py::arg("queries"), py::arg("max_tied") = 8, py::arg("min_score") = MIN_SCORE,
              py::arg("threads") = 1, py::arg("max_indel") = 0,
+             py::arg("chain_offset") = CHAIN_OFF,
              "(query_index, target_index, score, qstart, qend, tstart, rc, split) per best/tied "
              "hit. `max_indel` > 0 flags targets carrying two well-supported diagonals that far "
-             "apart -- the signature of an indel, which one ungapped extension cannot score.")
+             "apart -- the signature of an indel, which one ungapped extension cannot score.\n\n"
+             "`chain_offset` > 0 scores a target by the SUM of its two best diagonals when they lie "
+             "within that many nt of each other and cover disjoint parts of the read, instead of by "
+             "the better one alone, and applies `min_score` per target rather than per diagonal. "
+             "It costs no extra alignment work -- both diagonals are extended either way. Intended "
+             "for targets whose two halves are separated by a non-templated insert (a V+pad+J "
+             "scaffold); pointless for single-segment targets, where it is a no-op in practice. "
+             "Coordinates remain those of the best single diagonal, so `qstart`/`tstart` stay a "
+             "matched pair and the arithmetic junction projection is unaffected.")
         .def_property_readonly("size", &SegmentMapper::size, "Distinct indexed k-mers.")
         .def_property_readonly("postings", &SegmentMapper::postings, "Total (k-mer, position) entries.")
         .def_property_readonly("k", &SegmentMapper::k, "k-mer length.")
