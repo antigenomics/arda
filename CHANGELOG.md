@@ -3,6 +3,130 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.11.0
+
+### Fixed — a junction was emitted even when the V was trimmed past its own Cys104
+
+A rearrangement can trim V back beyond the conserved Cys104. The scaffold projection still lands
+somewhere, so arda emitted a junction opening on bases the V germline never templated. Measured
+against IgBLAST on 100,000 TRA amplicon reads (arda-benchmark `results/round18`): **1,396 of 46,785
+junctions disagreed, and every single one was a pure 5′ boundary offset** — the 3′ [FW]118 end was
+correct in 100 % of them, 1,376 contained the true junction and 20 were contained by it, none was a
+different region. 648 were exactly +9 nt and 643 of those were one V gene, `TRAV25`, whose Cys104
+sits at germline 264 while those reads' V ended at 258.
+
+arda already computed the signal and threw it away: `_anchored_vj_bounds` measures the longest
+prefix of the junction window that the called V's own `germline_nt` explains, and returns
+`(0, 0)` — *without* suppressing the junction — when that prefix is 0. `transfer_hit` now refuses
+the junction (and `junction_aa`, `cdr3_aa`, `productive`, `vj_in_frame`) when the prefix is under
+`MIN_V_ANCHOR_PREFIX`. Precision among emitted junctions **.96953 → .99919**, for 92 of 44,414
+correct junctions; on a bulk IG library the cost is **zero** — every emitted junction already
+cleared the bar. The cut is 2 nt, not 3: a synonymous TGT→TGC is the one SHM event that reaches the
+conserved codon, and it leaves two bases.
+
+### Fixed — `j_call` was copied from the scaffold whether or not the read carried a J
+
+`transfer_hit` set `j_call = ref.j_call` unconditionally, so a V-only read inherited the J of
+whichever V×J scaffold it landed on. On a bulk RNA-seq library that was **1,823 of 2,737 mapped
+reads**, 1,776 of which had an empty `j_sequence_start` and an empty `junction` in arda's own
+output — the record already said there was no J alignment. `j_call` is now blanked when neither the
+scaffold alignment reached J germline nor the junction anchor found a J start. `j_call` precision
+against IgBLAST: bulk **.1129 → .7842**, amplicon **.9685 → .9953**.
+
+Gated on the scaffold declaring `j_sequence_start`/`vj_end`: the aa markup does not, and blanking
+on a reference that cannot say deleted every protein-input `j_call`.
+
+### Changed — `transfer_hit` walks the alignment ONCE instead of four times
+
+Besides the seven regions, `transfer_hit` needs three single scaffold positions projected onto the
+query: the V germline end, the J germline start, and the V coding-frame anchor. Each went through
+`_project_point`, i.e. its **own** `_markup.transfer_regions` call -- a fresh 6-argument binding
+crossing, two fresh `std::string` copies of the *same* alignment, and a fresh forward walk. Measured
+at ~443 ns each against ~822 ns for the real multi-region call.
+
+Projecting a point is the degenerate region `[p, p]`, so all three now ride along in the single
+multi-region call and are read back by index. The coding-frame anchor is knowable before the walk
+(it depends only on `ref.starts[0]` and `hit["tstart"]`).
+
+**`transfer_regions` calls per 100 k-read amplicon run: 207,007 -> 54,178.** Output is byte-identical
+on both an amplicon and a bulk library.
+
+`_project_point` is kept -- only positions known *before* the walk can be folded in.
+
+### Changed — AIRR TSV formatting moved into the `_markup` C++ extension
+
+`airr_out.format_rows` did, per record, 52 `dict.get` calls, 52 `None` tests, 52 exact-type tests,
+a 52-element list build and a `str.join` -- 2.8 M dict lookups and 2.8 M list appends per 54 k-record
+chunk. It was the largest single block of Python left on the per-read path.
+
+`_markup.format_rows` does the same work with the column-name objects hashed once and the chunk
+accumulated into one buffer. **In-run A/B on 100 k amplicon reads: 0.365 s -> 0.171 s (2.1x), about
+3.4 % of end-to-end wall.** Output is byte-identical, asserted by `tests/unit/test_airr_out.py`
+across filled records, all-`None` records, missing keys, non-string values and non-ASCII.
+
+⚠ The microbenchmark says 3.4x and cProfile attributes 0.914 s of own time to this function; both
+overstate it. The uninstrumented in-run measurement (0.365 s, 6.3 % of wall) is the one to quote.
+
+The Python version stays as `_format_rows_py` -- the reference implementation, the fallback when the
+extension is not built, and the thing the equivalence test compares against.
+
+### Added — `build-db --allow-chimeras`: the TRDV x TRAJ scaffolds the default refuses
+
+The default reference declines to build `TRDV x TRAJ` on the grounds that TRDV1/2/3 are dedicated
+delta V genes, so the pairing is a chimera (`refbuild/loci.py`, pinned by
+`test_tra_does_NOT_share_the_trdv_stem`). That is a biological claim, and the external evidence
+disputes it: on 48,030 TRA amplicon reads, IgBLAST calls `TRDV1` + a `TRAJ` on **530** of them
+(1.10 % of the library, median v_score 93.8, every one carrying a junction) and **MiXCR
+independently agrees**, while arda calls the same J as both tools and emits no `v_call` at all.
+That single class is **83 % of arda's entire remaining `v_gene` gap** on that library.
+
+Which side is right is a domain judgement, so it is now a flag rather than a silent default.
+`--allow-chimeras` gives TRA `v_shared=("TRDV", "")`; everything else is untouched.
+
+⛔ **Measured, and the flag does not deliver the whole class.** Of 22 TRDV alleles, 15 are
+`TRAV/DV` genes already present under TRAV, so exactly **7 dedicated TRDV alleles** are new
+(V 102 -> 109). They imply 483 scaffolds, of which **476 are dropped for incomplete IgBLAST region
+markup** and 7 survive -- all `TRDV1*01`, against TRAJ13/16/24/39. Human scaffolds go
+15,414 -> 15,421.
+
+End-to-end on the same 100 k amplicon reads:
+
+| | default | `--allow-chimeras` |
+|---|---|---|
+| v_gene | .9867 | **.9874** |
+| v_allele_exact | .9455 | **.9479** |
+| TRDV1-class reads recovered | 0 / 530 | **34 / 530 (6.4 %)** |
+| of which junction byte-exact vs IgBLAST | — | **34 / 34** |
+| whole library v_gene newly right / newly wrong | — | **+37 / -3** |
+
+Every junction it recovers is correct, and the ceiling is the markup pipeline, not the flag: the
+truth's TRDV1 reads use TRAJ52 (x165), TRAJ8 (x21), TRAJ54 (x19) and other Js that have no
+surviving scaffold. Off by default. Assert the **scaffold count** after building, never the flag.
+
+### Added — `--v-only-on-segment`: a J-less read is aligned against its V segment, not 15,414 scaffolds
+
+Off by default; requires `--two-pass`. A `v_only` read carries no J — that is the class, not a
+search failure — so searching it against the whole V×J reference asks a question its sequence
+cannot answer. It is 77 % of the amplicon rescue set, at **338 µs/read against 31 µs** for a
+named-target alignment. MMseqs2 still does the alignment and still returns a real bit score, over
+exactly the nucleotides a whole-scaffold alignment of a J-less read would have covered, so
+`--min-score` keeps its meaning; anything that fails falls through to the full-reference rescue, so
+no read is lost.
+
+⛔ The class is gated by **geometry**, not by the shortlist reason. `v_only` means "no J segment
+hit", which on a 100 nt bulk read carrying SHM is not "no J in the read": the segment pass misses
+short hypermutated IGHJ and the full reference then finds it. Only reads whose V alignment stops
+before their own Cys104 are routed. The separation is total — of the reads whose rescue *did*
+produce a junction (77 bulk, 8 amplicon), **every one** reaches Cys104. Ungated this cost 77 of 213
+bulk junctions; gated it costs **zero reads and zero junctions** in either regime.
+
+Measured, 100,000 reads, 8 threads, M3, against `--two-pass --fast-segments` alone:
+
+| library | wall | user CPU | reads lost | junctions lost |
+|---|---|---|---|---|
+| TRA amplicon | 6.81 s → **5.96 s** | 20.4 s → **13.3 s** | 0 | 0 |
+| bulk RNA-seq | 3.19 s → **2.60 s** | 11.1 s → **5.4 s** | 0 | 0 |
+
 ## 2.10.0
 
 ### Fixed — a target-inverted alignment row silently produced a phantom clonotype

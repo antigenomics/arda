@@ -222,8 +222,15 @@ def _d_evalue(score: int, interior_len: int, db_nt: int, seqtype: str = "nt") ->
 # control above measures; do not re-introduce a hard-coded locus allow-list to suppress it.
 
 
+#: Prototype for :func:`_empty_record`. Copying a built dict is **8.8x** faster than rebuilding it
+#: from a comprehension (0.127 s -> 0.014 s per 54,178 records, ~2 % of an amplicon run's wall):
+#: `dict.copy` presizes and memcpys the table instead of hashing 52 keys and growing it. Every
+#: value is an immutable `""`, so the copy is safe to hand out.
+_EMPTY_RECORD_TEMPLATE = dict.fromkeys(AIRR_COLUMNS, "")
+
+
 def _empty_record(query_id: str, query_seq: str) -> dict:
-    rec = {c: "" for c in AIRR_COLUMNS}
+    rec = _EMPTY_RECORD_TEMPLATE.copy()
     rec["sequence_id"] = query_id
     rec["sequence"] = query_seq
     return rec
@@ -357,18 +364,50 @@ def _best_d(interior, d_germlines, min_score, exclude=None):
     return score, length, tuple(sorted(set(alleles))), s, e, ds, de
 
 
-def _common_prefix(a: str, b: str) -> int:
+def _common_prefix_py(a: str, b: str) -> int:
     n = 0
     while n < len(a) and n < len(b) and a[n] == b[n]:
         n += 1
     return n
 
 
-def _common_suffix(a: str, b: str) -> int:
+def _common_suffix_py(a: str, b: str) -> int:
     n = 0
     while n < len(a) and n < len(b) and a[-1 - n] == b[-1 - n]:
         n += 1
     return n
+
+
+# Per-character Python loops called 138,065 times per 100k-read amplicon run (once per V allele in
+# `v_anchor_prefix`, twice per read in `_anchored_vj_bounds`). The `_py` versions above stay as the
+# reference implementation and the fallback; `tests/unit/` asserts the two agree.
+_common_prefix = getattr(_markup, "common_prefix", None) or _common_prefix_py
+_common_suffix = getattr(_markup, "common_suffix", None) or _common_suffix_py
+
+
+#: nt of the Cys104 codon that a called V's own junction germline must explain before a junction
+#: is emitted. 2, not 3: a synonymous TGT/TGC substitution is the one SHM event that hits the
+#: conserved codon, and it leaves the first two bases intact.
+MIN_V_ANCHOR_PREFIX = 2
+
+
+def v_anchor_prefix(junction: str, v_call: str, anchors) -> int:
+    """Longest prefix of ``junction`` explained by any called V's own junction germline.
+
+    A junction's first codon *is* the V's conserved Cys104, so this is normally the full
+    templated stretch. It is 0 when the rearrangement trimmed V back past that codon: the
+    projection still lands somewhere and emits a junction opening on bases the V germline never
+    templated. Measured on a TRA amplicon (results/round18): 1,396 of 46,785 reads disagree with
+    IgBLAST, **every one of them a pure 5' over-extension** with the 3' end correct, and
+    ``prefix < 2`` separates 1,360 of them from 44,322 correct junctions.
+    """
+    best = 0
+    for allele in (v_call or "").split(","):
+        a = anchors.get(("V", allele.strip())) if anchors else None
+        g = getattr(a, "germline_nt", "") if a else ""
+        if a and a.status == "ok" and g:
+            best = max(best, _common_prefix(junction, g))
+    return best
 
 
 def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"):
@@ -524,9 +563,30 @@ def transfer_hit(
     per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
     ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
     """
-    coords = _markup.transfer_regions(
-        hit["qaln"], hit["taln"], int(hit["qstart"]), int(hit["tstart"]),
-        ref.starts, ref.ends)
+    # ⛔ ONE walk of the alignment, not four. Besides the seven regions, this function needs three
+    # single scaffold positions projected onto the query: the V germline end, the J germline start,
+    # and the V coding-frame anchor. Each used to go through `_project_point`, i.e. its own
+    # `transfer_regions` crossing -- a fresh 6-argument binding call, two fresh `std::string` copies
+    # of the SAME alignment, and a fresh forward walk, measured at 443 ns each against 822 ns for
+    # the real multi-region call. Projecting a point is exactly the degenerate region [p, p], so
+    # they ride along as extra intervals and are read back by index.
+    #
+    # `_project_point` is kept: `_extra_points` can only fold in positions known BEFORE the walk,
+    # and the aa path still projects one that is not.
+    ts = int(hit["tstart"])
+    t0 = ref.starts[0]
+    # The V coding-frame anchor: first scaffold position >= tstart that is in the V reading frame.
+    # Depends only on `t0` and `tstart`, so it is knowable here. -1 (no V, e.g. a J+C scaffold)
+    # projects to 0, which is exactly what `_project_point` returned for it.
+    frame_pos = ts + ((t0 - ts) % 3) if t0 > 0 else 0
+    extra = [ref.v_sequence_end or 0, ref.j_sequence_start or 0, frame_pos]
+    n_reg = len(ref.starts)
+    all_coords = _markup.transfer_regions(
+        hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
+        list(ref.starts) + extra, list(ref.ends) + extra)
+    coords = all_coords[:n_reg]
+    # `transfer_regions` returns (-1, -1) for an uncovered position; `_project_point` returned 0.
+    v_end_pt, j_start_pt, frame_pt = (max(0, all_coords[n_reg + i][0]) for i in range(3))
 
     rec = _empty_record(query_id, query_seq if submitted_seq is None else submitted_seq)
     rec.update(locus=ref.locus, v_call=ref.v_call, j_call=ref.j_call,
@@ -586,8 +646,7 @@ def transfer_hit(
     # Transfer the V germline end and J germline start (extended scaffold markup), then
     # refine them against the per-allele junction germlines -- the projection systematically
     # collapses the V..J interior (see `_anchored_vj_bounds`).
-    v_end_q = _project_point(hit, ref.v_sequence_end)
-    j_start_q = _project_point(hit, ref.j_sequence_start)
+    v_end_q, j_start_q = v_end_pt, j_start_pt      # from the single walk above
     if "cdr3" in region_q and "fwr4" in region_q:
         av, aj = _anchored_vj_bounds(query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
                                      ref.v_call, ref.j_call, anchors, seqtype)
@@ -599,18 +658,23 @@ def transfer_hit(
         rec["v_sequence_end"] = v_end_q
     if j_start_q:
         rec["j_sequence_start"] = j_start_q
+    if t_jstart and t_vjend and not rec["j_germline_start"] and not j_start_q:
+        # Neither the alignment nor the junction anchor found any J in this read, so `ref.j_call`
+        # names the J of whichever V*J scaffold the read landed on -- not a J the read carries
+        # evidence for. On bulk RNA-seq that is 1,823 of 2,737 mapped reads (results/round18 §4).
+        # Gated on the scaffold declaring where its J starts: a reference that cannot say (the aa
+        # markup does not carry `j_sequence_start`) makes an absent `j_germline_start` mean
+        # nothing, and blanking on it deleted every protein-input `j_call`.
+        rec["j_call"] = ""
 
     if seqtype == "nt":
         # V coding frame from the alignment phase (works even without FR1). A `J + C` scaffold has no
         # V, so ``ref.starts[0]`` is -1 and there is no V frame to project -- guard the arithmetic
         # rather than feed -1 into it. FR4 still reads in its own (J) frame, so it is translated below,
         # outside this branch: on a V-less hit it is the only markup there is.
-        t0 = ref.starts[0]
         coding_start = None
         if t0 > 0:
-            tstart = int(hit["tstart"])
-            p = tstart + ((t0 - tstart) % 3)
-            pj = _project_point(hit, p)
+            pj = frame_pt                          # from the single walk above
             coding_start = pj or region_q.get("fwr1", (None,))[0]
             if pj == 0 and coding_start is not None:
                 v_end = region_q.get("fwr3", (0, 0))[1] or len(query_seq)
@@ -634,6 +698,12 @@ def transfer_hit(
                 jnt, jaa, c3aa, phase = _junction_nt(
                     query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
                     coding_start, v_end_q)
+                # Refuse a junction whose opening codon the called V's germline does not template:
+                # the read's V was trimmed past Cys104, so this window is 5'-over-extended.
+                # Declining is what IgBLAST and MiXCR both do here (see `v_anchor_prefix`).
+                if jaa and anchors and v_anchor_prefix(jnt, ref.v_call, anchors) \
+                        < MIN_V_ANCHOR_PREFIX:
+                    jaa, phase = "", None
                 if jaa:
                     rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)

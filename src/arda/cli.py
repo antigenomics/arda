@@ -70,11 +70,24 @@ def build_db(
         help="Build scaffolds from one allele per gene (*01 where it exists, else the lowest). "
              "~4x smaller reference, no allele-level ambiguity.",
     ),
+    allow_chimeras: bool = typer.Option(
+        False, "--allow-chimeras",
+        help="Also build TRDV x TRAJ scaffolds, which the default reference refuses as chimeric. "
+             "TRDV1/2/3 are dedicated delta V genes, but they sit INSIDE the TRA locus between the "
+             "TRAV genes and the TRAJ cluster. Measured on 48,030 TRA amplicon reads: IgBLAST "
+             "calls TRDV1 + a TRAJ on 530 of them (1.10 % of the library, median v_score 93.8, all "
+             "carrying a junction) and MiXCR independently agrees, while arda calls the same J as "
+             "both and emits NO v_call -- 83 % of its whole remaining v_gene gap. Either the "
+             "pairing is real and the default drops 1.1 % of a TRA repertoire, or it is a chimera "
+             "and the other two report it because they call V and J independently. That is a "
+             "domain judgement, so it is a flag. Off by default; assert the SCAFFOLD COUNT after "
+             "building -- an earlier attempt added 7 scaffolds, not the ~483 the product implies.",
+    ),
 ) -> None:
     """Build the curated reference database (Phase 1)."""
     from .refbuild.build import build
 
-    build(organism, one_allele_per_gene=one_allele_per_gene)
+    build(organism, one_allele_per_gene=one_allele_per_gene, allow_chimeras=allow_chimeras)
 
 
 @app.command("build-index")
@@ -353,6 +366,17 @@ def rnaseq_map(
              "below 90%), because AID makes indels and not only substitutions. These reads are "
              "REROUTED, never dropped, so a false positive costs a little speed and cannot cost a "
              "read. Ignored without --fast-segments."),
+    segment_only_v: bool = typer.Option(
+        False, "--v-only-on-segment/--no-v-only-on-segment",
+        help="With --two-pass, align a read that hit a V but NO J against its own V segment "
+             "instead of the full 15,414-scaffold reference. A `v_only` read carries no J -- that "
+             "is the class, not a search failure -- so the scaffold search asks a question the "
+             "read cannot answer, and it is 77%% of the amplicon rescue set at 338us/read against "
+             "31us for a named-target alignment. MMseqs2 still does the alignment and still "
+             "produces a real bit score, over exactly the nucleotides a whole-scaffold alignment "
+             "of a J-less read would have covered, so --min-score keeps its meaning. Anything "
+             "that fails falls through to the full-reference rescue: no read is lost. "
+             "EXPERIMENTAL and off by default. Ignored without --two-pass."),
     adaptive: bool = typer.Option(
         False, "--adaptive/--no-adaptive",
         help="Cap alignments per read at --max-accept 40, then re-search UNCAPPED only the reads "
@@ -378,6 +402,7 @@ def rnaseq_map(
                      limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
                      fast_segments=fast_segments,
                      indel_rescue=indel_rescue,
+                     segment_only_v=segment_only_v,
                      adaptive=adaptive,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(

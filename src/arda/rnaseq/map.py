@@ -411,6 +411,7 @@ def map_rnaseq(
     adaptive: bool = False,
     fast_segments: bool = False,
     indel_rescue: bool = False,
+    segment_only_v: bool = False,
     prefilter: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
@@ -519,6 +520,7 @@ def map_rnaseq(
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
                     fast_segments=fast_segments,
                     indel_rescue=indel_rescue,
+                    segment_only_v=segment_only_v,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)

@@ -19,7 +19,7 @@ import polars as pl
 
 from ..paths import data_dir, vdj_dir
 from ..igblast import SUPPORTED_ORGANISMS
-from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR
+from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR, loci_for
 from . import imgt, combinations, airr_extract, constant
 from .translate import translate, aa_coords_from_nt
 from .airr_extract import REGION_NAMES
@@ -527,12 +527,17 @@ def _locus_manifest(nt_all: list[dict], d_germ: list[tuple[str, str, str]]) -> l
     return rows
 
 
-def build_species(organism: str, *, one_allele_per_gene: bool = False) -> Path:
+def build_species(organism: str, *, one_allele_per_gene: bool = False,
+                  allow_chimeras: bool = False) -> Path:
     """Build the reference DB for one organism. Returns the output directory.
 
     ``one_allele_per_gene`` builds scaffolds from a single representative allele per gene (``*01``
     where it exists, else the lowest-numbered) -- roughly a 4x smaller reference with no
     allele-level ambiguity. Off by default.
+
+    ``allow_chimeras`` additionally builds the ``TRDV × TRAJ`` scaffolds the default refuses --
+    see :func:`~arda.refbuild.loci.loci_for` for the measurement that makes this a live question
+    rather than a settled one. Off by default.
     """
     if organism not in IMGT_SPECIES_DIR:
         raise ValueError(f"Unknown organism {organism!r}; one of {list(IMGT_SPECIES_DIR)}")
@@ -540,8 +545,9 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False) -> Path:
     out_dir = vdj_dir(organism)
     logger = _setup_logger(out_dir)
     t0 = time.perf_counter()
-    logger.info("=== arda reference build: %s (%s)%s ===", organism, species_dir,
-                " [one allele per gene]" if one_allele_per_gene else "")
+    logger.info("=== arda reference build: %s (%s)%s%s ===", organism, species_dir,
+                " [one allele per gene]" if one_allele_per_gene else "",
+                " [TRDV x TRAJ chimeras ALLOWED]" if allow_chimeras else "")
 
     imgt.download_reference()
     j_frames = combinations.load_j_frames(organism)
@@ -549,7 +555,7 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False) -> Path:
     fr4_offsets = combinations.load_j_fr4_offsets(organism)
 
     nt_all, aa_all, combo_all, fa_nt, fa_aa = [], [], [], [], []
-    for locus in LOCI:
+    for locus in loci_for(allow_chimeras=allow_chimeras):
         try:
             nt, aa, combo, fnt, faa = _process_locus(
                 organism, species_dir, locus, j_frames, logger,
@@ -639,8 +645,10 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False) -> Path:
     return out_dir
 
 
-def build(organism: str = "all", *, one_allele_per_gene: bool = False) -> None:
+def build(organism: str = "all", *, one_allele_per_gene: bool = False,
+          allow_chimeras: bool = False) -> None:
     """Build one organism or ``"all"`` supported organisms."""
     organisms = SUPPORTED_ORGANISMS if organism == "all" else (organism,)
     for org in organisms:
-        build_species(org, one_allele_per_gene=one_allele_per_gene)
+        build_species(org, one_allele_per_gene=one_allele_per_gene,
+                      allow_chimeras=allow_chimeras)

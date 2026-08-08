@@ -65,6 +65,10 @@ class Shortlist:
     rescue: list[str] = field(default_factory=list)
     #: reason -> count, for the run report
     reasons: dict[str, int] = field(default_factory=dict)
+    #: read id -> why it was rescued. The same information as ``reasons``, per read: a caller can
+    #: only re-route one rescue class (e.g. ``v_only`` onto its own V segment) if it knows which
+    #: reads are in it.
+    reason_of: dict[str, str] = field(default_factory=dict)
 
     @property
     def n_total(self) -> int:
@@ -77,6 +81,7 @@ class Shortlist:
     def _mark(self, read_id: str, reason: str) -> None:
         self.rescue.append(read_id)
         self.reasons[reason] = self.reasons.get(reason, 0) + 1
+        self.reason_of[read_id] = reason
 
     def as_dict(self) -> dict:
         return {"implied": len(self.implied), "rescued": len(self.rescue),
