@@ -22,7 +22,7 @@ from .._locking import build_lock
 from ..paths import data_dir, vdj_dir
 from ..refbuild.translate import reverse_complement
 from . import io as seqio
-from .reference import load_reference, Reference
+from .reference import load_reference, Reference, REGIONS
 from .transfer import transfer_hit, AIRR_COLUMNS
 from .airr_out import airr_header, format_rows
 
@@ -893,6 +893,7 @@ def _segment_best_hits(
     combos: dict[tuple[str, str], str] | None = None,
     fast_segments: bool = False,
     indel_rescue: bool = False,
+    segment_only_v: bool = False,
 ) -> tuple[dict[str, dict], dict]:
     """Two-pass best hits: cheap segment pass, then align only the implied scaffold.
 
@@ -1123,11 +1124,68 @@ def _segment_best_hits(
     # no error: the partition assertion below only checks what the shortlist was told about.
     c_only = set(best_c) - set(best_v) - set(best_j)
     rescue = sorted(set(sl.rescue) | failed | c_only)
+
+    # A `v_only` read carries NO J -- that is the definition of the class, not a search failure --
+    # so searching it against 15,414 V×J scaffolds asks a question whose J half the read cannot
+    # answer. It is 77 % of the amplicon rescue set and ~44 % of the amplicon wall, at 338 µs/read
+    # against 31 µs for a named-target alignment (results/round18).
+    #
+    # ⛔ This is NOT round 5's refuted narrowing, which kept the read on SCAFFOLDS and narrowed
+    # which ones (so a read whose true home scored higher elsewhere was trapped, and the narrowed
+    # best then fell under `--min-score 75`). Here the read is aligned against its own V SEGMENT,
+    # by MMseqs2, producing a real bit score over exactly the nucleotides a whole-scaffold
+    # alignment of a J-less read would have covered -- so `--min-score` keeps its meaning and the
+    # segmap-scale calibration this was blocked on is not needed at all.
+    #
+    # Anything that fails here stays in `rescue`: the "no read lost" invariant is unchanged.
+    #
+    # ⛔ The class is gated by GEOMETRY, not by the shortlist reason alone. `v_only` means "no J
+    # segment hit", which on a read carrying SHM is not the same statement as "no J in the read":
+    # the segment pass misses short hypermutated IGHJ and the full reference then finds it.
+    # Routing on the reason code alone cost 77 of 213 bulk junctions.
+    #
+    # ⛔ And the gate must be measured from the READ's full extent, not from where the ALIGNMENT
+    # stopped. An ungapped extension breaks early under mismatch load, so on a hypermutated
+    # library the alignment end systematically understates how far the read reaches: gating on it
+    # passed every local test (100 k TRA amplicon, 100 k bulk, both zero-loss) and then lost
+    # **45 of 88,697 junctions on IGH_repertoire** (median 91.77 % V identity) at cluster scale.
+    # Projecting the read's remaining 3' bases along the same diagonal is SHM-proof -- unaligned
+    # bases still occupy target positions -- and it is still pure geometry: if the whole read,
+    # laid on its diagonal, cannot reach Cys104, no junction can be in it.
+    v_seg_hits: dict[str, dict] = {}
+    if segment_only_v and seg_db is not None:
+        def _cannot_reach_cys104(q: str) -> bool:
+            row = seg_rows.get((q, "V"))
+            if row is None:
+                return False
+            entry = ref.get(row["target"])
+            cdr3_start = entry.starts[REGIONS.index("cdr3")] if entry else -1
+            if cdr3_start <= 0:
+                return False               # no CDR3 markup on this segment: do not risk it
+            qs, qe = int(row["qstart"]), int(row["qend"])
+            t_end = int(row["tstart"]) + abs(qe - qs)
+            # Query bases past the alignment end, walking the target FORWARD. segmap emits
+            # `qstart > qend` for a minus-strand hit, where target-forward is query-backward.
+            tail = (len(seqs[q]) - qe) if qs < qe else (qe - 1)
+            return t_end + tail < cdr3_start - 3   # the Cys codon is unreachable, not just unread
+
+        v_only = {q: list(dict.fromkeys([f"V|{best_v[q]}"]
+                                        + [f"V|{a}" for a in tied_v.get(q, ())]))
+                  for q in rescue
+                  if sl.reason_of.get(q) == "v_only" and q in best_v
+                  and _cannot_reach_cys104(q)}
+        if v_only:
+            v_seg_hits, v_seg_failed = _align_implied(
+                query_db, seg_db, v_only, seg_rows, seqs, tmp,
+                threads=threads, side="V", ref=ref, tag_prefix="vseg")
+            rescue = [q for q in rescue if q not in v_seg_hits or q in v_seg_failed]
+
     if rescue:
         best.update(_full_rescue(query_db, full_db, rescue, tmp, threads=threads,
                                  sensitivity=sensitivity, mm_strand=mm_strand,
                                  max_seqs=max_seqs, kmer=kmer, search_type=search_type))
         _dump_vonly(rescue, best_v, best_j, seg_rows, best, seqs)
+    best.update(v_seg_hits)
 
     seen = set(best_v) | set(best_j) | set(best_c)
     # ⛔ Assert what actually matters: every read the segment pass SAW either came back with a hit
@@ -1154,7 +1212,8 @@ def _segment_best_hits(
               "reasons": {**sl.reasons,
                           **({"second_pass_failed": len(failed)} if failed else {}),
                           **({"indel_rescued": seg_report_split} if seg_report_split else {}),
-                          **({"c_only": len(c_only)} if c_only else {})}}
+                          **({"c_only": len(c_only)} if c_only else {})},
+              **({"v_only_on_segment": len(v_seg_hits)} if v_seg_hits else {})}
     return best, report
 
 
@@ -1231,6 +1290,7 @@ def _annotate_chunk(
     adaptive: bool = False,
     fast_segments: bool = False,
     indel_rescue: bool = False,
+    segment_only_v: bool = False,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1260,7 +1320,8 @@ def _annotate_chunk(
                 query_db, segment_db, target_db, tmp, ref, threads=threads,
                 sensitivity=sensitivity, mm_strand=mm_strand, max_seqs=max_seqs, kmer=kmer,
                 search_type=_SEARCH_TYPE[seqtype], seqs=dict(records), combos=combos,
-                fast_segments=fast_segments, indel_rescue=indel_rescue)
+                fast_segments=fast_segments, indel_rescue=indel_rescue,
+                segment_only_v=segment_only_v)
             if report is not None:
                 _merge_segment_report(report, seg_report)
         else:

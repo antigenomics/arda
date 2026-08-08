@@ -371,6 +371,31 @@ def _common_suffix(a: str, b: str) -> int:
     return n
 
 
+#: nt of the Cys104 codon that a called V's own junction germline must explain before a junction
+#: is emitted. 2, not 3: a synonymous TGT/TGC substitution is the one SHM event that hits the
+#: conserved codon, and it leaves the first two bases intact.
+MIN_V_ANCHOR_PREFIX = 2
+
+
+def v_anchor_prefix(junction: str, v_call: str, anchors) -> int:
+    """Longest prefix of ``junction`` explained by any called V's own junction germline.
+
+    A junction's first codon *is* the V's conserved Cys104, so this is normally the full
+    templated stretch. It is 0 when the rearrangement trimmed V back past that codon: the
+    projection still lands somewhere and emits a junction opening on bases the V germline never
+    templated. Measured on a TRA amplicon (results/round18): 1,396 of 46,785 reads disagree with
+    IgBLAST, **every one of them a pure 5' over-extension** with the 3' end correct, and
+    ``prefix < 2`` separates 1,360 of them from 44,322 correct junctions.
+    """
+    best = 0
+    for allele in (v_call or "").split(","):
+        a = anchors.get(("V", allele.strip())) if anchors else None
+        g = getattr(a, "germline_nt", "") if a else ""
+        if a and a.status == "ok" and g:
+            best = max(best, _common_prefix(junction, g))
+    return best
+
+
 def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"):
     """``(v_end_q, j_start_q)`` from the germline junction anchors, or ``(0, 0)``.
 
@@ -599,6 +624,14 @@ def transfer_hit(
         rec["v_sequence_end"] = v_end_q
     if j_start_q:
         rec["j_sequence_start"] = j_start_q
+    if t_jstart and t_vjend and not rec["j_germline_start"] and not j_start_q:
+        # Neither the alignment nor the junction anchor found any J in this read, so `ref.j_call`
+        # names the J of whichever V*J scaffold the read landed on -- not a J the read carries
+        # evidence for. On bulk RNA-seq that is 1,823 of 2,737 mapped reads (results/round18 §4).
+        # Gated on the scaffold declaring where its J starts: a reference that cannot say (the aa
+        # markup does not carry `j_sequence_start`) makes an absent `j_germline_start` mean
+        # nothing, and blanking on it deleted every protein-input `j_call`.
+        rec["j_call"] = ""
 
     if seqtype == "nt":
         # V coding frame from the alignment phase (works even without FR1). A `J + C` scaffold has no
@@ -634,6 +667,12 @@ def transfer_hit(
                 jnt, jaa, c3aa, phase = _junction_nt(
                     query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
                     coding_start, v_end_q)
+                # Refuse a junction whose opening codon the called V's germline does not template:
+                # the read's V was trimmed past Cys104, so this window is 5'-over-extended.
+                # Declining is what IgBLAST and MiXCR both do here (see `v_anchor_prefix`).
+                if jaa and anchors and v_anchor_prefix(jnt, ref.v_call, anchors) \
+                        < MIN_V_ANCHOR_PREFIX:
+                    jaa, phase = "", None
                 if jaa:
                     rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)

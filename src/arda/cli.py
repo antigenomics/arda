@@ -353,6 +353,17 @@ def rnaseq_map(
              "below 90%), because AID makes indels and not only substitutions. These reads are "
              "REROUTED, never dropped, so a false positive costs a little speed and cannot cost a "
              "read. Ignored without --fast-segments."),
+    segment_only_v: bool = typer.Option(
+        False, "--v-only-on-segment/--no-v-only-on-segment",
+        help="With --two-pass, align a read that hit a V but NO J against its own V segment "
+             "instead of the full 15,414-scaffold reference. A `v_only` read carries no J -- that "
+             "is the class, not a search failure -- so the scaffold search asks a question the "
+             "read cannot answer, and it is 77%% of the amplicon rescue set at 338us/read against "
+             "31us for a named-target alignment. MMseqs2 still does the alignment and still "
+             "produces a real bit score, over exactly the nucleotides a whole-scaffold alignment "
+             "of a J-less read would have covered, so --min-score keeps its meaning. Anything "
+             "that fails falls through to the full-reference rescue: no read is lost. "
+             "EXPERIMENTAL and off by default. Ignored without --two-pass."),
     adaptive: bool = typer.Option(
         False, "--adaptive/--no-adaptive",
         help="Cap alignments per read at --max-accept 40, then re-search UNCAPPED only the reads "
@@ -378,6 +389,7 @@ def rnaseq_map(
                      limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
                      fast_segments=fast_segments,
                      indel_rescue=indel_rescue,
+                     segment_only_v=segment_only_v,
                      adaptive=adaptive,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
