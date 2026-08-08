@@ -436,13 +436,13 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"
     residues rather than codons.
     """
     if not anchors or cs is None or f4 is None:
-        return 0, 0
+        return 0, 0, 0
     if seqtype == "aa":
         js0, je, field = cs - 1, f4, "templated_aa"   # junction = Cys104 .. [FW]118 residues
     else:
         js0, je, field = cs - 3, f4 + 2, "germline_nt"  # .. the same, as codons
     if js0 < 1 or je > len(query_seq):
-        return 0, 0
+        return 0, 0, 0
     junction = query_seq[js0 - 1 : je]
 
     def best(calls, segment, fn):
@@ -458,9 +458,12 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"
 
     p = best(v_call, "V", _common_prefix)
     s = best(j_call, "J", _common_suffix)
+    # `p` IS `v_anchor_prefix(junction, v_call, anchors)` -- the same scan over the same slice
+    # (`_junction_nt` cuts `query_seq[cs-3-1 : f4+2]`, identical to `junction` above). Returning it
+    # saves the caller a second pass over every called V allele per read.
     if not p or not s:
-        return 0, 0
-    return js0 + p - 1, je - s + 1
+        return 0, 0, p
+    return js0 + p - 1, je - s + 1, p
 
 
 def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
@@ -628,6 +631,7 @@ def transfer_hit(
     rec.update(segment_cigars(hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
                               len(query_seq), t_vend, t_jstart, t_vjend))
 
+    v_prefix: int | None = None      # set by `_anchored_vj_bounds`; reused by the junction gate
     region_q: dict[str, tuple[int, int]] = {}
     for name, (qs, qe) in zip(REGIONS, coords):
         if qs < 0:
@@ -648,8 +652,9 @@ def transfer_hit(
     # collapses the V..J interior (see `_anchored_vj_bounds`).
     v_end_q, j_start_q = v_end_pt, j_start_pt      # from the single walk above
     if "cdr3" in region_q and "fwr4" in region_q:
-        av, aj = _anchored_vj_bounds(query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
-                                     ref.v_call, ref.j_call, anchors, seqtype)
+        av, aj, v_prefix = _anchored_vj_bounds(
+            query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
+            ref.v_call, ref.j_call, anchors, seqtype)
         if av and aj and aj > av:
             v_end_q, j_start_q = av, aj
     if "fwr1" in region_q:
@@ -701,8 +706,11 @@ def transfer_hit(
                 # Refuse a junction whose opening codon the called V's germline does not template:
                 # the read's V was trimmed past Cys104, so this window is 5'-over-extended.
                 # Declining is what IgBLAST and MiXCR both do here (see `v_anchor_prefix`).
-                if jaa and anchors and v_anchor_prefix(jnt, ref.v_call, anchors) \
-                        < MIN_V_ANCHOR_PREFIX:
+                # `_anchored_vj_bounds` already scanned this exact slice, so reuse its answer
+                # rather than walking every called V allele a second time.
+                prefix = (v_prefix if v_prefix is not None
+                          else v_anchor_prefix(jnt, ref.v_call, anchors))
+                if jaa and anchors and prefix < MIN_V_ANCHOR_PREFIX:
                     jaa, phase = "", None
                 if jaa:
                     rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
