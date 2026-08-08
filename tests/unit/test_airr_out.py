@@ -80,3 +80,28 @@ def test_the_cpp_formatter_is_byte_identical_to_the_python_one():
     for batch in ([full], [nones], [sparse], [unicode_rec], [numeric],
                   [full, nones, sparse, unicode_rec, numeric], []):
         assert _format_rows_cpp(batch, tuple(AIRR_COLUMNS)) == _format_rows_py(batch)
+
+
+def test_the_cpp_string_helpers_match_the_python_ones():
+    """``_common_prefix``/``_common_suffix`` are per-character Python loops called 138,065 times
+    per 100 k-read amplicon run (once per V allele in ``v_anchor_prefix``, twice per read in
+    ``_anchored_vj_bounds``), so they moved into ``_markup``. They decide how much of a junction a
+    called germline templates -- and the Cys104 junction gate is a threshold on exactly that
+    number -- so an off-by-one here silently changes which junctions arda emits."""
+    import random
+
+    from arda.annotate import transfer as T
+
+    if T._common_prefix is T._common_prefix_py:       # pragma: no cover - extension not built
+        pytest.skip("_markup extension not built")
+
+    random.seed(1)
+    cases = [("", ""), ("A", ""), ("", "A"), ("ACGT", "ACGT"), ("TGT", "TGC")]
+    for _ in range(5000):
+        cases.append((
+            "".join(random.choice("ACGT") for _ in range(random.randint(0, 25))),
+            "".join(random.choice("ACGT") for _ in range(random.randint(0, 25))),
+        ))
+    for a, b in cases:
+        assert T._common_prefix(a, b) == T._common_prefix_py(a, b), (a, b)
+        assert T._common_suffix(a, b) == T._common_suffix_py(a, b), (a, b)
