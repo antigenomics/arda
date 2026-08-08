@@ -34,6 +34,29 @@ from .denoise import REGIMES, clonotype_quality, quality_rescue, read_quality
 
 __all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS"]
 
+
+def _read_airr(path):
+    """Read an AIRR TSV, tolerating BOTH dialects arda has written.
+
+    ⛔ ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
+    **chr 34 is ``"``, i.e. Q1** -- a legitimate score any low-quality base produces. polars' reader
+    treats it as a quote character, so ONE such base collapses the parse of the whole file
+    (``CSV malformed: expected 1 rows, actual 155 rows``). Measured on a real Raji run: exactly one
+    row contained a ``"`` and the entire table became unreadable.
+
+    The complication is that arda has written the format two ways. The streaming writer
+    (``_markup.format_rows``, which produces every ``map`` output) emits **raw** fields and a truly
+    empty string for a missing value. polars' ``write_csv`` quotes -- it renders an empty string as
+    the two characters ``""`` and doubles an embedded quote. So reading unquoted is right for the
+    big files and would turn every empty field of an older polars-written one into a literal ``""``.
+    Hence the normalisation below: an AIRR field is never legitimately the two-character string
+    ``""``, so mapping it back to empty is unambiguous and makes both dialects read the same.
+    """
+    df = pl.read_csv(path, separator="\t", infer_schema_length=0, quote_char=None)
+    return df.with_columns(
+        pl.when(pl.col(c) == '""').then(pl.lit("")).otherwise(pl.col(c)).alias(c)
+        for c, t in df.schema.items() if t == pl.Utf8)
+
 #: How a clonotype is identified.
 #:
 #: ``full`` -- ``(locus, v_call, j_call, junction)``, the historical key.
@@ -822,9 +845,9 @@ def correct_airr(
 
     stage = Stage()
     output = Path(output)
-    raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
+    raw = _read_airr(airr_tsv)
     if extra_airr is not None:
-        extra = pl.read_csv(extra_airr, separator="\t", infer_schema_length=0)
+        extra = _read_airr(extra_airr)
         if extra.height:
             raw = pl.concat([raw, extra], how="diagonal")
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
@@ -1056,12 +1079,12 @@ def correct_airr(
     })
     if map_d:
         out = out.with_columns(_clonotype_d(out, organism, d_max_evalue))
-    out.write_csv(output, separator="\t")
+    out.write_csv(output, separator="\t", quote_style="never")
 
     if read_map is not None:
         rows = [(rid, junctions[roots[r]]) for r in range(len(roots)) for rid in read_sets[r]]
         pl.DataFrame(rows, schema=["sequence_id", "junction"], orient="row").write_csv(
-            read_map, separator="\t")
+            read_map, separator="\t", quote_style="never")
     stage.finish(report)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")

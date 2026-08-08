@@ -195,3 +195,23 @@ def test_the_rescue_reaches_the_cliff_class_the_gate_cannot(tmp_path):
 def test_an_unknown_clonotype_key_raises(tmp_path):
     with pytest.raises(ValueError, match="clonotype_key"):
         correct_airr(_fixture(tmp_path), tmp_path / "o.tsv", map_d=False, clonotype_key="nope")
+
+
+def test_a_q1_base_in_the_quality_string_does_not_break_the_parse(tmp_path):
+    """⛔ Phred+33 chr 34 is `"`, i.e. Q1 — a legitimate score any low-quality base produces.
+
+    polars' CSV reader treats it as a quote character, so ONE such base collapsed the parse of the
+    whole file (`CSV malformed: expected 1 rows, actual 155 rows`). Measured on a real Raji run:
+    exactly one row of the file contained a `"` and the entire table became unreadable, which took
+    out four of that sample's benchmark legs. Nothing in an AIRR TSV is ever quoted — the writer is
+    `_markup.format_rows`, which emits raw fields — so quoting is disabled on read.
+    """
+    q_good = "I" * len(_PARENT)
+    q_q1 = 'I' * 10 + '"' + "I" * (len(_PARENT) - 11)      # one Q1 base, mid-junction
+    assert len(q_q1) == len(_PARENT)
+    rows = _rows(_PARENT, 50, q_good, prefix="p") + _rows(_NEAR, 2, q_q1, prefix="q")
+    src = tmp_path / "q1.tsv"
+    pl.DataFrame(rows).write_csv(src, separator="\t", quote_style="never")
+    out = tmp_path / "o.tsv"
+    correct_airr(src, out, map_d=False, ec_mode="accurate", error_rate=1e-6)
+    assert _totals(out)[1] == 52, "every read must survive a Q1 base in the quality string"

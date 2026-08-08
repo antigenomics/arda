@@ -3,6 +3,37 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.13.1
+
+### Fixed — a Q1 base in `junction_quality` made the whole AIRR unreadable
+
+`junction_quality` is a Phred+33 string, and **chr 34 is `"`, i.e. Q1** — a legitimate score that
+any low-quality base produces. polars' CSV reader treats it as a quote character, so **one such
+base collapsed the parse of the entire file**:
+
+```
+ComputeError: CSV malformed: expected 1 rows, actual 155 rows
+```
+
+Found on a real Raji run in the round-23 benchmark: exactly one row of the file contained a `"`,
+and every `correct` leg for that sample died. It is not rare — it needs one Q1 base anywhere in one
+junction, so any library with a low-quality tail hits it.
+
+Underneath was a second problem: **arda wrote the format two ways.** The streaming writer
+(`_markup.format_rows`, which produces every `map` output) emits raw fields and a truly empty
+string for a missing value; polars' `write_csv` quotes, rendering an empty string as the two
+characters `""`. Reading unquoted is right for the big files and would have turned every empty
+field of an older polars-written one into a literal `""`.
+
+So both sides are fixed: every AIRR reader now reads unquoted **and normalises a literal `""` back
+to empty** (an AIRR field is never legitimately that two-character string), and arda's polars
+writers emit `quote_style="never"` so there is one dialect going forward.
+
+⚠ `examples/rnaseq/clones.tsv` changes accordingly — 18 rows where `""` becomes genuinely empty.
+No value changes.
+
+Pinned by `test_a_q1_base_in_the_quality_string_does_not_break_the_parse`.
+
 ## 2.13.0
 
 ### Added — a quality-aware denoising framework: `--ec-mode amplicon|rnaseq`, `--clonotype-key`

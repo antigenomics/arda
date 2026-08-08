@@ -27,7 +27,7 @@ def write_airr(records: list[dict], path: str | Path) -> Path:
         path.write_text("\t".join(AIRR_COLUMNS) + "\n")
         return path
     df = pl.DataFrame(records).select(AIRR_COLUMNS)
-    df.write_csv(path, separator="\t")
+    df.write_csv(path, separator="\t", quote_style="never")
     return path
 
 

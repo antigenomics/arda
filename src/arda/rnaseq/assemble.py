@@ -39,6 +39,29 @@ from ..annotate.contig import reannotate_contigs
 
 __all__ = ["assemble_contigs", "AssembleReport"]
 
+
+def _read_airr(path):
+    """Read an AIRR TSV, tolerating BOTH dialects arda has written.
+
+    ⛔ ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
+    **chr 34 is ``"``, i.e. Q1** -- a legitimate score any low-quality base produces. polars' reader
+    treats it as a quote character, so ONE such base collapses the parse of the whole file
+    (``CSV malformed: expected 1 rows, actual 155 rows``). Measured on a real Raji run: exactly one
+    row contained a ``"`` and the entire table became unreadable.
+
+    The complication is that arda has written the format two ways. The streaming writer
+    (``_markup.format_rows``, which produces every ``map`` output) emits **raw** fields and a truly
+    empty string for a missing value. polars' ``write_csv`` quotes -- it renders an empty string as
+    the two characters ``""`` and doubles an embedded quote. So reading unquoted is right for the
+    big files and would turn every empty field of an older polars-written one into a literal ``""``.
+    Hence the normalisation below: an AIRR field is never legitimately the two-character string
+    ``""``, so mapping it back to empty is unambiguous and makes both dialects read the same.
+    """
+    df = pl.read_csv(path, separator="\t", infer_schema_length=0, quote_char=None)
+    return df.with_columns(
+        pl.when(pl.col(c) == '""').then(pl.lit("")).otherwise(pl.col(c)).alias(c)
+        for c, t in df.schema.items() if t == pl.Utf8)
+
 # D columns carried from the contig annotation onto each member read. Coordinates are omitted
 # on purpose: they index the contig, and these rows carry only the junction.
 _D_COLUMNS = ("d_call", "d2_call", "d_support", "d2_support", "np1", "np2", "np3")
@@ -230,7 +253,7 @@ def assemble_contigs(
         An :class:`AssembleReport`.
     """
     output = Path(output)
-    raw = pl.read_csv(airr_tsv, separator="\t", infer_schema_length=0)
+    raw = _read_airr(airr_tsv)
     stage = Stage()
     report = AssembleReport(reads_in=raw.height)
     n = raw.height

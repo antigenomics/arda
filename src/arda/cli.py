@@ -214,7 +214,7 @@ def markup(
     if vdjdb:
         cdr3_col, v_col, j_col, species_col = "cdr3", "v.segm", "j.segm", "species"
 
-    df = pl.read_csv(input, separator="\t", infer_schema_length=0)
+    df = pl.read_csv(input, separator="\t", infer_schema_length=0, quote_char=None)
     records = markup_records(df, cdr3=cdr3_col, v=v_col, j=j_col, species=species_col,
                              sequence_id=id_col or None, organism=organism or None,
                              max_replace=max_replace)
