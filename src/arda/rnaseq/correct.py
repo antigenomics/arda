@@ -228,7 +228,7 @@ def _error_pileup(
             continue
         loc = (locc[i] or "")[:3] or _gene3(vc[i]) or _gene3(jc[i]) or _gene3(cc[i])
         s = reverse_complement(seq) if str(rcc[i]).upper() in ("T", "TRUE", "1") else seq
-        best_ri, best_ov, best_lo, best_hi, seen = None, 19, 0, 0, set()
+        best_ri, best_ov, best_mm, best_lo, best_hi, seen = None, 19, 0, 0, 0, set()
         L = len(s)
         for rp in range(0, L - k + 1):
             for (ri, jp) in index.get(s[rp:rp + k], ()):
@@ -241,10 +241,14 @@ def _error_pileup(
                 jr = junctions[ri]
                 lo, hi = (-d if d < 0 else 0), min(L, len(jr) - d)
                 ov = hi - lo
-                if ov <= best_ov:
+                # Strictly worse overlap cannot win, so skip the mismatch scan. An EQUAL overlap
+                # must still be scored: see `_assign_coverage` for why arrival order is not a
+                # tie-break.
+                if ov < best_ov or ov < 20:
                     continue
-                if sum(1 for kk in range(lo, hi) if s[kk] != jr[kk + d]) <= 0.12 * ov:
-                    best_ri, best_ov, best_lo, best_hi = ri, ov, lo + d, hi + d
+                mm = sum(1 for kk in range(lo, hi) if s[kk] != jr[kk + d])
+                if mm <= 0.12 * ov and (best_ri is None or ov > best_ov or mm < best_mm):
+                    best_ri, best_ov, best_mm, best_lo, best_hi = ri, ov, mm, lo + d, hi + d
         if best_ri is not None:
             dep = depth[best_ri]
             for p in range(best_lo, best_hi):
@@ -365,7 +369,7 @@ def _assign_coverage(
             continue
         loc = (locc[i] or "")[:3] or _gene3(vc[i]) or _gene3(jc[i]) or _gene3(cc[i])
         s = reverse_complement(seq) if str(rcc[i]).upper() in ("T", "TRUE", "1") else seq
-        best_ri, best_ov, seen = None, min_ov - 1, set()
+        best_ri, best_ov, best_mm, seen = None, min_ov, 0, set()
         L = len(s)
         for rp in range(0, L - k + 1):
             for (ri, jp) in index.get(s[rp:rp + k], ()):
@@ -378,7 +382,18 @@ def _assign_coverage(
                 jr = root_jn[ri]
                 lo, hi = (-d if d < 0 else 0), min(L, len(jr) - d)
                 ov = hi - lo
-                if ov <= best_ov:
+                # ⛔ `ov < best_ov`, NOT `ov <= best_ov`. Equal overlap is COMMON and was being
+                # resolved by encounter order: the first root to reach a read kept it, and the
+                # mismatch count computed right below was thrown away.
+                #
+                # That is not hypothetical. When a phantom clonotype (a junction window slid 10 nt
+                # into V framework, arda <= 2.9.0) competed with the true Jurkat clone, ~47 % of the
+                # 5,758 reads it took were exact 48-vs-48 overlap ties -- and on those the losing
+                # TRUE root matched with 0 mismatches against the phantom's 1. Reads span the
+                # junction end to end, so ties are the normal case, not the corner case.
+                #
+                # Overlap first, then FEWER MISMATCHES. Both were already computed.
+                if ov < best_ov or ov < min_ov:
                     continue
                 budget = max_mm * ov
                 mm = 0
@@ -387,8 +402,8 @@ def _assign_coverage(
                         mm += 1
                         if mm > budget:
                             break
-                if mm <= budget:
-                    best_ov, best_ri = ov, ri
+                if mm <= budget and (best_ri is None or ov > best_ov or mm < best_mm):
+                    best_ov, best_mm, best_ri = ov, mm, ri
         if best_ri is not None:
             assigned[best_ri].append(sid)
             done.add(sid)
