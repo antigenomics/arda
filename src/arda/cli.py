@@ -506,8 +506,10 @@ def rnaseq_correct(
              "`map --junction-quality`. An explicit --error-method / --min-junction-q wins."),
     min_junction_q: Optional[int] = typer.Option(
         None, "--min-junction-q",
-        help="Drop a read whose junction differs from its putative parent at ANY base below this "
-             "Phred score; matching bases are not evidence and are not looked at. 0 = off. "
+        help="Reassign a read whose junction differs from its putative parent at ANY base below "
+             "this Phred score ONTO that parent; matching bases are not evidence and are not "
+             "looked at. The read is never discarded -- it came off a real rearrangement and is "
+             "counted in the parent clonotype. 0 = off. "
              "Requires the `junction_quality` column (`map --junction-quality`) and RAISES "
              "without it rather than silently not gating. Measured on the MIGEC spike-ins, a Q20 "
              "gate takes the published-variant-to-error-cloud read ratio from 1.349 to 2.110, "
@@ -546,7 +548,7 @@ def rnaseq_correct(
         f"({rep.collapsed} collapsed) over {rep.reads} reads"
         + (f"; dropped {rep.reads_incomplete}/{rep.reads_with_junction} incomplete junctions"
            if rep.reads_incomplete else "")
-        + (f"; dropped {rep.reads_low_quality} reads on --min-junction-q "
+        + (f"; moved {rep.reads_low_quality} reads onto their parent on --min-junction-q "
            f"({rep.clonotypes_low_quality} clonotypes emptied)"
            if rep.reads_low_quality else ""))
 

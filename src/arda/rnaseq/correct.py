@@ -97,8 +97,10 @@ class CorrectReport:
     collapsed: int = 0  # clonotypes absorbed into a parent
     reads_with_junction: int = 0   # Stage-1 reads carrying any junction
     reads_incomplete: int = 0      # ...of which dropped as truncated/out-of-frame/stop
-    reads_low_quality: int = 0     # ...and dropped by --min-junction-q (0 when the gate is off)
-    clonotypes_low_quality: int = 0  # clonotypes that lost EVERY read to the quality gate
+    # Reads MOVED onto their parent clonotype by --min-junction-q, not discarded (0 with the gate
+    # off). They are still counted -- in the parent -- so this never subtracts from `reads`.
+    reads_low_quality: int = 0
+    clonotypes_low_quality: int = 0  # clonotypes that gave up EVERY read to the quality gate
     # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
     # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
     wall_seconds: float = 0.0
@@ -164,7 +166,18 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
 
 def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
                   require_vj: bool) -> tuple[pl.DataFrame, int, int]:
-    """Drop reads whose junction differs from its putative parent ONLY at low-quality bases.
+    """Move reads whose junction differs from its putative parent ONLY at low-quality bases.
+
+    ⛔ **The read is REASSIGNED to the parent, never discarded.** A read that reached a complete
+    junction came off a real rearrangement of that locus; the evidence says its differing base is a
+    miscall, which is a statement about one base, not about whether the molecule existed. So the
+    read's clonotype key is rewritten to the parent's and it is counted there. Dropping it would
+    understate the parent's expression by exactly the reads the correction says belong to it.
+
+    (Before this, the gate filtered the reads out and coverage assignment happened to realign most
+    of them onto the parent anyway -- 325 of 330 on a TRA amplicon, 5 lost to the ``min_ov`` floor
+    in :func:`_assign_coverage`. Reassignment makes that structural: the reads route through the
+    exact-key pass, and the count is conserved by construction, not by an alignment succeeding.)
 
     The error model in :func:`_parents` sees abundance and nothing else, so a sequencing miscall
     and a real low-frequency variant are the same object to it and the only lever is
@@ -187,7 +200,8 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
     no hypothesis "this is a misread of X" to test. A read whose quality string is missing or too
     short is KEPT — absent evidence is not evidence of error.
 
-    Returns ``(filtered df, reads dropped, clonotypes emptied)``.
+    Returns ``(df with reassigned rows, reads reassigned, clonotypes emptied, sequence_id ->
+    parent clonotype key for every moved read, vacated clonotype key -> its parent's key)``.
     """
     if "junction_quality" not in df.columns:
         # Raise, never degrade. A silently unapplied gate is indistinguishable from a gate that
@@ -209,8 +223,10 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
     seqs = [k[3] for k in keys]
     cnt = [counts[k] for k in keys]
 
-    # Discriminating positions against the most abundant qualifying neighbour, per clonotype.
+    # Discriminating positions against the most abundant qualifying neighbour, per clonotype --
+    # and which neighbour that was, since a gated read is reassigned onto it.
     disc: list[tuple[int, ...]] = [() for _ in keys]
+    par: list[int | None] = [None] * len(keys)
     safe = [i for i, s in enumerate(seqs) if s and set(s) <= _DNA]
     if safe:
         index = seqtree.Index.build([seqs[i] for i in safe], alphabet="nt")
@@ -231,23 +247,58 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
             if best is not None:
                 a, b = seqs[ci], seqs[best]
                 disc[ci] = tuple(p for p in range(len(a)) if a[p] != b[p])
+                par[ci] = best
+
+    # One representative amino-acid junction per clonotype, so a reassigned read carries the
+    # parent's `junction_aa` and not its own (the group's is taken with `.first()` downstream).
+    have_aa = "junction_aa" in df.columns
+    aa = df["junction_aa"].to_list() if have_aa else [None] * df.height
+    key_aa: dict[int, object] = {}
+    for r in range(df.height):
+        key_aa.setdefault(pos[(loc[r], v[r], j[r], jn[r])], aa[r])
 
     cut = min_q + 33                                       # Phred+33; `>= min_q` keeps the boundary
-    keep = [True] * df.height
-    emptied: Counter = Counter()
+    out_loc, out_v, out_j = df["locus"].to_list(), df["v_call"].to_list(), df["j_call"].to_list()
+    out_jn, out_aa, out_q = df["junction"].to_list(), list(aa), df["junction_quality"].to_list()
+    moved: Counter = Counter()
+    moved_rows: list[tuple[int, int]] = []                 # (row, parent clonotype index)
     for r in range(df.height):
-        d = disc[pos[(loc[r], v[r], j[r], jn[r])]]
+        ci = pos[(loc[r], v[r], j[r], jn[r])]
+        d = disc[ci]
         if not d:
             continue
         q = jq[r]
         if len(q) != len(jn[r]):                           # no quality for this read: no evidence
             continue
         if any(ord(q[p]) < cut for p in d):
-            keep[r] = False
-            emptied[(loc[r], v[r], j[r], jn[r])] += 1
-    dropped = keep.count(False)
-    lost = sum(1 for k, n in emptied.items() if n == counts[k])
-    return df.filter(pl.Series(keep)), dropped, lost
+            out_loc[r], out_v[r], out_j[r], out_jn[r] = keys[par[ci]]
+            out_aa[r] = key_aa.get(par[ci])
+            # Its quality describes the junction it NO LONGER carries. A same-length quality string
+            # belonging to a different junction is the one corruption nothing downstream can detect,
+            # so it is blanked rather than carried over.
+            out_q[r] = ""
+            moved[ci] += 1
+            moved_rows.append((r, par[ci]))
+
+    # ⛔ Rewriting the row is not enough on its own. Coverage assignment re-derives every read's
+    # clonotype from the UNFILTERED Stage-1 frame by its original ``(locus, v, j, junction)`` key,
+    # so a moved read whose old clonotype still exists (because its other reads passed the gate)
+    # would be routed straight back to it and the move silently undone. Name the moved reads by
+    # ``sequence_id`` so that pass can override them read-by-read. The key a read is rewritten to
+    # necessarily survives -- that read is now in it -- so no chain walk is needed.
+    sids = df["sequence_id"].to_list()
+    moved_sid = {sids[r]: keys[p_i] for r, p_i in moved_rows}
+
+    cols = [pl.Series("locus", out_loc), pl.Series("v_call", out_v), pl.Series("j_call", out_j),
+            pl.Series("junction", out_jn), pl.Series("junction_quality", out_q)]
+    if have_aa:
+        cols.append(pl.Series("junction_aa", out_aa))
+    # Emptied = gave up every read AND received none back (a clonotype that took reads from a
+    # child of its own is still there).
+    received = {p_i for _, p_i in moved_rows}
+    emptied_keys = {keys[ci]: keys[par[ci]] for ci, n in moved.items()
+                    if n == cnt[ci] and ci not in received}
+    return df.with_columns(cols), sum(moved.values()), len(emptied_keys), moved_sid, emptied_keys
 
 
 def _root(i: int, parent: list[int | None]) -> int:
@@ -440,6 +491,7 @@ def _assign_coverage(
     root_loc: list[str],
     exact: dict[tuple[str, str, str, str], int],
     *,
+    override: dict[str, int] | None = None,
     k: int = 12,
     min_ov: int = 20,
     max_mm: float = 0.12,
@@ -452,6 +504,10 @@ def _assign_coverage(
     reach both anchors. This is the coverage read-counting an assembly-based extractor does, and it
     is the true expression estimate. Returns, parallel to ``root_jn``, the list of ``sequence_id`` s
     assigned to each clonotype. Each read is counted once.
+
+    ``override`` maps a ``sequence_id`` straight to a root position, ahead of every key lookup: it
+    carries the reads ``_quality_gate`` moved onto a parent, whose key in ``raw`` still names the
+    error clonotype they were moved off.
 
     Pass 1 -- exact: a read whose ``(locus, v_call, j_call, junction)`` key is in ``exact`` (the
     clonotype key -> root-position map, collapsed children included) is assigned there
@@ -484,11 +540,14 @@ def _assign_coverage(
     done: set[str] = set()
 
     # Pass 1: exact clonotype-key match (spanning + rescued reads; authoritative).
+    override = override or {}
     for i in range(n):
         sid = sidc[i]
         if sid in done:                              # a rescued read appears in mapped + assembled rows
             continue
-        rp = exact.get(((locc[i] or ""), (vc[i] or ""), (jc[i] or ""), (jnc[i] or "")))
+        rp = override.get(sid)
+        if rp is None:
+            rp = exact.get(((locc[i] or ""), (vc[i] or ""), (jc[i] or ""), (jnc[i] or "")))
         if rp is not None:
             assigned[rp].append(sid)
             done.add(sid)
@@ -657,7 +716,7 @@ def correct_airr(
         ec_mode: knob preset, ``"fast"`` (default, = today's shipped behaviour) or
             ``"accurate"``. See :data:`EC_MODES`; an explicitly passed ``error_method`` /
             ``min_junction_q`` overrides it.
-        min_junction_q: drop a read whose junction differs from its putative parent at any base
+        min_junction_q: reassign onto its parent a read whose junction differs from that parent
             below this Phred score (:func:`_quality_gate`). ``0`` disables it. Needs the
             ``junction_quality`` column from ``map --junction-quality`` and RAISES without it.
         error_method: ``"simple"`` (default) tests on spanning read counts; ``"binom"`` /
@@ -724,8 +783,10 @@ def correct_airr(
         df = df.filter(_COMPLETE)
     n_incomplete = n_with_junction - df.height
     n_low_q = n_clono_low_q = 0
+    moved_sid: dict[str, tuple[str, str, str, str]] = {}
+    emptied_keys: dict[tuple[str, str, str, str], tuple[str, str, str, str]] = {}
     if min_junction_q > 0:
-        df, n_low_q, n_clono_low_q = _quality_gate(
+        df, n_low_q, n_clono_low_q, moved_sid, emptied_keys = _quality_gate(
             df, min_q=min_junction_q, max_subs=max_subs, require_vj=require_vj)
 
     # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
@@ -802,7 +863,23 @@ def correct_airr(
         exact = {}                                                     # clonotype key (child too) -> root position
         for i in range(len(junctions)):
             exact.setdefault((locus[i], v[i], j[i], junctions[i]), pos[_root(i, parent)])
-        read_sets = _assign_coverage(raw, [junctions[i] for i in roots], [locus[i] for i in roots], exact)
+        # A clonotype the gate emptied is no longer in `exact`, so any OTHER read in `raw` still
+        # carrying its key -- an INCOMPLETE-junction read, which never reached Stage 2 at all --
+        # would lose its only anchor and go unassigned. (Measured: exactly one such read on Jurkat,
+        # and it has no `sequence`, so the alignment pass cannot rescue it either.) Point the
+        # vacated key at the parent instead, following chains of emptied clonotypes.
+        for old_k, par_k in emptied_keys.items():
+            seen = set()
+            while par_k in emptied_keys and par_k not in seen:
+                seen.add(par_k)
+                par_k = emptied_keys[par_k]
+            if par_k in exact:
+                exact.setdefault(old_k, exact[par_k])
+        # A quality-gated read is routed by its NEW clonotype, not by the key still sitting on it
+        # in `raw` -- otherwise coverage hands it back to the error clonotype it was moved off.
+        override = {sid: exact[k] for sid, k in moved_sid.items() if k in exact}
+        read_sets = _assign_coverage(raw, [junctions[i] for i in roots], [locus[i] for i in roots],
+                                     exact, override=override)
     else:
         read_sets = [agg_reads[i] for i in roots]
     dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads

@@ -328,3 +328,53 @@ def test_ec_mode_and_min_junction_q_reach_correct_through_the_pipeline():
         assert "ec_mode" in sig.parameters, fn.__name__
         assert "min_junction_q" in sig.parameters, fn.__name__
     assert "ec_mode=ec_mode" in inspect.getsource(pipeline.finish)
+
+
+# --- read conservation: the gate MOVES reads, it never loses them ----------------------------
+#
+# A read that reached a complete junction came off a real rearrangement of that locus. The gate's
+# evidence is about ONE BASE -- it says that base is a miscall -- and says nothing about whether
+# the molecule existed. So a gated read must be counted, in the parent. Anything else understates
+# the parent's expression by exactly the reads the correction claims belong to it.
+
+
+def test_a_partially_gated_clonotype_does_not_get_its_moved_reads_handed_back(tmp_path):
+    """The failure the sequence_id override exists to prevent.
+
+    When only SOME of a clonotype's reads fail the gate, the clonotype survives -- and coverage
+    assignment re-derives every read's clonotype from the UNFILTERED Stage-1 frame, by the key
+    still sitting on the read. Without an explicit per-read override the moved reads match that
+    key again and are handed straight back, so the gate silently does nothing here.
+    """
+    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 10, _q("5"), prefix="lo")     # Q20, below the Q25 gate
+            + _reads(_CHILD, 10, _q("I"), prefix="hi"))    # Q40, above it
+    cl = _clonotypes(_airr(tmp_path, rows, "part.tsv"), tmp_path / "part.out",
+                     error_rate=1e-6, min_junction_q=25)
+    assert cl[_CHILD] == 10, "the 10 low-Q reads must not still be sitting on the child"
+    assert cl[_PARENT] == 410, "...and they must be counted in the parent"
+
+
+def test_no_read_is_ever_lost_to_the_gate(tmp_path):
+    """Total assigned reads is invariant to the gate, at every threshold."""
+    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo")
+            + _reads(_CHILD, 15, _q("I"), prefix="hi"))
+    totals = {}
+    for q in (0, 20, 25, 30):
+        cl = _clonotypes(_airr(tmp_path, rows, f"c{q}.tsv"), tmp_path / f"c{q}.out",
+                         error_rate=1e-6, min_junction_q=q)
+        totals[q] = sum(cl.values())
+    assert len(set(totals.values())) == 1, f"reads lost or duplicated by the gate: {totals}"
+    assert totals[0] == 435
+
+
+def test_the_report_counts_moved_reads_without_subtracting_them(tmp_path):
+    """`reads_low_quality` is a move, not a loss: `reads` must not shrink when the gate fires."""
+    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo"))
+    src = _airr(tmp_path, rows, "rep.tsv")
+    off = correct_airr(src, tmp_path / "off.out", map_d=False, error_rate=1e-6, min_junction_q=0)
+    on = correct_airr(src, tmp_path / "on.out", map_d=False, error_rate=1e-6, min_junction_q=25)
+    assert on.reads_low_quality == 20
+    assert on.reads == off.reads, "spanning reads must be conserved across the gate"
