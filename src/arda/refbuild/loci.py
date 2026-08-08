@@ -11,6 +11,7 @@ from dataclasses import dataclass
 __all__ = [
     "Locus",
     "LOCI",
+    "loci_for",
     "VJ_LOCI",
     "VDJ_LOCI",
     "IMGT_SPECIES_DIR",
@@ -107,3 +108,40 @@ LOCI: tuple[Locus, ...] = (
 
 VJ_LOCI = tuple(loc for loc in LOCI if not loc.has_d)
 VDJ_LOCI = tuple(loc for loc in LOCI if loc.has_d)
+
+
+def loci_for(*, allow_chimeras: bool = False) -> tuple[Locus, ...]:
+    """:data:`LOCI`, optionally with the ``TRDV × TRAJ`` scaffolds the default build refuses.
+
+    The refusal above is a *biological* claim: TRDV1/2/3 are dedicated δ V genes, so a
+    ``TRDV × TRAJ`` scaffold is a chimera. The claim is testable and the test disagrees with it on
+    the only external evidence available. Measured on 48,030 TRA amplicon reads against an IgBLAST
+    truth (arda-benchmark ``results/round18`` §5c): **530 reads — 1.10 % of the library — are
+    called ``TRDV1`` + a ``TRAJ`` by IgBLAST, and MiXCR independently agrees**; all sit at IgBLAST
+    ``v_score ≥ 70`` (median 93.8), all carry an IgBLAST junction, and **arda calls their J
+    identically to both tools** while emitting no ``v_call`` and no junction at all. They are
+    **83 % of arda's entire remaining ``v_gene`` gap** on that library (.9867 vs MiXCR's .9973;
+    .9978 excluding them).
+
+    So the two readings are:
+
+    * the pairing is real — arda silently drops 1.1 % of a TRA repertoire, or
+    * it is a chimera — arda is right and IgBLAST and MiXCR both report it because they call V and
+      J independently, with no combination constraint at all.
+
+    This flag exists because that is a domain judgement, not a code decision, and the default must
+    not quietly encode either answer as if it were settled. ``False`` keeps the shipped biology.
+
+    ⛔ It is **not** free to turn on. An earlier attempt at the same scaffolds measured **+7**
+    scaffolds, not the ~483 the cross-product predicts, because 62 of 69 dropped for incomplete
+    markup — so a reference built with this on may not contain what you expect. Assert the
+    scaffold count, never the flag (CLAUDE.md: a reference swap can silently be a no-op).
+    """
+    if not allow_chimeras:
+        return LOCI
+    return tuple(
+        Locus(loc.name, loc.group, loc.v, loc.j, loc.d, loc.ig_seqtype,
+              v_shared=("TRDV", ""))            # empty needle == the whole TRDV stem
+        if loc.name == "TRA" else loc
+        for loc in LOCI
+    )

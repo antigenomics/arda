@@ -70,11 +70,24 @@ def build_db(
         help="Build scaffolds from one allele per gene (*01 where it exists, else the lowest). "
              "~4x smaller reference, no allele-level ambiguity.",
     ),
+    allow_chimeras: bool = typer.Option(
+        False, "--allow-chimeras",
+        help="Also build TRDV x TRAJ scaffolds, which the default reference refuses as chimeric. "
+             "TRDV1/2/3 are dedicated delta V genes, but they sit INSIDE the TRA locus between the "
+             "TRAV genes and the TRAJ cluster. Measured on 48,030 TRA amplicon reads: IgBLAST "
+             "calls TRDV1 + a TRAJ on 530 of them (1.10 % of the library, median v_score 93.8, all "
+             "carrying a junction) and MiXCR independently agrees, while arda calls the same J as "
+             "both and emits NO v_call -- 83 % of its whole remaining v_gene gap. Either the "
+             "pairing is real and the default drops 1.1 % of a TRA repertoire, or it is a chimera "
+             "and the other two report it because they call V and J independently. That is a "
+             "domain judgement, so it is a flag. Off by default; assert the SCAFFOLD COUNT after "
+             "building -- an earlier attempt added 7 scaffolds, not the ~483 the product implies.",
+    ),
 ) -> None:
     """Build the curated reference database (Phase 1)."""
     from .refbuild.build import build
 
-    build(organism, one_allele_per_gene=one_allele_per_gene)
+    build(organism, one_allele_per_gene=one_allele_per_gene, allow_chimeras=allow_chimeras)
 
 
 @app.command("build-index")

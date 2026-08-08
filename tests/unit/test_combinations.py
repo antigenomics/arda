@@ -65,6 +65,31 @@ def test_tra_does_NOT_share_the_trdv_stem():
         "genes are already covered from both sides")
 
 
+def test_allow_chimeras_adds_the_trdv_stem_to_tra_and_changes_nothing_else():
+    """``--allow-chimeras`` is the ONLY way to get ``TRDV × TRAJ``, and it is opt-in.
+
+    The default's refusal is a biological claim, and the external evidence disputes it: on 48,030
+    TRA amplicon reads, IgBLAST calls ``TRDV1`` + a ``TRAJ`` on 530 (1.10 % of the library, median
+    v_score 93.8, every one carrying a junction) and MiXCR independently agrees, while arda calls
+    the same J as both and emits no ``v_call`` -- 83 % of its whole remaining ``v_gene`` gap
+    (arda-benchmark ``results/round18`` §5c). Which side is right is a domain judgement, so it is a
+    flag and not a silent default change.
+
+    What this test pins is that the flag is *surgical*: TRA gains the TRDV stem, TRD keeps its
+    ``TRAV/DV`` sharing, and no other locus moves.
+    """
+    from arda.refbuild.loci import loci_for
+
+    assert loci_for() is LOCI, "the default must be the shipped table, not a rebuilt copy"
+
+    chim = {loc.name: loc for loc in loci_for(allow_chimeras=True)}
+    assert chim["TRA"].v_shared == ("TRDV", ""), "TRA must pull the WHOLE TRDV stem"
+    assert chim["TRD"].v_shared == ("TRAV", "/DV"), "TRD's own sharing must be untouched"
+    for loc in LOCI:
+        if loc.name != "TRA":
+            assert chim[loc.name] == loc, f"{loc.name} must be unchanged by --allow-chimeras"
+
+
 def test_dedup_collapses_identical_scaffolds():
     # Two V alleles with identical sequence collapse to one scaffold.
     v = {"V1": "ATG" * 10, "V2": "ATG" * 10}

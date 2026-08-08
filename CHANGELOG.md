@@ -36,6 +36,39 @@ against IgBLAST: bulk **.1129 → .7842**, amplicon **.9685 → .9953**.
 Gated on the scaffold declaring `j_sequence_start`/`vj_end`: the aa markup does not, and blanking
 on a reference that cannot say deleted every protein-input `j_call`.
 
+### Added — `build-db --allow-chimeras`: the TRDV x TRAJ scaffolds the default refuses
+
+The default reference declines to build `TRDV x TRAJ` on the grounds that TRDV1/2/3 are dedicated
+delta V genes, so the pairing is a chimera (`refbuild/loci.py`, pinned by
+`test_tra_does_NOT_share_the_trdv_stem`). That is a biological claim, and the external evidence
+disputes it: on 48,030 TRA amplicon reads, IgBLAST calls `TRDV1` + a `TRAJ` on **530** of them
+(1.10 % of the library, median v_score 93.8, every one carrying a junction) and **MiXCR
+independently agrees**, while arda calls the same J as both tools and emits no `v_call` at all.
+That single class is **83 % of arda's entire remaining `v_gene` gap** on that library.
+
+Which side is right is a domain judgement, so it is now a flag rather than a silent default.
+`--allow-chimeras` gives TRA `v_shared=("TRDV", "")`; everything else is untouched.
+
+⛔ **Measured, and the flag does not deliver the whole class.** Of 22 TRDV alleles, 15 are
+`TRAV/DV` genes already present under TRAV, so exactly **7 dedicated TRDV alleles** are new
+(V 102 -> 109). They imply 483 scaffolds, of which **476 are dropped for incomplete IgBLAST region
+markup** and 7 survive -- all `TRDV1*01`, against TRAJ13/16/24/39. Human scaffolds go
+15,414 -> 15,421.
+
+End-to-end on the same 100 k amplicon reads:
+
+| | default | `--allow-chimeras` |
+|---|---|---|
+| v_gene | .9867 | **.9874** |
+| v_allele_exact | .9455 | **.9479** |
+| TRDV1-class reads recovered | 0 / 530 | **34 / 530 (6.4 %)** |
+| of which junction byte-exact vs IgBLAST | — | **34 / 34** |
+| whole library v_gene newly right / newly wrong | — | **+37 / -3** |
+
+Every junction it recovers is correct, and the ceiling is the markup pipeline, not the flag: the
+truth's TRDV1 reads use TRAJ52 (x165), TRAJ8 (x21), TRAJ54 (x19) and other Js that have no
+surviving scaffold. Off by default. Assert the **scaffold count** after building, never the flag.
+
 ### Added — `--v-only-on-segment`: a J-less read is aligned against its V segment, not 15,414 scaffolds
 
 Off by default; requires `--two-pass`. A `v_only` read carries no J — that is the class, not a
