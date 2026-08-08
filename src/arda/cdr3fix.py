@@ -269,6 +269,16 @@ def _anchor_path(organism: str) -> Path:
     return vdj_dir(organism) / "cdr3_anchors.tsv"
 
 
+def _decisive(a: "Anchor") -> tuple:
+    """The fields that DECIDE the junction, for conflict detection.
+
+    Not the whole record: a TRAV/DV allele legitimately appears twice -- once from the TRA pass and
+    once from TRD's `v_shared` -- differing only in `locus`. Comparing everything would flag 15
+    benign human duplicates and train the reader to ignore the 3 mouse ones that matter.
+    """
+    return (a.anchor_nt, a.germline_nt, a.templated_aa, a.status)
+
+
 @lru_cache(maxsize=8)
 def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
     """``{(segment, allele): Anchor}`` for one organism; ``{}`` if not built."""
@@ -289,8 +299,7 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
         # twice -- once from the TRA pass and once from TRD's `v_shared` -- differing only in
         # `locus`, and warning about those would be 15 lines of noise per human load that trains
         # the reader to ignore the 3 mouse cases that matter.
-        decisive = lambda a: (a.anchor_nt, a.germline_nt, a.templated_aa, a.status)
-        if prev is not None and decisive(prev) != decisive(anchor):
+        if prev is not None and _decisive(prev) != _decisive(anchor):
             # ⛔ IMGT ships two accessions under one allele name (mouse `IGKV10-96*01` is both
             # AF441451/287 nt and M15520/286 nt; `IGLV2*01` is J00599 and M17529), so the anchor
             # table can carry two rows for one key with DIFFERENT templated_aa and germline_nt.

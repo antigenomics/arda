@@ -70,6 +70,37 @@ indexes are used when the local MMseqs2 version matches; otherwise arda rebuilds
 cache on first run. ``arda build-index`` (re)builds the shipped indexes for your MMseqs2
 version.
 
+.. _segments.fasta:
+
+The segment reference is generated, not shipped
+-----------------------------------------------
+
+``--two-pass`` (and therefore ``--fast-segments`` / ``--v-only-on-segment``) nominates
+candidates from a second, much smaller reference: ``segments.fasta``, the 924 collapsed per-allele
+V / J / C targets. That file is **generated, not shipped** — it is not in the auto-fetched
+reference tarball.
+
+**It is now built automatically on first use**, under the same build lock the MMseqs2 index
+uses, taking about 0.3 s once per organism per cache. Running ``arda build-index`` beforehand is
+no longer required for the two-pass configurations.
+
+.. note::
+
+   Before this, a plain ``pip install`` had no ``segments.fasta``, so every ``--two-pass`` run
+   silently degraded to the one-pass search behind a single log line: the flagship amplicon
+   configuration was unreachable out of the box, with correct output and none of the speedup.
+   If you are upgrading, nothing needs doing — a ``segments.fasta`` written before arda 2.8.0
+   is detected **by format** (it carries the old ``JC|`` targets) and regenerated, rather than
+   used.
+
+Both the generation and the regeneration take ``.segments.build.lock`` in the reference
+directory and build into a staging path, so concurrent runs — a Nextflow process per sample, a
+SLURM task per shard — cannot race each other into a partial file. If generation fails, arda
+warns and falls back to the one-pass search rather than raising.
+
+Export the generated reference, or any part of it, with :doc:`arda export-ref
+<reference_export>`.
+
 .. _IgBLAST without a checkout:
 
 IgBLAST without a checkout

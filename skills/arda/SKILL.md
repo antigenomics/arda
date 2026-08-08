@@ -237,8 +237,9 @@ Every stage reports `wall_seconds`, `peak_rss_mb` and `rss_gain_mb`. `peak_rss_m
 **whole-process** high-water mark *as of that stage's end* (getrusage offers no per-stage
 reset), which is exactly what a SLURM `--mem` or Nextflow `memory` directive must cover;
 `rss_gain_mb` is that stage's contribution. **Budget for Stage 3, not Stage 1**: mapping is flat
-at ~300–400 MB at any depth, but the clone set scales with repertoire richness — 2.7 GB at 28k
-clonotypes, versus 314 MB for a colder sample with *more* reads.
+at ~300–650 MB at any depth, but the clone set scales with repertoire richness — Stage-3
+`correct` peaked at **2,071.7 MB** on a B-cell-rich tumour (28,444 clonotypes from 105 M reads),
+versus **549 MB** for a colder sample with *more* reads (139 M). Budget ~4 GB.
 
 ## Bulk RNA-seq mode (`arda rnaseq`)
 

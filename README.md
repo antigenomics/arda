@@ -39,12 +39,14 @@ templates, repairing the junction, and inferring the D gene from the junction's 
 IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embed.
 `arda` keeps IgBLAST-quality region calls while being:
 
-- **Fast & scalable** — MMseqs2 search + a C++ projection step; multiprocessing
-  and SLURM-friendly from small FASTA to large FASTQ.
+- **Fast & scalable** — MMseqs2 search + a C++ projection step; on a TRA amplicon it
+  matches MiXCR's wall clock at **3.6× less CPU and 4.8× less RSS**
+  ([below](#performance)); multiprocessing and SLURM-friendly from small FASTA to large FASTQ.
 - **Embeddable** — `import arda; arda.annotate_sequences(...)`.
 - **Honest** — a D call is gated on an E-value that ships with it (`d_support`), a
-  germline allele with no derivable anchor is flagged rather than guessed, and a
-  repair that would not produce a canonical junction is refused.
+  germline allele with no derivable anchor is flagged rather than guessed, a junction
+  whose Cys104 anchor is not actually in the read is **not emitted**, and a `j_call`
+  requires J evidence rather than being inherited from the scaffold.
 - **Easy to install** — `pip install arda-mapper` (binary wheels ship the C++
   extension); the `mmseqs` binary is fetched as a static build at runtime — no
   conda. IgBLAST is fetched on first use the same way, and is only needed to
@@ -68,9 +70,8 @@ Needs [uv](https://docs.astral.sh/uv/). Flags: `--build-db` (rebuild references 
 install), `--tests` (run the fast suites). The committed `database/vdj/<organism>/`
 references mean **most users never need to build anything**. A `pip install arda-mapper`
 with no source checkout **auto-fetches** the curated references into `~/.cache/arda` on
-first use (the `arda-reference-vdj.tar.gz` release asset) and builds the MMseqs2 index
-there — **no `$ARDA_HOME` and no build step required** (set `ARDA_NO_AUTO_FETCH` for
-air-gapped runs with a pre-populated cache).
+first use and builds the MMseqs2 index there — no `$ARDA_HOME`, no build step
+(set `ARDA_NO_AUTO_FETCH` for air-gapped runs with a pre-populated cache).
 
 Supported organisms: **human, mouse** (full IG + TR), **rat, rabbit, rhesus_monkey**
 (IG only — IgBLAST ships no TR internal annotation for these).
@@ -82,56 +83,229 @@ arda info                                   # resolved paths + tool availability
 arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
-arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report -       # mark up + repair bare (CDR3aa, V, J) records
-arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv  # filter receptor reads from bulk RNA-seq
+arda markup -i junctions.tsv -o marked.tsv --report -           # mark up + repair bare (CDR3aa, V, J) records
+arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv  # receptor reads out of RNA-seq
 arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv   # rescue CDR3s no single read spans
-arda rnaseq correct -i mapped.airr.tsv -o clones.tsv            # collapse CDR3 errors into clonotypes
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+assemble+correct for pipelines
+arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
+arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+assemble+correct
+arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 20 --partition cpu
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
+arda export-ref --kind segments --locus TRB --format fasta      # the reference, out of the CLI
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
-arda slurm -i big.fastq -o big.airr.tsv --shards 50 --partition cpu   # cluster scale
 ```
+
+`arda slurm` (no `rnaseq`) shards FASTA into `arda annotate` for **amplicon / single-end**
+work only: it drops quality and separates mates, so paired RNA-seq must use
+`arda rnaseq slurm`, which shards Stage 1 and runs Stages 2–3 once over the merged output.
+
+**`arda export-ref`** dumps arda's most valuable offline artifact — every in-frame V·J
+scaffold with IgBLAST-quality FR1–4 / CDR1–3 coordinates — in 3 kinds × 4 formats:
+
+```bash
+arda export-ref --kind scaffolds --locus TRB --format gff3 -o trb.gff3   # V×J (and J+C) reference
+arda export-ref --kind segments  --locus TRB --format fasta              # collapsed per-allele V/J/C
+arda export-ref --kind anchors   --locus TRB                             # per-allele CDR3 anchors (tsv)
+```
+
+Coordinates are **1-based closed** (AIRR), so they pass through GFF3 unchanged; `--format airr`
+shapes a scaffold as an AIRR Rearrangement row, feedable straight into anything reading arda's
+own output. Details: [reference export](https://docs.isalgo.dev/arda/reference_export.html).
 
 [`examples/`](examples/) is a runnable tour, every artifact derived from real data committed to
 this repo and regenerated by `python examples/regenerate.py`: one real mRNA per locus; the two
 human reads (of 7,341, across five organisms) that carry a **tandem D-D**; seven VDJdb records
-covering every junction-repair outcome, including one arda reports and refuses to rewrite and one
-it refuses outright; and a 1,035-read FASTQ that runs the whole bulk RNA-seq pipeline in ~6 s.
-Two tests re-run that script and fail if a committed artifact stops reproducing.
+covering every junction-repair outcome; and a 1,035-read FASTQ that runs the whole bulk RNA-seq
+pipeline in ~6 s. See [`CHANGELOG.md`](CHANGELOG.md) for what changed per release.
 
-See [`CHANGELOG.md`](CHANGELOG.md) for what changed per release.
+Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on **both strands**
+by default (reverse-complement reads are re-oriented and flagged `rev_comp=T`); a single search
+annotates a mixed bulk RNA-seq file across all loci.
 
-The reference database ships with **precompiled MMseqs2 indexes**
-(`database/vdj/<organism>/mmseqs/`), so annotation runs out of the box with no
-build step. They are used automatically when the local MMseqs2 version matches the
-shipped one; otherwise arda transparently rebuilds a private cache on first run
-(`arda build-index` regenerates the shipped DBs for your version).
+## Amplicon vs bulk RNA-seq: which mode
 
-Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on
-**both strands** by default (reverse-complement reads are re-oriented and flagged
-`rev_comp=T`); a single search annotates a mixed bulk RNA-seq file across all loci.
+The speed flags are **regime-specific**, and picking the wrong one is slower than picking none.
 
-## Pipeline integration
+> `--two-pass --fast-segments --v-only-on-segment` = the **AMPLICON** configuration
+>
+> `--prefilter` = the **BULK** configuration
+>
+> They do **NOT** compose. `--two-pass` **ALONE is a LOSS**: 0.762× on bulk, 0.87× on an IGH amplicon.
 
-`arda rnaseq run` is a one-shot `map`+`assemble`+`correct` for bulk RNA-seq: given paired (or single)
-gzipped FASTQ it writes `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped reads),
-`<prefix>.assembled.airr.tsv` (assembled long-CDR3 reads) and `<prefix>.arda.json` (run report).
-Because it is a plain CLI over named files, it drops into any workflow engine with no glue code.
+```bash
+# AMPLICON / RepSeq (reads span V into J)
+arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ \
+    --two-pass --fast-segments --v-only-on-segment
 
-A ready-to-use **Nextflow module** lives in [`integrations/nextflow/arda/`](integrations/nextflow/arda/):
-copy it to `modules/local/arda/` in an nf-core/rnaseq (or similar) checkout, feed it the trimmed
-per-sample FASTQ channel the aligners already use, and it publishes per-sample clonotype tables to
-`${params.outdir}/arda/`. It ships a conda `environment.yml` (works with `-profile conda` out of the
-box) and a `Dockerfile`, and emits a `versions.yml`. See its
-[README](integrations/nextflow/arda/README.md) and the
-[pipeline-integration guide](https://docs.isalgo.dev/arda/pipeline_integration.html) for the five-line drop-in.
+# BULK RNA-seq (1-5 % of reads are receptor-derived)
+arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --prefilter
+```
 
-arda is **CPU-bound**: ~40–50k reads/s on 32 cores, so a full-depth bulk RNA-seq sample (~50 M read
-pairs) finishes in ~45 min. Throughput scales with cores. Peak memory tracks **repertoire richness**,
-not read depth — mapping is flat (~300–400 MB at any depth), while Stage 3 holds the clone set, so a
-B-cell-rich tumour peaked at 2.7 GB (28k clonotypes) and a colder sample with *more* reads used 314 MB.
-Budget ~4 GB.
+The predictor is not the library's name but whether a read hits **both** a V and a J segment —
+`fast_fraction` in the run report. Primer-anchored amplicon reads do; bulk reads land anywhere
+in a transcript and mostly do not, which is why the segment path is overhead there and the
+16-mer prefilter (a scan-term optimisation) is the bulk lever instead. All four flags are off by
+default. `--indel-rescue` (with `--fast-segments`) reroutes indel-bearing reads to the gapped
+path; its value tracks SHM load, so it is a per-library call. Details and the per-flag
+measurements: `arda rnaseq map --help` and the
+[usage guide](https://docs.isalgo.dev/arda/usage.html).
+
+## Performance
+
+### Head-to-head, same input and same job
+
+**TRA amplicon, 100,000 reads, 8 threads.**
+
+| tool | config | wall (s) | CPU (s) | peak RSS (MB) |
+|---|---|---:|---:|---:|
+| arda 2.11.1 | `--two-pass --fast-segments --v-only-on-segment` | **5.35** | **12.73** | **631** |
+| MiXCR 4.7.0 | `align --preset rna-seq --species hsa` | 5.90 | 45.24 | 3,027 |
+
+arda is **1.10× faster on wall clock at 3.6× less CPU and 4.8× less RSS** — the wall figures are
+close, the resource figures are not, which is what matters when many samples share a node.
+
+**Bulk RNA-seq, 100,000 reads.**
+
+| tool | wall (s) | CPU (s) | peak RSS (MB) | what it produced |
+|---|---:|---:|---:|---|
+| arda 2.11.1 | 2.51 | 5.4 | 234 | AIRR record per read, with junction |
+| MiXCR 4.7.0 | 4.54 | 31.8 | 3,022 | AIRR record per read, with junction |
+| TRUST4 | **1.91** | **4.36** | **192** | candidate read extraction only |
+
+⚠ TRUST4's stage here is **candidate extraction**, not a per-read AIRR record with a junction —
+it is doing less work, so the three rows are not like-for-like.
+
+**IGH RepSeq amplicon, 100,000 pairs, 32 threads.** What the amplicon configuration is worth
+against the shipped one-pass default on hypermutated IGH:
+
+| dataset | config | wall (s) | peak RSS (MB) |
+|---|---|---:|---:|
+| IGH_repertoire | one-pass default | 316.44 | 4,018 |
+| IGH_repertoire | `--two-pass --fast-segments --v-only-on-segment` | **76.25** | **1,479** |
+| IGH_naive | one-pass default | 305.32 | 3,736 |
+| IGH_naive | `--two-pass --fast-segments --v-only-on-segment` | **64.86** | **1,363** |
+
+4.15× and 4.71×, at ~2.7× less memory.
+
+### Synthetic benchmarks vs IgBLAST
+
+⚠ The two tables below are **synthetic** — generated human IGH sequences, not a real library —
+from [`scripts/bench_vs_igblast.py`](scripts/bench_vs_igblast.py) and
+[`scripts/bench_prefilter.py`](scripts/bench_prefilter.py). They measure scaling shape, not
+head-to-head standing; use the tables above for that. 16 threads.
+
+| sequences | arda wall | arda rate | speedup vs IgBLAST | region concordance |
+|----------:|----------:|----------:|-------------------:|-------------------:|
+| 10,000    | 5.5 s     | ~1.8k/s   | 4.4×               | 98.9%              |
+| 50,000    | 16 s      | ~3.0k/s   | 7.3×               |                    |
+| 100,000   | 30 s      | ~3.3k/s   | 7.9×               |                    |
+
+Bulk RNA-seq is faster per read than amplicon, because mmseqs prefilters by k-mer matching —
+reads with no receptor k-mer are rejected before alignment. 150 nt reads, 16 threads:
+
+| receptor content | throughput |
+|-----------------:|-----------:|
+| 100% (amplicon)  | ~5.7k reads/s |
+| 10%              | ~19k reads/s |
+| 1% (blood RNA-seq) | ~25k reads/s |
+
+### Memory
+
+arda is **CPU-bound**; large FASTQ is streamed in bounded chunks (a background reader prefetches
+the next chunk while the current one is annotated), so **mapping is flat at ~300–650 MB at any
+read depth**. Peak RSS tracks **repertoire richness**, not reads: Stage 3 holds the clone set, so
+on a B-cell-rich tumour (28,444 clonotypes from 105 M reads) `correct` peaked at **2,071.7 MB**,
+while a colder sample with *more* reads (139 M) peaked at **549 MB**. **Budget ~4 GB**, and size a
+SLURM `--mem` from Stage 3, never Stage 1.
+
+## Accuracy
+
+Against an IgBLAST truth on a TRA amplicon, 100,000 reads:
+
+| metric | arda 2.11.1 | MiXCR 4.7.0 |
+|---|---:|---:|
+| v_gene recall | .9867 | **.9973** |
+| v_gene precision | **.9996** | .9978 |
+| v_allele resolved | **.9868** | n/a |
+| j_gene recall | .9892 | **.9904** |
+| j_gene precision | .9953 | **.9995** |
+| junction precision, among emitted | .99919 | **.99991** |
+
+arda's V calls are the more **precise** of the two: it declines rather than guessing. MiXCR
+suffixes every allele `*00`, i.e. it makes no allele call at all, so `v_allele` has no comparator.
+
+**Score alleles as tie lists, not exact strings.** IgBLAST and arda both return an ambiguous
+allele as a comma-joined set; scoring that as a miss is a scoring artifact, not an error. Across
+25 datasets the median is `v_allele_exact` **.8328** against `v_allele_resolved` **.9763** —
+14 points of the apparent gap is the scoring rule.
+
+**A V/J boundary disagreement *inside* the junction is not an error.** V(D)J recombination is
+probabilistic: exonuclease chew-back and N/P-nucleotide addition mean the V-end / N-D-N / J-start
+partition is often not identifiable from sequence alone, so overlapping V/J/NDN assignments are
+acceptable and the ground truth is unknown. What *is* checkable, and what the table scores: the
+junction's **outer bounds** (Cys104 and [FW]118), the **gene/allele calls**, and whether a tool
+invents a junction it has no anchor for.
+
+On ~7.3k real GenBank mRNA records spanning **all five organisms and their loci** (committed,
+gzipped test fixtures), region concordance with IgBLAST on productive records is **98–99.7%** per
+organism, and `junction_aa`/`cdr3_aa` match IgBLAST ~99% while satisfying the AIRR invariants
+exactly. (GenBank also contains genomic/partial/non-productive entries that confuse both tools;
+those are excluded.)
+
+## Bulk RNA-seq mode
+
+`arda rnaseq` is a recall-first pipeline for extracting the repertoire from bulk RNA-seq, where
+1–5% of reads are receptor-derived:
+
+```bash
+arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
+arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv
+arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
+```
+
+`--extra-airr` is what folds Stage 3 back in; **without it the assembled reads are silently
+discarded.** `arda rnaseq run` does all three in one call and wires it for you.
+
+- **`map`** streams paired FASTQ, keeps only reads mapping to a receptor scaffold, and writes
+  them as AIRR. The reference includes **`J + C` constant-region scaffolds**, so a read spanning
+  the J→C splice — which ends in the constant region and has no V to anchor — still maps and
+  carries a **`c_call`** (the CH1 exon) plus a **`c_class`** isotype (`IGHG`/`IGHM`/`IGHA` … —
+  the class, never the noise-prone subclass). In paired mode the isotype of a CDR3-bearing read
+  is recovered from its constant-region mate. `--reconstruct` merges each overlapping mate pair
+  into one fragment, resolving overlap mismatches by the higher-Phred base.
+- **`assemble`** reconstructs clonotypes whose CDR3 is too long for any single 100–150 bp read to
+  span (V(DD)J ultralong, ~20–40 aa) by greedy overlap-extension anchored on Stage-1's per-read
+  `cdr3_start`.
+- **`correct`** aggregates reads into clonotypes and collapses sequencing-error CDR3 variants.
+  Abundance is the AIRR **`duplicate_count`** — every read that *encompasses* the junction,
+  the true expression estimate — with **`consensus_count`** for distinct fragments.
+
+`arda igblast -i reads.fastq -o truth.airr.tsv` runs IgBLAST across all loci as a gold-standard
+reference for benchmarking (see the `arda-benchmark` project).
+
+### Error correction: `--error-rate` is a per-library calibration
+
+`correct`'s error model is per-base with a **length-scaled threshold** (a mismatch over a longer
+junction is likelier an error) and is SHM-indel-tolerant. Its one knob is `--error-rate`, and the
+default (1e-3, ~Phred 30) is **not** universally safe:
+
+On the MIGEC spike-in library (PRJNA239303), at the default `--error-rate 1e-3` arda erases both
+published spike-in variants. That is a signal-to-noise limit, not a defect: on the paper's own
+metric computed over raw reads, **V1/Err1 = 1.35 and V2/Err2 = 0.28** — the second variant is
+*less* abundant than the worst 2-substitution PCR error in the same library, so **no
+abundance-based method, at any threshold, can separate them.** That is precisely why UMI
+consensus exists; it moves V1/Err1 to 26–76 before any correction runs.
+
+What to do about it:
+
+```bash
+arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv --error-rate 1e-5
+```
+
+`1e-5` recovers both spike-in variants exactly. On an independent error cloud, `1e-4` kept both
+while still removing 72% of the real PCR errors. Calibrate per library — by amplification depth
+and by whether the protocol carries UMIs — rather than trusting one default. Full write-up:
+[error correction](https://docs.isalgo.dev/arda/error_correction.html).
 
 ## Library
 
@@ -164,7 +338,8 @@ mk.cdr3_repaired            # 'CAIRDDKIIF'  -- the Phe118 anchor restored
 [str(e) for e in mk.errors] # ["J del@8 missing 'F' d=0"]
 mk.good                     # True: both sides repaired, both anchors present
 
-map_d_junction(junction_nt, "TRDV1*01", "TRDJ1*01", "human").d2_call   # 'TRDD3*01'
+junction_nt = "TGTGCTCTTGGGCCCCGGCCTTCCTACAGCGAGGAGTTGGGGGATACCCATCGGGCCGATAAACTCATCTTT"
+map_d_junction(junction_nt, "TRDV1*01", "TRDJ1*01", "human").d2_call      # 'TRDD3*01' (tandem D-D)
 posterior_d("CASSPLGQAYEQYF", "TRBV5-1*01", "TRBJ2-7*01", "human").d_call  # 'TRBD1'
 ```
 
@@ -178,10 +353,9 @@ with Cys104 and closes with Phe/Trp118.
 
 ### Annotating bare germline segments
 
-There is no coverage filter, so a **V-only** or **J-only** query maps to its
-scaffold and only the regions inside the query's coverage are returned. This lets
-you annotate isolated germline V or J alleles without synthesising a
-rearrangement — a bare V yields `fwr1..fwr3`, a bare J yields `fwr4`:
+There is no coverage filter, so a **V-only** or **J-only** query maps to its scaffold and only
+the regions inside the query's coverage are returned — a bare V yields `fwr1..fwr3`, a bare J
+yields `fwr4`:
 
 ```python
 from arda.annotate.mapper import annotate_records
@@ -190,41 +364,10 @@ recs = annotate_records(
     [("TRBV9*01", v_germline_nt), ("TRBJ2-7*01", j_germline_nt)],
     organism="human", seqtype="nt", strand="forward", map_d=False,
 )
-# V record -> fwr1/cdr1/fwr2/cdr2/fwr3 (+ v_sequence_end = CDR3 start)
-# J record -> fwr4 (+ j_sequence_start = CDR3 end / FR4 start)
 ```
 
-(mirpy uses exactly this to bake per-allele FR/CDR subsequences into its gene
-library; see `tests/synthetic/test_germline_segments.py`.)
-
-## Bulk RNA-seq mode
-
-`arda rnaseq` is a recall-first pipeline for extracting the receptor repertoire from
-bulk RNA-seq, where 1–5% of reads are receptor-derived:
-
-- **`map`** streams paired FASTQ, keeps only reads that map to a receptor scaffold, and
-  writes them as AIRR. The reference includes **`J + C` constant-region scaffolds**, so a
-  read spanning the J→C splice — which ends in the constant region and has no V to anchor —
-  still maps, and carries a **`c_call`** (the CH1 exon) plus a **`c_class`** isotype
-  (`IGHG`/`IGHM`/`IGHA` … — the class, never the noise-prone subclass). In paired mode the
-  isotype of a CDR3-bearing read is recovered from its constant-region mate. `--reconstruct`
-  merges each overlapping mate pair into one fragment, resolving overlap mismatches by the
-  higher-Phred base.
-- **`assemble`** (Stage 3) reconstructs clonotypes whose CDR3 is too long for any single
-  100–150 bp read to span (V(DD)J ultralong, ~20–40 aa) by greedy overlap-extension anchored on
-  Stage-1's per-read `cdr3_start`, and folds the recovered reads back into `correct`.
-- **`correct`** aggregates reads into clonotypes and collapses sequencing-error CDR3 variants.
-  Abundance is the AIRR **`duplicate_count`** — every read that *encompasses* the junction
-  (spanning or partial), the true expression estimate — with **`consensus_count`** for distinct
-  fragments. The error model is per-base with a **length-scaled threshold** (a mismatch over a
-  longer junction is likelier an error) and is SHM-indel-tolerant, keeping only complete junctions.
-
-```bash
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map + assemble + correct
-```
-
-`arda igblast -i reads.fastq -o truth.airr.tsv` runs IgBLAST across all loci as a
-gold-standard reference for benchmarking (see the `arda-benchmark` project).
+(mirpy uses exactly this to bake per-allele FR/CDR subsequences into its gene library; see
+`tests/synthetic/test_germline_segments.py`. `arda export-ref` is the CLI equivalent.)
 
 ## How it works
 
@@ -247,72 +390,54 @@ gold-standard reference for benchmarking (see the `arda-benchmark` project).
    The V..J interior is bounded by the **per-allele junction anchors** in
    `cdr3_anchors.tsv`, not by the scaffold projection — a scaffold has a 9 nt N-pad
    where a read has a 20–40 nt N-D-N region, so the projection collapses the very window
-   the D lives in. The D call is then accepted on a Karlin–Altschul E-value (`d_support`)
-   rather than a per-locus score floor, and is constrained by germline geometry: TRBD2
-   lies 3′ of the entire TRBJ1 cluster, so a TRBJ1 rearrangement can never be assigned
-   TRBD2. D mapping also runs on `--seqtype aa`, against each D germline's three
-   translated frames.
+   the D lives in. A junction is emitted only when the read actually reaches its Cys104
+   anchor. The D call is accepted on a Karlin–Altschul E-value (`d_support`) rather than
+   a per-locus score floor, and is constrained by germline geometry: TRBD2 lies 3′ of the
+   entire TRBJ1 cluster, so a TRBJ1 rearrangement can never be assigned TRBD2. D mapping
+   also runs on `--seqtype aa`, against each D germline's three translated frames.
 3. **Bare records** (`arda.cdr3fix`, `arda.dpost`): a VDJdb-style row — CDR3 amino acid,
    V, J, species, and no read — is marked up against the same anchors (`arda markup`),
    its errors located and conservatively repaired, and optionally given a D gene inferred
    from the junction *length* (`--d-posterior`).
 
-Fast sequence
-primitives (`translate`, `detect_coding_frame`, `reverse_complement`,
+Fast sequence primitives (`translate`, `detect_coding_frame`, `reverse_complement`,
 `back_translate`) live in the C++ extension and are re-exported from
-`arda.refbuild.translate` — mirpy-API-compatible, so mirpy can `import arda` and
-reuse them.
+`arda.refbuild.translate` — mirpy-API-compatible, so mirpy can `import arda` and reuse them.
 
-## Performance
+The reference ships with **precompiled MMseqs2 indexes** (`database/vdj/<organism>/mmseqs/`),
+used automatically when the local MMseqs2 version matches; otherwise arda transparently
+rebuilds a private cache on first run (`arda build-index` regenerates the shipped DBs).
+`segments.fasta` — the collapsed per-allele reference the two-pass path uses — is *generated*,
+not shipped, and is built on demand when missing.
 
-Exact annotation that matches IgBLAST while being several times faster, scaling to
-large FASTQ. Synthetic human IGH, 16 threads (`scripts/bench_vs_igblast.py`):
+## Pipeline integration
 
-| sequences | arda | arda rate | speedup vs IgBLAST | region concordance |
-|----------:|-----:|----------:|-------------------:|-------------------:|
-| 10,000    | 5.5s | ~1.8k/s   | 4.4×               | 98.9%              |
-| 50,000    | 16s  | ~3.0k/s   | 7.3×               |                    |
-| 100,000   | 30s  | ~3.3k/s   | 7.9×               |                    |
+`arda rnaseq run` writes `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped
+reads), `<prefix>.assembled.airr.tsv` and `<prefix>.arda.json` (run report). Because it is a
+plain CLI over named files, it drops into any workflow engine with no glue code.
 
-On ~7.3k real GenBank mRNA records spanning **all five organisms and their loci**
-(committed, gzipped test fixtures), region concordance with IgBLAST on productive
-records is **98–99.7%** per organism; `junction_aa`/`cdr3_aa` match IgBLAST ~99%
-and satisfy the AIRR invariants exactly. V-gene assignment agrees ~100%. (GenBank
-also contains genomic/partial/non-productive entries that confuse both tools; those
-are excluded from the comparison.)
-
-**Bulk RNA-seq is much faster than amplicon**, because mmseqs prefilters by k-mer
-matching — reads with no receptor k-mer are rejected before alignment. At 150 nt
-reads, 16 threads (`scripts/bench_prefilter.py`):
-
-| receptor content | throughput |
-|-----------------:|-----------:|
-| 100% (amplicon)  | ~5.7k reads/s |
-| 10%              | ~19k reads/s |
-| 1% (blood RNA-seq) | ~25k reads/s |
-
-Extrapolated to a **32-core node**, a 30M-read bulk RNA-seq library (~1% receptor)
-annotates in roughly **10–20 min** — the same order of magnitude as a STAR genome
-alignment pass on the same data (STAR is faster per read, but arda maps only to a
-tiny germline DB and the non-receptor majority costs just prefilter rejection).
-Large FASTQ is **streamed in bounded chunks** (a background reader prefetches the
-next chunk while the current one is annotated), so memory stays flat regardless of
-input size — `--chunk-size` tunes it.
+A ready-to-use **Nextflow module** lives in [`integrations/nextflow/arda/`](integrations/nextflow/arda/):
+copy it to `modules/local/arda/`, feed it the trimmed per-sample FASTQ channel the aligners
+already use, and it publishes per-sample clonotype tables to `${params.outdir}/arda/`. It ships a
+conda `environment.yml` (works with `-profile conda`) and a `Dockerfile`, and emits a
+`versions.yml`. See its [README](integrations/nextflow/arda/README.md) and the
+[pipeline-integration guide](https://docs.isalgo.dev/arda/pipeline_integration.html).
 
 ## Roadmap / TODO
 
-See [`ROADMAP.md`](ROADMAP.md). Done: V·J reference build (5 organisms), MMseqs2
-mapping, C++ markup transfer, reverse-complement, all-loci querying, streaming I/O,
-out-of-frame junctions, **D-segment mapping incl. D-D fusions** (IGH/TRB/TRD, on
-nucleotide *and* protein input, E-value gated, genomic-order constrained),
-**constant-region `J + C` scaffolds** (`c_call`/`c_class` isotype), **bulk RNA-seq
-mode** (`rnaseq map`/`assemble`/`correct`/`run`), **long-CDR3 contig assembly**,
-**coverage-based expression** (`duplicate_count`/`consensus_count`), **junction markup
-+ repair on bare records** (`arda markup`, `arda.cdr3fix`), **D on a bare junction**
-(`arda.annotate.dmap`) and **the aa D posterior** (`arda.dpost`), precompiled indexes,
-**multi-node (SLURM) sharding**. Next: full-depth clonotype benchmarking, and an
-`arda.hmm` semi-Markov model of V→N→D→N→J that would subsume the E-value gate, the
-genomic-order constraint and the D posterior into one forward–backward pass.
+See [`ROADMAP.md`](ROADMAP.md) for the full list. Done: the V·J reference build across
+5 organisms, MMseqs2 mapping with C++ markup transfer, all-loci querying, streaming I/O,
+**D-segment mapping incl. D-D fusions** (nt *and* aa input, E-value gated, genomic-order
+constrained), **constant-region `J + C` scaffolds** (`c_call`/`c_class` isotype), **bulk
+RNA-seq mode** with long-CDR3 contig assembly and coverage-based expression, **junction
+markup + repair on bare records**, **multi-node (SLURM) sharding**, **the segment-based
+fast paths** (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilter`,
+`--indel-rescue`) and **`arda export-ref`**.
+
+Next: full-depth clonotype benchmarking; a segment-native per-read path that removes MMseqs2
+from the amplicon hot loop; and an `arda.hmm` semi-Markov model of V→N→D→N→J that would
+subsume the E-value gate, the genomic-order constraint and the D posterior into one
+forward–backward pass.
 
 ## Development
 
@@ -323,10 +448,9 @@ python -m pytest tests/realworld -q                   # vs IgBLAST, on committed
 env RUN_BENCHMARK=1 python -m pytest tests/benchmark -s   # timing/memory/scaling
 ```
 
-Optional extras gate optional suites:
-`.[groundtruth]` (`olga`) for the generative ground-truth tests that keep `arda.cdr3fix`
-honest, `.[test]` for `airr` schema validation. Without them those tests **skip**, so
-`pip install -e '.[test]'` before reading a green suite as full coverage.
+Optional extras gate optional suites: `.[groundtruth]` (`olga`) for the generative ground-truth
+tests that keep `arda.cdr3fix` honest, `.[test]` for `airr` schema validation. Without them those
+tests **skip**, so `pip install -e '.[test]'` before reading a green suite as full coverage.
 
-Layout: `src/arda/{refbuild,annotate}`, C++ in `src/_markup/markup.cpp`,
-references in `database/`, downloads in gitignored `bin/` + `data/`.
+Layout: `src/arda/{refbuild,annotate}`, C++ in `src/_markup/markup.cpp` and
+`src/_segmap/segmap.cpp`, references in `database/`, downloads in gitignored `bin/` + `data/`.

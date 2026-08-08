@@ -682,11 +682,11 @@ def rnaseq_slurm(
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
     partition: Optional[str] = typer.Option(None, help="SLURM partition."),
     time_limit: str = typer.Option("04:00:00", "--time", help="Walltime per array task."),
-    mem: str = typer.Option("8G", help="Memory per array task (Stage 1 is flat, ~300-400 MB)."),
+    mem: str = typer.Option("8G", help="Memory per array task (Stage 1 is flat, ~300-650 MB)."),
     reduce_time: str = typer.Option("08:00:00", help="Walltime for the reduce step."),
     reduce_mem: str = typer.Option(
         "16G", help="Memory for reduce. Stage 3 holds the clone set: budget ~4 GB, more for a "
-                    "B-cell-rich sample (2.7 GB measured at 28k clonotypes)."),
+                    "B-cell-rich sample (2,071.7 MB measured on 28,444 clonotypes)."),
     submit: bool = typer.Option(False, "--submit", help="Run the generated script."),
 ) -> None:
     """Write (and optionally submit) a SLURM script: split → array-``map`` → reduce.

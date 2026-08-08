@@ -1,9 +1,9 @@
 """Wall time and peak RSS for one pipeline stage.
 
 Only `map` used to report resources, which left the expensive stage unmeasured: mapping is
-flat (~300-400 MB at any depth) while Stage 3 holds the clone set, and a B-cell-rich tumour
-peaked at 2.7 GB on 28k clonotypes. Anyone sizing a SLURM `--mem` or Nextflow `memory`
-directive from the mapping number alone would be OOM-killed.
+flat (~300-650 MB at any depth) while Stage 3 holds the clone set, and on a B-cell-rich tumour
+(28,444 clonotypes from 105M reads) `correct` peaked at 2,071.7 MB. Anyone sizing a SLURM
+`--mem` or Nextflow `memory` directive from the mapping number alone would be OOM-killed.
 
 What the numbers mean, exactly -- because `resource.getrusage` offers no way to be more
 precise, and a vaguer definition here would be a lie rather than a simplification:

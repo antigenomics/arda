@@ -89,8 +89,216 @@ length (``error_rate * junction_len`` per substitution; ~1/20 at a 45 nt junctio
 somatic-hypermutation indels, and tested only over reads that observe the discriminating
 position. Each clonotype's D is mapped once into its error-corrected junction
 (``d_call``/``d2_call``/``d_support``), not voted over reads — D is a function of the junction.
+See :doc:`error_correction` for the abundance model, what ``--error-rate``/``--max-subs``
+actually do, and where the method reaches its limit.
 ``arda igblast -i reads.fastq -o truth.airr.tsv`` runs IgBLAST across all loci as a
 gold-standard reference for benchmarking.
+
+.. _choosing a mode:
+
+Choosing a mode
+---------------
+
+``arda rnaseq map`` ships a default one-pass path plus two **alternative** accelerations. They
+attack different terms of the cost, and picking one by habit rather than by regime is the
+easiest way to make arda slower than its own default.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 34 48
+
+   * - regime
+     - configuration
+     - what it exploits
+   * - amplicon / RepSeq
+     - ``--two-pass --fast-segments --v-only-on-segment``
+     - Reads span V into J, so a cheap structural pass over a 924-target segment reference can
+       name the scaffold and the 15,414-scaffold search is mostly never run.
+   * - bulk RNA-seq
+     - ``--prefilter``
+     - Only 1–5 % of reads are receptor-derived, so the dominant cost is *proving the other
+       95–99 % are not*. A C++ 16-mer screen answers that before MMseqs2 is invoked at all.
+
+.. warning::
+
+   **The two configurations do not compose, and neither half is optional.**
+
+   * ``--two-pass`` **alone is a loss**: 0.762× on bulk and 0.87× on an IGH amplicon. It pays
+     only together with ``--fast-segments``.
+   * ``--fast-segments`` and ``--v-only-on-segment`` are ignored without ``--two-pass``.
+   * ``--prefilter`` does **not** compose with ``--fast-segments``. Measured, the combination
+     is slower than either lever on its own.
+
+   The predictor is not the library type but ``fast_fraction`` in the ``--report`` JSON: the
+   fraction of reads that hit **both** a V and a J segment. A primer-anchored TCR amplicon sits
+   near .85; an IGH RepSeq library sits near .50; a bulk library sits near .05. Run 100 k reads,
+   read ``fast_fraction``, then choose.
+
+Amplicon / RepSeq
+~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # one shot
+   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --threads 8 \
+       --two-pass --fast-segments --v-only-on-segment
+
+   # or stage by stage
+   arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report map.json \
+       --threads 8 --two-pass --fast-segments --v-only-on-segment
+   arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv --report assemble.json
+   arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv \
+       -o clones.tsv --report correct.json
+
+.. important::
+
+   ``correct`` takes the Stage-3 output through ``--extra-airr``. Omit it and the contigs
+   ``assemble`` just built are silently discarded — the clonotypes whose CDR3 no single read
+   spans never reach the table. ``arda rnaseq run --assemble`` wires this up for you.
+
+Measured on the same 100 k-read TRA amplicon, in one job, at 8 threads:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 18 18 18
+
+   * - tool
+     - wall (s)
+     - CPU (s)
+     - peak RSS (MB)
+   * - arda ``--two-pass --fast-segments --v-only-on-segment``
+     - **5.35**
+     - **12.73**
+     - **631**
+   * - MiXCR 4.7.0 ``align --preset rna-seq --species hsa``
+     - 5.90
+     - 45.24
+     - 3,027
+
+That is 1.10× on wall, **3.6× less CPU** and **4.8× less RSS**. The wall figures are close
+because both tools are already near the I/O floor at this size; the CPU and RSS columns are
+where the difference lives, and they are what decides how many samples fit on a node.
+
+On real IGH RepSeq at 32 threads (aldan3, 100 k pairs), against arda's own shipped one-pass
+default:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 18 18 18 20
+
+   * - dataset
+     - default (s)
+     - amplicon cfg (s)
+     - default RSS (MB)
+     - amplicon cfg RSS (MB)
+   * - IGH_repertoire
+     - 316.44
+     - **76.25**
+     - 4,018
+     - **1,479**
+   * - IGH_naive
+     - 305.32
+     - **64.86**
+     - 3,736
+     - **1,363**
+
+4.15× and 4.71× respectively, at roughly a third of the memory.
+
+Bulk RNA-seq
+~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # one shot
+   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --threads 8 --prefilter
+
+   # or stage by stage
+   arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report map.json \
+       --threads 8 --prefilter
+   arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv --report assemble.json
+   arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv \
+       -o clones.tsv --report correct.json
+
+``--prefilter`` drops reads that share no exact 16-mer with the reference before ``createdb``
+runs, so the FASTA write and the DB build are skipped along with the search. It costs ~0.5 % of
+real reads — concentrated in J→C and hypermutated IGH — which is why it is off by default.
+
+Measured on 100 k bulk RNA-seq reads:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 18 18 18
+
+   * - tool
+     - wall (s)
+     - CPU (s)
+     - peak RSS (MB)
+   * - arda
+     - 2.51
+     - 5.40
+     - 234
+   * - MiXCR 4.7.0
+     - 4.54
+     - 31.80
+     - 3,022
+   * - TRUST4
+     - **1.91**
+     - **4.36**
+     - **192**
+
+.. note::
+
+   TRUST4's row is **not the same stage of work**. It measures candidate *extraction* — which
+   reads look receptor-derived — while arda's and MiXCR's rows measure a per-read AIRR
+   Rearrangement record with gene calls and a junction. TRUST4 does that annotation later, on
+   ~1,000 assembled contigs rather than per read. Quote the row only with that caveat attached.
+
+Accuracy in the amplicon configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Against an IgBLAST truth on the same 100 k-read TRA amplicon (arda 2.11.1):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 22 22
+
+   * - metric
+     - arda
+     - MiXCR
+   * - ``v_gene`` recall
+     - .9867
+     - **.9973**
+   * - ``v_gene`` precision
+     - **.9996**
+     - .9978
+   * - ``v_allele`` resolved
+     - **.9868**
+     - n/a
+   * - ``j_gene`` recall
+     - .9892
+     - **.9904**
+   * - ``j_gene`` precision
+     - .9953
+     - **.9995**
+   * - ``junction`` precision among emitted
+     - .99919
+     - **.99991**
+
+arda trades a little recall for precision on the V call: it **declines rather than guesses**,
+which is why its ``v_gene`` precision is the higher of the two. MiXCR emits ``*00`` for every
+allele, i.e. it makes no allele call at all, so there is no ``v_allele`` figure to compare
+against.
+
+.. note::
+
+   **Score alleles as tie lists, not as exact strings.** IgBLAST and arda both report ambiguous
+   allele calls as comma-joined sets (``TRAV8-4*01,TRAV8-4*04,TRAV8-4*05``); an exact-string
+   comparison marks a correct-but-ambiguous call wrong. Across 25 cluster datasets the median
+   ``v_allele`` score is **.8328** scored exactly against **.9763** scored as tie-list
+   membership — the same output, a 14-point difference in the scorer.
+
+Junction correctness is discussed in :ref:`what a junction disagreement means`, which also says
+which kinds of disagreement are *not* errors.
 
 Junction markup and repair
 --------------------------
@@ -174,10 +382,11 @@ happened and what it cost. Three resource fields appear on every stage:
 
 .. note::
 
-   Budget for **Stage 3**, not Stage 1. Mapping is flat at ~300-400 MB regardless of read
-   depth, but ``assemble``/``correct`` hold the clone set: a B-cell-rich tumour peaked at
-   2.7 GB on 28k clonotypes while a colder sample with *more* reads used 314 MB. Peak RSS
-   tracks repertoire richness, not read depth.
+   Budget for **Stage 3**, not Stage 1. Mapping is flat at ~300-650 MB regardless of read
+   depth, but ``assemble``/``correct`` hold the clone set: on a B-cell-rich tumour
+   (28,444 clonotypes from 105 M reads) Stage-3 ``correct`` peaked at **2,071.7 MB**, while a
+   colder sample with *more* reads (139 M) peaked at **549 MB**. Peak RSS tracks repertoire
+   richness, not read depth. Budget ~4 GB.
 
 The report also carries ``arda_version``, ``mmseqs_version`` and a ``reference`` fingerprint
 (path, size, mtime). If two runs disagree, compare those first — a different aligner build or a

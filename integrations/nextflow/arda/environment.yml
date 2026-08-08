@@ -2,12 +2,34 @@ channels:
   - conda-forge
   - bioconda
 dependencies:
-  - python >=3.10
+  # UPPER-BOUNDED, and that bound is load-bearing. arda-mapper ships binary wheels for cp310-cp313
+  # only (it has C++ extensions: the segment mapper and the k-mer prefilter). A bare `>=3.10` let
+  # conda resolve Python 3.14 -- measured, on this machine -- and pip then has to build the
+  # extensions from the sdist inside the env, which needs a toolchain the image does not promise.
+  # Raise the ceiling only after cp314 wheels are published.
+  - python >=3.10,<3.14
   # PINNED EXACTLY, not `>=15`. An mmseqs index is only reusable by the release that built it,
   # so a floating pin lets conda resolve a *different aligner* than the CLI and SLURM paths use.
-  # That is an accuracy-differs-between-run-modes hazard, not merely a caching one.
+  # That is an accuracy-differs-between-run-modes hazard, not merely a caching one. This is also
+  # the build the module pins $ARDA_MMSEQS to (see main.nf).
   - bioconda::mmseqs2 =18.8cc5c
   - pip
   - pip:
-      # seqtree (needed by `arda rnaseq correct`) is a core dependency since 2.5.5 -- no extra.
-      - arda-mapper==2.7.2
+      # seqtree (needed by `arda rnaseq correct`) is a core dependency -- there is no extra to add.
+      #
+      # ⛔ 2.12.0 IS THE MINIMUM, and it is not a nicety. MEASURED against the released 2.11.1 env
+      # that Nextflow builds from this very file: `arda rnaseq run` there accepts `--two-pass` and
+      # NOTHING ELSE of the tuning set --
+      #     PRESENT --two-pass
+      #     MISSING --fast-segments --v-only-on-segment --prefilter --indel-rescue
+      # -- so BOTH regime presets abort with "No such option: --fast-segments" / "--prefilter", and
+      # the only combination 2.11.1 can run is `--two-pass` alone, which is the one combination
+      # that is a LOSS in both regimes (0.762x bulk, 0.87x IGH amplicon).
+      #
+      # ⚠ A git pin does NOT rescue this yet, and that was measured too: the commits carrying the
+      # flags are still LOCAL -- `master` is ahead of `origin/master`, so
+      # `arda-mapper @ git+https://github.com/antigenomics/arda@master` builds and installs 2.11.1
+      # WITHOUT them, failing identically. Until master is pushed and 2.12.0 released, the only
+      # working substitute is a local checkout:
+      #   - "arda-mapper @ file:///abs/path/to/arda"
+      - arda-mapper==2.12.0
