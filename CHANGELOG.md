@@ -36,6 +36,23 @@ against IgBLAST: bulk **.1129 → .7842**, amplicon **.9685 → .9953**.
 Gated on the scaffold declaring `j_sequence_start`/`vj_end`: the aa markup does not, and blanking
 on a reference that cannot say deleted every protein-input `j_call`.
 
+### Changed — AIRR TSV formatting moved into the `_markup` C++ extension
+
+`airr_out.format_rows` did, per record, 52 `dict.get` calls, 52 `None` tests, 52 exact-type tests,
+a 52-element list build and a `str.join` -- 2.8 M dict lookups and 2.8 M list appends per 54 k-record
+chunk. It was the largest single block of Python left on the per-read path.
+
+`_markup.format_rows` does the same work with the column-name objects hashed once and the chunk
+accumulated into one buffer. **In-run A/B on 100 k amplicon reads: 0.365 s -> 0.171 s (2.1x), about
+3.4 % of end-to-end wall.** Output is byte-identical, asserted by `tests/unit/test_airr_out.py`
+across filled records, all-`None` records, missing keys, non-string values and non-ASCII.
+
+⚠ The microbenchmark says 3.4x and cProfile attributes 0.914 s of own time to this function; both
+overstate it. The uninstrumented in-run measurement (0.365 s, 6.3 % of wall) is the one to quote.
+
+The Python version stays as `_format_rows_py` -- the reference implementation, the fallback when the
+extension is not built, and the thing the equivalence test compares against.
+
 ### Added — `build-db --allow-chimeras`: the TRDV x TRAJ scaffolds the default refuses
 
 The default reference declines to build `TRDV x TRAJ` on the grounds that TRDV1/2/3 are dedicated

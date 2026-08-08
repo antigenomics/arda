@@ -465,9 +465,83 @@ double aln_identity(const std::string& qaln, const std::string& taln,
     return covered ? double(ident) / double(covered) : -1.0;
 }
 
+// ---------------------------------------------------------------------------
+// AIRR TSV row formatting.
+//
+// Profiled at **12.7 % of the wall** of a 100k-read amplicon run (0.697 s for 54,178 records x 52
+// columns): per record the Python version does 52 `dict.get` calls, 52 None tests, 52 exact-type
+// tests, a 52-element list build and a `str.join` -- 2.8 M dict lookups and 2.8 M list appends per
+// chunk. It is the largest single block of Python left on the per-read path.
+//
+// Here the column-name objects are looked up directly (str hashes are cached and these are the
+// SAME objects on every call) and the whole chunk accumulates into one buffer.
+//
+// (E) Two contracts this MUST preserve, both pinned by tests:
+//   * a value of `None` renders as an EMPTY FIELD, never the string "None";
+//   * a MISSING key renders as an empty field too -- the Python version used `dict.get`, so a
+//     producer that did not go through `_empty_record` must not raise. `PyDict_GetItem` returns
+//     NULL for a missing key, landing in the same branch as None, so both hold by construction.
+// A previous attempt at this (an `itemgetter`-based rewrite) was reverted precisely because it
+// broke the missing-key case while producing no measurable gain.
+static std::string format_rows(const py::sequence &records, const py::sequence &columns) {
+    const size_t n_rows = py::len(records);
+    const size_t n_cols = py::len(columns);
+    if (n_rows == 0) return std::string();
+
+    std::vector<py::object> keys;                 // keep the key objects alive for the whole call
+    keys.reserve(n_cols);
+    for (size_t c = 0; c < n_cols; ++c) keys.push_back(columns[c]);
+
+    std::string out;
+    out.reserve(n_rows * n_cols * 6);             // ~6 bytes/field; grows if wrong, never truncates
+
+    for (size_t r = 0; r < n_rows; ++r) {
+        py::object row = records[r];
+        PyObject *dict = row.ptr();
+        const bool is_dict = PyDict_CheckExact(dict);
+        for (size_t c = 0; c < n_cols; ++c) {
+            if (c) out.push_back('\t');
+            py::object owned;                      // holds a strong ref in the non-dict path
+            PyObject *val;
+            if (is_dict) {
+                val = PyDict_GetItem(dict, keys[c].ptr());     // borrowed; NULL if absent
+                if (val == nullptr) {
+                    if (PyErr_Occurred()) throw py::error_already_set();
+                    continue;                                   // missing -> empty field
+                }
+            } else {
+                // Not a plain dict (a Mapping subclass, say): use the generic protocol and treat a
+                // lookup failure as "absent", exactly as `dict.get` did.
+                PyObject *got = PyObject_GetItem(dict, keys[c].ptr());
+                if (got == nullptr) { PyErr_Clear(); continue; }
+                owned = py::reinterpret_steal<py::object>(got);
+                val = owned.ptr();
+            }
+            if (val == Py_None) continue;                       // None -> empty field
+            PyObject *text = val;
+            py::object as_str;
+            if (!PyUnicode_CheckExact(val)) {
+                PyObject *s = PyObject_Str(val);
+                if (s == nullptr) throw py::error_already_set();
+                as_str = py::reinterpret_steal<py::object>(s);
+                text = as_str.ptr();
+            }
+            Py_ssize_t len = 0;
+            const char *utf8 = PyUnicode_AsUTF8AndSize(text, &len);
+            if (utf8 == nullptr) throw py::error_already_set();
+            out.append(utf8, static_cast<size_t>(len));
+        }
+        out.push_back('\n');
+    }
+    return out;
+}
+
 PYBIND11_MODULE(_markup, m) {
     m.doc() = "arda markup-transfer hot path (C++/pybind11)";
-    m.attr("__version__") = "0.4.0";
+    m.attr("__version__") = "0.5.0";
+    m.def("format_rows", &format_rows, py::arg("records"), py::arg("columns"),
+          "Format AIRR records as TSV rows (one trailing newline per row). A None value and a "
+          "missing key both render as an empty field.");
     m.def("project_region", &project_region,
           py::arg("qaln"), py::arg("taln"), py::arg("ref_aln_offset"),
           py::arg("qry_aln_offset"), py::arg("ref_start"), py::arg("ref_end"),

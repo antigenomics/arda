@@ -10,6 +10,15 @@ from .transfer import AIRR_COLUMNS
 
 __all__ = ["write_airr", "airr_header", "format_rows"]
 
+# Hoisted out of the call: a tuple of the SAME str objects every time, so the extension's per-column
+# dict lookups hit cached string hashes instead of re-interning 52 names per record.
+_COLUMNS = tuple(AIRR_COLUMNS)
+
+try:                                              # optional: built by scikit-build-core
+    from .._markup import format_rows as _format_rows_cpp
+except ImportError:                               # pragma: no cover - source checkout without ext
+    _format_rows_cpp = None
+
 
 def write_airr(records: list[dict], path: str | Path) -> Path:
     """Write annotation records to an AIRR-style TSV with stable column order."""
@@ -38,7 +47,20 @@ def format_rows(records: list[dict]) -> str:
     dict lookups for 54,876 rows, ~6 % of the run. Two of those lookups per column were the same
     lookup done twice (once to test for None, once to fetch), and `str()` was called on values that
     are already strings -- `transfer_hit` writes strings for every field it fills.
+
+    Re-profiled on the amplicon path once the search term collapsed, it is **12.7 % of the wall**
+    (0.697 s for 54,178 records x 52 columns), which is why the loop below now lives in
+    ``_markup.format_rows``. The Python version is kept as the reference implementation and the
+    fallback when the extension is not built; the two are asserted byte-identical by
+    ``tests/unit/test_airr_out.py``.
     """
+    if _format_rows_cpp is not None:
+        return _format_rows_cpp(records, _COLUMNS)
+    return _format_rows_py(records)
+
+
+def _format_rows_py(records: list[dict]) -> str:
+    """Reference implementation of :func:`format_rows` (see its docstring)."""
     cols = AIRR_COLUMNS
     out = []
     for rec in records:
