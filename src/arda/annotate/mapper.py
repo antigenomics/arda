@@ -1262,8 +1262,14 @@ def _merge_segment_report(acc: dict, chunk: dict) -> None:
     ``fast_fraction`` is recomputed from the totals rather than averaged -- averaging per-chunk
     fractions weights a 12-read tail chunk the same as a 400 k one.
     """
-    for k in ("implied", "rescued", "no_segment_hit"):
-        acc[k] = acc.get(k, 0) + chunk.get(k, 0)
+    # ⛔ Every counter `_segment_best_hits` emits must be listed here. One that is not gets silently
+    # dropped from the run report, which is indistinguishable from the feature never having run --
+    # the exact shape of failure this pipeline keeps shipping. `v_only_on_segment` was lost this
+    # way: `rescued` and `fast_fraction` moved, so the flag was demonstrably working, while its own
+    # counter read as absent.
+    for k in ("implied", "rescued", "no_segment_hit", "v_only_on_segment"):
+        if k in chunk or k in acc:
+            acc[k] = acc.get(k, 0) + chunk.get(k, 0)
     reasons = acc.setdefault("reasons", {})
     for k, v in chunk.get("reasons", {}).items():
         reasons[k] = reasons.get(k, 0) + v
