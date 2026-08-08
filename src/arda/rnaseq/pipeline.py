@@ -69,6 +69,7 @@ def _provenance() -> dict:
 def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
            organism: str = "human", threads: int = 0, assemble: bool = True,
            complete_only: bool = True, map_d: bool = True,
+           d_max_evalue: float | None = None,
            map_report: dict | None = None, echo=None) -> dict:
     """Run Stages 2-3 over a Stage-1 AIRR and write the clonotype table + merged report.
 
@@ -98,11 +99,13 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
         from .assemble import assemble_contigs
 
         extra = paths["assembled_airr"]
-        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d)
+        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d,
+                                d_max_evalue=d_max_evalue)
         say(f"[arda] assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
     crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d,
+                        d_max_evalue=d_max_evalue,
                         complete_only=complete_only, extra_airr=extra)
     say(f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")
@@ -122,6 +125,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
         r2: str | Path | None = None, organism: str = "human", threads: int = 0,
         reconstruct: bool = False, min_score: float = 75.0, kmer: int | None = 12,
         assemble: bool = True, complete_only: bool = True, map_d: bool = True,
+        d_max_evalue: float | None = None,
         limit: int | None = None, two_pass: bool = False, adaptive: bool = False,
         fast_segments: bool = False, prefilter: bool = False,
         segment_only_v: bool = False, indel_rescue: bool = False,
@@ -137,6 +141,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
     whole = Stage()
     mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
                       reconstruct=reconstruct, min_score=min_score, map_d=map_d,
+                      d_max_evalue=d_max_evalue,
                       kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
                       fast_segments=fast_segments, prefilter=prefilter,
                       segment_only_v=segment_only_v, indel_rescue=indel_rescue)
@@ -145,6 +150,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
 
     report = finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
+                    d_max_evalue=d_max_evalue,
                     map_report=mrep.as_dict(), echo=echo)
     report["wall_seconds"] = round(whole.wall_seconds, 3)
     (out_dir / OUTPUTS["report"].format(prefix=out_prefix)).write_text(
@@ -188,7 +194,8 @@ def _merge_map_reports(paths: list[Path]) -> dict:
 
 def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
            organism: str = "human", threads: int = 0, assemble: bool = True,
-           complete_only: bool = True, map_d: bool = True, echo=None) -> dict:
+           complete_only: bool = True, map_d: bool = True,
+           d_max_evalue: float | None = None, echo=None) -> dict:
     """Merge sharded Stage-1 output, then run Stages 2-3 once over the whole thing.
 
     The shard AIRRs are merged from an **explicit sorted list**, not a bare ``*.tsv`` glob:
@@ -216,4 +223,4 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
             f"{mrep['mapped_reads']}/{mrep['total_reads']} reads mapped; loci={mrep['per_locus']}")
     return finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                   assemble=assemble, complete_only=complete_only, map_d=map_d,
-                  map_report=mrep or None, echo=echo)
+                  d_max_evalue=d_max_evalue, map_report=mrep or None, echo=echo)

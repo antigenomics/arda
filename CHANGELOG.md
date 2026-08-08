@@ -5,6 +5,144 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Added — `--d-max-evalue`: the D call is a dial, and `d_support` ranks it
+
+The E-value that accepts a D call was a fixed operating point. It is now a knob on `annotate` and
+on every `rnaseq` stage that maps D (`map`, `correct`, `assemble`, `run`, `reduce`), and on
+`dmap.map_d_junction`. Measured against IgBLAST at gene level, the shipped 0.2 is deliberately the
+**weakest** band in both libraries tested — it is the highest-recall setting, which is the right
+default for a repertoire tool and the wrong one for a call you will act on:
+
+| `--d-max-evalue` | TRB amplicon: called / rate / agreement | bulk IGH: called / rate / agreement |
+|---|---|---|
+| **0.20** (shipped) | 18,362 / .4026 / .9765 | 648 / .3610 / .9417 |
+| 0.10 | 14,690 / .3221 / .9842 | 557 / .3103 / .9494 |
+| 0.05 | 10,749 / .2357 / .9911 | 461 / .2568 / .9746 |
+| **0.01** | 5,355 / .1174 / **.9985** | 347 / .1933 / **1.0000** |
+
+(TRB: SRR5233641, 45,604 reads with a projected V..J interior against 31,608 IgBLAST D calls at
+`v_score >= 70`. IGH: SRR5233639 at full depth, 1,795 reads with an interior, 1,056 truth calls.)
+
+⛔ The CLI default is `None`, **not** `0.2`. The shipped operating point is alphabet-dependent —
+0.2 for nt, 0.05 for aa — so a literal `0.2` would have silently loosened `--seqtype aa` by 4×
+while looking like a no-op. Pinned by `test_the_d_evalue_cli_default_does_not_loosen_the_aa_gate`.
+
+⚠ A composition-preserving shuffle null puts the false-D rate at **.0884 in TRB** against a real
+call rate of .4025 at the shipped gate (IGH .0095, its germlines being longer). A TRB D at 0.2 is a
+ranked hypothesis, not an identification.
+
+### Fixed — a tandem D-D must run in genomic order
+
+D-D fusion is a rearrangement: the upstream D joins the downstream D and everything between is
+deleted, so the product carries them in genomic 5′→3′ order. `transfer._dd_orientation_ok` refuses
+a pair that does not, over `_D_GENOMIC_ORDER` (`TRBD1 < TRBD2`, `TRDD1 < TRDD2 < TRDD3` — the
+architectures pinned independently of species). Applied **after** the positional sort, because the
+rule is about order on the read, not about which segment scored higher; a refused pair collapses to
+the single higher-scoring D rather than reaching down the score list for a producible partner.
+
+On the TRB amplicon this takes tandem calls **15 → 5**, deleting **only** the impossible ones —
+TRBD2→TRBD1 7→0, TRBD2→TRBD2 3→0, TRBD1→TRBD2 **5→5** — with the single-D count identical either
+way (18,362). The shipped `examples/dd.airr.tsv` record (TRD, `TRDD2*01 → TRDD3*01`) is genomic
+order and survives untouched.
+
+⛔ **This does not make TRB tandem D-D real.** Under a flank-only shuffle (100 permutations,
+conditioned on a real first D, D1's span fixed): 5 observed against 2.71 expected, Poisson
+`p = .139`. The pre-fix `p = .0031` was not evidence either — its "excess" *was* the 10 impossible
+calls, which such a shuffle cannot generate and therefore under-counts. What the gate buys is that
+the residual signal is composed only of producible pairs.
+
+⛔ **IGH is deliberately absent from the table.** In *human* IMGT the second number of
+`IGHD<family>-<position>` is the genomic position; in *mouse* it is a family-member index with no
+locus meaning, and the two vocabularies collide on real gene names (`IGHD1-1`, `IGHD2-15`,
+`IGHD5-5`, `IGHD5-12`, `IGHD6-6` exist in both). `_map_d` is handed sequences, not an organism.
+IGH tandem D-D is already 11 → 2 on real bulk IGH from the `/OR` orphon exclusion.
+
+### Added — the clonotype table can now be cut up: D-D markup columns
+
+`correct --map-d` named a `d2_call` and gave no way to find it. It now also emits `np1`/`np2`/`np3`
+and `v_sequence_end`, `d_sequence_start`/`d_sequence_end`, `d2_sequence_start`/`d2_sequence_end`,
+`j_sequence_start` — 1-based closed, in **junction** space (the clonotype table has no read), with
+`-1` for "not located". `DCall.markup(junction_nt)` returns the same cut as labelled parts.
+
+The partition closes: `np1 + D1 + np2 + D2 + np3 == junction[v_sequence_end : j_sequence_start-1]`
+on **every** record carrying a `d2_call` — 5/5 read-level and 4/4 clonotype-level on the TRB
+amplicon, 0 broken. ⛔ The boundaries *inside* the junction are one consistent reading, not ground
+truth: chew-back and N/P addition make the V-end / np / D / J-start partition non-identifiable from
+sequence, hardest for D, which is trimmed at both ends. The tests assert on **calls** and on the
+partition **closing**, never on an NDN-internal boundary.
+
+⚠ Real IGH tandem D-D is **0 in every local dataset at every stage** (0 of 15,070 mapped IGH reads,
+0 of 4,783 assembled contigs, 0 of 1,742 IGH clonotypes) — 100 bp reads do not span a D-D. IGH
+coverage of this path is synthetic.
+
+### Added — quality-aware error correction: `map --junction-quality`, `correct --min-junction-q`, `--ec-mode`
+
+`correct` used no quality information at all, so a sequencing miscall and a real low-frequency
+variant were the same object to it — both are "a rare neighbour of an abundant clonotype" — and
+`--error-rate` could only trade them off globally. Phred does separate them, because it is a
+different measurement. Measured at the mismatching base over 310,559 real MIGEC spike-in windows:
+the parent clone's own bases sit at median Q 38 (5.1 % below Q30), the two published spike-in
+variants at Q 35 and Q 34 (17.6 % / 16.7 %), and the 1-substitution error cloud around them at
+**median Q 24, 54.3 % below Q30**.
+
+Three pieces, all **off by default**; the shipped output does not move.
+
+* `arda rnaseq map --junction-quality` adds a `junction_quality` column — the read's Phred+33
+  string over exactly the bases of `junction`, same orientation. Stage 1 is the only place the
+  FASTQ quality is still in hand (it was read solely for `merge_pair`'s tie-break and discarded).
+  +2.2 % wall and +4.4 % bytes on 100 k amplicon reads. ⛔ For a `rev_comp` hit the quality belongs
+  to the read as submitted while every coordinate is on the coding strand, so it is reversed and
+  then **verified against the junction it claims to describe** — a same-length slice off the wrong
+  strand is a corruption nothing downstream can detect. Verified on 4,370 junction-bearing reads
+  (4,365 of them reverse-strand) against an independent FASTQ extraction: 4,370 exact, 0 wrong.
+  Refused with `--reconstruct`, whose merged fragment has no single input quality string.
+* `arda rnaseq correct --min-junction-q Q` drops a read whose junction differs from its putative
+  parent at any base below Q. Matching bases are not evidence and are never read, so this is not a
+  min/mean quality over the junction. A clonotype with no more-abundant neighbour is never gated, a
+  read with no quality string is kept, and a missing `junction_quality` column **raises** rather
+  than silently not gating.
+* `arda rnaseq correct --ec-mode fast|accurate` presets it. `fast` is byte-identical to today's
+  default; `accurate` is `--min-junction-q 20`, the low end of the plateau (the effect is flat over
+  Q20–32 and eats real variants by Q35). `binom`/`betabinom` are deliberately **not** in a mode:
+  measured on the same 302 k-read library at `--error-rate 1e-5`, `betabinom` returns byte-for-byte
+  the same 1,633 clonotypes as `simple` at 98× the wall, and `binom` reaches 23 clonotypes but at
+  57× — and on a monoclonal precision arm both are exact no-ops (301 clonotypes either way).
+
+What it buys: keeping both published MIGEC variants used to cost Jurkat TRB purity .99540 → .96034.
+With the gate on it costs nothing — 2/2 variants at TRB purity **.99530 (Q20) to .99600 (Q35)**,
+at or above the shipped default's purity, which keeps neither variant. Jurkat's spurious load falls
+from 297 to 62 distinct junctions with the true clone untouched. ⛔ It cannot rescue the 0.0072 %
+variant: that one sits below the RT template-error floor, whose competitors are high-Q by
+construction.
+
+### Added — `v_mutations` / `j_mutations`: the SHM record, in germline coordinates
+
+Two new AIRR columns, `G45A,C112T` — germline base, 1-based position **in that segment's own
+germline allele**, read base. Built in the walk `segment_cigars` already makes, so the marginal cost
+is **36 ms per 100,000 mapped reads** (measured on 35,825 real bulk IG alignments: 26.9 → 39.7 ms,
+cigars byte-identical) and **+2.25 %** on the output TSV (21,461,770 → 21,944,646 bytes).
+
+The information was not missing. `sequence_alignment` / `germline_alignment` already carry every
+column, and the germline they report matches the shipped allele on **28,365 of 28,365** mapped reads
+of a real bulk IG library (66,526 V mismatches, zero disagreements). What was missing is that
+recovering it needs arda's scaffold geometry — a consumer that does the obvious thing and diffs the
+two alignment strings gets 100,091 mismatches on that library, of which **20,140 (20.1 %) are N-pad
+or constant-region columns**: it attributes junction positions to a germline.
+
+⛔ Which is why the scoping is structural rather than a filter. A mutation inside the V..J interior
+is not attributable to any germline — recombination chews the segment ends back and adds
+non-templated N/P bases, so the V-end / NDN / J-start partition of a junction often is not
+identifiable from the sequence at all. The lists are built only for the V and J segments; the pad is
+not a segment, so an NDN position has no germline coordinate to be filed under and cannot enter the
+list by any code path. Substitutions only: indels stay in the CIGAR (`I`/`D`), and germline
+coordinates past an indel are still correct because the walk tracks the target position across the
+gap columns.
+
+An AIRR/SAM extended CIGAR (`=`/`X` in place of `M`) was the alternative and is 34 % smaller
+(+272,524 bytes against 411,202 on the same run), but it does not carry the germline base — so a
+consumer still has to fetch the allele and re-index it — and it changes the meaning of a shipped
+column instead of adding one.
+
 ### Fixed — conflicting CDR3-anchor rows were resolved by file order
 
 IMGT ships two accessions under one allele name (mouse `IGKV10-96*01` is both AF441451/287 nt and

@@ -16,6 +16,32 @@ CIGAR operators follow the AIRR spec (SAM subset):
 
 ``segment_cigars`` builds all three in a SINGLE pass over the aligned strings.
 
+SOMATIC HYPERMUTATION (``v_mutations`` / ``j_mutations``). The same walk answers "which germline
+positions does this read differ at", which is the input an SHM or lineage-tree tool needs, so it is
+emitted from here rather than re-derived downstream: ``G45A,C112T`` — germline base, 1-based
+position in that segment's OWN germline, read base.
+
+The information was already recoverable — ``sequence_alignment`` and ``germline_alignment`` carry
+every column, and on a real bulk IG library the germline they report matches the shipped allele on
+28,365 of 28,365 mapped reads (66,526 V mismatches, zero disagreements). What it was not, was
+*usable*: recovering it needs the scaffold geometry (``mmseqs2_tstart``, ``mmseqs2_t_vend``,
+``mmseqs2_t_jstart``, ``mmseqs2_t_vjend``) and the knowledge that arda aligns to a `V + pad + J`
+scaffold rather than to a germline. A consumer that does the obvious thing instead — diff the two
+AIRR alignment strings — gets 100,091 mismatches on that library of which **20,140 (20.1 %) are
+N-pad or constant-region columns**, i.e. it attributes junction positions to a germline.
+
+⛔ Which is the reason the scoping here is STRUCTURAL and not a filter. A mutation inside the
+V..J interior is not attributable to any germline: V(D)J recombination chews the segment ends back
+and adds non-templated N/P bases, so the V-end / NDN / J-start partition of a junction is often not
+identifiable from the sequence at all. The mutation lists are built only for ``seg_key`` V and J —
+the pad is not a segment, so a pad column has no germline coordinate to be recorded under and
+cannot enter the list by any code path. Nothing downstream needs to remember to exclude it.
+
+Substitutions only. Indels are in the CIGAR (``I``/``D``) and stay there: an SHM indel is one event
+of unbounded length, not a per-position call, and its representation would have to be re-interpreted
+by every consumer. The germline coordinates on the far side of an indel are still correct, because
+the walk tracks the target position across the gap columns.
+
 Correcting cigars for CONTIGS (Stage 3). A contig is just a long query, so BOTH ways to get its
 cigars end in ``segment_cigars`` and produce the same record (see :mod:`arda.annotate.contig`):
 
@@ -106,18 +132,20 @@ def _germline_pos(key: str, t: int, t_jstart: int, t_vjend: int) -> int:
     return t - t_vjend                                    # C: germline starts one past the V-J end
 
 
+#: A column carries mutation evidence only if BOTH bases are an unambiguous ACGT. The scaffold's
+#: N-pad never reaches the test (``_classify`` returns None there), but a read ``N`` would
+#: otherwise be recorded as a somatic mutation.
+_ACGT = frozenset("ACGT")
+
+
 def _segment_cigars_py(qaln: str, taln: str, qstart: int, tstart: int, qlen: int,
                        t_vend: int, t_jstart: int, t_vjend: int) -> dict[str, str]:
-    """Return ``{"v_cigar":…, "j_cigar":…, "c_cigar":…}`` (only the segments that have a body).
-
-    ``qaln``/``taln`` are the mmseqs aligned strings (``-`` for gaps), ``qstart``/``tstart`` their
-    1-based query/target start, ``qlen`` the full query length. Boundaries are 1-based scaffold
-    positions; pass 0 for an absent segment.
-    """
+    """Reference implementation of :func:`segment_cigars` (see its docstring)."""
     body: dict[str, list[str]] = {"v": [], "j": [], "c": []}
     q_first: dict[str, int] = {}
     q_last: dict[str, int] = {}
     g_first: dict[str, int] = {}
+    muts: dict[str, list[str]] = {"v": [], "j": []}
     q, t = qstart, tstart
     for qa, ta in zip(qaln, taln):
         cq, ct = qa != "-", ta != "-"
@@ -130,6 +158,10 @@ def _segment_cigars_py(qaln: str, taln: str, qstart: int, tstart: int, qlen: int
                 q_last[key] = q
             if ct:
                 g_first.setdefault(key, _germline_pos(key, t, t_jstart, t_vjend))
+            if op == "M" and key in muts:
+                gb, rb = ta.upper(), qa.upper()
+                if gb != rb and gb in _ACGT and rb in _ACGT:
+                    muts[key].append(f"{gb}{_germline_pos(key, t, t_jstart, t_vjend)}{rb}")
         if cq:
             q += 1
         if ct:
@@ -142,6 +174,9 @@ def _segment_cigars_py(qaln: str, taln: str, qstart: int, tstart: int, qlen: int
         cig = build_cigar(q_first[key] - 1, g_first.get(key, 1) - 1, ops, qlen - q_last[key])
         if cig:
             out[f"{key}_cigar"] = cig
+    for key, m in muts.items():
+        if m:
+            out[f"{key}_mutations"] = ",".join(m)
     return out
 
 
@@ -159,11 +194,17 @@ except ImportError:  # pragma: no cover - source checkout without the built exte
 
 def segment_cigars(qaln: str, taln: str, qstart: int, tstart: int, qlen: int,
                    t_vend: int, t_jstart: int, t_vjend: int) -> dict[str, str]:
-    """Return ``{"v_cigar":…, "j_cigar":…, "c_cigar":…}`` (only the segments that have a body).
+    """Per-segment AIRR fields from ONE walk of the alignment: ``v_cigar``/``j_cigar``/``c_cigar``
+    and ``v_mutations``/``j_mutations`` (only the keys that have content).
 
     ``qaln``/``taln`` are the mmseqs aligned strings (``-`` for gaps), ``qstart``/``tstart`` their
     1-based query/target start, ``qlen`` the full query length. Boundaries are 1-based scaffold
     positions; pass 0 for an absent segment.
+
+    The mutation lists are ``G45A,C112T`` — germline base, 1-based position **in that segment's own
+    germline**, read base — and they are what makes the SHM in an arda record usable without
+    re-deriving it. See :mod:`arda.annotate.cigar`'s module docstring for why the segment scoping is
+    structural rather than a filter.
     """
     if _segment_cigars_cpp is not None:
         return _segment_cigars_cpp(qaln, taln, qstart, tstart, qlen,

@@ -513,12 +513,16 @@ def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_sca
     assert airr.exists() and clones.exists() and rep.exists()
 
     # the clonotype table carries the correct-stage schema even when biology yields few rows.
-    # The four D columns are appended by `correct --map-d` (on by default): D is a function of
-    # the corrected junction, so it is called once per clonotype rather than voted over reads.
+    # The D columns are appended by `correct --map-d` (on by default): D is a function of the
+    # corrected junction, so it is called once per clonotype rather than voted over reads. The
+    # coordinates and np regions ride along because `d2_call` alone is not D-D MARKUP -- a
+    # consumer cannot find the second D without the span it was called on.
     cols = pl.read_csv(clones, separator="\t", infer_schema_length=0).columns
     assert cols == ["junction", "junction_aa", "v_call", "j_call", "c_call", "locus",
                     "duplicate_count", "consensus_count",
-                    "d_call", "d2_call", "d_support", "d2_support"]
+                    "d_call", "d2_call", "d_support", "d2_support", "np1", "np2", "np3",
+                    "v_sequence_end", "d_sequence_start", "d_sequence_end",
+                    "d2_sequence_start", "d2_sequence_end", "j_sequence_start"]
 
     # the merged report carries both stages, at the version the module used (defaults: k=12, min 75)
     r = json.loads(rep.read_text())
@@ -596,7 +600,7 @@ def test_assemble_rescues_incomplete_reads_via_contig(tmp_path, monkeypatch):
     pl.DataFrame(rows).write_csv(airr, separator="\t")
 
     JN, JA = "TGT" + "GCTAGA" * 12 + "TGG", "C" + "AR" * 12 + "W"   # canonical, in frame, no stop
-    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0, map_d=True: [
+    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0, map_d=True, d_max_evalue=None: [
         {"sequence_id": cid, "junction": JN, "junction_aa": JA, "v_call": "IGHV3-23*01",
          "j_call": "IGHJ4*02", "locus": "IGH", "d_call": "IGHD3-10*01", "d_support": "0.01",
          "np1": "GG", "np2": "TT"} for cid, _ in records])

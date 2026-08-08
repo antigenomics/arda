@@ -62,6 +62,15 @@ AIRR_COLUMNS = (
      # Per-segment CIGARs. Each is the sub-walk of the one query->scaffold alignment whose target
      # falls in that segment's germline range, with the rest of the read soft-clipped (see cigar.py).
      "v_cigar", "j_cigar", "c_cigar",
+     # SHM in each segment's OWN germline frame: `G45A,C112T` -- germline base, 1-based germline
+     # position, read base. Same alignment walk as the cigars, so it costs nothing extra, and it is
+     # what a lineage/SHM tool consumes. `germline_alignment` already CONTAINED this (verified: the
+     # germline it reports matches the shipped allele on 28,365 of 28,365 bulk IG reads), but
+     # recovering it needs arda's scaffold geometry -- a consumer that just diffs the two alignment
+     # strings attributes 20.1 % of the mismatches it finds to a germline that is not there, because
+     # the scaffold's N-pad and C region are in the same strings. Scoped to V and J STRUCTURALLY:
+     # the pad is not a segment, so a junction position has no germline coordinate to be filed under
+     # and cannot enter the list by any code path (see cigar.py's module docstring).
      # Germline coordinates (1-based, in the V or J allele). The scaffold's V part is the V germline
      # verbatim (target pos == V-germline pos) and its J part is the full J allele, so these fall
      # straight out of the target span with a constant offset -- no separate lookup.
@@ -78,6 +87,12 @@ AIRR_COLUMNS = (
      "d_support", "d2_support",
      "j_sequence_start", "np1", "np2", "np3", "junction", "junction_aa"]
     + [c for r in REGIONS for c in (f"{r}_start", f"{r}_end", r, f"{r}_aa")]
+    # ⛔ APPENDED AT THE END, deliberately. These are NON-AIRR-schema extras, and adding them
+    # mid-list (where they first landed, after `c_cigar`) shifted every column from
+    # `v_germline_start` onward -- silently breaking any consumer that reads the shipped set BY
+    # POSITION. It is the same rule `airr_header(extra_columns)` already states for
+    # `junction_quality`: new columns go last, so the shipped prefix never moves.
+    + ["v_mutations", "j_mutations"]
 )
 
 _VSIDE = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3")
@@ -200,6 +215,50 @@ def _allowed_d(d_germlines, j_call: str):
     if not genes or not all(g.startswith("TRBJ1-") for g in genes):
         return d_germlines
     return [(a, s) for a, s in d_germlines if not a.startswith("TRBD2")]
+
+
+#: Genomic 5'->3' rank of the D genes, for the loci whose architecture pins it independently of
+#: species. TRB runs TRBD1 - J1 cluster - TRBD2 - J2 cluster; TRD runs TRDD1 - TRDD2 - TRDD3.
+#: Both hold in human, mouse, rat and rhesus -- the same architecture argument `_allowed_d` makes.
+#:
+#: ⛔ IGH IS DELIBERATELY ABSENT. In *human* IMGT the second number of `IGHD<family>-<position>`
+#: is the genomic position (IGHD1-1 .. IGHD7-27), but in *mouse* it is a family-member index with
+#: no locus meaning -- and the two vocabularies collide on real gene names (`IGHD1-1`, `IGHD2-15`,
+#: `IGHD5-5`, `IGHD5-12`, `IGHD6-6` exist in both). `_map_d` is handed sequences, not an organism,
+#: so a name-parsed IGH rank would silently mis-order mouse. IGH tandem D-D is already down from
+#: 11 calls to 2 on real bulk IGH after the `/OR` orphon exclusion above; the remaining 2 are not
+#: worth a species-dependent rule. Genes absent here impose NO constraint.
+_D_GENOMIC_ORDER = {
+    "TRBD1": 0, "TRBD2": 1,
+    "TRDD1": 0, "TRDD2": 1, "TRDD3": 2,
+}
+
+
+def _dd_orientation_ok(alleles5, alleles3) -> bool:
+    """Can a deletional D-D join put ``alleles5`` 5' of ``alleles3`` on the read?
+
+    D-D fusion is a rearrangement like any other: the upstream D joins to the downstream D and
+    everything between them is deleted, so the fused product carries them in GENOMIC order. A
+    read whose 5' D lies 3' of its 3' D in the germline locus therefore names a product that
+    deletional joining cannot make. Measured on a real TRB amplicon: **10 of 15 tandem calls
+    were TRBD2 -> TRBD1**, i.e. the impossible direction, which is what a chance second hit
+    looks like when the two germlines are 16 nt and 12 nt of shared-composition sequence.
+
+    Strict ``<``: equal rank means the SAME gene twice, which needs two germline copies and is
+    likewise not producible.
+
+    Either side may be an allele ambiguity list (byte-identical germlines across genes). One
+    producible assignment is enough -- the call does not claim which member it was. A gene
+    outside :data:`_D_GENOMIC_ORDER` (all of IGH) constrains nothing and passes.
+    """
+    genes5 = {a.split("*")[0] for a in alleles5}
+    genes3 = {a.split("*")[0] for a in alleles3}
+    for g5 in genes5:
+        for g3 in genes3:
+            r5, r3 = _D_GENOMIC_ORDER.get(g5), _D_GENOMIC_ORDER.get(g3)
+            if r5 is None or r3 is None or r5 < r3:
+                return True
+    return False
 
 
 def _d_min_score(interior_len: int, db_nt: int, max_evalue: float | None = None,
@@ -475,7 +534,7 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"
 
 
 def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
-           seqtype: str = "nt"):
+           seqtype: str = "nt", d_max_evalue: float | None = None):
     """Map D segment(s) into the V..J interior and populate d_call/np regions.
 
     Coordinates emitted are AIRR (1-based closed, query space). A second, non-overlapping
@@ -485,7 +544,14 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
     be the higher-scoring one -- with ``np1``/``np2``/``np3`` between V, the D(s), and J.
 
     ``j_call`` restricts the candidate D set to those genomically 5' of the J (see
-    ``_allowed_d``); pass it whenever the J is known.
+    ``_allowed_d``); pass it whenever the J is known. A tandem pair is additionally required
+    to run 5'->3' in genomic order (see ``_dd_orientation_ok``); a pair that does not is
+    reported as the single, higher-scoring D.
+
+    ``d_max_evalue`` overrides the shipped operating point (``_D_MAX_EVALUE`` = 0.2 for nt,
+    0.05 for aa) for BOTH segments. Lower is stricter: measured against IgBLAST at gene level,
+    ``0.01`` agrees .9985 on a TRB amplicon and 1.0000 on bulk IGH, against .9765 / .9417 for
+    the shipped 0.2 -- at a lower call rate. ``None`` keeps the shipped value.
 
     ``d_call`` and ``d2_call`` are comma-separated allele ambiguity lists (see ``_best_d``).
 
@@ -510,7 +576,7 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
     d_germlines = _allowed_d(d_germlines, j_call)
     if not d_germlines:
         return
-    min_score = _d_min_score(len(interior), db_nt, seqtype=seqtype)
+    min_score = _d_min_score(len(interior), db_nt, max_evalue=d_max_evalue, seqtype=seqtype)
     d1 = _best_d(interior, d_germlines, min_score)
     if d1 is None:
         return
@@ -522,6 +588,13 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
     if d2 is not None:
         segs.append(d2)
     segs.sort(key=lambda c: c[3])                 # order 5'->3' by interior start
+    # ⛔ ORIENTATION, after sorting and never before: the rule is about the order the two D
+    # segments occupy ON THE READ, not about which of them scored higher. A pair running against
+    # genomic order is not a weaker tandem, it is not a tandem -- so drop the second call
+    # entirely and report the higher-scoring segment alone (`d1`), rather than manufacturing a
+    # producible partner by reaching further down the score list.
+    if len(segs) == 2 and not _dd_orientation_ok(segs[0][2], segs[1][2]):
+        segs = [d1]
 
     def q(off):                                   # interior 0-based offset -> query 1-based
         return i_lo + off
@@ -565,6 +638,7 @@ def transfer_hit(
     d_germlines: list[tuple[str, str]] | None = None,
     submitted_seq: str | None = None,
     anchors: dict | None = None,
+    d_max_evalue: float | None = None,
 ) -> dict:
     """Build an AIRR record by projecting ``ref`` region coords onto the query.
 
@@ -573,6 +647,8 @@ def transfer_hit(
     for a reverse-strand hit it is the reverse complement of ``query_seq`` and ``rev_comp`` is set,
     per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
     ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
+
+    ``d_max_evalue`` overrides the D-call E-value gate; see :func:`_map_d`.
     """
     # ⛔ ONE walk of the alignment, not four. Besides the seven regions, this function needs three
     # single scaffold positions projected onto the query: the V germline end, the J germline start,
@@ -744,7 +820,8 @@ def transfer_hit(
             rec["stop_codon"] = "F" if (vclean and not j_stop) else "T"
         # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
-        _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call)
+        _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call,
+               d_max_evalue=d_max_evalue)
     else:  # aa input: regions are already amino acids; no frame bridging needed.
         for name, (qs, qe) in region_q.items():
             rec[f"{name}_aa"] = query_seq[qs - 1 : qe]
@@ -760,5 +837,6 @@ def transfer_hit(
         # D (and tandem D-D) against the three translated frames of each D germline. Only IGH
         # keeps enough surviving D to see in protein; the TR loci mostly stay silent, which is
         # the honest answer. Same call, same columns, aa coordinates.
-        _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call, seqtype="aa")
+        _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call, seqtype="aa",
+               d_max_evalue=d_max_evalue)
     return rec

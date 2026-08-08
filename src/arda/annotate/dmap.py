@@ -61,6 +61,39 @@ class DCall:
     def is_dd(self) -> bool:
         return bool(self.d2_call)
 
+    def markup(self, junction_nt: str) -> list[tuple[str, str]]:
+        """The junction cut into labelled parts, 5'->3'.
+
+        ``[("V", ...), ("np1", ...), (d_call, ...), ("np2", ...), (d2_call, ...),
+        ("np3", ...), ("J", ...)]`` for a tandem D-D, without the last two entries for a
+        single D, and ``[("V", ...), ("N", ...), ("J", ...)]`` when no D was called.
+
+        The parts concatenate back to ``junction_nt`` EXACTLY -- that is the contract this
+        method exists to make checkable, and it is what a D-D markup consumer needs: the
+        AIRR columns alone give it as a set of coordinates and three np strings that it
+        must re-derive the D-observed sequence from.
+
+        ⛔ The V-end / np / D-start boundaries INSIDE the junction are not identifiable
+        from sequence -- exonuclease chew-back and N/P addition make the partition
+        probabilistic. This is one consistent reading of the junction, not ground truth.
+        Empty when the V/J split could not be located at all.
+        """
+        if self.v_sequence_end < 0 or self.j_sequence_start < 1:
+            return []
+        js = self.j_sequence_start - 1                      # 1-based closed -> slice index
+        v, j = junction_nt[: self.v_sequence_end], junction_nt[js:]
+        if not self.called:
+            return [("V", v), ("N", junction_nt[self.v_sequence_end : js]), ("J", j)]
+        d1 = junction_nt[self.d_sequence_start - 1 : self.d_sequence_end]
+        parts = [("V", v), ("np1", self.np1), (self.d_call, d1)]
+        if self.is_dd:
+            d2 = junction_nt[self.d2_sequence_start - 1 : self.d2_sequence_end]
+            parts += [("np2", self.np2), (self.d2_call, d2), ("np3", self.np3)]
+        else:
+            parts.append(("np2", self.np2))
+        parts.append(("J", j))
+        return parts
+
 
 def _common_prefix(a: str, b: str) -> int:
     n = 0
@@ -81,8 +114,12 @@ def _d_germlines(organism: str) -> dict[str, list[tuple[str, str]]]:
 
 
 def map_d_junction(junction_nt: str, v_call: str, j_call: str,
-                   species: str = "human") -> DCall:
-    """Map D (and a tandem second D) into a bare nucleotide junction."""
+                   species: str = "human", d_max_evalue: float | None = None) -> DCall:
+    """Map D (and a tandem second D) into a bare nucleotide junction.
+
+    ``d_max_evalue`` overrides the shipped E-value gate on the D call(s); see
+    :func:`arda.annotate.transfer._map_d`. ``None`` keeps the shipped 0.2.
+    """
     organism = resolve_species(species)
     junction_nt = (junction_nt or "").strip().upper()
     locus = resolve_locus(v_call, j_call)
@@ -109,7 +146,8 @@ def map_d_junction(junction_nt: str, v_call: str, j_call: str,
     out.v_sequence_end, out.j_sequence_start = v_end, j_start + 1
 
     rec: dict = {}
-    _map_d(rec, junction_nt, v_end, j_start + 1, germlines, j_call)
+    _map_d(rec, junction_nt, v_end, j_start + 1, germlines, j_call,
+           d_max_evalue=d_max_evalue)
     if not rec.get("d_call"):
         return out
 

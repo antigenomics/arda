@@ -136,7 +136,39 @@ def test_clonotype_d_is_called_on_the_corrected_junction():
     df = pl.DataFrame({"junction": [junction, "TGTGCTTTTTTT"],
                        "v_call": ["TRBV20-1*01", "TRAV1-1*01"],
                        "j_call": ["TRBJ2-1*01", "TRAJ33*01"]})
-    d_call, d2_call, d_support, _ = _clonotype_d(df, "human")
-    assert d_call[0].startswith("TRBD1"), d_call[0]
-    assert float(d_support[0]) < 0.2
-    assert d_call[1] == "" and d2_call[1] == "", "TRA is a VJ locus: no D"
+    cols = {s.name: s for s in _clonotype_d(df, "human")}
+    assert cols["d_call"][0].startswith("TRBD1"), cols["d_call"][0]
+    assert float(cols["d_support"][0]) < 0.2
+    assert cols["d_call"][1] == "" and cols["d2_call"][1] == "", "TRA is a VJ locus: no D"
+    # The markup columns come with the call: np1 + D + np2 must rebuild the interior, so a
+    # consumer of the CLONOTYPE table (which has no read) can cut the junction up unaided.
+    lo, hi = cols["d_sequence_start"][0], cols["d_sequence_end"][0]
+    interior = junction[cols["v_sequence_end"][0] : cols["j_sequence_start"][0] - 1]
+    assert cols["np1"][0] + junction[lo - 1 : hi] + cols["np2"][0] == interior
+    # A VJ-locus row carries no coordinates at all rather than a bogus zero-length span.
+    assert cols["d_sequence_start"][1] == -1 and cols["np1"][1] == ""
+
+
+def test_the_d_evalue_cli_default_does_not_loosen_the_aa_gate():
+    """⛔ `--d-max-evalue` must default to None, never to the literal nt value.
+
+    The calibrated operating point is alphabet-dependent -- 0.2 for nt, 0.05 for aa (the aa D
+    database is 22-38 residues per TR locus and under-calibrated, so it gates tighter). A CLI
+    default of 0.2 looks like a no-op and silently loosens every `--seqtype aa` run by 4x.
+    """
+    import inspect
+
+    from arda import cli
+
+    commands = [cli.annotate, cli.rnaseq_map, cli.rnaseq_correct,
+                cli.rnaseq_assemble, cli.rnaseq_run, cli.rnaseq_reduce]
+    for fn in commands:
+        param = inspect.signature(fn).parameters["d_max_evalue"]
+        assert param.default.default is None, f"{fn.__name__} defaults to {param.default.default}"
+
+    # ...and None really does resolve per alphabet, rather than to one shared constant.
+    from arda.annotate.transfer import _D_AA_MAX_EVALUE, _D_MAX_EVALUE, _d_min_score
+
+    assert _D_AA_MAX_EVALUE < _D_MAX_EVALUE
+    assert _d_min_score(30, 300, None, "aa") == _d_min_score(30, 300, _D_AA_MAX_EVALUE, "aa")
+    assert _d_min_score(30, 300, None, "nt") == _d_min_score(30, 300, _D_MAX_EVALUE, "nt")

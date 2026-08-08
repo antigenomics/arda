@@ -25,7 +25,8 @@ runs. See ``arda-benchmark/results/round14/README.md`` §2.
 
 ⛔ **This is a fast path, not a replacement.** It yields ``junction`` and its coordinates. It does
 *not* yield ``v_identity``, ``sequence_alignment``, ``germline_alignment``, the per-segment CIGARs
-or the ``mmseqs2_*`` block, all of which ``annotate.transfer`` derives from the alignment's
+and mutation lists, or the ``mmseqs2_*`` block, all of which ``annotate.transfer`` derives from the
+alignment's
 ``qaln``/``taln``. Anything needing those still needs the scaffold alignment.
 
 ⛔ **And it refuses rather than degrades.** A junction that is well-formed but wrong is the worst

@@ -76,6 +76,211 @@ For very low coverage, ``--error-method binom`` or ``betabinom`` instead builds 
 read-depth pileup that also counts partial reads, buying depth at the cost of a distributional
 assumption. ``simple`` (the default) is the spanning-count test above.
 
+.. _quality gate:
+
+Quality: the evidence abundance does not have
+---------------------------------------------
+
+The test above sees abundance and nothing else, so a sequencing miscall and a real low-frequency
+variant are **the same object** to it — both are "a rare neighbour of an abundant clonotype" — and
+``--error-rate`` can only trade them off globally. Phred separates them, because it is a different
+measurement: a miscall is a detector artifact and reads low-Q, while a real base (a true variant,
+or a template error made before the UMI) reads high-Q.
+
+Measured at the discriminating base over 310,559 real MIGEC spike-in windows:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 44 20 18 18
+
+   * - population
+     - n bases
+     - median Q
+     - % below Q30
+   * - parent clone, all 48 positions
+     - 14,079,696
+     - **38**
+     - **5.1 %**
+   * - EHEB-V1 (published, real)
+     - 1,094
+     - 35
+     - 17.6 %
+   * - EHEB-V2 (published, real)
+     - 42
+     - 34
+     - 16.7 %
+   * - 1-substitution error cloud
+     - 12,281
+     - **24**
+     - **54.3 %**
+   * - 2-substitution error cloud
+     - 5,094
+     - **6**
+     - **91.1 %**
+
+``--min-junction-q Q`` drops a read whose junction differs from its putative parent at **any base
+below Q**.
+
+.. code-block:: bash
+
+   arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
+   arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --min-junction-q 20
+
+Three properties of the gate, each deliberate:
+
+* **Only the mismatching bases are evidence.** A junction that agrees with its parent everywhere
+  else says nothing about whether the one differing base is real, so gating on the junction's
+  *minimum* or *mean* quality asks the wrong question and mostly measures read length.
+* **A clonotype with no more-abundant neighbour is never gated.** There is no hypothesis "this is a
+  misread of X" to test, so nothing is dropped. A read whose quality string is missing or the wrong
+  length is **kept** — absent evidence is not evidence of error.
+* **It needs Stage 1 to have carried the quality, and raises if it did not.** ``map`` reads FASTQ
+  quality only for ``--reconstruct``'s tie-break and otherwise discards it, so
+  ``--junction-quality`` is what makes the gate possible. Without the ``junction_quality`` column
+  ``correct`` **errors out** rather than silently not gating — an unapplied gate is
+  indistinguishable from a gate that found nothing.
+
+``map --junction-quality`` emits ``junction_quality``: the read's Phred+33 string over exactly the
+bases of ``junction``, in the same orientation, so position *i* of one indexes position *i* of the
+other. It is off by default (it appends a non-schema column, so the default output does not move),
+costs **+2.2 % wall and +4.4 % bytes**, and is refused with ``--reconstruct`` — a merged fragment's
+bases come from two reads, so no input quality string describes it.
+
+.. note::
+
+   For a ``rev_comp`` hit the quality belongs to the read as submitted while every coordinate is on
+   the coding strand, so it is reversed and then **verified against the junction it claims to
+   describe** before being written: a same-length slice off the wrong strand is a corruption
+   nothing downstream could detect. Verified on 4,370 junction-bearing reads (4,365 of them
+   reverse-strand) against an independent FASTQ extraction: 4,370 exact, 0 wrong.
+
+What the gate does before any error model runs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Read counts on the MIGEC library. ``Err1``/``Err2`` are the most abundant error clonotype at the
+same edit distance from the parent — the paper's own discriminating statistic.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 12 10 12 10 16 24
+
+   * - ``--min-junction-q``
+     - V1
+     - V2
+     - Err1
+     - Err2
+     - **V1/Err1**
+     - distinct error clonotypes
+   * - **0** (off)
+     - **1,094**
+     - **21**
+     - 811
+     - 76
+     - 1.349
+     - 2,690
+   * - **20**
+     - 941
+     - 19
+     - 446
+     - 21
+     - **2.110**
+     - **300**
+   * - 30
+     - 901
+     - 16
+     - **421**
+     - 21
+     - **2.140**
+     - 237
+   * - 35
+     - 612
+     - 2
+     - 342
+     - 20
+     - 1.789
+     - 213
+
+The effect is **flat over Q20–32 and degrades by Q35**, where it starts eating the real variant
+(1,094 → 612 reads). Q20 keeps 86 % of V1's reads while removing 89 % of the distinct error
+clonotypes.
+
+Modes: ``--ec-mode``
+--------------------
+
+Two presets over the knobs above. An explicitly passed ``--error-method`` or ``--min-junction-q``
+always wins over the mode.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 30 52
+
+   * - ``--ec-mode``
+     - is
+     - use when
+   * - ``fast`` (default)
+     - ``--error-method simple``, no quality gate
+     - Anything abundance-driven: repertoire overlap, diversity, clonal expansion. Byte-identical
+       to arda's historical behaviour.
+   * - ``accurate``
+     - ``--error-method simple --min-junction-q 20``
+     - Low-frequency variants matter: spike-ins, MRD-style tracking, a monoclonal control whose
+       purity you are measuring. Needs ``map --junction-quality``.
+
+Q20 is the **low end of the measured plateau**, not the optimum on any one library — on the MIGEC
+data Q25–30 is marginally better on every axis. Shipping the conservative end is deliberate:
+``accurate`` exists to protect rare real variants, and one library is not enough to tune a default
+with.
+
+.. warning::
+
+   ``binom``/``betabinom`` are deliberately **not** in a mode, and "accurate" does not mean them.
+   Measured on the same 302 k-read MIGEC library at ``--error-rate 1e-5``:
+
+   .. list-table::
+      :header-rows: 1
+      :widths: 22 22 20 20 16
+
+      * - arm
+        - ``--error-method``
+        - ``--min-junction-q``
+        - wall
+        - clonotypes
+      * - MIGEC
+        - ``simple``
+        - 0
+        - **3.32 s**
+        - 1,633
+      * - MIGEC
+        - ``betabinom``
+        - 0
+        - 325.42 s
+        - 1,633 (identical, 98×)
+      * - MIGEC
+        - ``binom``
+        - 0
+        - 238.68 s
+        - 123
+      * - MIGEC
+        - **``simple``**
+        - **20**
+        - **3.79 s**
+        - **127**
+      * - MIGEC
+        - ``binom``
+        - 20
+        - 216.33 s
+        - 23
+      * - Jurkat (monoclonal)
+        - all three
+        - 0
+        - 0.34 / 0.38 / 0.39 s
+        - **301 / 301 / 301**
+
+   ``betabinom`` returns byte-for-byte the same answer as ``simple`` at 98× the wall — a pure loss.
+   ``binom`` is a real gain on the deep library but at 57×, and it is an exact **no-op** on the
+   monoclonal precision arm: every point of Jurkat purity came from the quality gate, none from the
+   depth model. They stay explicit flags, for the very-low-coverage case they were written for.
+
 What the options actually do
 ----------------------------
 
@@ -116,11 +321,24 @@ What the options actually do
    * - ``--error-method``
      - ``simple``
      - ``simple`` = spanning-read counts. ``binom``/``betabinom`` = per-position pileup for very
-       low coverage.
+       low coverage — and ~270× slower, see the warning above.
+   * - ``--ec-mode``
+     - ``fast``
+     - Preset over ``--error-method`` + ``--min-junction-q``. ``accurate`` = ``simple`` + Q20.
+       An explicit knob overrides it.
+   * - ``--min-junction-q``
+     - off
+     - Drop a read whose junction differs from its putative parent at any base below this Phred
+       score. Needs ``map --junction-quality``; **raises** without it.
    * - ``--map-d``
      - on
-     - Add ``d_call``/``d2_call``/``d_support`` per clonotype, mapped into the corrected
-       junction.
+     - Add the D columns per clonotype — ``d_call``/``d2_call``/``d_support``/``d2_support``, the
+       D and V/J spans, and ``np1``–``np3`` — mapped into the corrected junction. Coordinates are
+       1-based closed in **junction** space (``-1`` = not located).
+   * - ``--d-max-evalue``
+     - calibrated
+     - E-value gate on those D calls. Lower is stricter; ``0.01`` is the band where D agrees .9985
+       with IgBLAST on a TRB amplicon. See :doc:`d_segments`.
 
 The one to reach for is ``--error-rate``. ``--max-subs`` looks like a stringency knob and is not
 one: it changes which pairs are *considered*, never which are *accepted*.
@@ -174,6 +392,102 @@ the cycle count, the platform and the read depth, and the default of ``1e-3`` is
 sequencer assumption that says nothing about the PCR in front of it. If low-frequency clones
 matter to the question, calibrate on a spike-in or on a known monoclonal control and pin the
 value in the pipeline.
+
+``--error-rate`` has a physical reading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It is a per-base error rate, so pick it from **what the input actually is**:
+
+* **~1e-3 for raw reads.** Phred 30 — the sequencer's own substitution rate, which is what
+  dominates when every read is an independent observation.
+* **~1e-5 for UMI-consensus input.** Consensus over a UMI family removes the sequencing error
+  almost entirely; what is left is the error that was already in the molecule.
+
+Recovering the variants used to cost purity; with the gate it does not
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The reason ``1e-5`` was not simply the answer is that it also stops collapsing real PCR error. Two
+arms, one for recall (MIGEC: both published variants must survive) and one for precision (a
+monoclonal Jurkat TRB library: everything except the one true clone is spurious):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 16 20 16 14
+
+   * - configuration
+     - MIGEC variants
+     - MIGEC error clonotypes
+     - Jurkat TRB purity
+     - Jurkat junctions
+   * - ``1e-3`` (shipped default)
+     - **0 / 2**
+     - 0
+     - .99540
+     - 86
+   * - ``1e-5``, no gate
+     - 2 / 2
+     - 1,630
+     - **.96034**
+     - 297
+   * - ``1e-5 --ec-mode accurate`` (Q20)
+     - **2 / 2**
+     - **124**
+     - **.99530**
+     - **62**
+   * - ``1e-5 --min-junction-q 35``
+     - 2 / 2
+     - 64
+     - **.99600**
+     - 59
+
+Keeping both published variants used to cost 3.5 points of Jurkat purity. With the gate it costs
+nothing: purity is back at or above the default's, while the default keeps **neither** variant.
+Cross-lineage false positives are 0 throughout. The gate does not overrule ``--error-rate`` — at
+``1e-3`` the variants are gone before it runs — so the two are set together.
+
+.. code-block:: bash
+
+   # low-frequency variant recovery, without paying for it in spurious clonotypes
+   arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
+   arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --ec-mode accurate
+
+The template-error floor: why V2 stays unrecoverable
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Neither the gate nor UMI consensus rescues the second spike-in, and the reason is physical rather
+than algorithmic.
+
+Reverse transcription and the first few linear cycles of PCR happen **before the UMI is attached**.
+An error made there is copied into every molecule of that UMI family, so it is in the consensus by
+construction: UMI collapsing cannot remove it, and its Phred score is *high* — it is a real base,
+faithfully read. At a template error rate of ~1e-5–1e-6 per base, a 48 nt junction carries a
+spurious substitution in about **0.048 %** of molecules.
+
+That is the floor. Against it:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 26 48
+
+   * - variant
+     - abundance vs parent
+     - vs the ~0.048 % floor
+   * - EHEB-V1
+     - 0.373 %
+     - ~8× above it — recoverable, and the gate recovers it
+   * - EHEB-V2
+     - 0.0072 %
+     - **below it** — indistinguishable from template error by any method
+
+So V2 is not a corrector failure and not a threshold that needs lowering. It is a variant present
+at a frequency the library's own chemistry manufactures noise at. The way past it is experimental
+— a higher-fidelity RT/polymerase, fewer pre-UMI cycles, or duplex tagging — not a parameter.
+
+.. important::
+
+   Do not chase a variant below the template-error floor by lowering ``--error-rate`` further. The
+   1e-6 row of the same sweep keeps exactly the same 2 variants as 1e-5 while taking Jurkat TRB
+   purity from .96034 to .94672 — it buys nothing and costs precision.
 
 .. _what a junction disagreement means:
 

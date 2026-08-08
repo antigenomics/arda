@@ -1324,6 +1324,7 @@ def _annotate_chunk(
     sensitivity: float,
     mm_strand: int | None,
     map_d: bool = True,
+    d_max_evalue: float | None = None,
     mapped_only: bool = False,
     max_seqs: int = _MAX_SEQS,
     kmer: int | None = -1,
@@ -1418,7 +1419,8 @@ def _annotate_chunk(
             hit["qstart"], hit["qend"] = qlen - qs + 1, qlen - qe + 1
         dg = ref.d_germlines.get(entry.locus) if map_d else None
         out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
-                                d_germlines=dg, submitted_seq=qseq, anchors=ref.anchors))
+                                d_germlines=dg, submitted_seq=qseq, anchors=ref.anchors,
+                                d_max_evalue=d_max_evalue))
     return out
 
 
@@ -1447,6 +1449,7 @@ def annotate_records(
     sensitivity: float | None = None,
     strand: str = "both",
     map_d: bool = True,
+    d_max_evalue: float | None = None,
 ) -> list[dict]:
     """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
 
@@ -1457,12 +1460,14 @@ def annotate_records(
         map_d: ``True`` (default) maps D segments into the junction of VDJ-locus
             hits (``d_call``/``d2_call``/``np*``); ``False`` skips D mapping (nt
             input only — D mapping never runs for protein input).
+        d_max_evalue: E-value gate on the D call(s); ``None`` keeps the shipped 0.2. Lower is
+            stricter (see :func:`arda.annotate.transfer._map_d`).
     """
     ref, target_db, threads, sensitivity, mm_strand = _prep(
         organism, seqtype, threads, sensitivity, strand)
     return _annotate_chunk(records, ref, target_db, seqtype,
                            threads=threads, sensitivity=sensitivity,
-                           mm_strand=mm_strand, map_d=map_d)
+                           mm_strand=mm_strand, map_d=map_d, d_max_evalue=d_max_evalue)
 
 
 def annotate_file(
@@ -1476,6 +1481,7 @@ def annotate_file(
     strand: str = "both",
     chunk_size: int = _CHUNK_SIZE,
     map_d: bool = True,
+    d_max_evalue: float | None = None,
 ) -> Path:
     """Annotate a FASTA/FASTQ file and stream an AIRR TSV.
 
@@ -1517,7 +1523,8 @@ def annotate_file(
                 break
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
                                    threads=threads, sensitivity=sensitivity,
-                                   mm_strand=mm_strand, map_d=map_d)
+                                   mm_strand=mm_strand, map_d=map_d,
+                                   d_max_evalue=d_max_evalue)
             fh.write(format_rows(recs))
     t.join()
     return output

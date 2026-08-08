@@ -31,13 +31,22 @@ def write_airr(records: list[dict], path: str | Path) -> Path:
     return path
 
 
-def airr_header() -> str:
-    """The AIRR TSV header line (no trailing newline)."""
-    return "\t".join(AIRR_COLUMNS)
+def airr_header(extra_columns: tuple[str, ...] = ()) -> str:
+    """The AIRR TSV header line (no trailing newline).
+
+    ``extra_columns`` appends non-schema fields (today only ``junction_quality``, emitted by
+    ``arda rnaseq map --junction-quality``). They go at the END, after every shipped column, so a
+    consumer reading the shipped set by position is unaffected; with the default ``()`` the header
+    is byte-identical to what it has always been.
+    """
+    return "\t".join(list(AIRR_COLUMNS) + list(extra_columns))
 
 
-def format_rows(records: list[dict]) -> str:
+def format_rows(records: list[dict], extra_columns: tuple[str, ...] = ()) -> str:
     """Format records as TSV rows (column order, trailing newline per row).
+
+    ``extra_columns`` must match what :func:`airr_header` was given. A record missing that key
+    renders as an empty field in both implementations (pinned by ``tests/unit/test_airr_out.py``).
 
     Used by the streaming writer in ``mapper.annotate_file`` to append chunks
     incrementally without holding the whole output in memory.
@@ -54,14 +63,14 @@ def format_rows(records: list[dict]) -> str:
     fallback when the extension is not built; the two are asserted byte-identical by
     ``tests/unit/test_airr_out.py``.
     """
+    cols = _COLUMNS + tuple(extra_columns) if extra_columns else _COLUMNS
     if _format_rows_cpp is not None:
-        return _format_rows_cpp(records, _COLUMNS)
-    return _format_rows_py(records)
+        return _format_rows_cpp(records, cols)
+    return _format_rows_py(records, cols)
 
 
-def _format_rows_py(records: list[dict]) -> str:
+def _format_rows_py(records: list[dict], cols=_COLUMNS) -> str:
     """Reference implementation of :func:`format_rows` (see its docstring)."""
-    cols = AIRR_COLUMNS
     out = []
     for rec in records:
         vals = []

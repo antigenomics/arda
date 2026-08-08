@@ -18,6 +18,19 @@ from . import __version__
 
 app = typer.Typer(add_completion=False, help="Antigen Receptor Domain Annotation")
 
+# Shared by every command that maps D. The gate is an E-value: the expected number of chance
+# matches at least this good given the interior length and the D-database size (see
+# `annotate.transfer._map_d`). 0.2 is the shipped operating point and stays the default -- this
+# option only lets a caller ASK for the strict band, which is where D is worth trusting.
+# ⛔ The default is None, NOT 0.2. The shipped operating point is alphabet-dependent -- 0.2 for
+# nt, 0.05 for aa -- so a literal 0.2 here would silently LOOSEN `--seqtype aa` by 4x while
+# looking like a no-op. None means "whatever this alphabet's calibrated value is".
+_D_EVALUE_HELP = (
+    "Max E-value for a D call (and for a tandem second D). Lower is stricter. Default: the "
+    "calibrated operating point, 0.2 for nt and 0.05 for aa. Measured against IgBLAST at gene "
+    "level on nt: 0.2 agrees .9765 on a TRB amplicon and .9417 on bulk IGH; 0.01 agrees .9985 "
+    "and 1.0000, at roughly a third of the call rate.")
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -153,12 +166,15 @@ def annotate(
         help="Map D segments (d_call/d2_call/d_support/np*) for VDJ loci. Works on aa input "
              "too, against the D germlines' three translated frames -- informative for IGH, "
              "mostly silent for the TR loci, whose D is too short to survive in protein."),
+    d_max_evalue: Optional[float] = typer.Option(
+        None, "--d-max-evalue", help=_D_EVALUE_HELP),
 ) -> None:
     """Annotate FR/CDR regions and write an AIRR TSV (streamed, memory-bounded)."""
     from .annotate.mapper import annotate_file
 
     annotate_file(input, output, organism=organism, seqtype=seqtype,
-                  threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d)
+                  threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d,
+                  d_max_evalue=d_max_evalue)
 
 
 @app.command()
@@ -337,6 +353,8 @@ def rnaseq_map(
         help="Map D segments (VDJ loci). --no-map-d is ~19% faster and yields an identical read "
              "set, v_call and junction — only d_call is dropped. Use it for filtering or for the "
              "map|correct clonotype pipeline, which never keys on D."),
+    d_max_evalue: Optional[float] = typer.Option(
+        None, "--d-max-evalue", help=_D_EVALUE_HELP),
     reconstruct: bool = typer.Option(
         False, "--reconstruct", help="Merge overlapping paired mates into one fragment."),
     min_score: float = typer.Option(
@@ -420,6 +438,15 @@ def rnaseq_map(
              "also moves junction_aa on 3 of 453 reads, two of them scoring 128 and 131 — far "
              "above the trigger — so a high score does not certify the best alignment was found. "
              "Opt in only where a junction-level difference is acceptable."),
+    junction_quality: bool = typer.Option(
+        False, "--junction-quality/--no-junction-quality",
+        help="Also emit a `junction_quality` column: the read's Phred+33 string over exactly the "
+             "bases of `junction`, same orientation. Stage 1 is the ONLY place the FASTQ quality "
+             "is still in hand, and `correct --min-junction-q` needs it -- measured on a MIGEC "
+             "spike-in library, the mismatching base of a real variant reads median Q 34-35 "
+             "against median Q 16 for the sequencing-error cloud around it. OFF by default: it "
+             "appends a non-schema column, so the default output is unchanged. Not usable with "
+             "--reconstruct (a merged fragment has no single input quality string)."),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -429,14 +456,15 @@ def rnaseq_map(
 
     rep = map_rnaseq(r1, output, r2=r2, organism=organism, threads=threads,
                      sensitivity=sensitivity, strand=strand, chunk_size=chunk_size,
-                     map_d=map_d, reconstruct=reconstruct, min_score=min_score,
+                     map_d=map_d, d_max_evalue=d_max_evalue,
+                     reconstruct=reconstruct, min_score=min_score,
                      max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                      drop_constant_only=drop_constant_only,
                      limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
                      fast_segments=fast_segments,
                      indel_rescue=indel_rescue,
                      segment_only_v=segment_only_v,
-                     adaptive=adaptive,
+                     adaptive=adaptive, with_junction_quality=junction_quality,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
@@ -463,9 +491,28 @@ def rnaseq_correct(
     require_vj: bool = typer.Option(
         True, "--require-vj/--no-require-vj",
         help="Only collapse neighbours sharing V and J (a true error keeps the germline V/J call)."),
-    error_method: str = typer.Option(
-        "simple", help="simple = spanning-read counts; binom|betabinom = per-position read-depth "
-                       "pileup for very low coverage."),
+    error_method: Optional[str] = typer.Option(
+        None, help="simple = spanning-read counts; binom|betabinom = per-position read-depth "
+                   "pileup for very low coverage. Default: whatever --ec-mode selects (simple). "
+                   "⛔ binom/betabinom are ~270x slower AND more aggressive on a deep library "
+                   "(MIGEC 302k reads: 0.73s/143 clonotypes vs 197s/79 and 254s/78) and "
+                   "byte-identical on a monoclonal one -- neither is in a mode for that reason."),
+    ec_mode: str = typer.Option(
+        "fast", "--ec-mode",
+        help="Knob preset. `fast` (default) = the shipped behaviour: the abundance error model on "
+             "spanning read counts, no quality gate. `accurate` = the same model plus "
+             "--min-junction-q 20, which judges the one base that discriminates a clonotype from "
+             "its parent on its Phred score instead of on abundance alone. Needs "
+             "`map --junction-quality`. An explicit --error-method / --min-junction-q wins."),
+    min_junction_q: Optional[int] = typer.Option(
+        None, "--min-junction-q",
+        help="Drop a read whose junction differs from its putative parent at ANY base below this "
+             "Phred score; matching bases are not evidence and are not looked at. 0 = off. "
+             "Requires the `junction_quality` column (`map --junction-quality`) and RAISES "
+             "without it rather than silently not gating. Measured on the MIGEC spike-ins, a Q20 "
+             "gate takes the published-variant-to-error-cloud read ratio from 1.349 to 2.110, "
+             "keeping 86 % of the real variant's reads and removing 89 % of the distinct error "
+             "clonotypes; it plateaus over Q20-32 and starts eating real variants by Q35."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions",
         help="Keep only complete junctions (span C104..[FW]118, in frame, no stop). Reads that "
@@ -478,23 +525,30 @@ def rnaseq_correct(
     organism: str = typer.Option("human", help="Reference organism (used only to map D)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
-        help="Add d_call/d2_call/d_support to each clonotype, mapped into its error-corrected "
-             "junction (once per clonotype, not per read)."),
+        help="Add the D columns (d_call/d2_call/d_support/d2_support, the D and V/J spans, and "
+             "np1-np3) to each clonotype, mapped into its error-corrected junction (once per "
+             "clonotype, not per read). Coordinates are 1-based closed in JUNCTION space."),
+    d_max_evalue: Optional[float] = typer.Option(
+        None, "--d-max-evalue", help=_D_EVALUE_HELP),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Collapse CDR3 sequencing errors into clonotypes (per-substitution/indel error model)."""
     from .rnaseq.correct import correct_airr
 
     rep = correct_airr(input, output, organism=organism, map_d=map_d,
-                       max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
+                       d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
+                       ec_mode=ec_mode, min_junction_q=min_junction_q,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
     typer.echo(
         f"[arda] {rep.clonotypes_in} -> {rep.clonotypes_out} clonotypes "
         f"({rep.collapsed} collapsed) over {rep.reads} reads"
         + (f"; dropped {rep.reads_incomplete}/{rep.reads_with_junction} incomplete junctions"
-           if rep.reads_incomplete else ""))
+           if rep.reads_incomplete else "")
+        + (f"; dropped {rep.reads_low_quality} reads on --min-junction-q "
+           f"({rep.clonotypes_low_quality} clonotypes emptied)"
+           if rep.reads_low_quality else ""))
 
 
 @rnaseq_app.command("assemble")
@@ -509,6 +563,8 @@ def rnaseq_assemble(
         True, "--map-d/--no-map-d",
         help="Call D (and tandem D-D) on each assembled contig and carry it onto its member "
              "reads. An ultralong CDR3 is where a D-D is most likely and least visible."),
+    d_max_evalue: Optional[float] = typer.Option(
+        None, "--d-max-evalue", help=_D_EVALUE_HELP),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Stage 3 — assemble long-CDR3 contigs the reads don't individually span.
@@ -520,7 +576,7 @@ def rnaseq_assemble(
     from .rnaseq.assemble import assemble_contigs
 
     rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d,
-                           report_path=report)
+                           d_max_evalue=d_max_evalue, report_path=report)
     typer.echo(
         f"[arda] assemble: {rep.contigs_complete}/{rep.contigs} complete contigs from "
         f"{rep.seeds} seeds; rescued {rep.reads_rescued} reads")
@@ -556,6 +612,8 @@ def rnaseq_run(
         True, "--map-d/--no-map-d",
         help="Map D segments. Off skips D in all three stages; the clonotype table then carries "
              "no d_call/d2_call."),
+    d_max_evalue: Optional[float] = typer.Option(
+        None, "--d-max-evalue", help=_D_EVALUE_HELP),
     limit: int = typer.Option(
         0, "--limit", "-n",
         help="Analyse only the first N reads (single-end) / read pairs (paired), then stop. "
@@ -610,7 +668,8 @@ def rnaseq_run(
     pipeline.run(r1, out_dir, out_prefix, r2=r2, organism=organism, threads=threads,
                  reconstruct=reconstruct, min_score=min_score,
                  kmer=(None if kmer == 0 else kmer), assemble=assemble,
-                 complete_only=complete_only, map_d=map_d, limit=(limit or None),
+                 complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
+                 limit=(limit or None),
                  two_pass=two_pass, fast_segments=fast_segments, prefilter=prefilter,
                  segment_only_v=segment_only_v, indel_rescue=indel_rescue, echo=typer.echo)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
@@ -648,6 +707,8 @@ def rnaseq_reduce(
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
+    d_max_evalue: Optional[float] = typer.Option(
+        None, "--d-max-evalue", help=_D_EVALUE_HELP),
 ) -> None:
     """Merge a sharded Stage 1, then run Stages 2-3 ONCE over the whole thing.
 
@@ -659,7 +720,7 @@ def rnaseq_reduce(
 
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
-                    echo=typer.echo)
+                    d_max_evalue=d_max_evalue, echo=typer.echo)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
 
 

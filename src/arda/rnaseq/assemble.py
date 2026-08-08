@@ -200,6 +200,7 @@ def assemble_contigs(
     scan_cap: int = 400,
     threads: int = 0,
     map_d: bool = True,
+    d_max_evalue: float | None = None,
     report_path: str | Path | None = None,
 ) -> AssembleReport:
     """Assemble long-CDR3 contigs from Stage-1 mapped reads and attribute their junctions.
@@ -220,6 +221,7 @@ def assemble_contigs(
         airr_tsv: Stage-1 mapped-reads AIRR TSV.
         output: assembled-reads AIRR TSV (header only if nothing assembles).
         map_d: map D segments on the assembled contig (default ``True``).
+        d_max_evalue: E-value gate on the D call(s); ``None`` keeps the shipped 0.2.
         max_ext_past_cdr3: stop extending a contig once it reaches this many nt past the CDR3
             start -- enough to cross the junction into J without running into the shared C region.
         scan_cap: per-step cap on candidate reads examined for a (germline-frequent) k-mer.
@@ -293,7 +295,8 @@ def assemble_contigs(
             Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
         return report
 
-    ann = reannotate_contigs(contig_records, organism, threads=threads, map_d=map_d)
+    ann = reannotate_contigs(contig_records, organism, threads=threads, map_d=map_d,
+                             d_max_evalue=d_max_evalue)
     ann_by_id = {a.get("sequence_id"): a for a in ann}
 
     rows: list[dict] = []

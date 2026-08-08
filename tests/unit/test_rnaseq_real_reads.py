@@ -348,3 +348,35 @@ def test_adaptive_search_loses_no_read_the_uncapped_search_keeps(tmp_path):
     for col in ("locus", "c_call"):
         bad = [q for q in a if (a[q][col] or "") != (b[q][col] or "")]
         assert len(bad) <= 3, f"{col} differs on {len(bad)} read(s), was <=3: {bad[:3]}"
+
+
+def test_v_mutations_agree_with_the_alignment_strings_on_real_reads(mapped):
+    """`v_mutations` must be a summary of the SAME alignment, not a second opinion about it.
+
+    The two AIRR alignment strings already contain every mismatch (verified against the shipped
+    germline on 28,365 of 28,365 mapped reads of a bulk IG library, 66,526 V mismatches, zero
+    disagreements). So the end-to-end property is agreement plus SCOPE: re-walking the strings and
+    keeping only the columns inside the V germline range must reproduce the field exactly -- and
+    every recorded position must lie inside `[v_germline_start, v_germline_end]`, which is the
+    structural exclusion of the NDN expressed on real data rather than on a constructed alignment.
+    """
+    out, _report = mapped
+    rows = pl.read_csv(out, separator="\t", infer_schema_length=0)
+    checked = 0
+    for r in rows.filter(pl.col("sequence_alignment") != "").iter_rows(named=True):
+        t_vend = int(float(r["mmseqs2_t_vend"])) if r["mmseqs2_t_vend"] else 0
+        if not t_vend:
+            continue
+        t = int(float(r["mmseqs2_tstart"]))
+        want = []
+        for qa, ta in zip(r["sequence_alignment"], r["germline_alignment"]):
+            if ta != "-":
+                if t <= t_vend and qa != "-" and qa != ta and {qa, ta} <= set("ACGT"):
+                    want.append(f"{ta}{t}{qa}")
+                t += 1
+        assert (r["v_mutations"] or "") == ",".join(want), r["sequence_id"]
+        if want:
+            lo, hi = int(r["v_germline_start"]), int(r["v_germline_end"])
+            assert all(lo <= int(m[1:-1]) <= hi for m in want), r["sequence_id"]
+            checked += 1
+    assert checked > 20, f"only {checked} mutated reads in the fixture -- the test proves little"

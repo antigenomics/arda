@@ -38,9 +38,47 @@ from ..refbuild.translate import reverse_complement
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["map_rnaseq", "read_pairs", "merge_pair", "RnaseqReport"]
+__all__ = ["map_rnaseq", "read_pairs", "merge_pair", "junction_quality", "RnaseqReport"]
 
 _MERGE_ANCHOR = 12  # exact k-mer used to locate the R1/rc(R2) overlap in O(len)
+
+#: Non-schema AIRR column written by ``--junction-quality``: the read's Phred+33 string over
+#: exactly the bases of ``junction``, in the same orientation, so position *i* of one indexes
+#: position *i* of the other. Stage 2 reads it for ``correct --min-junction-q``.
+JUNCTION_QUALITY = "junction_quality"
+
+
+def junction_quality(rec: dict, qual: str) -> str:
+    """The read's Phred+33 substring covering ``rec["junction"]``, or ``""``.
+
+    ⛔ The quality string belongs to the read AS SUBMITTED, while the junction and every coordinate
+    in the record are on the CODING strand. For ``rev_comp == "T"`` the two run in opposite
+    directions, so the quality is reversed (not complemented -- a Phred char has no complement)
+    before slicing. Getting that backwards yields a string of the right LENGTH holding the wrong
+    bases' qualities, which no length or format check downstream can catch. So the slice is
+    verified against the junction it claims to describe before it is returned.
+
+    The junction is ``coding[cdr3_start - 3 : cdr3_end + 3]`` -- the CDR3 flanked by the Cys104 and
+    [FW]118 anchor codons, see :func:`arda.annotate.transfer._junction_nt` -- so the coordinates
+    place it in O(1). They can be absent (a producer that did not fill the region columns), hence
+    the ``find`` fallback; if neither reproduces the junction, return ``""`` rather than a
+    misaligned string.
+    """
+    jn = rec.get("junction") or ""
+    if not jn or not qual:
+        return ""
+    seq = rec.get("sequence") or ""
+    if str(rec.get("rev_comp") or "").upper() in ("T", "TRUE", "1"):
+        qual, seq = qual[::-1], reverse_complement(seq)
+    if len(qual) != len(seq):
+        return ""
+    cs, ce = rec.get("cdr3_start"), rec.get("cdr3_end")
+    if cs and ce:
+        s = int(cs) - 4                                   # 0-based start of the Cys104 codon
+        if s >= 0 and seq[s:s + len(jn)] == jn:
+            return qual[s:s + len(jn)]
+    p = seq.find(jn)
+    return qual[p:p + len(jn)] if p >= 0 else ""
 
 
 def _constant_only(rec: dict) -> bool:
@@ -228,8 +266,14 @@ def chunked_fragments(records: Iterator[tuple], size: int) -> Iterator[list]:
 
 
 def read_pairs(r1: str | Path, r2: str | Path | None = None,
-               *, reconstruct: bool = False, limit: int | None = None) -> Iterator[tuple[str, str]]:
+               *, reconstruct: bool = False, limit: int | None = None,
+               with_qual: bool = False) -> Iterator[tuple]:
     """Stream ``(id, sequence)`` reads for single-end (``r1`` only) or paired input.
+
+    ``with_qual`` yields ``(id, sequence, quality)`` instead — the Phred+33 string, ``""`` for
+    FASTA input. It is incompatible with ``reconstruct``: a merged fragment's bases come from two
+    different reads, so no single input quality string describes it (:func:`map_rnaseq` refuses
+    the combination rather than emitting a quality that does not belong to the sequence).
 
     For paired input the two mates carry the same id, so they are tagged ``<id>/1`` and
     ``<id>/2`` to keep query ids unique (strip the suffix to recover the pair). With
@@ -257,11 +301,13 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
     # a divergence the caller asked never to reach. A limited run is small by construction, so it
     # gives up nothing that matters to take the pure-Python path here.
     if _dnaio is not None and limit is None:
-        yield from _read_pairs_dnaio(r1, r2, reconstruct=reconstruct)
+        yield from _read_pairs_dnaio(r1, r2, reconstruct=reconstruct, with_qual=with_qual)
         return
 
     if r2 is None:
-        it = seqio.read_sequences(r1)
+        it = seqio.read_sequences(r1, with_qual=with_qual)
+        if with_qual:                       # FASTA has no quality: `read_sequences` yields None
+            it = ((i, s, q or "") for i, s, q in it)
         yield from islice(it, limit) if limit is not None else it
         return
 
@@ -270,7 +316,7 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
     # longer one, so a truncated mate file is invisible both during and after the loop.
     # Quality is read only when reconstructing (merge_pair's tie-break needs it) -- the default path
     # keeps discarding it, so it costs nothing.
-    wq = reconstruct
+    wq = reconstruct or with_qual
     n = 0
     for n, (a, b) in enumerate(zip_longest(seqio.read_sequences(r1, with_qual=wq),
                                            seqio.read_sequences(r2, with_qual=wq))):
@@ -279,7 +325,7 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
         if a is None or b is None:
             raise ValueError(
                 f"R1 and R2 differ in length (diverge at record {n}); one file is truncated.")
-        if reconstruct:
+        if wq:
             (i1, s1, q1), (i2, s2, q2) = a, b
         else:
             (i1, s1), (i2, s2) = a, b
@@ -292,11 +338,16 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
             if merged is not None:
                 yield i1, merged
                 continue
-        yield f"{i1}/1", s1
-        yield f"{i2}/2", s2
+        if with_qual:
+            yield f"{i1}/1", s1, q1 or ""
+            yield f"{i2}/2", s2, q2 or ""
+        else:
+            yield f"{i1}/1", s1
+            yield f"{i2}/2", s2
 
 
-def _read_pairs_dnaio(r1, r2, *, reconstruct: bool) -> Iterator[tuple[str, str]]:
+def _read_pairs_dnaio(r1, r2, *, reconstruct: bool,
+                      with_qual: bool = False) -> Iterator[tuple]:
     """The same stream, parsed in C.
 
     Once ``--prefilter`` removed the search, reading became the largest single cost of a bulk run
@@ -315,7 +366,8 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool) -> Iterator[tuple[str, str]]
         if r2 is None:
             with _dnaio.open(str(r1)) as fh:
                 for rec in fh:
-                    yield rec.id, rec.sequence
+                    yield ((rec.id, rec.sequence, rec.qualities or "") if with_qual
+                           else (rec.id, rec.sequence))
             return
         with _dnaio.open(str(r1), str(r2)) as fh:
             for a, b in fh:
@@ -325,8 +377,12 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool) -> Iterator[tuple[str, str]]
                     if merged is not None:
                         yield a.id, merged
                         continue
-                yield f"{a.id}/1", a.sequence
-                yield f"{b.id}/2", b.sequence
+                if with_qual:
+                    yield f"{a.id}/1", a.sequence, a.qualities or ""
+                    yield f"{b.id}/2", b.sequence, b.qualities or ""
+                else:
+                    yield f"{a.id}/1", a.sequence
+                    yield f"{b.id}/2", b.sequence
     except _dnaio.FileFormatError as exc:
         # Re-word to the two phrases callers and tests match on. dnaio says "Reads are improperly
         # paired. There are more reads in file 1 than in file 2" and "Read name 'b' in file 1 does
@@ -399,6 +455,7 @@ def map_rnaseq(
     strand: str = "both",
     chunk_size: int = _RNASEQ_CHUNK,
     map_d: bool = True,
+    d_max_evalue: float | None = None,
     reconstruct: bool = False,
     min_score: float = _MIN_SCORE,
     max_seqs: int = mapper._MAX_SEQS,
@@ -413,6 +470,7 @@ def map_rnaseq(
     indel_rescue: bool = False,
     segment_only_v: bool = False,
     prefilter: bool = False,
+    with_junction_quality: bool = False,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -430,6 +488,13 @@ def map_rnaseq(
         limit: analyse only the first ``limit`` reads (single-end) / read pairs (paired), then
             stop — a native head, so a subsample no longer needs an external ``zcat | head |
             gzip`` round-trip. ``None`` maps the whole file.
+        with_junction_quality: also emit a ``junction_quality`` column — the read's Phred+33
+            string over exactly the bases of ``junction``, same orientation (see
+            :func:`junction_quality`). OFF by default: it appends a non-schema column, so the
+            default output stays byte-identical. This is the only place the FASTQ quality is
+            still in hand — Stage 1 otherwise discards it — and it is what
+            ``correct --min-junction-q`` gates on. Refused with ``reconstruct`` (a merged
+            fragment has no single input quality string).
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
@@ -467,6 +532,12 @@ def map_rnaseq(
     Returns:
         The run :class:`RnaseqReport` (also printed by the CLI).
     """
+    if with_junction_quality and reconstruct:
+        # A merged fragment's bases come from two reads, so no input quality string describes it.
+        # Emitting one of the two would put a quality beside bases it does not belong to -- the
+        # exact silent-misalignment failure `junction_quality` verifies against. Refuse instead.
+        raise ValueError("--junction-quality cannot be combined with --reconstruct: a merged "
+                         "fragment has no single input quality string")
     output = Path(output)
     ref, target_db, threads, sens, mm_strand = mapper._prep(
         organism, seqtype, threads, sensitivity, strand)
@@ -492,7 +563,8 @@ def map_rnaseq(
 
     def reader():
         try:
-            pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit)
+            pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit,
+                               with_qual=with_junction_quality)
             for chunk in chunked_fragments(pairs, chunk_size):
                 chunks.put(chunk)
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
@@ -507,15 +579,24 @@ def map_rnaseq(
                           min_score=min_score)
     reads_fh = open(emit_reads, "w") if emit_reads else None
     stage = Stage()
+    extra_cols: tuple[str, ...] = (JUNCTION_QUALITY,) if with_junction_quality else ()
     try:
         with open(output, "w") as fh:
-            fh.write(airr_header() + "\n")
+            fh.write(airr_header(extra_cols) + "\n")
 
             def flush(batch: list) -> None:
                 """Search one batch and write its mapped reads."""
+                quals = {}
+                if with_junction_quality:
+                    # Split the quality off HERE, not in the reader: `_annotate_chunk`,
+                    # `write_fasta` and `prefilter.keep_records` all take `(id, sequence)` pairs,
+                    # and a third element would reach every one of them.
+                    quals = {r[0]: r[2] for r in batch}
+                    batch = [(r[0], r[1]) for r in batch]
                 keep = mapper._annotate_chunk(
                     batch, ref, target_db, seqtype, threads=threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
+                    d_max_evalue=d_max_evalue,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
                     fast_segments=fast_segments,
@@ -531,7 +612,10 @@ def map_rnaseq(
                             if float(r.get("mmseqs2_score") or 0) >= min_score]
                 if not keep:
                     return
-                fh.write(format_rows(keep))
+                if with_junction_quality:
+                    for r in keep:
+                        r[JUNCTION_QUALITY] = junction_quality(r, quals.get(r["sequence_id"], ""))
+                fh.write(format_rows(keep, extra_cols))
                 report.mapped_reads += len(keep)
                 for r in keep:
                     loc = r.get("locus") or "?"
@@ -571,7 +655,13 @@ def map_rnaseq(
                 report.total_reads += len(chunk)
                 if prefilter and seqtype == "nt":
                     from ..prefilter import keep_records  # noqa: PLC0415 — optional native ext
-                    survivors = keep_records(chunk, ref.target_fasta, threads=threads)
+                    if with_junction_quality:
+                        qmap = {r[0]: r[2] for r in chunk}
+                        survivors = [(i, s, qmap[i]) for i, s in
+                                     keep_records([(r[0], r[1]) for r in chunk],
+                                                  ref.target_fasta, threads=threads)]
+                    else:
+                        survivors = keep_records(chunk, ref.target_fasta, threads=threads)
                     report.prefilter_stats["seen"] = (
                         report.prefilter_stats.get("seen", 0) + len(chunk))
                     report.prefilter_stats["passed"] = (

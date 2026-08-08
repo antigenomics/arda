@@ -63,6 +63,7 @@ def reannotate_contigs(
     sensitivity: float | None = None,
     strand: str = "both",
     map_d: bool = True,
+    d_max_evalue: float | None = None,
 ) -> list[dict]:
     """Annotate assembled contigs by re-aligning them (baseline path).
 
@@ -70,7 +71,8 @@ def reannotate_contigs(
     :func:`~arda.annotate.mapper.annotate_records`: a contig is just a long query.
     """
     return annotate_records(records, organism, seqtype, threads=threads,
-                            sensitivity=sensitivity, strand=strand, map_d=map_d)
+                            sensitivity=sensitivity, strand=strand, map_d=map_d,
+                            d_max_evalue=d_max_evalue)
 
 
 def merge_contig(contig: Contig, reference: Reference, *, map_d: bool = True) -> dict:

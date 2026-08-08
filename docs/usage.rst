@@ -22,7 +22,8 @@ validation) with 1-based, closed region coordinates (``fwr1_start``/``fwr1_end``
 ``v_call``/``d_call``/``d2_call``/``j_call``, the constant-region ``c_call``/``c_class``
 (isotype), per-segment CIGARs (``v_cigar``/``d_cigar``/``j_cigar``/``c_cigar``) and the
 matching V/J/D germline coordinates, ``sequence_alignment`` / ``germline_alignment``,
-``v_identity``, ``stop_codon``, ``vj_in_frame``, ``junction``, and ``productive``.
+``v_identity``, the per-segment SHM lists ``v_mutations`` / ``j_mutations``, ``stop_codon``,
+``vj_in_frame``, ``junction``, and ``productive``.
 On a score tie ``d_call``/``d2_call`` are comma-separated allele ambiguity lists, and
 ``d2_call`` is the second (3′) segment of a D-D fusion — called in every D locus (IGH,
 TRB, TRD). The ``sequence`` field holds the read **as submitted**; ``rev_comp`` = ``T``
@@ -36,6 +37,48 @@ IGH (a D call on ~36 % of real records, agreeing with the nucleotide call on 98 
 and mostly silent for the TR loci, whose D is too short to survive trimming into protein.
 For aa input the ``d_germline_*`` columns and ``d_cigar`` are left empty on purpose: the
 alignment offsets index a reading frame, not the D germline.
+
+Somatic hypermutation
+~~~~~~~~~~~~~~~~~~~~~
+
+``v_mutations`` and ``j_mutations`` are the read's substitutions against its called germline —
+``G45A,C112T``: germline base, 1-based position **in that segment's own allele**, read base. That is
+the coordinate frame a lineage or selection-pressure tool needs, so two reads of one clone are
+directly comparable and the germline is the root. A read with none is empty; the counterpart
+``v_identity`` is the same information as a fraction.
+
+⛔ The V and J germline-aligned regions only, **by construction**. A mismatch inside the junction is
+not attributable to a germline: V(D)J recombination trims the segment ends and inserts non-templated
+N/P bases, so the V-end / NDN / J-start partition frequently is not identifiable from the sequence.
+arda aligns to a ``V + N-pad + J [+ C]`` scaffold, and the pad is not a segment — an NDN position has
+no germline coordinate to be recorded under. Diffing ``sequence_alignment`` against
+``germline_alignment`` by hand does **not** give you this: on a real bulk IG library 20.1 % of the
+mismatches that diff finds lie in the pad or the constant region.
+
+Substitutions only; an indel is in the CIGAR as ``I``/``D``. Germline coordinates after an indel are
+still correct. Positions are on the coding strand, so for ``rev_comp = T`` a read-side lookup (a
+Phred quality, say) must be made against the reverse complement of ``sequence``.
+
+Accuracy against IgBLAST, and what a lineage-tree builder needs on top of this: :doc:`shm`.
+
+D segments
+~~~~~~~~~~
+
+``--d-max-evalue`` moves the gate that accepts a D call (and a tandem second D) — the shipped
+operating point is 0.2 for nt and 0.05 for aa, and ``0.01`` is the band where D agrees .9985 with
+IgBLAST at gene level on a TRB amplicon, at roughly a third of the call rate. Germline geometry is
+applied before the statistics: ``/OR`` orphons cannot rearrange and are excluded, TRBD2 can never
+join a TRBJ1, and a tandem D-D must run in genomic order. The bands, the constraints and how to
+consume the D-D markup: :doc:`d_segments`.
+
+Quality over the junction
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``arda rnaseq map --junction-quality`` adds a ``junction_quality`` column — the read's Phred+33
+string over exactly the bases of ``junction``, same orientation. Off by default (it is a non-schema
+column, so the default output does not move) and refused with ``--reconstruct``. Stage 1 is the
+only place the FASTQ quality is still in hand, and it is what ``correct --min-junction-q`` gates
+on: see :ref:`quality gate`.
 
 Python library
 --------------

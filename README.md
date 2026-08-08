@@ -85,8 +85,11 @@ arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
 arda markup -i junctions.tsv -o marked.tsv --report -           # mark up + repair bare (CDR3aa, V, J) records
 arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv  # receptor reads out of RNA-seq
+arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality  # + Phred over the junction
 arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv   # rescue CDR3s no single read spans
 arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
+arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --ec-mode accurate  # quality-gated correction
+arda annotate -i reads.fastq -o out.airr.tsv --d-max-evalue 0.01  # the strict D band
 arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+assemble+correct
 arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 20 --partition cpu
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
@@ -149,6 +152,26 @@ default. `--indel-rescue` (with `--fast-segments`) reroutes indel-bearing reads 
 path; its value tracks SHM load, so it is a per-library call. Details and the per-flag
 measurements: `arda rnaseq map --help` and the
 [usage guide](https://docs.isalgo.dev/arda/usage.html).
+
+### Accuracy regimes: which knob for which question
+
+Separate from the speed flags, and set from **what you are going to do with the answer**. All are
+off by default; the shipped output does not move unless you ask.
+
+| question | flags | what it buys |
+|---|---|---|
+| Repertoire-level D usage | *(default, `E ≤ 0.2`)* | highest D recall |
+| A D call you will act on, or a tandem D-D you will report | `--d-max-evalue 0.01` | gene agreement vs IgBLAST **.9765 → .9985** (TRB amplicon), at ~⅓ the call rate |
+| Low-frequency variant recovery (spike-in, MRD, monoclonal control) | `map --junction-quality` + `correct --error-rate 1e-5 --ec-mode accurate` | keeps both published MIGEC spike-ins **and** monoclonal purity **.96034 → .99530** |
+| SHM / lineage trees | *(default)* | `v_mutations`/`j_mutations` in germline coordinates, `+36 ms` per 100 k reads |
+
+`--d-max-evalue` is a **recall/precision dial**, not a bug fix: the shipped 0.2 is deliberately the
+loosest band, because dropping two thirds of the D calls is the wrong default for a repertoire
+tool. `--ec-mode accurate` is `--min-junction-q 20` — it judges the one base that discriminates a
+clonotype from its parent on its **Phred score** rather than on abundance, which is a measurement
+the abundance model does not have. Depth: [D segments](https://docs.isalgo.dev/arda/d_segments.html),
+[SHM](https://docs.isalgo.dev/arda/shm.html),
+[error correction](https://docs.isalgo.dev/arda/error_correction.html).
 
 ## Performance
 
@@ -303,9 +326,26 @@ arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones
 ```
 
 `1e-5` recovers both spike-in variants exactly. On an independent error cloud, `1e-4` kept both
-while still removing 72% of the real PCR errors. Calibrate per library — by amplification depth
-and by whether the protocol carries UMIs — rather than trusting one default. Full write-up:
-[error correction](https://docs.isalgo.dev/arda/error_correction.html).
+while still removing 72% of the real PCR errors. `--error-rate` has a physical reading — **~1e-3
+for raw reads** (the sequencer's Phred-30 substitution rate) and **~1e-5 for UMI-consensus input**
+— so calibrate per library rather than trusting one default.
+
+**And it no longer has to cost precision.** `1e-5` used to buy the variants at 3.5 points of
+purity on a monoclonal control (.99540 → .96034), because it also stops collapsing real PCR error.
+`correct --min-junction-q` gates on the Phred score of the one base that discriminates a clonotype
+from its putative parent — a measurement abundance does not have, and one that separates cleanly
+(the published spike-ins read median Q 34–35 there, the error cloud around them **median Q 24**):
+
+```bash
+arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
+arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --ec-mode accurate
+```
+
+Both variants kept, monoclonal purity back to **.99530**, spurious junctions 297 → 62, distinct
+error clonotypes 1,630 → 124. What it cannot do is rescue a variant below the **template-error
+floor**: RT and early-PCR errors happen *before* the UMI is attached, so consensus cannot remove
+them and they are high-Q by construction. Full write-up, including why `binom`/`betabinom` are not
+`accurate`: [error correction](https://docs.isalgo.dev/arda/error_correction.html).
 
 ## Library
 
@@ -318,8 +358,8 @@ records = arda.annotate_sequences(
 )
 # -> list of AIRR record dicts: v_call, d_call/d2_call, j_call, c_call/c_class,
 #    fwr1..fwr4, cdr1..cdr3, *_start/*_end (1-based closed), *_aa, junction(_aa),
-#    np1/np2/np3, d_support/d2_support, {v,j,c,d}_cigar, sequence_alignment,
-#    germline_alignment, productive, ...
+#    np1/np2/np3, d_support/d2_support, {v,j,c,d}_cigar, v_mutations/j_mutations,
+#    sequence_alignment, germline_alignment, productive, ...
 # The TSV is a spec-valid AIRR Rearrangement file (passes airr.schema validation).
 ```
 
@@ -391,10 +431,13 @@ recs = annotate_records(
    `cdr3_anchors.tsv`, not by the scaffold projection — a scaffold has a 9 nt N-pad
    where a read has a 20–40 nt N-D-N region, so the projection collapses the very window
    the D lives in. A junction is emitted only when the read actually reaches its Cys104
-   anchor. The D call is accepted on a Karlin–Altschul E-value (`d_support`) rather than
-   a per-locus score floor, and is constrained by germline geometry: TRBD2 lies 3′ of the
-   entire TRBJ1 cluster, so a TRBJ1 rearrangement can never be assigned TRBD2. D mapping
-   also runs on `--seqtype aa`, against each D germline's three translated frames.
+   anchor. The D call is accepted on a Karlin–Altschul E-value (`d_support`, re-thresholdable
+   with `--d-max-evalue`) rather than a per-locus score floor, and is constrained by germline
+   geometry **before** the statistics: `/OR` orphons sit outside the locus and cannot rearrange
+   at all; TRBD2 lies 3′ of the entire TRBJ1 cluster, so a TRBJ1 rearrangement can never be
+   assigned TRBD2; and a tandem D-D must run in genomic 5′→3′ order, since deletional joining
+   cannot produce any other. D mapping also runs on `--seqtype aa`, against each D germline's
+   three translated frames.
 3. **Bare records** (`arda.cdr3fix`, `arda.dpost`): a VDJdb-style row — CDR3 amino acid,
    V, J, species, and no read — is marked up against the same anchors (`arda markup`),
    its errors located and conservatively repaired, and optionally given a D gene inferred
@@ -432,7 +475,9 @@ constrained), **constant-region `J + C` scaffolds** (`c_call`/`c_class` isotype)
 RNA-seq mode** with long-CDR3 contig assembly and coverage-based expression, **junction
 markup + repair on bare records**, **multi-node (SLURM) sharding**, **the segment-based
 fast paths** (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilter`,
-`--indel-rescue`) and **`arda export-ref`**.
+`--indel-rescue`), **per-segment SHM in germline coordinates** (`v_mutations`/`j_mutations`),
+**quality-gated error correction** (`--junction-quality`, `--min-junction-q`, `--ec-mode`)
+and **`arda export-ref`**.
 
 Next: full-depth clonotype benchmarking; a segment-native per-read path that removes MMseqs2
 from the amplicon hot loop; and an `arda.hmm` semi-Markov model of V→N→D→N→J that would

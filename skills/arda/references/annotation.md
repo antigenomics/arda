@@ -69,7 +69,7 @@ mmseqs2_score, mmseqs2_evalue, mmseqs2_identity,
 mmseqs2_{qstart,qend,qlen,tstart,tend,tlen,t_vend,t_jstart,t_vjend},
 rev_comp, productive, stop_codon, vj_in_frame, v_identity,
 sequence_alignment, germline_alignment,
-v_cigar, j_cigar, c_cigar,
+v_cigar, j_cigar, c_cigar, v_mutations, j_mutations,
 v_germline_start, v_germline_end, j_germline_start, j_germline_end,
 v_sequence_start, v_sequence_end,
 d_sequence_start, d_sequence_end, d2_sequence_start, d2_sequence_end,
@@ -89,6 +89,15 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
   (the scaffold's non-templated stretch reads as `N`, per AIRR).
 - `v_cigar`/`j_cigar`/`c_cigar`/`d_cigar` follow the AIRR CIGAR spec: leading `S`
   (query 5′ offset) then `N` (germline 5′ offset), an `M`/`I`/`D` body, a trailing `S`.
+- `v_mutations`/`j_mutations` are the read's SHM against the called germline — `G45A,C112T`:
+  germline base, 1-based position **in that segment's own allele**, read base. That frame is what
+  makes two reads of one clone comparable and the germline the tree root. ⛔ V and J germline-aligned
+  regions ONLY, **by construction**: a mismatch inside the junction is not attributable to any
+  germline (chew-back + non-templated N/P), and the scaffold's N-pad is not a segment, so an NDN
+  position has no germline coordinate to be recorded under. Do NOT re-derive this by diffing
+  `sequence_alignment` against `germline_alignment` — on a real bulk IG library 20.1 % of the
+  mismatches that finds are pad or constant-region columns. Substitutions only; an indel is `I`/`D`
+  in the cigar and coordinates after it are still correct. Empty when the read is germline.
 - `{region}` is the nucleotide (or aa, for aa input) slice; `{region}_aa` is the
   amino-acid translation (V-side regions read in the V frame; FR4 in the J frame).
 - `productive` = "T" only when in-frame and free of stop codons / N-bridge;

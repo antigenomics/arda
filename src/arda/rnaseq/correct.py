@@ -66,6 +66,29 @@ _COMPLETE = (
 )
 
 
+#: ``--ec-mode`` presets. Each names an ``error_method`` and a ``min_junction_q``; an explicitly
+#: passed knob always wins (:func:`correct_airr` resolves ``None`` against the mode).
+#:
+#: ⛔ ``accurate`` is NOT ``binom``/``betabinom``. Those pile up partial reads per discriminating
+#: position for extra depth at very low coverage, which sounds like the accurate answer and is not
+#: one here: measured on a 302,172-read MIGEC library with one 293 k-read clone, `simple` takes
+#: 0.73 s and 143 clonotypes, `binom` 197 s / 79 and `betabinom` 254 s / 78 — ~270x slower AND
+#: more aggressive, i.e. they collapse MORE real low-frequency variants, which is the failure this
+#: mode exists to avoid. On a monoclonal Jurkat library all three are byte-identical (90
+#: clonotypes, 0.35/0.41/0.39 s). So the depth models earn no place in a shipped mode; what
+#: `accurate` buys is the QUALITY gate, which is evidence the simple model never had.
+#:
+#: Q20 is the LOW end of the measured plateau, not the optimum on any one library. The gate's
+#: effect is flat over Q20-32 and degrades by Q35 (on the MIGEC spike-ins the abundant published
+#: variant loses 1,094 -> 612 reads there), and on that library Q25-30 is marginally better on
+#: every axis than Q20. Shipping the conservative end is deliberate: `accurate` exists to protect
+#: rare real variants, and one library is not enough to tune a default with.
+EC_MODES: dict[str, dict] = {
+    "fast": {"error_method": "simple", "min_junction_q": 0},
+    "accurate": {"error_method": "simple", "min_junction_q": 20},
+}
+
+
 @dataclass
 class CorrectReport:
     clonotypes_in: int = 0
@@ -74,6 +97,8 @@ class CorrectReport:
     collapsed: int = 0  # clonotypes absorbed into a parent
     reads_with_junction: int = 0   # Stage-1 reads carrying any junction
     reads_incomplete: int = 0      # ...of which dropped as truncated/out-of-frame/stop
+    reads_low_quality: int = 0     # ...and dropped by --min-junction-q (0 when the gate is off)
+    clonotypes_low_quality: int = 0  # clonotypes that lost EVERY read to the quality gate
     # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
     # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
     wall_seconds: float = 0.0
@@ -135,6 +160,94 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
                     best, best_count = nj, counts[nj]
         parent[ci] = best
     return parent
+
+
+def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
+                  require_vj: bool) -> tuple[pl.DataFrame, int, int]:
+    """Drop reads whose junction differs from its putative parent ONLY at low-quality bases.
+
+    The error model in :func:`_parents` sees abundance and nothing else, so a sequencing miscall
+    and a real low-frequency variant are the same object to it and the only lever is
+    ``error_rate`` — which trades them off globally and cannot separate them. Phred does separate
+    them, because it is a different measurement: a miscall is a detector artifact and reads low-Q,
+    while a real base — a true variant, or a template error made before the UMI — reads high-Q.
+    Measured at the mismatching base over 310,559 real MIGEC windows: the two published spike-in
+    variants sit at median Q 34-35 (16.7 / 17.6 % below Q30), the surrounding 1-substitution error
+    cloud at **median Q 24** (54.3 % below Q30) and the 2-substitution cloud at median Q 6
+    (91.1 %). ⚠ An earlier pass reported the 1-sub cloud at median 16; that extraction required an
+    exact interior seed and so could only see mismatches near the junction's ends, which is its
+    low-Q half. The separation is a 14-point median gap, not 19.
+
+    ⛔ Only the MISMATCHING bases are evidence. A junction agreeing with its parent everywhere
+    else says nothing about whether the one differing base is real, so gating on the junction's
+    minimum or mean quality asks the wrong question and mostly measures read length.
+
+    The parent is the most abundant substitution-only neighbour within ``max_subs`` (sharing V/J
+    when ``require_vj``). A clonotype with no more-abundant neighbour is not gated at all: there is
+    no hypothesis "this is a misread of X" to test. A read whose quality string is missing or too
+    short is KEPT — absent evidence is not evidence of error.
+
+    Returns ``(filtered df, reads dropped, clonotypes emptied)``.
+    """
+    if "junction_quality" not in df.columns:
+        # Raise, never degrade. A silently unapplied gate is indistinguishable from a gate that
+        # applied and found nothing to drop, and this project has already shipped that failure
+        # once (IgBLAST's missing `_gl.aux` produced a truth with no junctions and exit 0).
+        raise ValueError(
+            "--min-junction-q needs a `junction_quality` column, which this AIRR does not have. "
+            "Re-run Stage 1 with `arda rnaseq map --junction-quality` (Stage 1 is the only place "
+            "the FASTQ quality is still in hand).")
+    jn = df["junction"].to_list()
+    jq = [x or "" for x in df["junction_quality"].to_list()]
+    v = [x or "" for x in df["v_call"].to_list()]
+    j = [x or "" for x in df["j_call"].to_list()]
+    loc = [x or "" for x in df["locus"].to_list()]
+
+    counts: Counter = Counter(zip(loc, v, j, jn))
+    keys = sorted(counts)                                  # deterministic clonotype order
+    pos = {k: i for i, k in enumerate(keys)}
+    seqs = [k[3] for k in keys]
+    cnt = [counts[k] for k in keys]
+
+    # Discriminating positions against the most abundant qualifying neighbour, per clonotype.
+    disc: list[tuple[int, ...]] = [() for _ in keys]
+    safe = [i for i, s in enumerate(seqs) if s and set(s) <= _DNA]
+    if safe:
+        index = seqtree.Index.build([seqs[i] for i in safe], alphabet="nt")
+        params = seqtree.SearchParams(max_subs=max_subs, max_ins=0, max_dels=0,
+                                      max_total_edits=max_subs, engine="seqtm")
+        for ci in safe:
+            best, best_count = None, -1
+            for hit in index.search(seqs[ci], params):
+                nj = safe[hit.ref_id]
+                if nj == ci or hit.n_subs == 0 or len(seqs[nj]) != len(seqs[ci]):
+                    continue
+                if require_vj and (keys[nj][1] != keys[ci][1] or keys[nj][2] != keys[ci][2]):
+                    continue
+                if cnt[nj] <= cnt[ci]:                     # a parent is strictly more abundant
+                    continue
+                if cnt[nj] > best_count or (cnt[nj] == best_count and seqs[nj] < seqs[best]):
+                    best, best_count = nj, cnt[nj]
+            if best is not None:
+                a, b = seqs[ci], seqs[best]
+                disc[ci] = tuple(p for p in range(len(a)) if a[p] != b[p])
+
+    cut = min_q + 33                                       # Phred+33; `>= min_q` keeps the boundary
+    keep = [True] * df.height
+    emptied: Counter = Counter()
+    for r in range(df.height):
+        d = disc[pos[(loc[r], v[r], j[r], jn[r])]]
+        if not d:
+            continue
+        q = jq[r]
+        if len(q) != len(jn[r]):                           # no quality for this read: no evidence
+            continue
+        if any(ord(q[p]) < cut for p in d):
+            keep[r] = False
+            emptied[(loc[r], v[r], j[r], jn[r])] += 1
+    dropped = keep.count(False)
+    lost = sum(1 for k, n in emptied.items() if n == counts[k])
+    return df.filter(pl.Series(keep)), dropped, lost
 
 
 def _root(i: int, parent: list[int | None]) -> int:
@@ -442,7 +555,18 @@ def _gene3(x: str | None) -> str:
     return g[:3] if g[:3] in ("IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD") else ""
 
 
-def _clonotype_d(out: pl.DataFrame, organism: str) -> list[pl.Series]:
+#: Clonotype D columns. The four calls/supports, then everything a D-D MARKUP consumer needs to
+#: cut the junction up: where the V stops templating it, where the J starts, the D span(s), and
+#: the non-templated stretches between them. ⛔ All coordinates are 1-based closed in JUNCTION
+#: space -- the clonotype table has no read -- with -1 meaning "not located". Without them the
+#: table named a second D and gave no way to find it; `d2_call` alone is not markup.
+_D_STR_COLS = ("d_call", "d2_call", "d_support", "d2_support", "np1", "np2", "np3")
+_D_INT_COLS = ("v_sequence_end", "d_sequence_start", "d_sequence_end",
+               "d2_sequence_start", "d2_sequence_end", "j_sequence_start")
+
+
+def _clonotype_d(out: pl.DataFrame, organism: str,
+                 d_max_evalue: float | None = None) -> list[pl.Series]:
     """D (and tandem D-D) per clonotype, mapped into its error-corrected junction.
 
     Reads carry their own ``d_call``, but a read's D is called on a sequencing-error copy of
@@ -451,21 +575,26 @@ def _clonotype_d(out: pl.DataFrame, organism: str) -> list[pl.Series]:
     function of ``(junction, v_call, j_call)`` -- so call it once here rather than voting over
     reads. Costs one gapless alignment per clonotype, not per read.
 
+    ``d_max_evalue`` overrides the shipped E-value gate; see
+    :func:`arda.annotate.transfer._map_d`.
+
     VJ loci and organisms without D germlines come back empty, as does an unresolvable V/J.
     """
     from ..annotate.dmap import map_d_junction
 
-    cols = {c: [] for c in ("d_call", "d2_call", "d_support", "d2_support")}
+    cols: dict[str, list] = {c: [] for c in _D_STR_COLS + _D_INT_COLS}
     for jn, vc, jc in zip(out["junction"], out["v_call"], out["j_call"]):
         try:
-            call = map_d_junction(jn or "", vc or "", jc or "", organism)
+            call = map_d_junction(jn or "", vc or "", jc or "", organism,
+                                  d_max_evalue=d_max_evalue)
         except (KeyError, ValueError):        # unknown allele / organism without anchors
             call = None
-        cols["d_call"].append(call.d_call if call else "")
-        cols["d2_call"].append(call.d2_call if call else "")
-        cols["d_support"].append(call.d_support if call else "")
-        cols["d2_support"].append(call.d2_support if call else "")
-    return [pl.Series(k, v, dtype=pl.Utf8) for k, v in cols.items()]
+        for c in _D_STR_COLS:
+            cols[c].append(getattr(call, c) if call else "")
+        for c in _D_INT_COLS:
+            cols[c].append(getattr(call, c) if call else -1)
+    return ([pl.Series(c, cols[c], dtype=pl.Utf8) for c in _D_STR_COLS]
+            + [pl.Series(c, cols[c], dtype=pl.Int32) for c in _D_INT_COLS])
 
 
 def correct_airr(
@@ -474,12 +603,15 @@ def correct_airr(
     *,
     organism: str = "human",
     map_d: bool = True,
+    d_max_evalue: float | None = None,
     max_subs: int = 3,
     max_indel: int = 0,
     error_rate: float = 0.001,
     indel_rate: float = 0.001,
     require_vj: bool = True,
-    error_method: str = "simple",
+    error_method: str | None = None,
+    ec_mode: str = "fast",
+    min_junction_q: int | None = None,
     complete_only: bool = True,
     coverage: bool = True,
     read_map: str | Path | None = None,
@@ -491,11 +623,13 @@ def correct_airr(
     Args:
         airr_tsv: Stage-1 mapped-reads AIRR TSV (needs ``junction``, ``sequence_id``).
         organism: reference organism, used only to map D into each clonotype's junction.
-        map_d: append ``d_call``/``d2_call``/``d_support``/``d2_support``, called once per
+        map_d: append the D columns (``_D_STR_COLS`` + ``_D_INT_COLS``), called once per
             clonotype on its corrected junction (see :func:`_clonotype_d`). Default ``True``.
+        d_max_evalue: E-value gate on the D call(s); ``None`` keeps the shipped 0.2. Lower is
+            stricter -- 0.01 is the band where D agrees .9985 with IgBLAST on a TRB amplicon.
         output: corrected clonotype table TSV (``junction``, ``junction_aa``, ``v_call``,
             ``j_call``, ``c_call``, ``locus``, ``duplicate_count``, ``consensus_count``, and
-            with ``map_d`` the four D columns), sorted
+            with ``map_d`` the D columns), sorted
             by abundance. A clonotype is keyed by ``(locus, v_call, j_call, junction)``. Per the
             AIRR schema, ``duplicate_count`` is the number of READS supporting the clonotype (both
             paired mates of a molecule count) and ``consensus_count`` is the number of distinct
@@ -520,6 +654,12 @@ def correct_airr(
             collapse probability is length-scaled, ``error_rate * junction_len``, so the default
             reproduces vdjtools' ~1/20 at a 45 nt (15 aa) junction and scales for other lengths.
         indel_rate: per-BASE indel error rate (instrument-dependent; default 0.001, length-scaled).
+        ec_mode: knob preset, ``"fast"`` (default, = today's shipped behaviour) or
+            ``"accurate"``. See :data:`EC_MODES`; an explicitly passed ``error_method`` /
+            ``min_junction_q`` overrides it.
+        min_junction_q: drop a read whose junction differs from its putative parent at any base
+            below this Phred score (:func:`_quality_gate`). ``0`` disables it. Needs the
+            ``junction_quality`` column from ``map --junction-quality`` and RAISES without it.
         error_method: ``"simple"`` (default) tests on spanning read counts; ``"binom"`` /
             ``"betabinom"`` pile up partial reads per discriminating position for extra depth at
             very low coverage (:func:`_error_pileup`).
@@ -547,6 +687,13 @@ def correct_airr(
     Returns:
         A :class:`CorrectReport`.
     """
+    if ec_mode not in EC_MODES:
+        raise ValueError(f"ec_mode must be one of {sorted(EC_MODES)}, got {ec_mode!r}")
+    preset = EC_MODES[ec_mode]
+    if error_method is None:
+        error_method = preset["error_method"]
+    if min_junction_q is None:
+        min_junction_q = preset["min_junction_q"]
     for name, val in (("error_rate", error_rate), ("indel_rate", indel_rate)):
         # p_err < 1 keeps counts strictly increasing along parent pointers (no cycles); p_err == 0
         # would make a single mismatch collapse anything, p_err >= 1 never collapses.
@@ -576,6 +723,10 @@ def correct_airr(
     if complete_only:
         df = df.filter(_COMPLETE)
     n_incomplete = n_with_junction - df.height
+    n_low_q = n_clono_low_q = 0
+    if min_junction_q > 0:
+        df, n_low_q, n_clono_low_q = _quality_gate(
+            df, min_q=min_junction_q, max_subs=max_subs, require_vj=require_vj)
 
     # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
     # same nucleotide junction but a different locus/V/J are different clonotypes. `read_ids` keeps
@@ -616,7 +767,9 @@ def correct_airr(
     report = CorrectReport(clonotypes_in=len(junctions),
                            reads=sum(span_counts),
                            reads_with_junction=n_with_junction,
-                           reads_incomplete=n_incomplete)
+                           reads_incomplete=n_incomplete,
+                           reads_low_quality=n_low_q,
+                           clonotypes_low_quality=n_clono_low_q)
     parent = _parents(junctions, span_counts, v, j, max_subs=max_subs, max_indel=max_indel,
                       error_rate=error_rate, indel_rate=indel_rate, require_vj=require_vj)
     if error_method != "simple":
@@ -689,7 +842,7 @@ def correct_airr(
         "consensus_count": [cons[r] for r in order],             # distinct fragment consensuses
     })
     if map_d:
-        out = out.with_columns(_clonotype_d(out, organism))
+        out = out.with_columns(_clonotype_d(out, organism, d_max_evalue))
     out.write_csv(output, separator="\t")
 
     if read_map is not None:

@@ -357,7 +357,7 @@ static std::tuple<std::string, std::string, int, int, int, int> merge_alignment(
 
 
 // ---------------------------------------------------------------------------
-// Per-segment AIRR CIGARs.
+// Per-segment AIRR CIGARs, and the per-segment SHM mutation lists that fall out of the same walk.
 //
 // The pure-Python `arda.annotate.cigar.segment_cigars` walks the alignment column by column and
 // makes two function calls per column (`_classify`, `_germline_pos`). Profiled over the real-read
@@ -402,14 +402,22 @@ static std::string build_cigar_cpp(int q_lead, int g_lead, const std::string& op
     return out;
 }
 
+// A base carries mutation evidence only if it is an unambiguous ACGT on BOTH sides. The scaffold's
+// N-pad never reaches here (seg_key rejects it), but a read N would otherwise read as a mutation.
+static inline bool acgt(char c) {
+    return c == 'A' || c == 'C' || c == 'G' || c == 'T';
+}
+
 std::map<std::string, std::string> segment_cigars(
         const std::string& qaln, const std::string& taln,
         int qstart, int tstart, int qlen,
         int t_vend, int t_jstart, int t_vjend) {
     static const char* NAMES[3] = {"v_cigar", "j_cigar", "c_cigar"};
+    static const char* MUT_NAMES[2] = {"v_mutations", "j_mutations"};
     std::string ops[3];
     int q_first[3] = {0, 0, 0}, q_last[3] = {0, 0, 0}, g_first[3] = {0, 0, 0};
     bool seen[3] = {false, false, false};
+    std::string muts[2];                          // V and J only; a C mutation is not SHM evidence
 
     int q = qstart, t = tstart;
     const size_t n = std::min(qaln.size(), taln.size());
@@ -425,6 +433,16 @@ std::map<std::string, std::string> segment_cigars(
                 q_last[key] = q;
             }
             if (ct && g_first[key] == 0) g_first[key] = germline_pos(key, t, t_jstart, t_vjend);
+            if (key < 2 && op == 'M') {
+                const char gb = std::toupper((unsigned char)taln[i]);
+                const char rb = std::toupper((unsigned char)qaln[i]);
+                if (gb != rb && acgt(gb) && acgt(rb)) {
+                    if (!muts[key].empty()) muts[key].push_back(',');
+                    muts[key].push_back(gb);
+                    muts[key] += std::to_string(germline_pos(key, t, t_jstart, t_vjend));
+                    muts[key].push_back(rb);
+                }
+            }
         }
         if (cq) ++q;
         if (ct) ++t;
@@ -437,6 +455,8 @@ std::map<std::string, std::string> segment_cigars(
         std::string cig = build_cigar_cpp(q_first[k] - 1, g_lead, ops[k], qlen - q_last[k]);
         if (!cig.empty()) out[NAMES[k]] = cig;
     }
+    for (int k = 0; k < 2; ++k)
+        if (!muts[k].empty()) out[MUT_NAMES[k]] = muts[k];
     return out;
 }
 
