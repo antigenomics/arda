@@ -86,9 +86,14 @@ def test_readme_table_for_dd_airr():
 
     igh = row["PX612894.1"]
     assert igh["d_call"] == "IGHD3-9*01"
-    assert igh["d2_call"] == "IGHD2/OR15-2a*01,IGHD2/OR15-2b*01", "byte-identical D genes tie"
+    # ⛔ This used to assert a SECOND D of `IGHD2/OR15-2a*01,IGHD2/OR15-2b*01`, and that assertion
+    # was pinning an artifact. Those are `/OR` ORPHONS -- on chromosome 15, outside the IGH locus,
+    # not producible by any rearrangement. On a real bulk IGH library 11 of 11 tandem D-D calls
+    # named that same pair, i.e. the entire tandem-D signal was this one vocabulary error. Orphons
+    # are now excluded in `_allowed_d`, so this record correctly has ONE D.
+    assert not igh["d2_call"], "orphon /OR genes must never produce a second D"
 
-    for r in (trd, igh):
+    for r in (trd,):
         seq = r["sequence"]
         d1 = seq[int(r["d_sequence_start"]) - 1 : int(r["d_sequence_end"])]
         d2 = seq[int(r["d2_sequence_start"]) - 1 : int(r["d2_sequence_end"])]
@@ -102,7 +107,10 @@ def test_dd_reads_reproduce_from_the_junction_alone():
 
     for r in _committed(EXAMPLES / "dd.airr.tsv").iter_rows(named=True):
         call = map_d_junction(r["junction"], r["v_call"], r["j_call"], "human")
-        assert (call.d_call, call.d2_call) == (r["d_call"], r["d2_call"]), r["sequence_id"]
+        # An absent second D reads back as None from the TSV and as "" from the caller; both mean
+        # "no second D", so compare on emptiness rather than on the sentinel.
+        assert call.d_call == r["d_call"], r["sequence_id"]
+        assert (call.d2_call or "") == (r["d2_call"] or ""), r["sequence_id"]
 
 
 def test_committed_rnaseq_clonotypes_still_reproduce(tmp_path):
