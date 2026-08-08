@@ -3,6 +3,83 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.13.0
+
+### Added — a quality-aware denoising framework: `--ec-mode amplicon|rnaseq`, `--clonotype-key`
+
+Stage 2's abundance model asks whether the parent could have produced this many misreads by
+chance. That question is **only answerable for near neighbours**, and it is now measured exactly
+where it stops being answerable. If a clonotype *k* substitutions from its parent is accumulated
+independent error, the 1- and 2-substitution intermediates must also be observed — the same process
+generates them at far higher rate. On Jurkat TRB (dominant clone 9,932 reads, 48 nt):
+
+| k | clonotypes | expected at `1e-3` | median mean-Q | has an observed *(k−1)* neighbour |
+|---|---|---|---|---|
+| 1 | 108 | 476.74 | 31.4 | — |
+| 2 | 82 | 11.20 | 25.2 | **82 / 82** |
+| 3 | 28 | 0.17 | 24.2 | 3 / 28 |
+| 4 | 13 | 0.0019 | 24.0 | **0 / 13** |
+| 5 | 18 | 0.0000 | 20.1 | **0 / 18** |
+| ≥6 | 14 | 0.0000 | 16.5–18.2 | **0 / 14** |
+
+**k ≤ 2 is a ladder** and the abundance model is valid on it — which is what `--max-subs 3` has
+always been. **k ≥ 4 is a cliff**: zero intermediates, and 13 observed where the model predicts
+0.0019. Those are single bad reads, and quality says so independently (median mean junction Phred
+falls monotonically 31.4 → 16.5; the k ≥ 5 class is 100 % sub-Q30 against the dominant clone's
+5.9 %).
+
+⛔ Widening `--max-subs` to 10 *does* clean that library up (53 → 11 clonotypes) **for the wrong
+reason** — the abundance test it applies there has probability 0 to every printed digit, and
+`--error-rate` is inert from 1e-3 to 1e-1 on that class for the same reason. So the new modes reach
+it on the evidence that actually distinguishes it:
+
+* `--ec-mode amplicon` — rescue at mean-Q < 25, radius 12 subs, ratio 50×. A targeted library is
+  deep, so a 1-read neighbour of an abundant clone is almost always error.
+* `--ec-mode rnaseq` — rescue at mean-Q < 20, radius 6 subs, ratio 200×. Bulk RNA-seq is sparse
+  (0.02–3 % receptor), singletons are the norm and mostly real, so the rescue stays narrow.
+
+⛔ **Nothing in the framework discards a read.** A candidate with no qualifying parent keeps its
+reads and is reported as an orphan. That is not caution, it is the measured requirement: on a
+polyclonal hypermutated repertoire a whole-junction mean-Q floor at Q30 strands **3.70 %** of all
+junction-bearing reads with no parent to inherit them. Read conservation is pinned over every
+regime × key by `test_no_regime_or_key_ever_loses_a_read`.
+
+`--clonotype-key junction` canonicalises V/J to the junction's majority before grouping, so **call
+splits collapse** — a junction byte-identical to an abundant clone's under a different V or J call,
+which no error model can see because there is no discriminating base. On Jurkat that is the largest
+error class by reads (130 of 14,531, including an allele-level TRG split). Cost on a polyclonal TRA
+amplicon: 132 of 19,956 clonotypes merge (0.66 %), and the minority call there carries one read
+against 4–10 on a short 30–39 nt junction.
+
+Jurkat, `--clonotype-key junction`, 14,531 reads throughout:
+
+| `--ec-mode` | clonotypes | reads | TRB purity | rescued | orphans |
+|---|---|---|---|---|---|
+| `fast` | 89 | 14,531 | .99562 | 0 | 0 |
+| `accurate` | 53 | 14,531 | .99696 | 0 | 0 |
+| **`amplicon`** | **10** | **14,531** | **.99990** | 43 | 2 |
+| `rnaseq` | 40 | 14,531 | .99800 | 13 | 16 |
+
+MIGEC spike-ins: all three published clonotypes survive every mode (error clonotypes 1,630 → 108
+under `amplicon`) at exactly 310,559 reads.
+
+New C++ extension `arda._denoise` (per-read mean junction Phred; the wide-radius, length-bucketed,
+early-exit parent search — 31,943 clonotypes is 5.1e8 ordered pairs on an IGH repertoire). Both
+have Python reference implementations asserted identical in the tests.
+
+### Fixed — the coverage k-mer cap kept an arbitrary 64 roots, not the abundant ones
+
+`_assign_coverage` bounds how many roots one germline-shared k-mer may name, and kept the first
+`cap` in target order — so the survivors depended on the root list's order and any change to the
+root set silently reshuffled them (merging call splits cost 3 reads of 43,475, none of which had a
+junction of their own to fall back on). Now inserted in descending abundance, then sequence: the
+roots a partial read is most likely to belong to are the ones that survive. On the TRA amplicon
+this also **recovers 35 reads** that were previously unassigned (43,475 → 43,510).
+
+⚠ Residual, named rather than swept: with the quality gate on, 9 reads of 43,510 (0.021 %) are
+still not placed — 7 carrying a frameshift-N junction and 2 with no junction at all, i.e. reads
+that never formed a clonotype and were only ever placed by alignment.
+
 ## 2.12.1
 
 ### Fixed — the quality gate MOVES a read onto its parent, it never discards it

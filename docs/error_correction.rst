@@ -204,10 +204,104 @@ The effect is **flat over Q20–32 and degrades by Q35**, where it starts eating
 (1,094 → 612 reads). Q20 keeps 86 % of V1's reads while removing 89 % of the distinct error
 clonotypes.
 
+Where the abundance model stops working: the ladder and the cliff
+-----------------------------------------------------------------
+
+The abundance test asks whether the parent could have produced this many misreads by chance. That
+question is **only answerable for near neighbours**, and it is possible to measure exactly where it
+stops being answerable.
+
+If a clonotype *k* substitutions from its parent is accumulated independent error, the 1- and
+2-substitution intermediates must **also** be observed — the same process generates them at far
+higher rate. So the intermediates are a testable prediction. On a monoclonal T line (Jurkat,
+dominant TRB clone 9,932 reads over 48 nt):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 8 14 24 16 38
+
+   * - *k*
+     - clonotypes
+     - expected at ``1e-3``
+     - median mean-Q
+     - has an observed *(k−1)* neighbour
+   * - 1
+     - 108
+     - 476.74
+     - 31.4
+     - —
+   * - 2
+     - 82
+     - 11.20
+     - 25.2
+     - **82 / 82**
+   * - 3
+     - 28
+     - 0.17
+     - 24.2
+     - 3 / 28
+   * - 4
+     - 13
+     - 0.0019
+     - 24.0
+     - **0 / 13**
+   * - 5
+     - 18
+     - 0.0000
+     - 20.1
+     - **0 / 18**
+   * - ≥ 6
+     - 14
+     - 0.0000
+     - 16.5–18.2
+     - **0 / 14**
+
+**k ≤ 2 is a ladder.** Every one of the 82 two-substitution variants has an observed
+one-substitution neighbour on its path to the parent, and the observed counts are within an order of
+magnitude of the binomial prediction. The abundance model is valid here, and chain collapse walks
+it — which is why ``--max-subs`` defaults to 3 (2 plus headroom).
+
+**k ≥ 4 is a cliff.** Zero intermediates at every *k*, and the model predicts 0.0019 clonotypes at
+*k* = 4 where 13 are observed. These are not accumulated substitutions; they are single reads whose
+whole junction window is unreliable, and the quality says so independently — median mean junction
+Phred falls monotonically from 31.4 to 16.5, and the *k* ≥ 5 class is 100 % sub-Q30 against the
+dominant clone's 5.9 %.
+
+.. warning::
+
+   Widening ``--max-subs`` to 10 *does* clean that library up (53 → 11 clonotypes, TRB purity
+   .99990) — **for the wrong reason**. The abundance test it applies there has probability 0 to
+   every printed digit. ``--error-rate`` is likewise inert from 1e-3 to 1e-1 on that class: the
+   model has no neighbour to work with. If the class is to be collapsed, it must be collapsed on
+   the evidence that actually distinguishes it, which is read quality — see the rescue below.
+
+The quality-directed rescue
+---------------------------
+
+``--ec-mode amplicon`` and ``--ec-mode rnaseq`` add a second tier that reaches the cliff class.
+Only clonotypes whose reads are **measurably bad** (median of the per-read mean junction Phred
+below ``lowq_mean_q``) are considered, each may only join a neighbour at least ``lowq_min_ratio``
+times more abundant within ``lowq_max_subs`` substitutions, and — the part that is not negotiable —
+a candidate with **no** such neighbour keeps its reads.
+
+.. important::
+
+   **Nothing in this framework discards a read.** A read that reached a complete junction came off
+   a real rearrangement of that locus; deciding its junction carries a miscall is a statement about
+   bases, not about whether the molecule existed. The rescue returns *parent assignments*, and the
+   sum of ``duplicate_count`` is invariant — pinned by
+   ``tests/unit/test_denoise.py::test_no_regime_or_key_ever_loses_a_read`` over every regime and
+   both clonotype keys.
+
+That is also why this is a rescue *radius* and not a quality *filter*. A whole-junction mean-Q
+floor looks better on every cell line, but measured on a polyclonal hypermutated repertoire
+(IGH_repertoire, 31,943 clonotypes) a floor at Q30 strands **3.70 %** of all junction-bearing reads
+with no parent to inherit them — 47 % of everything it removes — against 0.148 % at a floor of 20.
+
 Modes: ``--ec-mode``
 --------------------
 
-Two presets over the knobs above. An explicitly passed ``--error-method`` or ``--min-junction-q``
+Four presets over the knobs above. An explicitly passed ``--error-method`` or ``--min-junction-q``
 always wins over the mode.
 
 .. list-table::
@@ -225,6 +319,69 @@ always wins over the mode.
      - ``--error-method simple --min-junction-q 20``
      - Low-frequency variants matter: spike-ins, MRD-style tracking, a monoclonal control whose
        purity you are measuring. Needs ``map --junction-quality``.
+   * - ``amplicon``
+     - ``accurate`` + rescue at mean-Q < 25, radius 12 subs, ratio 50×
+     - A targeted library, where a real clonotype is **deep**, so a 1-read neighbour of an abundant
+       clone is almost always error and the rescue can be wide.
+   * - ``rnaseq``
+     - ``accurate`` + rescue at mean-Q < 20, radius 6 subs, ratio 200×
+     - Bulk RNA-seq, where the receptor fraction is 0.02–3 % and **singletons are the norm and
+       mostly real**, so the rescue stays narrow and demands a much stronger abundance ratio.
+
+The two regimes differ because their clonotype-size distributions differ, not by taste. Measured on
+Jurkat (14,531 reads, monoclonal), with ``--clonotype-key junction``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 14 12 14 14 14
+
+   * - ``--ec-mode``
+     - clonotypes
+     - reads
+     - TRB purity
+     - rescued
+     - orphans
+   * - ``fast``
+     - 89
+     - 14,531
+     - .99562
+     - 0
+     - 0
+   * - ``accurate``
+     - 53
+     - 14,531
+     - .99696
+     - 0
+     - 0
+   * - ``amplicon``
+     - **10**
+     - **14,531**
+     - **.99990**
+     - 43
+     - 2
+   * - ``rnaseq``
+     - 40
+     - 14,531
+     - .99800
+     - 13
+     - 16
+
+The read total does not move. On the MIGEC spike-ins all three published clonotypes survive every
+mode (error clonotypes 1,630 → 108 under ``amplicon``) at exactly 310,559 reads.
+
+The clonotype key: ``--clonotype-key``
+--------------------------------------
+
+The default key is ``(locus, v_call, j_call, junction)``. ``--clonotype-key junction`` canonicalises
+V/J to the junction's majority first, so **call splits collapse**: a junction byte-identical to an
+abundant clone's under a different V or J call. No error model can see that class — identical
+junctions have no discriminating base — and on Jurkat it is the largest error class *by reads*
+(130 of 14,531, including an allele-level ``TRGJ1*01`` / ``TRGJ1*02`` split).
+
+Measured cost on a **polyclonal** TRA amplicon: 132 of 19,956 clonotypes merge (0.66 %), and in
+every ambiguous case inspected the minority call carried **one** read against 4–10 for the majority,
+on a short 30–39 nt junction where little V sequence sits inside the junction to call V from — a
+call error on a low-abundance read, not a second clone.
 
 Q20 is the **low end of the measured plateau**, not the optimum on any one library — on the MIGEC
 data Q25–30 is marginally better on every axis. Shipping the conservative end is deliberate:

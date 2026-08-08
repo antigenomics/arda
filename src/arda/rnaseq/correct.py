@@ -30,8 +30,23 @@ from ._res import Stage
 import seqtree
 
 from ..refbuild.translate import reverse_complement
+from .denoise import REGIMES, clonotype_quality, quality_rescue, read_quality
 
-__all__ = ["correct_airr", "CorrectReport"]
+__all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS"]
+
+#: How a clonotype is identified.
+#:
+#: ``full`` -- ``(locus, v_call, j_call, junction)``, the historical key.
+#: ``junction`` -- ``(locus, junction)``: the V/J calls are canonicalised to the junction's
+#: majority before grouping, so **call splits collapse**. That class is invisible to every error
+#: model -- a junction byte-identical to an abundant clone's under a different V or J call has no
+#: discriminating base to score -- and on Jurkat it is the largest error class BY READS (130 of
+#: 14,531), including an allele-level TRG split. Measured cost on a POLYCLONAL TRA amplicon: 132 of
+#: 19,956 clonotypes merge (0.66 %), and in every ambiguous case inspected the minority call
+#: carried ONE read against 4-10 for the majority on a short 30-39 nt junction -- a call error on a
+#: low-abundance read, not a second clone. Benefit on Jurkat: TRB 35 -> 33 clonotypes at purity
+#: .99096 -> .99696, reads unchanged.
+CLONOTYPE_KEYS = ("full", "junction")
 
 _DNA = frozenset("ACGT")
 
@@ -83,9 +98,17 @@ _COMPLETE = (
 #: variant loses 1,094 -> 612 reads there), and on that library Q25-30 is marginally better on
 #: every axis than Q20. Shipping the conservative end is deliberate: `accurate` exists to protect
 #: rare real variants, and one library is not enough to tune a default with.
+#: ``amplicon`` and ``rnaseq`` additionally switch on the QUALITY-DIRECTED RESCUE
+#: (:mod:`arda.rnaseq.denoise`), which reaches the class the abundance model structurally cannot:
+#: a clonotype 4+ substitutions from anything has no ladder of observed intermediates behind it
+#: (0 of 13 at k=4 on Jurkat, against 0.0019 predicted) and no discriminating base for
+#: ``--min-junction-q`` to judge, but its reads are measurably bad. They are ROUTED to an abundant
+#: parent, never deleted; one with no parent is kept.
 EC_MODES: dict[str, dict] = {
-    "fast": {"error_method": "simple", "min_junction_q": 0},
-    "accurate": {"error_method": "simple", "min_junction_q": 20},
+    "fast": {"error_method": "simple", "min_junction_q": 0, "regime": "fast"},
+    "accurate": {"error_method": "simple", "min_junction_q": 20, "regime": "accurate"},
+    "amplicon": {"error_method": "simple", "min_junction_q": 20, "regime": "amplicon"},
+    "rnaseq": {"error_method": "simple", "min_junction_q": 20, "regime": "rnaseq"},
 }
 
 
@@ -101,6 +124,12 @@ class CorrectReport:
     # off). They are still counted -- in the parent -- so this never subtracts from `reads`.
     reads_low_quality: int = 0
     clonotypes_low_quality: int = 0  # clonotypes that gave up EVERY read to the quality gate
+    # The quality-directed rescue (`--ec-mode amplicon|rnaseq`). Reads MOVE to the parent; a
+    # candidate with no parent is kept, and its reads are `orphan_reads` -- reported, never lost.
+    rescued_clonotypes: int = 0
+    rescued_reads: int = 0
+    orphan_clonotypes: int = 0
+    orphan_reads: int = 0
     # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
     # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
     wall_seconds: float = 0.0
@@ -493,6 +522,7 @@ def _assign_coverage(
     *,
     override: dict[str, int] | None = None,
     aliases: list[tuple[str, str, int]] | None = None,
+    root_counts: list[int] | None = None,
     k: int = 12,
     min_ov: int = 20,
     max_mm: float = 0.12,
@@ -565,12 +595,25 @@ def _assign_coverage(
     tgt_jn = list(root_jn) + [a[0] for a in (aliases or ())]
     tgt_loc = list(root_loc) + [a[1] for a in (aliases or ())]
     tgt_root = list(range(len(root_jn))) + [a[2] for a in (aliases or ())]
+    # ⛔ `cap` bounds how many roots one germline-shared k-mer may name, and WHICH ones it keeps is
+    # therefore load-bearing. Keeping the first `cap` in target order made the survivors depend on
+    # the root list's order, so any change to the root set silently re-shuffled them: merging call
+    # splits under `--clonotype-key junction` cost 3 reads of 43,475 that had been placed by this
+    # pass, none of which had a junction of its own to fall back on. Insert in DESCENDING ABUNDANCE
+    # (then sequence, for a total order): the roots a partial read is most likely to belong to are
+    # the ones that survive the cap, and the choice no longer depends on upstream grouping.
+    n_roots = len(root_jn)
+    order = sorted(range(len(tgt_jn)),
+                   key=lambda ri: (-(root_counts[tgt_root[ri]] if root_counts else 0),
+                                   tgt_jn[ri], ri))
     index: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    for ri, jn in enumerate(tgt_jn):
+    for ri in order:
+        jn = tgt_jn[ri]
         for p in range(len(jn) - k + 1):
             lst = index[jn[p:p + k]]
             if len(lst) < cap:                       # bound the germline-shared k-mers
                 lst.append((ri, p))
+    del n_roots
     for i in range(n):
         sid = sidc[i]
         if sid in done:
@@ -682,6 +725,7 @@ def correct_airr(
     require_vj: bool = True,
     error_method: str | None = None,
     ec_mode: str = "fast",
+    clonotype_key: str = "full",
     min_junction_q: int | None = None,
     complete_only: bool = True,
     coverage: bool = True,
@@ -760,7 +804,10 @@ def correct_airr(
     """
     if ec_mode not in EC_MODES:
         raise ValueError(f"ec_mode must be one of {sorted(EC_MODES)}, got {ec_mode!r}")
+    if clonotype_key not in CLONOTYPE_KEYS:
+        raise ValueError(f"clonotype_key must be one of {list(CLONOTYPE_KEYS)}, got {clonotype_key!r}")
     preset = EC_MODES[ec_mode]
+    regime = preset.get("regime", "fast")
     if error_method is None:
         error_method = preset["error_method"]
     if min_junction_q is None:
@@ -794,6 +841,42 @@ def correct_airr(
     if complete_only:
         df = df.filter(_COMPLETE)
     n_incomplete = n_with_junction - df.height
+    # ⛔ The KEY is decided BEFORE any correction. The quality gate names a read's parent by its
+    # clonotype key, so canonicalising afterwards leaves those names pointing at keys that no
+    # longer exist -- 2 of Jurkat's 14,531 reads went missing that way, which is small enough to
+    # have shipped unnoticed and is still a violation of the invariant.
+    if clonotype_key == "junction":
+        # Collapse CALL SPLITS by giving every read of a (locus, junction) that junction's majority
+        # (v_call, j_call) before grouping. Rewriting the labels rather than shortening the group
+        # key keeps everything downstream -- coverage's exact-key pass, the read map, the emitted
+        # columns -- working on a 4-tuple, so this is a relabel, not a second code path.
+        # ⛔ Ties break on count then lexicographically, never on row order: `correct`'s
+        # reproducibility rests on exactly this kind of decision being total.
+        votes: dict[tuple[str, str], Counter] = defaultdict(Counter)
+        for loc, vv, jj, jn in zip(df["locus"].to_list(), df["v_call"].to_list(),
+                                   df["j_call"].to_list(), df["junction"].to_list()):
+            votes[(loc or "", jn or "")][(vv or "", jj or "")] += 1
+        best = {k: min(sorted(c), key=lambda pair: (-c[pair], pair)) for k, c in votes.items()}
+        # ⛔ `raw` must be relabelled TOO, not just `df`. Coverage assignment re-derives every
+        # read's clonotype from the UNFILTERED frame by its own (locus, v, j, junction) key, so a
+        # read whose label the canonicalisation changed would miss the exact-key pass and fall to
+        # the aligner or go unassigned. Measured when this was missing: 128 of Jurkat's 14,531
+        # reads vanished -- the same read-conservation leak the quality gate had, one flag later.
+        rl, rj = raw["locus"].to_list(), raw["junction"].to_list()
+        rv, rjc = raw["v_call"].to_list(), raw["j_call"].to_list()
+        raw = raw.with_columns(
+            pl.Series("v_call", [best.get((a or "", b or ""), (c, d))[0]
+                                 for a, b, c, d in zip(rl, rj, rv, rjc)]),
+            pl.Series("j_call", [best.get((a or "", b or ""), (c, d))[1]
+                                 for a, b, c, d in zip(rl, rj, rv, rjc)]),
+        )
+        df = df.with_columns(
+            pl.Series("v_call", [best[(loc or "", n or "")][0]
+                                 for loc, n in zip(df["locus"].to_list(), df["junction"].to_list())]),
+            pl.Series("j_call", [best[(loc or "", n or "")][1]
+                                 for loc, n in zip(df["locus"].to_list(), df["junction"].to_list())]),
+        )
+
     n_low_q = n_clono_low_q = 0
     moved_sid: dict[str, tuple[str, str, str, str]] = {}
     emptied_keys: dict[tuple[str, str, str, str], tuple[str, str, str, str]] = {}
@@ -849,6 +932,41 @@ def correct_airr(
         parent = _error_pileup(raw, junctions, v, j, locus, parent, span_counts,
                                error_rate=error_rate, indel_rate=indel_rate, method=error_method)
 
+    # QUALITY-DIRECTED RESCUE (arda.rnaseq.denoise). The abundance model above is only valid where
+    # a ladder of observed intermediates exists -- measured at k <= 2, with 3 as headroom. Beyond
+    # that there is no ladder (0 of 13 clonotypes at k=4 on Jurkat have any observed k-1 neighbour,
+    # against 0.0019 predicted) and `--min-junction-q` cannot see the class either, because a
+    # clonotype with no neighbour within `max_subs` has no discriminating base to judge. What IS
+    # true of it is that its reads are bad. So: only clonotypes whose reads are measurably bad, only
+    # onto a much more abundant parent, and a candidate with no parent KEEPS ITS READS.
+    rescue_report = None
+    if regime and REGIMES[regime].enabled() and "junction_quality" in df.columns:
+        rq = read_quality(df["junction"].to_list(),
+                          [x or "" for x in df["junction_quality"].to_list()])
+        cq = clonotype_quality(list(zip([x or "" for x in df["locus"].to_list()],
+                                        [x or "" for x in df["v_call"].to_list()],
+                                        [x or "" for x in df["j_call"].to_list()],
+                                        df["junction"].to_list())), rq)
+        clono_q = [cq.get((locus[i], v[i], j[i], junctions[i]), -1.0)
+                   for i in range(len(junctions))]
+        # Only clonotypes the abundance model did NOT already claim: a read routed twice is a bug,
+        # and re-deciding a parent the ladder already justified would be strictly worse evidence.
+        free = [i for i in range(len(junctions)) if parent[i] is None]
+        rescued, rescue_report = quality_rescue(
+            junctions, span_counts,
+            [clono_q[i] if i in set(free) else -1.0 for i in range(len(junctions))],
+            REGIMES[regime])
+        for i, pi in enumerate(rescued):
+            # Never overwrite an abundance parent, and never create a cycle: the rescue target is
+            # strictly more abundant (enforced in `nearest_more_abundant`), which is the same
+            # no-cycle argument `_parents` relies on.
+            if pi is not None and parent[i] is None:
+                parent[i] = pi
+        report.rescued_clonotypes = rescue_report.rescued_clonotypes
+        report.rescued_reads = rescue_report.rescued_reads
+        report.orphan_clonotypes = rescue_report.orphan_clonotypes
+        report.orphan_reads = rescue_report.orphan_reads
+
     # Accumulate each clonotype's count + reads into its ultimate ancestor.
     agg_count = counts[:]
     agg_reads: list[list[str]] = [list(r) for r in read_ids]
@@ -896,7 +1014,8 @@ def correct_airr(
         # 9,208 on Ramos, every one of them a read with no junction at all.)
         aliases = [(old_k[3], old_k[0], exact[old_k]) for old_k in emptied_keys if old_k in exact]
         read_sets = _assign_coverage(raw, [junctions[i] for i in roots], [locus[i] for i in roots],
-                                     exact, override=override, aliases=aliases)
+                                     exact, override=override, aliases=aliases,
+                                     root_counts=[span_counts[i] for i in roots])
     else:
         read_sets = [agg_reads[i] for i in roots]
     dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads

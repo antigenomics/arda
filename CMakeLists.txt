@@ -38,3 +38,11 @@ target_compile_options(_segmap PRIVATE -O3)
 target_link_libraries(_segmap PRIVATE Threads::Threads)
 
 install(TARGETS _segmap DESTINATION arda)
+
+# Quality-aware clonotype denoising: per-read junction quality and the wide-radius parent search.
+# Separate from _markup (annotation) because this is Stage 2, and the measurements that justify
+# every rule in it live in the benchmark repo's round 22. See src/_denoise/denoise.cpp.
+pybind11_add_module(_denoise src/_denoise/denoise.cpp)
+target_compile_options(_denoise PRIVATE -O3)
+
+install(TARGETS _denoise DESTINATION arda)

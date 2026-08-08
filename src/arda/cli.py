@@ -499,11 +499,27 @@ def rnaseq_correct(
                    "byte-identical on a monoclonal one -- neither is in a mode for that reason."),
     ec_mode: str = typer.Option(
         "fast", "--ec-mode",
-        help="Knob preset. `fast` (default) = the shipped behaviour: the abundance error model on "
-             "spanning read counts, no quality gate. `accurate` = the same model plus "
-             "--min-junction-q 20, which judges the one base that discriminates a clonotype from "
-             "its parent on its Phred score instead of on abundance alone. Needs "
+        help="Denoising preset. `fast` (default) = shipped behaviour: the abundance error model on "
+             "spanning read counts, no quality gate. `accurate` = the same plus --min-junction-q "
+             "20, judging the one base that discriminates a clonotype from its parent on its Phred "
+             "score. `amplicon` / `rnaseq` add the QUALITY-DIRECTED RESCUE: a clonotype 4+ subs "
+             "from anything has no ladder of observed intermediates behind it (0 of 13 at k=4 on "
+             "Jurkat vs 0.0019 predicted) and no discriminating base to gate on, but its reads are "
+             "measurably bad -- those are routed to a much more abundant parent, NEVER deleted, and "
+             "one with no parent keeps its reads. `amplicon` searches wide (12 subs, 50x ratio) "
+             "because a real clonotype there is deep; `rnaseq` stays narrow (6 subs, 200x) because "
+             "singletons are the norm in a 0.02-3 % receptor library. All need "
              "`map --junction-quality`. An explicit --error-method / --min-junction-q wins."),
+    clonotype_key: str = typer.Option(
+        "full", "--clonotype-key",
+        help="`full` (default) = (locus, v_call, j_call, junction). `junction` = (locus, junction): "
+             "V/J are canonicalised to the junction's majority first, so CALL SPLITS collapse -- a "
+             "junction byte-identical to an abundant clone's under a different V or J call, which "
+             "no error model can see because there is no discriminating base. On Jurkat that is "
+             "the largest error class by reads (130 of 14,531, incl. an allele-level TRG split): "
+             "TRB 35 -> 33 clonotypes at purity .99096 -> .99696, reads unchanged. Measured cost "
+             "on a polyclonal TRA amplicon: 132 of 19,956 clonotypes merge (0.66 %), and the "
+             "minority call there carries 1 read against 4-10 on a short junction."),
     min_junction_q: Optional[int] = typer.Option(
         None, "--min-junction-q",
         help="Reassign a read whose junction differs from its putative parent at ANY base below "
@@ -541,6 +557,7 @@ def rnaseq_correct(
                        d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        ec_mode=ec_mode, min_junction_q=min_junction_q,
+                       clonotype_key=clonotype_key,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
     typer.echo(
