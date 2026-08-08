@@ -549,9 +549,30 @@ def transfer_hit(
     per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
     ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
     """
-    coords = _markup.transfer_regions(
-        hit["qaln"], hit["taln"], int(hit["qstart"]), int(hit["tstart"]),
-        ref.starts, ref.ends)
+    # ⛔ ONE walk of the alignment, not four. Besides the seven regions, this function needs three
+    # single scaffold positions projected onto the query: the V germline end, the J germline start,
+    # and the V coding-frame anchor. Each used to go through `_project_point`, i.e. its own
+    # `transfer_regions` crossing -- a fresh 6-argument binding call, two fresh `std::string` copies
+    # of the SAME alignment, and a fresh forward walk, measured at 443 ns each against 822 ns for
+    # the real multi-region call. Projecting a point is exactly the degenerate region [p, p], so
+    # they ride along as extra intervals and are read back by index.
+    #
+    # `_project_point` is kept: `_extra_points` can only fold in positions known BEFORE the walk,
+    # and the aa path still projects one that is not.
+    ts = int(hit["tstart"])
+    t0 = ref.starts[0]
+    # The V coding-frame anchor: first scaffold position >= tstart that is in the V reading frame.
+    # Depends only on `t0` and `tstart`, so it is knowable here. -1 (no V, e.g. a J+C scaffold)
+    # projects to 0, which is exactly what `_project_point` returned for it.
+    frame_pos = ts + ((t0 - ts) % 3) if t0 > 0 else 0
+    extra = [ref.v_sequence_end or 0, ref.j_sequence_start or 0, frame_pos]
+    n_reg = len(ref.starts)
+    all_coords = _markup.transfer_regions(
+        hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
+        list(ref.starts) + extra, list(ref.ends) + extra)
+    coords = all_coords[:n_reg]
+    # `transfer_regions` returns (-1, -1) for an uncovered position; `_project_point` returned 0.
+    v_end_pt, j_start_pt, frame_pt = (max(0, all_coords[n_reg + i][0]) for i in range(3))
 
     rec = _empty_record(query_id, query_seq if submitted_seq is None else submitted_seq)
     rec.update(locus=ref.locus, v_call=ref.v_call, j_call=ref.j_call,
@@ -611,8 +632,7 @@ def transfer_hit(
     # Transfer the V germline end and J germline start (extended scaffold markup), then
     # refine them against the per-allele junction germlines -- the projection systematically
     # collapses the V..J interior (see `_anchored_vj_bounds`).
-    v_end_q = _project_point(hit, ref.v_sequence_end)
-    j_start_q = _project_point(hit, ref.j_sequence_start)
+    v_end_q, j_start_q = v_end_pt, j_start_pt      # from the single walk above
     if "cdr3" in region_q and "fwr4" in region_q:
         av, aj = _anchored_vj_bounds(query_seq, region_q["cdr3"][0], region_q["fwr4"][0],
                                      ref.v_call, ref.j_call, anchors, seqtype)
@@ -638,12 +658,9 @@ def transfer_hit(
         # V, so ``ref.starts[0]`` is -1 and there is no V frame to project -- guard the arithmetic
         # rather than feed -1 into it. FR4 still reads in its own (J) frame, so it is translated below,
         # outside this branch: on a V-less hit it is the only markup there is.
-        t0 = ref.starts[0]
         coding_start = None
         if t0 > 0:
-            tstart = int(hit["tstart"])
-            p = tstart + ((t0 - tstart) % 3)
-            pj = _project_point(hit, p)
+            pj = frame_pt                          # from the single walk above
             coding_start = pj or region_q.get("fwr1", (None,))[0]
             if pj == 0 and coding_start is not None:
                 v_end = region_q.get("fwr3", (0, 0))[1] or len(query_seq)

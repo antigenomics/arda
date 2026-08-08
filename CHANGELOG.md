@@ -36,6 +36,23 @@ against IgBLAST: bulk **.1129 → .7842**, amplicon **.9685 → .9953**.
 Gated on the scaffold declaring `j_sequence_start`/`vj_end`: the aa markup does not, and blanking
 on a reference that cannot say deleted every protein-input `j_call`.
 
+### Changed — `transfer_hit` walks the alignment ONCE instead of four times
+
+Besides the seven regions, `transfer_hit` needs three single scaffold positions projected onto the
+query: the V germline end, the J germline start, and the V coding-frame anchor. Each went through
+`_project_point`, i.e. its **own** `_markup.transfer_regions` call -- a fresh 6-argument binding
+crossing, two fresh `std::string` copies of the *same* alignment, and a fresh forward walk. Measured
+at ~443 ns each against ~822 ns for the real multi-region call.
+
+Projecting a point is the degenerate region `[p, p]`, so all three now ride along in the single
+multi-region call and are read back by index. The coding-frame anchor is knowable before the walk
+(it depends only on `ref.starts[0]` and `hit["tstart"]`).
+
+**`transfer_regions` calls per 100 k-read amplicon run: 207,007 -> 54,178.** Output is byte-identical
+on both an amplicon and a bulk library.
+
+`_project_point` is kept -- only positions known *before* the walk can be folded in.
+
 ### Changed — AIRR TSV formatting moved into the `_markup` C++ extension
 
 `airr_out.format_rows` did, per record, 52 `dict.get` calls, 52 `None` tests, 52 exact-type tests,
