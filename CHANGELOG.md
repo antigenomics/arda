@@ -3,6 +3,37 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.12.1
+
+### Fixed — the quality gate MOVES a read onto its parent, it never discards it
+
+A read that reached a complete junction came off a real rearrangement of that locus.
+`--min-junction-q`'s evidence is about **one base** — it says that base is a miscall — and says
+nothing about whether the molecule existed, so discarding the read understates the parent's
+expression by exactly the reads the correction claims belong to it.
+
+2.12.0 filtered gated reads out of the frame. Coverage assignment then happened to realign most of
+them back onto the parent — 325 of 330 on a TRA amplicon — so the rule held *by accident*, resting
+on an alignment succeeding, and 5 reads were lost. The gated read's clonotype key is now rewritten
+to the parent's and it routes through the exact-key pass. Three leaks had to be closed:
+
+* coverage re-derives every read's clonotype from the **unfiltered** Stage-1 frame by the key still
+  on the read, so a moved read whose old clonotype survived (its other reads passed the gate) was
+  handed straight back and the move silently did nothing;
+* a clonotype the gate empties **vacates its key**, and any other read carrying it — an
+  incomplete-junction read, which never reached Stage 2 — loses its only anchor;
+* the vacated **junction** left the alignment index, so a partial read whose only ≥20 nt overlap was
+  with it went unassigned.
+
+Measured. Jurkat `ERR3003543`, reads assigned **14,531 at every gate** while clonotypes go 90 → 54
+and purity TRA .99055 → .99528, TRB .98963 → .99096. MIGEC spike-ins at `--error-rate 1e-5`, reads
+assigned **310,559 at every gate**, all three published clonotypes kept, error clonotypes
+1,630 → 79: error reads fall 8,398 → 2,026 and the parent gains **+6,545**.
+
+⛔ Scoped to gate-vacated junctions, **not** to every collapsed child. Aliasing all of them was
+built and measured: it moves *default* output (Ramos 9,208 → 9,234 with the gate off) and still
+loses 14 reads at Q20. Rejected.
+
 ## 2.12.0
 
 ### Added — `--d-max-evalue`: the D call is a dial, and `d_support` ranks it
