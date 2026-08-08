@@ -378,3 +378,24 @@ def test_the_report_counts_moved_reads_without_subtracting_them(tmp_path):
     on = correct_airr(src, tmp_path / "on.out", map_d=False, error_rate=1e-6, min_junction_q=25)
     assert on.reads_low_quality == 20
     assert on.reads == off.reads, "spanning reads must be conserved across the gate"
+
+
+def test_a_vacated_junction_stays_an_alignment_target(tmp_path):
+    """A read with NO junction of its own, covering only the junction the gate removed.
+
+    The clonotype is gone, but its sequence is still real: partial reads legitimately cover it.
+    Dropping it from the alignment index loses those reads outright -- they overlap no surviving
+    root by `min_ov`. It stays, pointing at the parent. (Measured: 5 such reads on Ramos, every
+    one carrying no junction at all.)
+    """
+    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo"))
+    # A partial read: it carries the child's sequence but never reached a junction of its own, so
+    # only the alignment pass can place it.
+    rows.append({"sequence_id": "partial0", "sequence": _CHILD, "junction": "", "junction_aa": "",
+                 "v_call": "TRBV20-1*01", "j_call": "TRBJ2-1*01", "locus": "TRB",
+                 "junction_quality": ""})
+    cl = _clonotypes(_airr(tmp_path, rows, "alias.tsv"), tmp_path / "alias.out",
+                     error_rate=1e-6, min_junction_q=25)
+    assert _CHILD not in cl
+    assert cl[_PARENT] == 421, "the partial read must land on the parent, not vanish"

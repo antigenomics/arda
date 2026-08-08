@@ -492,6 +492,7 @@ def _assign_coverage(
     exact: dict[tuple[str, str, str, str], int],
     *,
     override: dict[str, int] | None = None,
+    aliases: list[tuple[str, str, int]] | None = None,
     k: int = 12,
     min_ov: int = 20,
     max_mm: float = 0.12,
@@ -508,6 +509,12 @@ def _assign_coverage(
     ``override`` maps a ``sequence_id`` straight to a root position, ahead of every key lookup: it
     carries the reads ``_quality_gate`` moved onto a parent, whose key in ``raw`` still names the
     error clonotype they were moved off.
+
+    ``aliases`` are extra ``(junction, locus, root position)`` targets for the ALIGNMENT pass. A
+    junction the quality gate vacated is still real sequence that partial reads legitimately cover
+    -- it just is not its own clonotype any more -- so it stays in the index, pointing at the
+    parent. Without it a read whose only >= ``min_ov`` overlap was with the vacated junction goes
+    unassigned, which loses reads the correction says belong to the parent.
 
     Pass 1 -- exact: a read whose ``(locus, v_call, j_call, junction)`` key is in ``exact`` (the
     clonotype key -> root-position map, collapsed children included) is assigned there
@@ -553,8 +560,13 @@ def _assign_coverage(
             done.add(sid)
 
     # Pass 2: align the rest (partial V-side / J-side reads that never reached a complete junction).
+    # Targets are the roots, then the vacated junctions; `tgt_root` maps a target back to the root
+    # position its reads are credited to (identity for a root, the parent for an alias).
+    tgt_jn = list(root_jn) + [a[0] for a in (aliases or ())]
+    tgt_loc = list(root_loc) + [a[1] for a in (aliases or ())]
+    tgt_root = list(range(len(root_jn))) + [a[2] for a in (aliases or ())]
     index: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    for ri, jn in enumerate(root_jn):
+    for ri, jn in enumerate(tgt_jn):
         for p in range(len(jn) - k + 1):
             lst = index[jn[p:p + k]]
             if len(lst) < cap:                       # bound the germline-shared k-mers
@@ -572,13 +584,13 @@ def _assign_coverage(
         L = len(s)
         for rp in range(0, L - k + 1):
             for (ri, jp) in index.get(s[rp:rp + k], ()):
-                if loc and root_loc[ri] != loc:
+                if loc and tgt_loc[ri] != loc:
                     continue
                 d = jp - rp
                 if (ri, d) in seen:
                     continue
                 seen.add((ri, d))
-                jr = root_jn[ri]
+                jr = tgt_jn[ri]
                 lo, hi = (-d if d < 0 else 0), min(L, len(jr) - d)
                 ov = hi - lo
                 # ⛔ `ov < best_ov`, NOT `ov <= best_ov`. Equal overlap is COMMON and was being
@@ -604,7 +616,7 @@ def _assign_coverage(
                 if mm <= budget and (best_ri is None or ov > best_ov or mm < best_mm):
                     best_ov, best_mm, best_ri = ov, mm, ri
         if best_ri is not None:
-            assigned[best_ri].append(sid)
+            assigned[tgt_root[best_ri]].append(sid)
             done.add(sid)
     return assigned
 
@@ -878,8 +890,13 @@ def correct_airr(
         # A quality-gated read is routed by its NEW clonotype, not by the key still sitting on it
         # in `raw` -- otherwise coverage hands it back to the error clonotype it was moved off.
         override = {sid: exact[k] for sid, k in moved_sid.items() if k in exact}
+        # ...and the junctions the gate vacated stay in the ALIGNMENT index, pointing at the parent.
+        # A partial read carrying no junction of its own can have covered only that sequence; with
+        # the target gone it overlaps no surviving root by `min_ov` and is dropped. (Measured: 5 of
+        # 9,208 on Ramos, every one of them a read with no junction at all.)
+        aliases = [(old_k[3], old_k[0], exact[old_k]) for old_k in emptied_keys if old_k in exact]
         read_sets = _assign_coverage(raw, [junctions[i] for i in roots], [locus[i] for i in roots],
-                                     exact, override=override)
+                                     exact, override=override, aliases=aliases)
     else:
         read_sets = [agg_reads[i] for i in roots]
     dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads
