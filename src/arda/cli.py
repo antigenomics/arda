@@ -90,6 +90,39 @@ def build_db(
     build(organism, one_allele_per_gene=one_allele_per_gene, allow_chimeras=allow_chimeras)
 
 
+@app.command("export-ref")
+def export_ref(
+    organism: str = typer.Option("human", help="Reference organism."),
+    kind: str = typer.Option(
+        "scaffolds", "--kind",
+        help="scaffolds = the V x J (and J+C) reference the mapper aligns against; "
+             "segments = the collapsed per-allele V/J/C reference the two-pass search uses; "
+             "anchors = the per-allele CDR3 anchor table (germline_nt, templated_aa, status)."),
+    fmt: str = typer.Option(
+        "tsv", "--format",
+        help="tsv (sequence + every region as its own column), fasta, gff3 (regions as features; "
+             "GFF3 is 1-based closed like arda, so coordinates pass through unchanged), or airr "
+             "(the same rows shaped as an AIRR Rearrangement, so a scaffold can be fed straight "
+             "into anything that reads arda's own output)."),
+    seqtype: str = typer.Option("nt", help="'nt' or 'aa' reference."),
+    locus: Optional[str] = typer.Option(
+        None, "--locus", help="Comma-separated loci to keep (e.g. 'TRB,IGH'). Default: all."),
+    output: Optional[Path] = typer.Option(None, "-o", "--output", help="Write here (default: stdout)."),
+) -> None:
+    """Export reference sequences with their FR/CDR markup.
+
+    The reference is arda's most valuable offline artifact -- every in-frame V.J germline scaffold
+    with IgBLAST-quality FR1-4 / CDR1-3 coordinates -- and until now it was only reachable by
+    hand-joining the build's TSVs against its FASTAs. Coordinates are **1-based closed** (AIRR).
+    """
+    from .refexport import export_reference
+
+    loci = {x.strip() for x in locus.split(",") if x.strip()} if locus else None
+    n = export_reference(organism, kind=kind, fmt=fmt, seqtype=seqtype, loci=loci, out=output)
+    typer.echo(f"[arda] exported {n} {kind} record(s) as {fmt}"
+               + (f" -> {output}" if output else ""), err=True)
+
+
 @app.command("build-index")
 def build_index_cmd(
     organism: str = typer.Option("all", help="Organism (or 'all')."),

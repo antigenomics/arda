@@ -3,6 +3,33 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Added — `arda export-ref`: the reference, with its markup, out of the CLI
+
+The reference is arda's most valuable offline artifact — every in-frame V·J germline scaffold with
+IgBLAST-quality FR1–4 / CDR1–3 coordinates, plus the per-segment markup and the per-allele CDR3
+anchors — and until now it was only reachable by reading the build's TSVs by hand and re-joining
+them against the FASTAs. That join is exactly the kind of thing that goes wrong quietly:
+coordinates are **1-based closed**, a `J + C` scaffold has no V at all, and the aa reference has
+three frames per D allele, so an off-by-one produces plausible nonsense.
+
+```sh
+arda export-ref --locus TRB                          # 2,112 TRB scaffolds, TSV, regions as columns
+arda export-ref --kind segments --format fasta       # the 924-target segment reference
+arda export-ref --kind anchors  --locus TRB          # per-allele CDR3 anchors
+arda export-ref --format gff3 -o trb.gff3            # regions as features for a browser
+arda export-ref --format airr                        # scaffolds shaped as AIRR Rearrangements
+```
+
+Three kinds (`scaffolds`, `segments`, `anchors`) × four formats (`tsv`, `fasta`, `gff3`, `airr`),
+with `--locus` filtering and `--seqtype nt|aa`. GFF3 is 1-based closed like arda, so coordinates
+pass through unchanged; the TSV states the convention in a header comment.
+
+The tests do not check that the exporter ran — they check that what it wrote **round-trips**: every
+region's `*_seq` equals the slice its own `*_start`/`*_end` imply, the declared junction equals the
+slice its CDR3/FR4 coordinates imply, and regions are ordered and non-overlapping.
+
 ## 2.11.1
 
 ### Changed — `transfer_hit` no longer scans the junction anchor twice
