@@ -188,6 +188,14 @@ def _allowed_d(d_germlines, j_call: str):
     sitting in the same band as chance hits, versus 0.014 for the genuinely producible
     TRBJ2 x TRBD2. An ambiguous J spanning both clusters excludes nothing.
     """
+    # ⛔ ORPHONS FIRST, and unconditionally. IMGT ships `/OR` D genes -- `IGHD.../OR15-...` sit on
+    # CHROMOSOME 15, outside the IGH locus, and cannot rearrange at all. They are not a usage
+    # preference to down-weight; they are not producible. Measured on a real bulk IGH library:
+    # **11 of 11 tandem D-D calls named `IGHD2/OR15-2a*01,IGHD2/OR15-2b*01` as their second D**, so
+    # the entire tandem-D signal in that library was this one vocabulary artifact. Excluding them
+    # leaves 639 of 650 single-D calls untouched, moves 9 to a real rearrangeable gene, loses 2,
+    # and drops tandem D-D from 11 to 2.
+    d_germlines = [(a, s) for a, s in d_germlines if "/OR" not in a]
     genes = {a.split("*")[0] for a in j_call.split(",") if a.strip()}
     if not genes or not all(g.startswith("TRBJ1-") for g in genes):
         return d_germlines

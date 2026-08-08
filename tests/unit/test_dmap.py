@@ -60,14 +60,40 @@ def test_trbd1_still_maps_on_a_j1_junction(org):
     assert _gene(call.d_call) == {"TRBD1"}, call.d_call
 
 
-def test_allowed_d_leaves_other_loci_and_ambiguous_j_alone():
+def test_allowed_d_excludes_nothing_for_J_POSITION_outside_the_trb_j1_case():
+    """The J-position rule is TRB-J1-specific; everywhere else it must forbid nothing.
+
+    ⚠ Compared by CONTENT, not identity: `_allowed_d` also drops `/OR` orphons unconditionally
+    (see the next test), so it always returns a new list. An `is` check here would pass only by
+    accident of that filter being absent.
+    """
+    def names(xs):
+        return [a for a, _ in xs]
+
     igh = _load_d_germlines(vdj_dir("human"))["IGH"]
-    assert _allowed_d(igh, "IGHJ1*01") is igh          # every IGHD is 5' of every IGHJ
+    igh_real = [x for x in igh if "/OR" not in x[0]]
+    assert names(_allowed_d(igh, "IGHJ1*01")) == names(igh_real)   # every IGHD is 5' of every IGHJ
     trb = _load_d_germlines(vdj_dir("human"))["TRB"]
-    assert _allowed_d(trb, "TRBJ2-1*01") is trb
-    assert _allowed_d(trb, "TRBJ1-1*01,TRBJ2-1*01") is trb   # spans clusters: forbids nothing
-    assert _allowed_d(trb, "") is trb                        # unknown J: forbids nothing
+    assert names(_allowed_d(trb, "TRBJ2-1*01")) == names(trb)
+    assert names(_allowed_d(trb, "TRBJ1-1*01,TRBJ2-1*01")) == names(trb)  # spans clusters
+    assert names(_allowed_d(trb, "")) == names(trb)                       # unknown J
     assert not any(a.startswith("TRBD2") for a, _ in _allowed_d(trb, "TRBJ1-1*01"))
+
+
+def test_orphan_d_genes_are_never_candidates():
+    """`/OR` D genes sit OUTSIDE their locus and cannot rearrange at all.
+
+    IMGT ships 10 of human IGH's 48 D alleles as `IGHD.../OR15-...`, which are on **chromosome
+    15**. They are not a usage preference to down-weight -- they are not producible. Measured on a
+    real bulk IGH library, **11 of 11 tandem D-D calls named `IGHD2/OR15-2a*01,IGHD2/OR15-2b*01`
+    as their second D**, so the whole tandem-D signal there was this one vocabulary artifact.
+    """
+    igh = _load_d_germlines(vdj_dir("human"))["IGH"]
+    assert any("/OR" in a for a, _ in igh), "fixture check: IMGT should ship orphon IGHD genes"
+    for j in ("IGHJ1*01", "IGHJ4*02", ""):
+        assert not any("/OR" in a for a, _ in _allowed_d(igh, j)), j
+    # And the real genes all survive -- the filter must be surgical.
+    assert len(_allowed_d(igh, "IGHJ4*02")) == sum(1 for a, _ in igh if "/OR" not in a)
 
 
 @pytest.mark.parametrize("org", ["human", "mouse"])

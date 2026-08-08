@@ -144,13 +144,40 @@ def _root(i: int, parent: list[int | None]) -> int:
 
 
 def _binom_sf(k: int, n: int, p: float) -> float:
-    """P(X >= k) for X ~ Binomial(n, p), summed as 1 - CDF(k-1) (k terms; k is a small error count)."""
+    """P(X >= k) for X ~ Binomial(n, p), summed as 1 - CDF(k-1).
+
+    ⛔ Computed in LOG space, and it has to be. The obvious form -- ``comb(n, i) * p**i *
+    (1-p)**(n-i)`` -- raises ``OverflowError: int too large to convert to float`` the moment a
+    clonotype is big: ``comb(293327, i)`` is an exact Python int with tens of thousands of digits,
+    and multiplying it by a float converts it first. Measured on a real 302,172-read MIGEC library
+    with one 293 k-read clone, ``--error-method binom`` crashed after 190 s. The overflow is not
+    the whole story either: that formulation is O(k) with k = the child's read count, so it was
+    also spending three minutes to reach the crash.
+
+    So: `lgamma` for the log-binomial coefficient, `log1p(-p)` for the tail factor (accurate when
+    p is tiny, which is exactly this caller's regime), and an early exit once the running CDF is
+    within float epsilon of 1 -- the terms fall off geometrically past the mean, so a clone with
+    293 k reads no longer costs 293 k iterations.
+    """
     if k <= 0:
         return 1.0
     if k > n:
         return 0.0
-    from math import comb
-    cdf = sum(comb(n, i) * p ** i * (1.0 - p) ** (n - i) for i in range(k))
+    from math import exp, lgamma, log, log1p
+    if p <= 0.0:
+        return 0.0
+    if p >= 1.0:
+        return 1.0
+    lp, lq = log(p), log1p(-p)
+    lgn = lgamma(n + 1)
+    cdf = 0.0
+    for i in range(k):
+        term = exp(lgn - lgamma(i + 1) - lgamma(n - i + 1) + i * lp + (n - i) * lq)
+        cdf += term
+        # Past the mean the terms decay geometrically; once the complement is below float
+        # resolution the answer is 0.0 and every further term is noise.
+        if cdf >= 1.0 - 1e-15 and i > n * p:
+            return 0.0
     return max(0.0, 1.0 - cdf)
 
 
