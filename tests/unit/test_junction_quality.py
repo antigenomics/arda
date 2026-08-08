@@ -299,3 +299,32 @@ def test_unknown_mode_raises(tmp_path):
     rows = _reads(_PARENT, 5, "I" * len(_PARENT), prefix="p")
     with pytest.raises(ValueError, match="ec_mode"):
         correct_airr(_airr(tmp_path, rows), tmp_path / "o.tsv", map_d=False, ec_mode="turbo")
+
+
+def test_ec_mode_on_rnaseq_run_implies_the_stage1_column_it_needs():
+    """⛔ `run` does Stage 1 and Stage 2 in ONE call, so a user cannot turn on
+    `map --junction-quality` by hand. If asking for the gate did not imply producing its input,
+    `--ec-mode accurate` would silently do nothing there -- the exact class of failure this
+    codebase keeps hitting (a flag that is accepted, changes nothing, and reports success).
+    """
+    import inspect
+
+    from arda.rnaseq import pipeline
+
+    src = inspect.getsource(pipeline.run)
+    assert "with_junction_quality=" in src, "run() must drive the Stage-1 column"
+    assert 'ec_mode != "fast"' in src and "min_junction_q is not None" in src, (
+        "asking for the gate, by either route, must imply producing its input")
+
+
+def test_ec_mode_and_min_junction_q_reach_correct_through_the_pipeline():
+    """Both stages of `run` must forward the knobs, or the preset stops at the CLI boundary."""
+    import inspect
+
+    from arda.rnaseq import pipeline
+
+    for fn in (pipeline.run, pipeline.finish):
+        sig = inspect.signature(fn)
+        assert "ec_mode" in sig.parameters, fn.__name__
+        assert "min_junction_q" in sig.parameters, fn.__name__
+    assert "ec_mode=ec_mode" in inspect.getsource(pipeline.finish)

@@ -70,6 +70,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
            organism: str = "human", threads: int = 0, assemble: bool = True,
            complete_only: bool = True, map_d: bool = True,
            d_max_evalue: float | None = None,
+           ec_mode: str = "fast", min_junction_q: int | None = None,
            map_report: dict | None = None, echo=None) -> dict:
     """Run Stages 2-3 over a Stage-1 AIRR and write the clonotype table + merged report.
 
@@ -105,7 +106,8 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
     crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d,
-                        d_max_evalue=d_max_evalue,
+                        d_max_evalue=d_max_evalue, ec_mode=ec_mode,
+                        min_junction_q=min_junction_q,
                         complete_only=complete_only, extra_airr=extra)
     say(f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")
@@ -129,6 +131,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
         limit: int | None = None, two_pass: bool = False, adaptive: bool = False,
         fast_segments: bool = False, prefilter: bool = False,
         segment_only_v: bool = False, indel_rescue: bool = False,
+        ec_mode: str = "fast", min_junction_q: int | None = None,
         echo=None) -> dict:
     """Single-node map -> assemble -> correct."""
     from .map import map_rnaseq
@@ -144,12 +147,18 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
                       d_max_evalue=d_max_evalue,
                       kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
                       fast_segments=fast_segments, prefilter=prefilter,
-                      segment_only_v=segment_only_v, indel_rescue=indel_rescue)
+                      segment_only_v=segment_only_v, indel_rescue=indel_rescue,
+                      # ⛔ The quality gate reads a column Stage 1 only writes when asked. In `run`
+                      # both stages happen in one call, so the user cannot wire that up by hand --
+                      # asking for the gate has to imply producing its input, or `--ec-mode
+                      # accurate` would silently do nothing here.
+                      with_junction_quality=(ec_mode != "fast" or min_junction_q is not None))
     say(f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
         f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
 
     report = finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
+                    ec_mode=ec_mode, min_junction_q=min_junction_q,
                     d_max_evalue=d_max_evalue,
                     map_report=mrep.as_dict(), echo=echo)
     report["wall_seconds"] = round(whole.wall_seconds, 3)

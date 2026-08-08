@@ -643,6 +643,21 @@ def rnaseq_run(
         False, "--indel-rescue/--no-indel-rescue",
         help="With --fast-segments, route reads whose seed votes show two diagonals to the GAPPED "
              "rescue. Its value tracks SHM load; a per-library call."),
+    ec_mode: str = typer.Option(
+        "fast", "--ec-mode",
+        help="Error-correction preset. `fast` (default) = the shipped abundance model, no quality "
+             "gate. `accurate` = the same model plus --min-junction-q 20, judging the base that "
+             "discriminates a clonotype from its parent on its Phred score rather than on "
+             "abundance alone. ⛔ In `run` this AUTOMATICALLY turns on the Stage-1 "
+             "--junction-quality column it needs, because both stages happen in one call and you "
+             "cannot wire that up by hand. Measured: keeping both published MIGEC spike-in "
+             "variants used to cost 3.5 points of monoclonal-Jurkat purity; with the gate it costs "
+             "none (2/2 variants at purity .99530 against .96034 ungated), and it beats every "
+             "error-model/rate combination without it (124 error clonotypes vs binom's best 208)."),
+    min_junction_q: Optional[int] = typer.Option(
+        None, "--min-junction-q",
+        help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset. "
+             "Plateaus over Q20-32 and starts eating real variants by Q35."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
@@ -671,7 +686,8 @@ def rnaseq_run(
                  complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
                  limit=(limit or None),
                  two_pass=two_pass, fast_segments=fast_segments, prefilter=prefilter,
-                 segment_only_v=segment_only_v, indel_rescue=indel_rescue, echo=typer.echo)
+                 segment_only_v=segment_only_v, indel_rescue=indel_rescue,
+                 ec_mode=ec_mode, min_junction_q=min_junction_q, echo=typer.echo)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
                f"{out_dir / f'{out_prefix}.clones.tsv'}, "
                f"{out_dir / f'{out_prefix}.arda.json'}")
