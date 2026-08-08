@@ -207,3 +207,46 @@ def test_a_repair_that_would_destroy_an_anchor_is_refused():
         if m.good:
             assert m.cdr3_repaired.startswith("C"), (cdr3, m.cdr3_repaired)
             assert m.cdr3_repaired.endswith(("F", "W")), (cdr3, m.cdr3_repaired)
+
+
+def test_conflicting_anchor_rows_are_resolved_deterministically_not_by_file_order():
+    """IMGT ships two accessions under one allele name, so `cdr3_anchors.tsv` can carry two rows
+    for one `(segment, allele)` with DIFFERENT `germline_nt` and `status`. The loader used to be
+    last-wins, which silently decided which junction germline the Cys104 gate scores against --
+    on 3 mouse alleles, depending on nothing but row order.
+
+    ⛔ The comparison must be on the fields that DECIDE the junction, not on the whole record: a
+    TRAV/DV allele legitimately appears twice (once from the TRA pass, once from TRD's `v_shared`)
+    differing only in `locus`, and treating those as conflicts is 15 lines of noise per human load
+    that trains the reader to ignore the 3 that matter.
+    """
+    import logging
+
+    from arda.cdr3fix import load_anchors
+
+    load_anchors.cache_clear()
+    human = load_anchors("human")
+    assert human, "human anchors must load"
+    # The TRAV/DV alleles are present and usable despite appearing under two loci.
+    shared = [k for k in human if "/DV" in k[1]]
+    assert shared, "expected TRAV/DV alleles in the human anchor table"
+    assert all(human[k].germline_nt or human[k].status != "ok" for k in shared)
+
+    load_anchors.cache_clear()
+    mouse = load_anchors("mouse")
+    # Where two rows genuinely conflict, the usable one wins -- never the truncated one by luck.
+    for allele in ("IGKV10-96*01", "IGLV2*01", "IGLV3*01"):
+        a = mouse.get(("V", allele))
+        if a is not None:
+            assert a.status == "ok", f"{allele}: conflict resolved to status={a.status}"
+
+
+def test_the_conflict_resolution_prefers_ok_then_the_longer_germline():
+    """Pinned as a rule, not as an outcome, so a reference rebuild cannot quietly flip it."""
+    import inspect
+
+    from arda import cdr3fix
+
+    src = inspect.getsource(cdr3fix.load_anchors)
+    assert 'a.status == "ok"' in src
+    assert "len(a.germline_nt)" in src

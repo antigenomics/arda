@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
@@ -122,6 +123,9 @@ MARKUP_COLUMNS = [
     "v_end", "j_start", "v_fix", "j_fix", "v_canonical", "j_canonical",
     "good", "fix_needed", "n_errors", "errors", "cdr3fix",
 ]
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -274,11 +278,37 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
     df = pl.read_csv(path, separator="\t", infer_schema_length=0)
     out: dict[tuple[str, str], Anchor] = {}
     for r in df.iter_rows(named=True):
-        out[(r["segment"], r["allele"])] = Anchor(
+        key = (r["segment"], r["allele"])
+        anchor = Anchor(
             locus=r["locus"], segment=r["segment"], templated_aa=r["templated_aa"] or "",
             functionality=r["functionality"], status=r["status"], source=r["source"],
             anchor_nt=int(r["anchor_nt"]), partial_nt=int(r["partial_nt"]),
             germline_nt=r["germline_nt"] or "")
+        prev = out.get(key)
+        # Compare only the fields that DECIDE the junction. A TRAV/DV allele legitimately appears
+        # twice -- once from the TRA pass and once from TRD's `v_shared` -- differing only in
+        # `locus`, and warning about those would be 15 lines of noise per human load that trains
+        # the reader to ignore the 3 mouse cases that matter.
+        decisive = lambda a: (a.anchor_nt, a.germline_nt, a.templated_aa, a.status)
+        if prev is not None and decisive(prev) != decisive(anchor):
+            # ⛔ IMGT ships two accessions under one allele name (mouse `IGKV10-96*01` is both
+            # AF441451/287 nt and M15520/286 nt; `IGLV2*01` is J00599 and M17529), so the anchor
+            # table can carry two rows for one key with DIFFERENT templated_aa and germline_nt.
+            # This loader used to be last-wins, which silently decided which junction germline the
+            # Cys104 gate would score against -- on 3 mouse alleles, invisibly, depending on file
+            # order. Prefer the usable row (`status == "ok"`), then the one that templates MORE
+            # junction, and say so, so the choice is deterministic and auditable rather than
+            # whatever `iter_rows` yielded last.
+            better = max((prev, anchor),
+                         key=lambda a: (a.status == "ok", len(a.germline_nt), a.germline_nt))
+            if better is not prev:
+                out[key] = better
+            logger.warning(
+                "cdr3_anchors.tsv has conflicting rows for %s %s in %s; keeping status=%s "
+                "germline_nt=%s (IMGT ships two accessions under one allele name)",
+                key[0], key[1], organism, better.status, better.germline_nt or "-")
+            continue
+        out[key] = anchor
     return out
 
 

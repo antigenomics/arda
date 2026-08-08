@@ -5,6 +5,21 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Fixed — conflicting CDR3-anchor rows were resolved by file order
+
+IMGT ships two accessions under one allele name (mouse `IGKV10-96*01` is both AF441451/287 nt and
+M15520/286 nt; `IGLV2*01` is J00599 and M17529), so `cdr3_anchors.tsv` can carry two rows for one
+`(segment, allele)` with **different `germline_nt` and `status`**. `load_anchors` was last-wins, so
+which junction germline the Cys104 gate scored against was decided by row order — on **3 mouse
+alleles**, invisibly. `IGLV3*01` could resolve to a `truncated` row over an `ok` one.
+
+Resolution is now explicit and logged: prefer `status == "ok"`, then the longer templated germline.
+
+⛔ The conflict test compares only the fields that **decide the junction** (`anchor_nt`,
+`germline_nt`, `templated_aa`, `status`). A TRAV/DV allele legitimately appears twice — once from
+the TRA pass, once from TRD's `v_shared` — differing only in `locus`; treating those as conflicts
+would emit 15 warnings per human load and train the reader to ignore the 3 that matter.
+
 ### Fixed — the flagship speed path was unreachable on a plain `pip install`
 
 `segments.fasta` is **generated, not shipped**, and the auto-fetched reference tarball does not
