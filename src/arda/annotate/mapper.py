@@ -244,6 +244,8 @@ def _has_jc_targets(fasta: Path) -> bool:
     Scans headers only, and stops at the first ``>JC|``. The whole file is ~250 KB, so this costs
     nothing next to the mmseqs build it guards.
     """
+    if not fasta.exists():
+        return False          # nothing to regenerate FOR; the caller decides whether to build it
     with open(fasta) as fh:
         return any(line.startswith(">JC|") for line in fh)
 
@@ -281,6 +283,30 @@ def _regenerate_segments(fasta: Path, organism: str) -> None:
                        "pre-2.8.0 reference, which is correct but ~1.9x slower", organism, exc)
 
 
+def _generate_segments(fasta: Path, organism: str) -> None:
+    """Build a ``segments.fasta`` that does not exist yet, safely under concurrency.
+
+    Separate from :func:`_regenerate_segments` because the two ask different questions and so need
+    different done-predicates: that one is "is this file STALE", gated on ``not _has_jc_targets``;
+    this one is "does it EXIST", gated on ``fasta.exists()``. Reusing the stale-format predicate
+    here would be wrong in the silent direction -- a missing file has no ``JC|`` targets, so it
+    reads as *already regenerated* and the lock would skip the build.
+    """
+    from .._locking import build_lock
+    from ..refbuild.segments import build_segment_reference
+
+    lock = fasta.parent / ".segments.build.lock"
+    try:
+        with build_lock(lock, done=lambda: fasta.exists()) as mine:
+            if not mine:
+                return
+            logger.info("no segments.fasta for %s; generating it (one-time, ~0.3 s)", organism)
+            build_segment_reference(organism, out_dir=fasta.parent)
+    except OSError as exc:
+        logger.warning("could not generate segments.fasta for %s (%s); --two-pass will fall back "
+                       "to the one-pass search", organism, exc)
+
+
 def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     """The mmseqs DB for the segment reference, or ``None`` if it has not been built.
 
@@ -290,8 +316,12 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     `_createdb_atomic` holds the build lock, which is what makes that safe for the Nextflow
     process-per-sample and SLURM task-per-shard layouts.
 
-    Returns ``None`` rather than raising when `segments.fasta` is absent: the two-pass is then
-    simply unavailable and the caller falls back to the one-pass search.
+    **A missing `segments.fasta` is GENERATED, not tolerated.** It is generated rather than
+    shipped, and the auto-fetched reference tarball does not carry it, so on a plain
+    ``pip install`` every ``--two-pass``/``--fast-segments`` run used to degrade to the one-pass
+    search behind a single log line -- the flagship configuration, silently unreachable out of the
+    box. It is built here (~0.3 s) under the same lock. ``None`` is returned only if that fails,
+    and the caller still falls back rather than raising.
 
     **A pre-2.8.0 `segments.fasta` is regenerated, not used.** Upgrading arda does not rewrite a
     generated artifact, and this one changed shape in 2.8.0: the 345 `JC|` scaffolds became 25 `C|`
@@ -303,7 +333,14 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     """
     fasta = ref.target_fasta.parent / "segments.fasta"
     if not fasta.exists():
-        return None
+        # ⛔ Generate it rather than silently falling back. `segments.fasta` is GENERATED, not
+        # shipped, and the auto-fetched reference tarball does not contain it -- so on a plain
+        # `pip install` every `--two-pass`/`--fast-segments` run degraded to the one-pass search
+        # with only a log line, and the flagship configuration was unreachable out of the box.
+        # It costs ~0.3 s to build and takes the same lock as the stale-format regeneration.
+        _generate_segments(fasta, organism)
+        if not fasta.exists():
+            return None                       # generation failed; the caller falls back, as before
     if _has_jc_targets(fasta):
         _regenerate_segments(fasta, organism)
     cache = data_dir() / "mmseqs_db" / f"{organism}_segments"

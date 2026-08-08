@@ -563,8 +563,35 @@ def rnaseq_run(
     two_pass: bool = typer.Option(
         False, "--two-pass/--one-pass",
         help="Shortlist ONE VxJ scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score). **Reach for it when reads SPAN V INTO J, not by library type.** It needs a read to hit both a V and a J segment, and `fast_fraction` in the report is the predictor -- not whether the library is amplicon. Measured across regimes: 3.51x on a 48%-receptor TCR amplicon (fast path 85%), 2.96x on a 100%-receptor human TRB set (95.6%), 2.64x on mouse TRA (89%), but 1.03x SLOWER on a human IGH set of the SAME 100%-receptor data (16.3%, because those reads cover V and stop short of the short IGHJ target) and 0.762x on a 2.74%-receptor bulk library (5%), where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
+    # ⛔ These were on `rnaseq map` only, so the pipeline entry point -- the one a Nextflow/SLURM
+    # user actually calls -- could reach `--two-pass` and NOTHING ELSE. And `--two-pass` ALONE is a
+    # loss on bulk (0.762x) and on an IGH amplicon (0.87x): the single tunable it exposed was the
+    # dominated config. The winning ones are here now.
+    fast_segments: bool = typer.Option(
+        False, "--fast-segments/--no-fast-segments",
+        help="With --two-pass, nominate segments with arda's own C++ seed-and-extend instead of "
+             "MMseqs2 (100k reads x 924 targets in 0.18 s). THIS is the amplicon lever: with it, "
+             "an IGH RepSeq amplicon goes 316 s -> 76 s at 32 threads. Ignored without --two-pass."),
+    segment_only_v: bool = typer.Option(
+        False, "--v-only-on-segment/--no-v-only-on-segment",
+        help="With --two-pass, align a read that hit a V but NO J against its own V segment rather "
+             "than the full reference -- 77 % of the amplicon rescue set. Zero reads and zero "
+             "junctions lost at full depth (66 M pairs). Ignored without --two-pass."),
+    prefilter: bool = typer.Option(
+        False, "--prefilter/--no-prefilter",
+        help="Screen reads with a C++ 16-mer index before the search. THIS is the BULK lever "
+             "(1.99x); it does NOT compose with --fast-segments, which is the amplicon one."),
+    indel_rescue: bool = typer.Option(
+        False, "--indel-rescue/--no-indel-rescue",
+        help="With --fast-segments, route reads whose seed votes show two diagonals to the GAPPED "
+             "rescue. Its value tracks SHM load; a per-library call."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
+
+    ⛔ **Pick the lever by regime, not by habit.** ``--two-pass --fast-segments
+    --v-only-on-segment`` is the amplicon configuration; ``--prefilter`` is the bulk one; they do
+    not compose, and ``--two-pass`` on its own is *slower* than the default on both bulk and IGH
+    amplicon.
 
     Runs the three RNA-seq stages with the shipped defaults, writing under ``--out-dir``:
 
@@ -584,7 +611,8 @@ def rnaseq_run(
                  reconstruct=reconstruct, min_score=min_score,
                  kmer=(None if kmer == 0 else kmer), assemble=assemble,
                  complete_only=complete_only, map_d=map_d, limit=(limit or None),
-                 two_pass=two_pass, echo=typer.echo)
+                 two_pass=two_pass, fast_segments=fast_segments, prefilter=prefilter,
+                 segment_only_v=segment_only_v, indel_rescue=indel_rescue, echo=typer.echo)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
                f"{out_dir / f'{out_prefix}.clones.tsv'}, "
                f"{out_dir / f'{out_prefix}.arda.json'}")

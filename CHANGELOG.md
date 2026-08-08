@@ -5,6 +5,34 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Fixed — the flagship speed path was unreachable on a plain `pip install`
+
+`segments.fasta` is **generated, not shipped**, and the auto-fetched reference tarball does not
+carry it. So on a plain `pip install arda-mapper`, every `--two-pass` / `--fast-segments` run
+degraded to the one-pass search behind a single log line: correct output, exit 0, and none of the
+speed — the configuration that makes arda faster than MiXCR, silently unavailable out of the box.
+
+`_cached_segment_db` now generates it (~0.3 s, once, under the same build lock) instead of
+returning `None`. Verified: with `segments.fasta` deleted, a `--two-pass --fast-segments` run
+rebuilds it **byte-identically** and produces **byte-identical** output.
+
+⛔ Generation and stale-format *re*generation are separate functions on purpose, because they ask
+different questions and need different done-predicates. `_has_jc_targets` is false for a missing
+file, so reusing the stale-format predicate would make a missing file read as *already regenerated*
+and the lock would skip the build — silently, in the same direction as the bug. `_has_jc_targets`
+also used to raise `FileNotFoundError` on a missing file, which would have thrown inside the lock;
+it is now total.
+
+### Fixed — `arda rnaseq run` could reach only the dominated config
+
+The pipeline entry point — the one a Nextflow or SLURM user actually calls — exposed `--two-pass`
+and nothing else. And `--two-pass` **alone** is a loss: 0.762× on bulk and 0.87× on an IGH
+amplicon. The single tunable it offered was the one configuration that makes arda slower.
+
+`--fast-segments`, `--v-only-on-segment`, `--prefilter` and `--indel-rescue` are now on `run` too,
+with the regime rule in the command's own help: `--two-pass --fast-segments --v-only-on-segment`
+is the amplicon configuration, `--prefilter` is the bulk one, and they do not compose.
+
 ### Added — `arda export-ref`: the reference, with its markup, out of the CLI
 
 The reference is arda's most valuable offline artifact — every in-frame V·J germline scaffold with
