@@ -3,6 +3,22 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.11.1
+
+### Changed — `transfer_hit` no longer scans the junction anchor twice
+
+`_anchored_vj_bounds` computes the longest prefix of the junction that the called V's germline
+templates, and `v_anchor_prefix` then recomputed **the same scan over the same slice** to feed the
+Cys104 junction gate (`_junction_nt` cuts `query_seq[cs-3-1 : f4+2]`, byte-identical to the window
+`_anchored_vj_bounds` already built). It now returns that number and the gate reuses it, so a read
+with an ambiguous V call no longer walks every called allele a second time.
+
+Amplicon 100 k reads, 8 threads: **5.55 s -> 5.35 s**. Output byte-identical on an amplicon and a
+bulk library; 624 tests pass.
+
+Cumulative over 2.11.0 + 2.11.1, same workload: **5.96 s -> 5.35 s (10.2 %)**, against MiXCR's
+5.90 s — 1.10x faster on wall at 12.7 s of CPU versus 45.2 s, and 631 MB versus 3,027 MB.
+
 ## 2.11.0
 
 ### Fixed — a junction was emitted even when the V was trimmed past its own Cys104
