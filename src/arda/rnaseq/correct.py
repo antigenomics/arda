@@ -133,7 +133,11 @@ class CorrectReport:
     #: discards them. Reported so a run is self-checking instead of relying on a docstring.
     reads_assigned: int = 0
     collapsed: int = 0  # clonotypes absorbed into a parent
-    reads_with_junction: int = 0   # Stage-1 reads carrying any junction
+    reads_with_junction: int = 0   # Stage-1 reads carrying any junction (EXCLUDES assembled rows)
+    #: Junction-bearing rows contributed by `--assemble` (`extra_airr`). A rescued read appears in
+    #: BOTH frames -- its incomplete Stage-1 row and its assembled row -- so these are reported
+    #: separately rather than folded into `reads_with_junction`, which is a Stage-1 statistic.
+    reads_from_assembly: int = 0
     reads_incomplete: int = 0      # ...of which dropped as truncated/out-of-frame/stop
     # Reads MOVED onto their parent clonotype by --min-junction-q, not discarded (0 with the gate
     # off). They are still counted -- in the parent -- so this never subtracts from `reads`.
@@ -892,9 +896,17 @@ def correct_airr(
     stage = Stage()
     output = Path(output)
     raw = _read_airr(airr_tsv)
+    n_assembled = 0
     if extra_airr is not None:
         extra = _read_airr(extra_airr)
         if extra.height:
+            # ⛔ Remember how many rows came from ASSEMBLY. A rescued read appears TWICE in the
+            # concatenated frame -- once as its incomplete Stage-1 row and once as the assembled
+            # row that carries the contig's junction -- so counting junction-bearing rows on `raw`
+            # inflates `reads_with_junction` (documented as "Stage-1 reads carrying any junction")
+            # by exactly this number.
+            n_assembled = extra.filter(
+                pl.col("junction").is_not_null() & (pl.col("junction") != "")).height
             raw = pl.concat([raw, extra], how="diagonal")
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
     # complete-only filter below drops them, and the JUNCTION reads that build the clonotype carry no
@@ -906,10 +918,13 @@ def correct_airr(
             if cl:
                 frag_iso.setdefault(_strip_mate(sid), []).append(cl)
     df = raw.filter(pl.col("junction").is_not_null() & (pl.col("junction") != ""))
-    n_with_junction = df.height
+    # `reads_with_junction` is a STAGE-1 statistic, so the assembled rows come back out of it --
+    # see the note at the concat. `reads_from_assembly` reports them separately, so the two sources
+    # stay separable instead of being silently summed.
+    n_with_junction = df.height - n_assembled
     if complete_only:
         df = df.filter(_COMPLETE)
-    n_incomplete = n_with_junction - df.height
+    n_incomplete = max(0, n_with_junction - (df.height - n_assembled))
     # ⛔ The KEY is decided BEFORE any correction. The quality gate names a read's parent by its
     # clonotype key, so canonicalising afterwards leaves those names pointing at keys that no
     # longer exist -- 2 of Jurkat's 14,531 reads went missing that way, which is small enough to
@@ -993,6 +1008,7 @@ def correct_airr(
     report = CorrectReport(clonotypes_in=len(junctions),
                            reads=sum(span_counts),
                            reads_with_junction=n_with_junction,
+                           reads_from_assembly=n_assembled,
                            reads_incomplete=n_incomplete,
                            reads_low_quality=n_low_q,
                            clonotypes_low_quality=n_clono_low_q)
@@ -1134,6 +1150,16 @@ def correct_airr(
     # only `reads` available: SRR5233636 fast 1,838,213 -> accurate 1,812,745 (-25,468) went unseen.
     report.reads_assigned = sum(dup)
 
+    def _top(items: list[str]) -> str:
+        """Most common, ties broken LEXICOGRAPHICALLY -- never by encounter order.
+
+        ``Counter.most_common(1)`` resolves a tie by insertion order, and insertion order here comes
+        from a threaded mmseqs search, so a two-way isotype tie could report a different class from
+        run to run on the same input. Every other tie-break in this module is already total.
+        """
+        c = Counter(items)
+        return min(c, key=lambda k: (-c[k], k))
+
     def _dominant_ccall(read_list: list[str]) -> str:
         # A clonotype's isotype = the dominant RESOLVED class over its fragments' constant mates.
         # `isotype_class` emits the generic `IGHC` only on cross-class ambiguity (IGHG1,IGHM), so
@@ -1143,13 +1169,25 @@ def correct_airr(
         # fragment with one assigned mate contributed once -- weighting the vote by assigned
         # mates rather than by molecules, exactly as the first line of this comment says it must
         # not. A 1-fragment minority could then outvote a 2-fragment majority.
+        # ⛔ ...and the fragment's OWN calls must collapse to ONE vote too. Deduplicating
+        # `read_list` is not enough: `frag_iso` holds one entry per ROW carrying a `c_class`, so a
+        # fragment whose two mates both carry one voted twice, and an assembly-rescued fragment
+        # voted a third time because `assemble` copies the member read's `c_class` onto the rescued
+        # row while the Stage-1 row still carries it. That is the per-mate weighting the comment
+        # above says must not happen, reintroduced one level down.
+        def _one_vote(fc: list[str]) -> str:
+            res = [c for c in fc if c not in _GENERIC_ISOTYPE]
+            return _top(res or fc)
+
         calls: list[str] = []
         for frag in dict.fromkeys(_strip_mate(sid) for sid in read_list):
-            calls.extend(frag_iso.get(frag, ()))
+            fc = frag_iso.get(frag)
+            if fc:
+                calls.append(_one_vote(list(fc)))
         if not calls:
             return ""
         resolved = [c for c in calls if c not in _GENERIC_ISOTYPE]
-        return Counter(resolved or calls).most_common(1)[0][0]
+        return _top(resolved or calls)
 
     # Sort by abundance, then break every tie deterministically. Ranking on counts alone left
     # tied clonotypes in read order, and read order comes from a threaded mmseqs search -- so

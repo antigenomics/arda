@@ -117,10 +117,18 @@ def _greedy_contigs(
     needs enough germline to anchor it); that region is shared germline, so any V-read of the
     gene extends it correctly -- no chimera risk, and ``scan_cap`` bounds the germline-k-mer cost.
     """
+    # ⛔ Cap the postings AT INSERT, not only when reading them. Both consumers already take
+    # `[:scan_cap]` of the posting list, so keeping only the first `scan_cap` entries yields the
+    # IDENTICAL candidate set -- this is a pure memory fix, not a behaviour change. Unbounded, the
+    # index held every k-mer position of every mapped read of the locus (~90 postings per 100 nt
+    # read) in a Python dict of int lists, which is ~460 MB per 100k reads; `--assemble` is ON by
+    # default, so every run paid it. `_assign_coverage` bounds its equivalent index the same way.
     index: dict[str, list[int]] = defaultdict(list)
     for i, s in enumerate(oriented):
         for p in range(0, len(s) - k + 1):
-            index[s[p:p + k]].append(i)
+            lst = index[s[p:p + k]]
+            if len(lst) < scan_cap:
+                lst.append(i)
 
     used = [False] * len(oriented)
     # longest CDR3 tail first: that read spans the most of the junction, the best seed.
