@@ -220,6 +220,16 @@ def _greedy_contigs(
             spans.append((0, len(oriented[best_j])))
         if len(members) >= 2:
             contigs.append((contig, members, spans))
+        else:
+            # ⛔ RELEASE a rejected contig's reads. `used` is set as reads are recruited, but a
+            # contig dropped here never gave them back, so a seed that failed to extend was
+            # permanently consumed -- it could no longer join a LATER seed's contig even as an
+            # ordinary extension member. Seeds are tried longest-CDR3-tail first, so the reads this
+            # stranded were exactly the short-tailed ones that most need a contig to reach a
+            # junction. A rejected contig here always has just its seed (any successful extension
+            # would have made it >= 2), so this releases one read.
+            for mi in members:
+                used[mi] = False
     return contigs
 
 

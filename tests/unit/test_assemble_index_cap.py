@@ -60,3 +60,36 @@ def test_no_posting_list_exceeds_scan_cap():
     # ...and the index construction itself, mirrored, respects it.
     for postings in _index(reads, SCAN_CAP).values():
         assert len(postings) <= SCAN_CAP
+
+
+def test_a_rejected_contig_releases_its_reads():
+    """⛔ A contig dropped for having <2 members must give its reads back.
+
+    `used` is set as reads are recruited, but a rejected contig never released them, so a seed that
+    failed to extend was permanently consumed — it could not join a LATER seed's contig even as an
+    ordinary extension member. Seeds are tried longest-CDR3-tail first, so the reads this stranded
+    were the short-tailed ones that most need a contig to reach a junction.
+
+    ⚠ The asymmetry is the whole fixture, and it has to be built deliberately: with ordinary
+    overlapping reads either one can seed the other, so nothing is ever stranded. Here `s1` seeds
+    FIRST (longer CDR3 tail) and fails — its 3' loop is already past `max_ext_past_cdr3` and nothing
+    carries its 5' head — while `s2` can only reach two members by recruiting `s1` 5'. With `s1`
+    still marked used, `s2` is rejected too and NO contig forms at all.
+    """
+    rng = random.Random(17)
+
+    def seq(n):
+        return "".join(rng.choice("ACGT") for _ in range(n))
+
+    q, m, w = seq(30), seq(40), seq(60)
+    s1 = q + m            # 70 nt; its suffix `m` is exactly s2's prefix
+    s2 = m + w            # 100 nt; its 5' head is m[:21], carried only by s1 at p > 0
+    reads = [s1, s2]
+    contigs = _greedy_contigs(reads, [0, 1], [10, 60], k=21, min_overlap=21, min_id=0.95,
+                              max_ext_past_cdr3=30, scan_cap=400, min_v=70)
+    assert contigs, "s1 was stranded by its own failed seed, so s2 could not assemble"
+    cseq, members, spans = contigs[0]
+    assert sorted(members) == [0, 1], f"both reads should be members, got {members}"
+    assert cseq == q + m + w
+    for mi, (a, b) in zip(members, spans):
+        assert cseq[a:b] == reads[mi]
