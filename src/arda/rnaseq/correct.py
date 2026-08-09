@@ -1016,6 +1016,17 @@ def correct_airr(
     # true of it is that its reads are bad. So: only clonotypes whose reads are measurably bad, only
     # onto a much more abundant parent, and a candidate with no parent KEEPS ITS READS.
     rescue_report = None
+    if regime and REGIMES[regime].enabled() and "junction_quality" not in df.columns:
+        # ⛔ Raise, never degrade -- the same rule `_quality_gate` enforces above, for the same
+        # reason. Skipping the rescue silently produces a report indistinguishable from a rescue
+        # that ran and found nothing (rescued/orphan counters all 0) and a table byte-identical to
+        # `--ec-mode fast`. `rnaseq run` wires the column up itself, but the standalone `correct`
+        # entry point cannot, so an AIRR mapped without --junction-quality reached here and the
+        # whole point of --ec-mode amplicon|rnaseq was quietly dropped.
+        raise ValueError(
+            f"--ec-mode {regime} needs a `junction_quality` column, which this AIRR does not have. "
+            "Re-run Stage 1 with `arda rnaseq map --junction-quality` (Stage 1 is the only place "
+            "the FASTQ quality is still in hand), or use --ec-mode fast.")
     if regime and REGIMES[regime].enabled() and "junction_quality" in df.columns:
         rq = read_quality(df["junction"].to_list(),
                           [x or "" for x in df["junction_quality"].to_list()])

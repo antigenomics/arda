@@ -254,3 +254,36 @@ def test_the_rescue_never_merges_across_loci(tmp_path):
     assert "TRB" in loci, "the TRB clonotype was absorbed into a TRA clonotype"
     assert loci["TRB"] == 1
     assert rep.reads_assigned == sum(r["duplicate_count"] for r in got) == 5001
+
+
+def test_the_rescue_raises_when_junction_quality_is_absent(tmp_path):
+    """⛔ Raise, never degrade -- the rule `_quality_gate` already enforces, for the same reason.
+
+    Silently skipping the rescue produces a report indistinguishable from a rescue that ran and
+    found nothing (every rescued/orphan counter 0) and a clonotype table byte-identical to
+    ``--ec-mode fast``. ``rnaseq run`` turns the column on itself, but the standalone ``correct``
+    entry point cannot, so an AIRR mapped without ``--junction-quality`` silently lost the whole
+    point of ``--ec-mode amplicon|rnaseq``.
+
+    ⚠ ``--min-junction-q 0`` is required to reach it: otherwise the preset's gate raises first, and
+    the test would pass for the wrong reason.
+    """
+    import polars as pl
+    import pytest
+
+    from arda.rnaseq.correct import correct_airr
+
+    jn = "TGTGCCAGCAGTTTCTCGACCTGTTCGGCTAACTATGGCTACACCTTC"
+    rows = [{"sequence_id": f"r{i}", "sequence": jn, "junction": jn,
+             "junction_aa": "CASSLDGTGF", "v_call": "TRBV12-3*01", "j_call": "TRBJ1-2*01",
+             "locus": "TRB"} for i in range(5)]
+    src = tmp_path / "noq.tsv"
+    pl.DataFrame(rows).write_csv(src, separator="\t")
+
+    for mode in ("amplicon", "rnaseq"):
+        with pytest.raises(ValueError, match="junction_quality"):
+            correct_airr(src, tmp_path / f"noq_{mode}.out", map_d=False,
+                         ec_mode=mode, min_junction_q=0)
+    # ...and `fast`, which needs no quality, still works on the same input.
+    rep = correct_airr(src, tmp_path / "noq_fast.out", map_d=False, ec_mode="fast")
+    assert rep.reads_assigned == 5

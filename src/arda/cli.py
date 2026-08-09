@@ -677,6 +677,13 @@ def rnaseq_run(
         None, "--min-junction-q",
         help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset. "
              "Plateaus over Q20-32 and starts eating real variants by Q35."),
+    clonotype_key: str = typer.Option(
+        "full", "--clonotype-key",
+        help="`full` (default) = (locus, v_call, j_call, junction). `junction` = (locus, junction), "
+             "which collapses CALL SPLITS -- a junction byte-identical to an abundant clone's under "
+             "a different V or J call, invisible to any error model because there is no "
+             "discriminating base. Same option as `correct --clonotype-key`; see it for the "
+             "measured cost."),
 ) -> None:
     """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
 
@@ -706,7 +713,8 @@ def rnaseq_run(
                  limit=(limit or None),
                  two_pass=two_pass, fast_segments=fast_segments, prefilter=prefilter,
                  segment_only_v=segment_only_v, indel_rescue=indel_rescue,
-                 ec_mode=ec_mode, min_junction_q=min_junction_q, echo=typer.echo)
+                 ec_mode=ec_mode, min_junction_q=min_junction_q,
+                 clonotype_key=clonotype_key, echo=typer.echo)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
                f"{out_dir / f'{out_prefix}.clones.tsv'}, "
                f"{out_dir / f'{out_prefix}.arda.json'}")

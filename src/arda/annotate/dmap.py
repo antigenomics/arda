@@ -24,6 +24,7 @@ Only IGH, TRB and TRD have D germlines; VJ loci return an empty call.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from ..cdr3fix import load_anchors, resolve_allele, resolve_locus, resolve_species
 from .reference import _load_d_germlines
@@ -109,6 +110,12 @@ def _common_suffix(a: str, b: str) -> int:
     return n
 
 
+# ⛔ CACHED, and it has to be. `_load_d_germlines` opens and re-parses `d_germlines.fasta` on every
+# call, and `correct._clonotype_d` calls `map_d_junction` ONCE PER CLONOTYPE -- so a run spent the
+# whole load per clonotype. Measured at 54.4 us/call: 2.0 s on a 36,741-clonotype TRA amplicon and
+# 21.6 s on a 397,305-clonotype bulk sample, on the DEFAULT path (`--map-d` is on unless disabled).
+# The reference is immutable for the life of the process, so one entry per organism is enough.
+@lru_cache(maxsize=8)
 def _d_germlines(organism: str) -> dict[str, list[tuple[str, str]]]:
     return _load_d_germlines(vdj_dir(organism))
 
