@@ -651,44 +651,34 @@ def _assign_coverage(
     # reads here, while the same aliases GAIN 31,343 once the index is big enough to hold both. They
     # are worth keeping; they must simply not outrank the roots. Roots first, then aliases into
     # whatever slots remain.
+    #
+    # ⚠ SEPARATELY, `cap` itself under-assigns, and the curve is measured -- SRR5233636,
+    # `--ec-mode fast` (so no aliases exist at all), clonotype table IDENTICAL at every cap, i.e.
+    # purely read assignment:
+    #     cap   64   1,838,213 reads   207.4 s
+    #     cap  128   1,844,359          312.1 s
+    #     cap  256   1,850,917          485.9 s
+    #     cap  512   1,867,867          740.7 s
+    #     cap 1024   1,867,904          865.0 s
+    # It SATURATES at 512: the whole recoverable prize is +29,654 reads (1.6 %) and 1024 adds 37
+    # more. So the default trades ~1.6 % of coverage-based abundance for 3.6x on this stage. Peak
+    # RSS is flat across the whole sweep (~12.1 GB), so it is CPU in the alignment inner loop.
+    # ⛔ Do NOT "fix" this by guaranteeing every root a posting -- that was built and measured and
+    # is a NO-OP: 1,838,213 at cap 64 and 1,850,917 at cap 256 on this sample, and 3,132,742 on a
+    # bulk one (SRR5233642), byte-identical to the sweep in every case. No root is ever fully
+    # unreachable; the reads are lost because a root's surviving postings sit at k-mer positions the
+    # PARTIAL READ does not cover. Raising `cap` is currently the only lever that moves it.
     order = sorted(range(len(tgt_jn)),
                    key=lambda ri: (ri >= len(root_jn),
                                    -(root_counts[tgt_root[ri]] if root_counts else 0),
                                    tgt_jn[ri], ri))
     index: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    placed = [False] * len(tgt_jn)
     for ri in order:
         jn = tgt_jn[ri]
         for p in range(len(jn) - k + 1):
             lst = index[jn[p:p + k]]
             if len(lst) < cap:                       # bound the germline-shared k-mers
                 lst.append((ri, p))
-                placed[ri] = True
-    # ⛔ A target whose every k-mer was already full gets ZERO postings and is UNREACHABLE -- no read
-    # can be assigned to it by this pass at all, however well it matches. That is where the cap's
-    # read loss comes from, and raising `cap` is the expensive way to fix it: measured on a TRA
-    # amplicon (SRR5233636, --ec-mode fast, identical clonotype table at every cap, so this is purely
-    # read assignment) each doubling buys ~6,300 reads and costs ~1.5x wall --
-    #     cap 64 1,838,213 / 207.4 s | 128 1,844,359 / 312.1 s | 256 1,850,917 / 485.9 s
-    #     cap 1024 1,867,904 (+29,691 vs 64)
-    # Instead give every unreachable target ONE slot, in its LEAST-LOADED k-mer -- the k-mer it
-    # shares with the fewest others, i.e. the most specific one it has. The overflow is bounded by
-    # the number of such targets and `cap` is unchanged.
-    # ⛔ ROOTS ONLY. Forcing an ALIAS back in re-creates the very bug roots-first exists to fix --
-    # the alias then competes with the rare root whose junction it carries, and at equal overlap and
-    # equal mismatches the read is credited to the alias's abundant parent instead. Caught by
-    # test_an_abundant_alias_must_not_steal_the_kmer_slots_of_a_rare_root. The guarantee wanted here
-    # is that every real CLONOTYPE is reachable, not that every vacated junction is.
-    for ri in range(len(root_jn)):
-        jn = tgt_jn[ri]
-        if placed[ri] or len(jn) < k:
-            continue
-        best_p, best_load = 0, None
-        for p in range(len(jn) - k + 1):
-            load = len(index[jn[p:p + k]])
-            if best_load is None or load < best_load:
-                best_p, best_load = p, load
-        index[jn[best_p:best_p + k]].append((ri, best_p))
     for i in range(n):
         sid = sidc[i]
         if sid in done:
