@@ -120,7 +120,17 @@ EC_MODES: dict[str, dict] = {
 class CorrectReport:
     clonotypes_in: int = 0
     clonotypes_out: int = 0
+    #: ⛔ SPANNING reads entering Stage 2, counted BEFORE any correction runs. It is therefore
+    #: invariant to everything ``correct`` does, and it is **NOT** the read-conservation quantity.
+    #: Comparing it across ``--ec-mode`` shows 0 on every sample and reads exactly like the
+    #: invariant holding -- which is how a 1.39 % leak on a full-depth TRA amplicon was missed.
+    #: The invariant is :attr:`reads_assigned`.
     reads: int = 0
+    #: **The read-conservation invariant**: ``sum(duplicate_count)`` over the emitted clonotype
+    #: table, i.e. every read the correction actually placed. This is what must not fall when a
+    #: denoising mode is switched on -- error correction MOVES reads onto a parent, it never
+    #: discards them. Reported so a run is self-checking instead of relying on a docstring.
+    reads_assigned: int = 0
     collapsed: int = 0  # clonotypes absorbed into a parent
     reads_with_junction: int = 0   # Stage-1 reads carrying any junction
     reads_incomplete: int = 0      # ...of which dropped as truncated/out-of-frame/stop
@@ -1043,6 +1053,11 @@ def correct_airr(
         read_sets = [agg_reads[i] for i in roots]
     dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads
     cons = [len({_strip_mate(x) for x in rs}) for rs in read_sets]      # AIRR consensus_count: fragments
+    # ⛔ THE read-conservation invariant, reported so it is checkable on a real run. `reads` above
+    # cannot move (it is counted before correction), so a benchmark comparing it across --ec-mode
+    # sees 0 everywhere and reads that as conservation. Measured full-depth on the golden set with
+    # only `reads` available: SRR5233636 fast 1,838,213 -> accurate 1,812,745 (-25,468) went unseen.
+    report.reads_assigned = sum(dup)
 
     def _dominant_ccall(read_list: list[str]) -> str:
         # A clonotype's isotype = the dominant RESOLVED class over its fragments' constant mates.

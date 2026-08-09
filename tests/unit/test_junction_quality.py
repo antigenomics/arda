@@ -433,3 +433,31 @@ def test_the_plausibility_test_uses_phred_not_the_global_error_rate(tmp_path):
     for er in (1e-3, 1e-9):                       # the gate's outcome must not depend on it
         cl = _clonotypes(src, tmp_path / f"er{er}.out", error_rate=er, min_junction_q=25)
         assert _CHILD not in cl, f"gate changed with error_rate={er}"
+
+
+def test_reads_assigned_is_the_conservation_invariant_and_matches_the_table(tmp_path):
+    """⛔ The report must carry the quantity the invariant is DEFINED on.
+
+    ``CorrectReport.reads`` is the spanning-read count taken before any correction runs, so it is
+    invariant to everything ``correct`` does. A benchmark comparing it across ``--ec-mode`` sees 0
+    on every sample and reads that as read conservation -- which is exactly how a full-depth leak
+    was missed on a TRA amplicon (SRR5233636, fast 1,838,213 -> accurate 1,812,745, -25,468, while
+    ``reads`` sat at 1,667,551 in both). ``reads_assigned`` is ``sum(duplicate_count)`` over the
+    emitted table, which is what must not fall.
+    """
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo"))
+    src = _airr(tmp_path, rows, "inv.tsv")
+
+    base = None
+    modes = ({}, {"min_junction_q": 25}, {"ec_mode": "amplicon"}, {"ec_mode": "rnaseq"})
+    for n, mode_kw in enumerate(modes):
+        out = tmp_path / f"inv_{n}.out"
+        rep = correct_airr(src, out, map_d=False, error_rate=1e-6, **mode_kw)
+        table = sum(r["duplicate_count"] for r in pl.read_csv(out, separator="\t").to_dicts())
+        assert rep.reads_assigned == table, f"report disagrees with the table for {mode_kw}"
+        if base is None:
+            base = rep.reads_assigned
+        # ⛔ Error correction MOVES reads onto a parent; it never discards them.
+        assert rep.reads_assigned >= base, (
+            f"read conservation VIOLATED by {mode_kw}: {rep.reads_assigned} < {base}")
