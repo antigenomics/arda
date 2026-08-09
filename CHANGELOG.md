@@ -91,6 +91,38 @@ does not support. Membership is decided per read from the span it already aligne
 comparison against the reference, not a new alignment — then ranked library-wide so the allele the
 whole library supports leads, with only unambiguous reads voting.
 
+### ⛔ Known defect, newly measured — `v_mutations` / `j_mutations` include junction positions
+
+`docs/shm.rst` claimed the mutation lists were scoped to V and J **structurally**, so "a junction
+position has no germline coordinate to be filed under and cannot enter the list by any code path."
+**That claim is false and is retracted in this release.** The N-pad is excluded, but the V
+germline's 3' tail and the J germline's 5' head lie *inside* the junction, and mutations are scoped
+by segment (`t <= t_vend`, `[t_jstart, t_vjend]`) rather than by the junction boundary — so
+exonuclease chew-back and non-templated N/P bases are reported as substitutions against a germline
+that does not template them.
+
+Measured on a **TRA amplicon** (SRR5233636, 500,000 reads), where T-cell receptors do not
+hypermutate so every entry is spurious by construction: **1.046 V and 1.658 J mutations per read**,
+with **86.2 % of J entries at J germline position <= 10**. Splitting the load by the frequency of
+each `(allele, position, alt)` across reads carrying that allele separates three superimposed
+populations:
+
+| frequency | share of J entries | share of V entries | what it is |
+|---|---:|---:|---|
+| < 0.01 | 13.0 % | 39.0 % | sequencing error |
+| 0.01–0.5 | 80.8 % | 59.2 % | junction diversity misattributed as SHM |
+| >= 0.5 | 6.2 % | 1.9 % | a genuinely wrong **allele** call |
+
+The high-frequency tail is real and separate — `TRAV8-6*01` positions 281/282 at 0.88, `TRAJ8*01`
+position 1 at 0.67 — i.e. the called allele is not the one the reads carry. `v_identity` has the
+same scope defect: it runs to `t_vend`, so it is depressed by junction diversity rather than by
+mutation load.
+
+**Not fixed in this release.** The fix needs the scaffold's CDR3 boundary threaded into the C++
+markup and the Python reference implementation together, and it changes every published SHM number,
+so it gets its own round with its own measurement. Documented in `docs/shm.rst` with the workaround
+in the meantime: separate the three populations by frequency.
+
 ### Known limitation, measured
 
 The coverage k-mer `cap` under-assigns ~1.6 % of reads in the default path, independent of the alias

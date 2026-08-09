@@ -51,20 +51,49 @@ reads of a real bulk IG library (66,526 V mismatches, zero disagreements). What 
    (``mmseqs2_tstart``, ``mmseqs2_t_vend``, ``mmseqs2_t_jstart``, ``mmseqs2_t_vjend``); the two
    strings are also 30.7 % of the TSV.
 
-   Use ``v_mutations`` / ``j_mutations``. They are scoped to the V and J segments **structurally**,
-   not by a filter: the pad is not a segment, so a junction position has no germline coordinate to
-   be filed under and cannot enter the list by any code path.
+   Use ``v_mutations`` / ``j_mutations`` in preference to the alignment strings — but read the
+   defect below first.
+
+.. danger::
+
+   **⛔ KNOWN DEFECT (open): ``v_mutations`` / ``j_mutations`` DO include junction-internal
+   positions.** This page previously claimed the opposite — that the N-pad is not a segment, so a
+   junction position "cannot enter the list by any code path". That claim is false and is
+   retracted. The pad is excluded, but the **V germline's 3' tail and the J germline's 5' head lie
+   inside the junction**, and mutations are scoped by segment (``t <= t_vend``,
+   ``[t_jstart, t_vjend]``), not by the junction boundary. So exonuclease chew-back and
+   non-templated N/P bases are emitted as substitutions against a germline that does not template
+   them.
+
+   Measured on a **TRA amplicon** (SRR5233636, 500,000 reads) — T-cell receptors do **not**
+   somatically hypermutate, so every entry there is spurious by construction:
+
+   * **1.046 V and 1.658 J "mutations" per read**;
+   * **86.2 % of J entries sit at J germline position <= 10**, i.e. the 5' head, inside the
+     junction;
+   * splitting the reported load by the frequency of each ``(allele, position, alt)`` across reads
+     carrying that allele: **13.0 % of J entries are below frequency 0.01** (sequencing error),
+     **80.8 % fall between 0.01 and 0.5** (junction diversity), and **6.2 % sit at 0.5 or above**
+     (a genuinely wrong *allele* call, e.g. ``TRAV8-6*01`` positions 281/282 at 0.88, ``TRAJ8*01``
+     position 1 at 0.67).
+
+   Until this is fixed, treat the lists as *three superimposed populations* and separate them by
+   frequency: ``>= 0.5`` is an allele artifact, ``< 0.01`` is sequencing error, and the remainder
+   on TR loci — or at J positions below the ``[FW]118`` anchor on any locus — is junction
+   diversity, not SHM. ``v_identity`` has the same scope defect: it runs to ``t_vend``, so it is
+   depressed by junction diversity rather than by mutation load.
 
 .. important::
 
-   **A mutation inside the junction is not attributable to any germline, and arda does not claim
-   one.**
+   **A mutation inside the junction is not attributable to any germline**, and arda should not
+   claim one.
 
    V(D)J recombination trims the V, D and J ends by a variable amount and inserts non-templated
    N/P bases in their place, so the *V-end / NDN / J-start* partition of a junction frequently is
    not identifiable from the sequence at all. A "mutation" placed inside the NDN is a statement
-   about a boundary that has no ground truth. The exclusion is the point of the design, not a
-   limitation of it — see :doc:`d_segments` for the same rule on the D side.
+   about a boundary that has no ground truth — see :doc:`d_segments` for the same rule on the D
+   side. ⚠ That is the design intent; the defect above is that the implementation does not yet
+   honour it.
 
 Two more properties worth knowing:
 
