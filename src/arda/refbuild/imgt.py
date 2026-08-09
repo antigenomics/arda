@@ -153,15 +153,45 @@ def ungap_gene(species_dir: str, group: str, gene_stem: str) -> Path:
 
 
 def load_functional_alleles(
-    species_dir: str, group: str, gene_stem: str
+    species_dir: str, group: str, gene_stem: str, *, keep_orphons: bool = False
 ) -> dict[str, str]:
-    """Return ``{allele: ungapped_sequence}`` for functional/ORF alleles only."""
+    """Return ``{allele: ungapped_sequence}`` for functional/ORF alleles only.
+
+    ⛔ **ORPHONS ARE EXCLUDED.** IMGT ships ``/OR`` genes -- ``TRBV20/OR9-2`` is on chromosome 9
+    while the TRB locus is on 7, ``IGHV1/OR15-1`` is on 15 while IGH is on 14. V(D)J recombination
+    is INTRA-LOCUS, so an orphon cannot take part in a rearrangement and a call naming one on a
+    rearranged read is wrong by construction, not merely disagreed-with. They are near-identical to
+    their real counterparts, so they win ties and displace them.
+
+    Measured against an IgBLAST truth (benchmark round 23), on reads where both called a V:
+
+    ==================  ==========================  =====================  ==================
+    library             arda called an orphon on    truth ever did         ``v_gene``
+    ==================  ==========================  =====================  ==================
+    migec_exp1_IGH      24.62 % of reads            **0**                  .7500 -> **.9963**
+    migec_exp1_TCR      3.78 %                      43                     .9602 -> **.9975**
+    IGH_repertoire      0.17 %                      112                    .9853 -> .9860
+    ==================  ==========================  =====================  ==================
+
+    On migec_exp1_IGH a single confusion, ``TRBV20-1`` -> ``TRBV20/OR9-2``, was **98.51 %** of all
+    V disagreements. ⚠ And it is not fixable downstream: in every one of those reads the orphon was
+    the *only* call arda emitted, so there was no non-orphon alternative to prefer. It has to go
+    from the reference.
+
+    ⚠ IgBLAST's own reference keeps them, so it emits an orphon occasionally itself (112 reads on
+    IGH_repertoire). Those become disagreements after this change. That is IgBLAST being wrong
+    about which rearrangements can exist, and the net is strongly positive.
+
+    ``keep_orphons=True`` restores the old vocabulary, for reproducing a pre-2.13.3 reference.
+    """
     functionality = parse_functionality(gene_fasta_path(species_dir, group, gene_stem))
     ungapped = ungap_gene(species_dir, group, gene_stem)
     out: dict[str, str] = {}
     for header, seq in read_fasta(ungapped):
         # edit_imgt_file rewrites the header to the bare allele name.
         allele = header.split("|")[0].strip().split()[0]
+        if not keep_orphons and "/OR" in allele:
+            continue
         func = functionality.get(allele, "")
         if func in _FUNCTIONAL and seq:
             out[allele] = seq.upper().replace(".", "")
