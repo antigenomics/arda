@@ -3,6 +3,115 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.14.0
+
+### Fixed — a full-depth read leak in coverage assignment (⛔ read counts change)
+
+**`--ec-mode accurate|amplicon|rnaseq` lost reads out of the clonotype table**, and the amount
+scaled with library depth, so no local test saw it. Measured across the 16-sample golden set at full
+depth: **7 samples leaked, −107,440 reads in total**, worst on the TRA amplicons (SRR5233636
+−25,468 of 1,838,213, i.e. 1.39 %; SRR5233635 −7,383) and present on **both MIGEC published-truth
+libraries** (−755 IGH, −1,351 TCR). The cell lines all *gained* (Jurkat +44, Raji +46,
+MouseSpleen +5), which is exactly why a monoclonal QC panel never caught it.
+
+The cause is not the error model. `_assign_coverage` bounds each k-mer's postings at `cap` and fills
+them in descending abundance; an **alias** — a junction the quality gate vacated, kept in the index
+only so partial reads that covered it still reach the parent — is ordered by its **parent's** count,
+which is high by construction. Aliases therefore sorted to the front and evicted genuine
+low-abundance roots, and every partial read whose only home was such a root went unassigned. On
+SRR5233636, every arm emits an **identical 36,587-row clonotype table**, so this is purely read
+assignment:
+
+| index                                | reads assigned | vs `fast` |
+|--------------------------------------|---------------:|----------:|
+| cap 64, aliases ordered by abundance |      1,812,740 |   −25,473 |
+| cap 64, aliases off                  |      1,838,181 |       −32 |
+| **cap 64, roots first (this release)** | **1,841,624** | **+3,411** |
+| cap 1024, aliases by abundance       |      1,869,556 |   +31,343 |
+
+The alias mechanism was added to rescue 5 reads of 9,208 on Ramos and was costing 25,441 here. It is
+worth keeping — the same aliases *gain* 31,343 once the index can hold both — it simply must not
+outrank the roots. Every mode now gains rather than loses: on SRR5233636 `accurate` +3,411,
+`amplicon` +2,827, `rnaseq` +3,393.
+
+**`CorrectReport.reads_assigned`** is new and is the reason this was invisible. `reads` is the
+spanning-read count taken *before* correction, so it cannot move; comparing it across `--ec-mode`
+returns 0 on every sample and reads exactly like conservation holding. `reads_assigned` is
+`sum(duplicate_count)` over the emitted table — the quantity the invariant is actually defined on.
+
+**The quality rescue no longer merges across loci.** It grouped candidate parents by junction
+*length* alone, and `--ec-mode amplicon` opens the radius to 12 substitutions, so on SRR5233636
+3 of 9,025 rescues were 1-read **TRB** clonotypes absorbed into abundant **TRA** clonotypes at 11–12
+substitutions — misattributed expression, not lost reads. The search now runs once per locus, which
+also bounds it: it is quadratic within a length bin and single-threaded, and a 397 k-clonotype
+library was still running after 39 minutes of CPU against ~5 for a 49 k one.
+
+⚠ **V and J stay ignored by the rescue, deliberately.** The abundance model defaults to
+`--require-vj` because a true error keeps the germline call — true for the 1–3 substitution
+neighbours it collapses. The rescue targets the opposite class, where the *whole junction window* is
+unreliable (median mean Phred 16.5–20.1), and a read that bad has an unreliable V/J call for the
+same reason. 50.9 % of `amplicon` rescues cross V. What protects a genuine clone is the two gates
+that *are* trustworthy: its reads must be measurably bad, and the parent must be
+`lowq_min_ratio` times more abundant.
+
+**The quality gate's parent must now be able to have PRODUCED the read.** Its only test was
+`count(parent) > count(child)` — one extra read made anything within `--max-subs` a parent, and at
+3 substitutions nothing supports that. The plausibility test is computed from **this read's own
+Phred**: the product of 10^(−Q/10) over the discriminating positions, times the parent's count, must
+reach the child's. ⚠ Using the global `--error-rate` instead was tried and is wrong the other way —
+it makes the gate a strict subset of the abundance model, which is what the gate exists to reach
+past (MIGEC at 1e-5 went 1,633 → 1,633 error clonotypes, from 158).
+
+**`--ec-mode amplicon|rnaseq` now raises without `junction_quality`** instead of silently skipping
+the rescue and reporting counters that are indistinguishable from a clean library — the same
+"raise, never degrade" rule `--min-junction-q` already followed.
+
+**The Nextflow module emitted a flag `arda rnaseq run` did not have.** `main.nf` appended
+`--clonotype-key` to the `run` command line, where only `correct` accepted it, so
+`arda_clonotype_key = 'junction'` failed the process outright. `run` now accepts it and plumbs it
+through to `correct`.
+
+### Changed
+
+**Orphon V/J genes are excluded from the reference.** IMGT `/OR` genes sit outside their locus
+(`TRBV20/OR9-2` is on chromosome 9, TRB is on 7) and cannot rearrange, so they were pure false-call
+surface. ⚠ This affects `arda build-db`; an auto-fetched prebuilt reference needs regenerating to
+pick it up.
+
+**D germline loading is cached.** `_d_germlines` re-opened and re-parsed `d_germlines.fasta` on
+every call and `_clonotype_d` calls it once per clonotype — 54.4 µs each, so **2.0 s** wasted on a
+36,741-clonotype amplicon and **21.6 s** on a 397,305-clonotype library, on the default `--map-d`
+path. Now 0.056 µs.
+
+### Added
+
+**Tie lists (`--tie-lists`, off by default) and `arda resolve-ties`.** A read aligned over a span
+that several germlines share carries no base that separates them, so naming one is a claim the data
+does not support. Membership is decided per read from the span it already aligned — a string
+comparison against the reference, not a new alignment — then ranked library-wide so the allele the
+whole library supports leads, with only unambiguous reads voting.
+
+### Known limitation, measured
+
+The coverage k-mer `cap` under-assigns ~1.6 % of reads in the default path, independent of the alias
+fix. On SRR5233636 with `--ec-mode fast` (no aliases exist), the clonotype table is identical at
+every cap:
+
+| cap | reads assigned | wall |
+|----:|---------------:|-----:|
+|  64 |      1,838,213 | 207.4 s |
+| 128 |      1,844,359 | 312.1 s |
+| 256 |      1,850,917 | 485.9 s |
+| 512 |      1,867,867 | 740.7 s |
+|1024 |      1,867,904 | 865.0 s |
+
+It saturates at 512: the whole prize is +29,654 reads and 1024 adds 37 more. Peak RSS is flat, so it
+is CPU in the alignment inner loop. The default stays at 64 — 3.6× on this stage for 1.6 % of
+coverage-based abundance is a per-workload judgement. ⛔ Guaranteeing every root a posting does
+**not** help: built, measured, byte-identical on an amplicon and a bulk sample at two caps. No root
+is ever fully unreachable; the reads are lost because a root's surviving postings sit at k-mer
+positions the partial read does not cover.
+
 ## 2.13.2
 
 ### Added — the denoising framework is reachable from Nextflow, and the cluster path is documented
