@@ -93,3 +93,35 @@ def test_a_rejected_contig_releases_its_reads():
     assert cseq == q + m + w
     for mi, (a, b) in zip(members, spans):
         assert cseq[a:b] == reads[mi]
+
+
+def test_the_extension_choice_does_not_depend_on_read_order():
+    """⛔ Equal-length extension candidates must be resolved by a TOTAL order.
+
+    `len(ext) > len(best_ext)` alone leaves the winner to the posting list's order, which is AIRR
+    row order, which comes from a threaded mmseqs search — so the contig sequence, and every
+    junction derived from it, could differ between runs on the same input. This project has already
+    shipped a nondeterministic Stage 2 for exactly this reason.
+
+    Here two candidates extend the seed by the SAME length with DIFFERENT bases, so only the
+    tie-break decides. Feeding them in both orders must give the same contig.
+    """
+    rng = random.Random(23)
+
+    def seq(n):
+        return "".join(rng.choice("ACGT") for _ in range(n))
+
+    core = seq(60)
+    a_tail, b_tail = "A" * 25, "C" * 25          # equal length, different sequence
+    seed = core
+    cand_a, cand_b = core[-30:] + a_tail, core[-30:] + b_tail
+
+    def run(reads):
+        out = _greedy_contigs(reads, [0], [10], k=K, min_overlap=21, min_id=0.95,
+                              max_ext_past_cdr3=130, scan_cap=400, min_v=0)
+        return out[0][0] if out else None
+
+    first = run([seed, cand_a, cand_b])
+    second = run([seed, cand_b, cand_a])
+    assert first is not None and first == second, (
+        f"the contig depends on read order:\n  {first}\n  {second}")

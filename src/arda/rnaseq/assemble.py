@@ -182,7 +182,13 @@ def _greedy_contigs(
                 if sum(1 for x, y in zip(a, b) if x != y) > (1 - min_id) * ov:
                     continue
                 ext = s[ov:]
-                if len(ext) > len(best_ext):
+                # ⛔ TOTAL ORDER. `len(ext) > len(best_ext)` alone leaves equal-length candidates
+                # to be resolved by the order the posting list happens to be in, which is AIRR row
+                # order, which comes from a threaded mmseqs search -- so the contig sequence, and
+                # every junction derived from it, could differ between runs on the same input. This
+                # project has already shipped a nondeterministic Stage 2 for exactly this reason.
+                # Longest extension first, then the extension SEQUENCE.
+                if (len(ext), ext) > (len(best_ext), best_ext) and ext:
                     best_j, best_ext = j, ext
             if best_j is None or not best_ext:
                 break
@@ -208,7 +214,8 @@ def _greedy_contigs(
                 if sum(1 for x, y in zip(a, b) if x != y) > (1 - min_id) * ov:
                     continue
                 ext = s[:p]
-                if len(ext) > len(best_ext):
+                # Same total order as the 3' pass above, for the same reason.
+                if (len(ext), ext) > (len(best_ext), best_ext) and ext:
                     best_j, best_ext = j, ext
             if best_j is None or not best_ext:
                 break
