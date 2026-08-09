@@ -122,7 +122,84 @@ def test_scores_must_match_the_calls():
 
 # --- end to end ---------------------------------------------------------------------------------
 
-def test_resolve_airr_expands_then_ranks(tmp_path):
+def _has_human_germlines() -> bool:
+    from arda.refbuild import imgt
+    from arda.refbuild.loci import IMGT_SPECIES_DIR, loci_for
+    d = IMGT_SPECIES_DIR["human"]
+    for locus in loci_for():
+        if getattr(locus, "v", None):
+            try:
+                if imgt.load_functional_alleles(d, locus.group, locus.v):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def test_resolve_airr_raises_when_the_germlines_are_absent(tmp_path, monkeypatch):
+    """⛔ Raise, never degrade.
+
+    Without germlines every call is left exactly as it was, so the output is byte-identical to the
+    input and the report reads ``expanded: 0`` -- indistinguishable from a library that genuinely
+    had no ties. That is the failure mode this project has shipped before, and here it kept a CI
+    test red: the reference is not built in CI, so ``resolve-ties`` silently did nothing.
+    """
+    from arda.annotate.ties import resolve_airr as _resolve
+    from arda.refbuild import imgt as imgt_mod
+
+    src = tmp_path / "in.tsv"
+    pl.DataFrame({
+        "sequence_id": ["r1"], "v_call": ["IGLV2-23*01"],
+        "v_germline_start": ["1"], "v_germline_end": ["70"],
+    }).write_csv(src, separator="\t", quote_style="never")
+
+    def _none(*a, **k):
+        raise OSError("no germlines here")
+
+    # `resolve_airr` imports `imgt` locally, so patch it at the source module.
+    monkeypatch.setattr(imgt_mod, "load_functional_alleles", _none)
+    with pytest.raises(ValueError, match="germline"):
+        _resolve(src, tmp_path / "out.tsv", organism="human", segments=("v",))
+
+
+def test_expansion_and_ranking_end_to_end_without_the_reference():
+    """The whole pipeline -- expand, then rank -- on an explicit germline set.
+
+    ⚠ Hermetic ON PURPOSE. The previous version of this test built its germlines from the installed
+    IMGT reference, so it passed locally and failed in CI (which does not build one) for six
+    releases' worth of commits before anyone looked. The biology it encodes is real and measured:
+    the first 70 nt of ``IGLV2-14`` and ``IGLV2-23`` are identical, so a read aligned over that span
+    cannot choose between them.
+    """
+    shared = "CAGTCTGCCCTGACTCAGCCTGCCTCCGTGTCTGGGTCTCCTGGACAGTCGATCACCATCTCCTGCACT"
+    germ = {
+        "IGLV2-14*01": shared + "GGAACCAGCAGTGACGTTGGTGGTTATAACTATGTCTCCTGGTACCAACAG",
+        "IGLV2-23*01": shared + "GGAACCAGCAGTGACGTTGGTGGTTATAACTATGTCTCCTGGTACCAACAA",
+        "IGLV3-1*01":  "TCCTATGAGCTGACACAGCCACCCTCGGTGTCAGTGTCCCCAGGACAAACGGCCAGGATCACCTGCTCT",
+    }
+    res = TieResolver(germ)
+    # A read aligned over germline 1..70 cannot separate the two IGLV2 alleles...
+    widened = [res.expand(c, 1, 70) for c in
+               ("IGLV2-23*01", "IGLV2-23*01", "IGLV2-14*01")]
+    for w in widened:
+        assert "IGLV2-14*01" in w and "IGLV2-23*01" in w
+    assert all("IGLV3-1*01" not in w for w in widened), "an unrelated germline must not join"
+
+    # ...and the library then ranks them: IGLV2-23 has 2 unambiguous votes against IGLV2-14's 1.
+    ranked = rank_ties(widened, None, evidence=["IGLV2-23*01", "IGLV2-23*01", "IGLV2-14*01"])
+    assert all(r.startswith("IGLV2-23*01") for r in ranked)
+    # Membership is unchanged -- only the order moves.
+    assert all(sorted(a.split(",")) == sorted(b.split(",")) for a, b in zip(widened, ranked))
+
+
+@pytest.mark.skipif(not _has_human_germlines(),
+                    reason="human IMGT germlines not installed (CI does not build a reference)")
+def test_resolve_airr_expands_then_ranks_against_the_real_reference(tmp_path):
+    """The same claim against the SHIPPED germlines, skipped only when they are genuinely absent.
+
+    ⚠ The skip is explicit and visible in the report, not a silent pass: the hermetic test above
+    covers the logic unconditionally, so this one adds the reference and nothing else.
+    """
     src = tmp_path / "in.tsv"
     pl.DataFrame({
         "sequence_id": ["r1", "r2", "r3"],
@@ -134,8 +211,6 @@ def test_resolve_airr_expands_then_ranks(tmp_path):
     out = tmp_path / "out.tsv"
     rep = resolve_airr(src, out, organism="human", segments=("v",))
     got = pl.read_csv(out, separator="\t", infer_schema_length=0).to_dicts()
-    # The first 70 nt of IGLV2-14 and IGLV2-23 are identical, so every allele of both is a tie...
     assert all("IGLV2-14" in r["v_call"] and "IGLV2-23" in r["v_call"] for r in got)
-    # ...and IGLV2-23 leads everywhere, because it has 2 unambiguous votes against IGLV2-14's 1.
     assert all(r["v_call"].startswith("IGLV2-23") for r in got)
     assert rep["expanded"]["v"] == 3 and rep["reranked"]["v"] == 1

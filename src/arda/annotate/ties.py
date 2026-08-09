@@ -219,7 +219,16 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
             except OSError:                        # a locus whose germline files are absent
                 continue
         if not germ:
-            continue
+            # ⛔ Raise, never degrade. Without germlines every call is left exactly as it was, so
+            # the output is byte-identical to the input and the report says `expanded: 0` -- which
+            # is indistinguishable from a library that genuinely had no ties. This is the same
+            # failure mode `--min-junction-q` and the quality rescue already refuse, and it hid a
+            # red CI test: the reference is not built there, so `resolve-ties` silently did
+            # nothing and only the test's own assertion noticed.
+            raise ValueError(
+                f"resolve-ties needs the IMGT germline FASTAs for {seg}_call under "
+                f"{species_dir}, and none could be read. Build the reference first "
+                "(`arda build-db`), or pass an organism whose germlines are installed.")
         res = TieResolver(germ)
         calls = df[call_col].to_list()
         starts, ends = df[gs].to_list(), df[ge].to_list()
