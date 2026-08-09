@@ -134,6 +134,10 @@ class CorrectReport:
     reads_assigned: int = 0
     collapsed: int = 0  # clonotypes absorbed into a parent
     reads_with_junction: int = 0   # Stage-1 reads carrying any junction (EXCLUDES assembled rows)
+    #: Clonotypes dropped because no read was assigned to them -- see the note at the emit step.
+    #: Only reachable with `--all-junctions`, where a rescued read's truncated Stage-1 junction is
+    #: itself a clonotype key and loses its reads to the assembled row.
+    empty_clonotypes: int = 0
     #: Junction-bearing rows contributed by `--assemble` (`extra_airr`). A rescued read appears in
     #: BOTH frames -- its incomplete Stage-1 row and its assembled row -- so these are reported
     #: separately rather than folded into `reads_with_junction`, which is a Stage-1 statistic.
@@ -897,6 +901,7 @@ def correct_airr(
     output = Path(output)
     raw = _read_airr(airr_tsv)
     n_assembled = 0
+    asm_from = -1                          # index of the first assembled row in `raw`, if any
     if extra_airr is not None:
         extra = _read_airr(extra_airr)
         if extra.height:
@@ -907,6 +912,7 @@ def correct_airr(
             # by exactly this number.
             n_assembled = extra.filter(
                 pl.col("junction").is_not_null() & (pl.col("junction") != "")).height
+            asm_from = raw.height          # the assembled rows are everything from here on
             raw = pl.concat([raw, extra], how="diagonal")
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
     # complete-only filter below drops them, and the JUNCTION reads that build the clonotype carry no
@@ -1131,7 +1137,26 @@ def correct_airr(
                 exact.setdefault(old_k, exact[par_k])
         # A quality-gated read is routed by its NEW clonotype, not by the key still sitting on it
         # in `raw` -- otherwise coverage hands it back to the error clonotype it was moved off.
-        override = {sid: exact[k] for sid, k in moved_sid.items() if k in exact}
+        # ⛔ An ASSEMBLED row outranks the read's own truncated Stage-1 row. Pass 1 walks `raw` in
+        # concatenation order -- mapped rows first -- and stops at the first key it finds in
+        # `exact`. Under `--all-junctions` the read's own TRUNCATED junction is itself a clonotype,
+        # so it won that race, `done` then blocked the assembled row, and the contig's clonotype was
+        # emitted with duplicate_count 0 while its reads were credited to a truncated prefix of its
+        # own junction. Measured on a 2-read fixture: `CAKGALQ` dup=2 beside `CAKGALQKW` dup=0.
+        # The contig's complete junction is the better evidence, so route the read there.
+        # (Harmless under the default `--complete-only`: the truncated row never becomes a
+        # clonotype, so both paths already agree.)
+        override = {}
+        if asm_from >= 0:
+            a_loc, a_v = raw["locus"].to_list(), raw["v_call"].to_list()
+            a_j, a_jn = raw["j_call"].to_list(), raw["junction"].to_list()
+            a_sid = raw["sequence_id"].to_list()
+            for ri in range(asm_from, raw.height):
+                k = ((a_loc[ri] or ""), (a_v[ri] or ""), (a_j[ri] or ""), (a_jn[ri] or ""))
+                if k in exact:
+                    override[a_sid[ri]] = exact[k]
+        # ...and a quality-gated read's move is decided later still, so it wins over both.
+        override.update({sid: exact[k] for sid, k in moved_sid.items() if k in exact})
         # ...and the junctions the gate vacated stay in the ALIGNMENT index, pointing at the parent.
         # A partial read carrying no junction of its own can have covered only that sequence; with
         # the target gone it overlaps no surviving root by `min_ov` and is dropped. (Measured: 5 of
@@ -1195,6 +1220,20 @@ def correct_airr(
     order = sorted(range(len(roots)),
                    key=lambda r: (-dup[r], -cons[r], junctions[roots[r]],
                                   v[roots[r]], j[roots[r]]))
+    if coverage:
+        # ⛔ A clonotype with NO reads is not a clonotype. Under `--all-junctions` a rescued read's
+        # own TRUNCATED Stage-1 junction is itself a clonotype key, and once the assembled row
+        # (which carries the contig's complete junction, the better evidence) takes the read, that
+        # truncated row is left with nothing -- so the table carried a `duplicate_count` 0 row that
+        # no read supports. Measured on a 2-read fixture: `CAKGALQ` dup=0 beside `CAKGALQKW` dup=2.
+        # ⚠ Dropping it removes no READS -- it has none, by definition -- so the conservation
+        # invariant is untouched. Only reachable with coverage counting; with spanning counts a
+        # clonotype has >= 1 read by construction.
+        dropped = sum(1 for r in order if dup[r] == 0)
+        if dropped:
+            order = [r for r in order if dup[r] > 0]
+            report.clonotypes_out -= dropped
+            report.empty_clonotypes = dropped
     out = pl.DataFrame({
         "junction": [junctions[roots[r]] for r in order],
         "junction_aa": [junction_aa[roots[r]] for r in order],
