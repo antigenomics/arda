@@ -93,6 +93,27 @@ AIRR_COLUMNS = (
     # POSITION. It is the same rule `airr_header(extra_columns)` already states for
     # `junction_quality`: new columns go last, so the shipped prefix never moves.
     + ["v_mutations", "j_mutations"]
+    # ⛔ The JUNCTION BOUNDARY in GERMLINE coordinates, emitted so a downstream consumer can do
+    # allele re-assignment and SHM calling WITHOUT arda's reference. `v_mutations` positions are
+    # 1-based in the called V allele and `j_mutations` positions are 1-based in the called J allele,
+    # but both lists span the junction: the V germline's 3' tail and the J germline's 5' head are
+    # inside it, so chew-back and non-templated N/P bases appear as substitutions against a germline
+    # that does not template them. Splitting framework from junction needs exactly these two
+    # numbers, and until now they existed only in `cdr3_anchors.tsv` inside the reference.
+    #
+    # `v_anchor_nt` is the 0-based offset of the Cys104 codon in the called V allele's germline;
+    # `j_anchor_nt` is the 0-based offset of the [FW]118 codon in the called J allele's. So a
+    # `v_mutations` entry at 1-based position p is junction-internal iff p > v_anchor_nt, and a
+    # `j_mutations` entry at p is junction-internal iff p <= j_anchor_nt + 3.
+    #
+    # ⚠ Emitted RAW, exactly as the reference stores them, rather than pre-classified: frequency
+    # and position together decide what a variant is, and that is the consumer's call. Measured on
+    # SRR5233636 (a TRA amplicon, 500 k reads, where TCRs cannot hypermutate so every entry is
+    # spurious): 1.046 V and 1.658 J entries per read, 86.2 % of J entries at J position <= 10, and
+    # the high-frequency ones sit INSIDE the junction (TRAV8-6*01 positions 281/282 at 0.88 against
+    # its anchor at 270; TRAJ8*01 position 1 at 0.67 against its anchor at 26) -- i.e. an allele
+    # difference in the templated V/J tail, not somatic mutation and not N/P diversity.
+    + ["v_anchor_nt", "j_anchor_nt"]
 )
 
 _VSIDE = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3")
@@ -714,6 +735,15 @@ def transfer_hit(
     # Per-segment CIGARs (v/j/c) in a single walk of the same aligned strings.
     rec.update(segment_cigars(hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
                               len(query_seq), t_vend, t_jstart, t_vjend))
+    # The junction boundary in GERMLINE coordinates -- see AIRR_COLUMNS for why it is emitted and
+    # why it is raw. Taken from the FIRST call of a tie list, which is the one the positions in
+    # `v_mutations` / `j_mutations` are expressed against.
+    if anchors:
+        for col, seg, call in (("v_anchor_nt", "V", ref.v_call), ("j_anchor_nt", "J", ref.j_call)):
+            allele = (call or "").split(",")[0].strip()
+            a = anchors.get((seg, allele)) if allele else None
+            if a is not None and a.status == "ok":
+                rec[col] = a.anchor_nt
 
     v_prefix: int | None = None      # set by `_anchored_vj_bounds`; reused by the junction gate
     region_q: dict[str, tuple[int, int]] = {}
