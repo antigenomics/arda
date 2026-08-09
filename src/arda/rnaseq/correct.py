@@ -26,6 +26,8 @@ from pathlib import Path
 
 import polars as pl
 
+from ..annotate.airr_out import read_airr as _read_airr
+
 from ._res import Stage
 import seqtree
 
@@ -35,27 +37,6 @@ from .denoise import REGIMES, clonotype_quality, quality_rescue, read_quality
 __all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS"]
 
 
-def _read_airr(path):
-    """Read an AIRR TSV, tolerating BOTH dialects arda has written.
-
-    ⛔ ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
-    **chr 34 is ``"``, i.e. Q1** -- a legitimate score any low-quality base produces. polars' reader
-    treats it as a quote character, so ONE such base collapses the parse of the whole file
-    (``CSV malformed: expected 1 rows, actual 155 rows``). Measured on a real Raji run: exactly one
-    row contained a ``"`` and the entire table became unreadable.
-
-    The complication is that arda has written the format two ways. The streaming writer
-    (``_markup.format_rows``, which produces every ``map`` output) emits **raw** fields and a truly
-    empty string for a missing value. polars' ``write_csv`` quotes -- it renders an empty string as
-    the two characters ``""`` and doubles an embedded quote. So reading unquoted is right for the
-    big files and would turn every empty field of an older polars-written one into a literal ``""``.
-    Hence the normalisation below: an AIRR field is never legitimately the two-character string
-    ``""``, so mapping it back to empty is unambiguous and makes both dialects read the same.
-    """
-    df = pl.read_csv(path, separator="\t", infer_schema_length=0, quote_char=None)
-    return df.with_columns(
-        pl.when(pl.col(c) == '""').then(pl.lit("")).otherwise(pl.col(c)).alias(c)
-        for c, t in df.schema.items() if t == pl.Utf8)
 
 #: How a clonotype is identified.
 #:
@@ -625,7 +606,6 @@ def _assign_coverage(
     # pass, none of which had a junction of its own to fall back on. Insert in DESCENDING ABUNDANCE
     # (then sequence, for a total order): the roots a partial read is most likely to belong to are
     # the ones that survive the cap, and the choice no longer depends on upstream grouping.
-    n_roots = len(root_jn)
     order = sorted(range(len(tgt_jn)),
                    key=lambda ri: (-(root_counts[tgt_root[ri]] if root_counts else 0),
                                    tgt_jn[ri], ri))
@@ -636,7 +616,6 @@ def _assign_coverage(
             lst = index[jn[p:p + k]]
             if len(lst) < cap:                       # bound the germline-shared k-mers
                 lst.append((ri, p))
-    del n_roots
     for i in range(n):
         sid = sidc[i]
         if sid in done:

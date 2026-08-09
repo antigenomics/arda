@@ -8,7 +8,7 @@ import polars as pl
 
 from .transfer import AIRR_COLUMNS
 
-__all__ = ["write_airr", "airr_header", "format_rows"]
+__all__ = ["write_airr", "airr_header", "format_rows", "read_airr"]
 
 # Hoisted out of the call: a tuple of the SAME str objects every time, so the extension's per-column
 # dict lookups hit cached string hashes instead of re-interning 52 names per record.
@@ -84,3 +84,25 @@ def _format_rows_py(records: list[dict], cols=_COLUMNS) -> str:
                 vals.append(str(v))
         out.append("\t".join(vals))
     return "\n".join(out) + ("\n" if out else "")
+
+def read_airr(path):
+    """Read an AIRR TSV, tolerating BOTH dialects arda has written.
+
+    ⛔ ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
+    **chr 34 is ``"``, i.e. Q1** -- a legitimate score any low-quality base produces. polars' reader
+    treats it as a quote character, so ONE such base collapses the parse of the whole file
+    (``CSV malformed: expected 1 rows, actual 155 rows``). Measured on a real Raji run: exactly one
+    row contained a ``"`` and the entire table became unreadable.
+
+    The complication is that arda has written the format two ways. The streaming writer
+    (``_markup.format_rows``, which produces every ``map`` output) emits **raw** fields and a truly
+    empty string for a missing value. polars' ``write_csv`` quotes -- it renders an empty string as
+    the two characters ``""`` and doubles an embedded quote. So reading unquoted is right for the
+    big files and would turn every empty field of an older polars-written one into a literal ``""``.
+    Hence the normalisation below: an AIRR field is never legitimately the two-character string
+    ``""``, so mapping it back to empty is unambiguous and makes both dialects read the same.
+    """
+    df = pl.read_csv(path, separator="\t", infer_schema_length=0, quote_char=None)
+    return df.with_columns(
+        pl.when(pl.col(c) == '""').then(pl.lit("")).otherwise(pl.col(c)).alias(c)
+        for c, t in df.schema.items() if t == pl.Utf8)

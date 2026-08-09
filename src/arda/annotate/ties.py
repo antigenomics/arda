@@ -199,9 +199,10 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
 
     from ..refbuild import imgt
     from ..refbuild.loci import IMGT_SPECIES_DIR, loci_for
+    from .airr_out import read_airr
 
     species_dir = IMGT_SPECIES_DIR[organism]
-    df = pl.read_csv(path, separator="\t", infer_schema_length=0, quote_char=None)
+    df = read_airr(path)          # one AIRR reader, one dialect (see its docstring)
     report = {"rows": df.height, "expanded": {}, "reranked": {}}
 
     for seg in segments:
@@ -215,7 +216,7 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
                 continue
             try:
                 germ.update(imgt.load_functional_alleles(species_dir, locus.group, stem))
-            except Exception:                      # a locus whose germline files are absent
+            except OSError:                        # a locus whose germline files are absent
                 continue
         if not germ:
             continue
