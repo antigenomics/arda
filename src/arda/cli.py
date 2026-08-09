@@ -812,3 +812,39 @@ def rnaseq_slurm(
 
 if __name__ == "__main__":
     app()
+
+@app.command("resolve-ties")
+def resolve_ties_cmd(
+    input: Path = typer.Option(..., "--input", "-i", help="AIRR TSV from `annotate` or `rnaseq map`."),
+    output: Path = typer.Option(..., "--output", "-o", help="AIRR TSV with widened, ranked calls."),
+    organism: str = typer.Option("human", "--organism"),
+    segments: str = typer.Option("v,j", "--segments",
+                                 help="Which calls to widen (comma-joined): v, j."),
+    rank: bool = typer.Option(True, "--rank/--no-rank",
+                              help="Second pass: put the allele the WHOLE LIBRARY supports first."),
+) -> None:
+    """Widen ``v_call``/``j_call`` to every germline the read's alignment cannot rule out.
+
+    A read aligned over ``[germline_start, germline_end]`` is explained exactly as well by any
+    germline carrying that same stretch, so naming one is a claim the data does not support.
+    Measured against IgBLAST on a Ramos library: arda emitted **0 multi-gene tie lists in 504
+    calls** where IgBLAST emitted **11.68 %**, and on the 104 reads where they disagreed, aligning
+    each read to both germlines showed **59 of 60 fit identically** (identity 1.0000 over 63-70 nt).
+    Neither was right; both were overconfident.
+
+    ⛔ This ADDS no alignment. The tie is a string comparison against the reference over the span
+    already aligned, so it costs neither the memory nor the time that keeping `top_hit` before
+    `convertalis` was protecting (that collapse made the alignment TSV 2.88x smaller AND took
+    allele agreement .9735 -> .9956; this does not undo it).
+
+    ⛔ It is a SEPARATE COMMAND, not a flag on `map`, because the ranking needs every read before it
+    can order any of them -- two passes over one file. And it changes `v_call`/`j_call` on every
+    library: a consumer that splits on `,` and takes `[0]` sees the better answer, one that treats
+    the field as a single gene sees a new shape.
+    """
+    from .annotate.ties import resolve_airr
+
+    segs = tuple(x.strip() for x in segments.split(",") if x.strip())
+    rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank,
+                       echo=typer.echo)
+    typer.echo(f"[arda] wrote {output} ({rep['rows']} rows)")

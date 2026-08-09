@@ -144,6 +144,35 @@ std::vector<int64_t> nearest_more_abundant(const std::vector<std::string>& seqs,
     return parent;
 }
 
+// Indices of candidates that CONTAIN `segment` verbatim.
+//
+// The tie-list primitive. A read aligned to germline `G` over `[gstart, gend)` is explained exactly
+// as well by any other germline containing that same stretch -- the read carries no base that
+// distinguishes them, so naming only `G` is a claim the data does not support. Measured on Ramos:
+// 59 of 60 disagreements with IgBLAST are pairs where BOTH germlines match at identity 1.0000 over
+// 63-70 nt, and arda emitted 0 tie lists in 504 calls against IgBLAST's 11.68 %.
+//
+// Substring search rather than a position-wise compare, because ungapped germline sequences are
+// not in a common coordinate system -- the same stretch sits at different offsets in two alleles,
+// and comparing `other[gstart:gend]` would miss it. `std::search` is fine here: the needle is
+// ~60-200 nt, the haystacks a few hundred, and the caller memoises on (allele, gstart, gend), which
+// on an amplicon collapses hundreds of thousands of reads onto a few thousand distinct spans.
+//
+// ⛔ Returns candidates in the order given, so the caller's ordering (and therefore the emitted
+// call string) is deterministic.
+std::vector<int64_t> containing(const std::string& segment,
+                                const std::vector<std::string>& candidates) {
+    std::vector<int64_t> out;
+    if (segment.empty()) return out;
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        const std::string& c = candidates[i];
+        if (c.size() < segment.size()) continue;
+        if (std::search(c.begin(), c.end(), segment.begin(), segment.end()) != c.end())
+            out.push_back(static_cast<int64_t>(i));
+    }
+    return out;
+}
+
 // Substitution distance to a reference sequence, -1 when the lengths differ. Used to build the
 // ladder/cliff diagnostic the framework reports, so the evidence for a collapse is inspectable
 // rather than asserted.
@@ -162,7 +191,7 @@ std::vector<int> subs_to(const std::vector<std::string>& seqs, const std::string
 
 PYBIND11_MODULE(_denoise, m) {
     m.doc() = "Hot paths of quality-aware clonotype error correction (see denoise.cpp header).";
-    m.attr("__version__") = "0.1.0";
+    m.attr("__version__") = "0.2.0";
     m.def("mean_phred", &mean_phred, py::arg("junctions"), py::arg("quals"),
           "Per-read mean Phred over the junction; -1.0 when the quality is absent or its length "
           "disagrees with the junction (absent evidence, not bad evidence).");
@@ -173,6 +202,9 @@ PYBIND11_MODULE(_denoise, m) {
           py::arg("max_subs"), py::arg("min_ratio") = 1.0,
           "For each flagged clonotype, the most abundant equal-length neighbour within `max_subs` "
           "substitutions and at least `min_ratio` times its count; -1 if none. Deterministic.");
+    m.def("containing", &containing, py::arg("segment"), py::arg("candidates"),
+          "Indices of candidates containing `segment` verbatim -- the germlines a read aligned "
+          "over that stretch cannot distinguish from the one it was called against.");
     m.def("subs_to", &subs_to, py::arg("seqs"), py::arg("ref"),
           "Substitution distance from each sequence to `ref`; -1 when the lengths differ.");
 }
