@@ -573,7 +573,14 @@ def test_greedy_contigs_reconstructs_a_split_cdr3():
     contigs = _greedy_contigs(reads, seeds, cs, k=21, min_overlap=21, min_id=0.9,
                               max_ext_past_cdr3=130, scan_cap=400, min_v=70)
     assert contigs, "the tiling reads must assemble into at least one contig"
-    assert any(true in seq for seq, _ in contigs), "the full V(D)J sequence was not reconstructed"
+    assert any(true in seq for seq, _, _ in contigs), "the full V(D)J sequence was not reconstructed"
+    # ⛔ Every member's span must be its own read, at the offset the contig actually places it --
+    # attribution is gated on those spans, so a wrong one silently credits the wrong read.
+    for seq, members, spans in contigs:
+        assert len(members) == len(spans)
+        for mi, (a, b) in zip(members, spans):
+            assert b - a == len(reads[mi]), "span length must equal the member read's length"
+            assert seq[a:b] == reads[mi], "span must locate the member read in the contig"
 
 
 def test_assemble_rescues_incomplete_reads_via_contig(tmp_path, monkeypatch):

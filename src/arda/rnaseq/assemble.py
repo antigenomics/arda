@@ -55,6 +55,16 @@ _LOCI = ("IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD")
 # ``correct._COMPLETE`` (kept local to avoid importing a private symbol).
 _CANON = re.compile(r"^C[ACDEFGHIKLMNPQRSTVWY]*[FW]$")
 
+#: How much of the contig's junction a member read must actually cover before the contig's junction
+#: is attributed to it. Membership only requires a ``min_overlap`` match, and after the extension
+#: passes accumulate germline at the contig ends that match can be entirely germline V or J -- so a
+#: read of a DIFFERENT clone of the same V gene qualifies. Ten nucleotides is a little over three
+#: codons of clone-specific sequence: enough that the read cannot be explained by germline alone,
+#: and short enough that a read clipping the junction's edge still counts.
+#: ⚠ Failing this does NOT lose the read -- it stays in the Stage-1 frame for coverage assignment.
+#: It only withholds the FORCED attribution to this clonotype.
+_MIN_JUNCTION_COVER = 10
+
 
 def _rc(s: str) -> str:
     return s.translate(_COMP)[::-1]
@@ -87,6 +97,10 @@ class AssembleReport:
     contigs: int = 0
     contigs_complete: int = 0          # contigs whose re-annotated junction is complete
     reads_rescued: int = 0             # incomplete member reads attributed to a complete contig
+    #: Members skipped because their span did not cover the contig's junction by
+    #: ``_MIN_JUNCTION_COVER`` -- recruited on germline-only overlap, so there is no evidence they
+    #: belong to this clonotype. They keep their reads; only the attribution is withheld.
+    members_without_junction: int = 0
     # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
     # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
     wall_seconds: float = 0.0
@@ -108,10 +122,13 @@ def _greedy_contigs(
     max_ext_past_cdr3: int,
     scan_cap: int,
     min_v: int = 70,
-) -> list[tuple[str, list[int]]]:
+) -> list[tuple[str, list[int], list[tuple[int, int]]]]:
     """Seed from ``seed_idx`` (longest CDR3 tail first), extend 3' into J then 5' into V.
 
-    Returns ``[(contig_seq, member_read_indices)]``. ``used`` partitions reads: each read
+    Returns ``[(contig_seq, member_read_indices, member_spans)]``, where each span is the member's
+    ``[start, end)`` in FINAL contig coordinates. The spans exist so attribution can be checked:
+    membership is granted on a germline-shared overlap, so a member need not have covered the
+    junction at all -- see :func:`assemble_contigs`. ``used`` partitions reads: each read
     joins at most one contig (dominant clones seed first), so member counts don't overlap.
     The 5' pass extends ~``min_v`` nt into the V so re-annotation can call the V gene (mmseqs
     needs enough germline to anchor it); that region is shared germline, so any V-read of the
@@ -133,13 +150,16 @@ def _greedy_contigs(
     used = [False] * len(oriented)
     # longest CDR3 tail first: that read spans the most of the junction, the best seed.
     seed_idx = sorted(seed_idx, key=lambda i: len(oriented[i]) - (cdr3_start[i] or 0), reverse=True)
-    contigs: list[tuple[str, list[int]]] = []
+    contigs: list[tuple[str, list[int], list[tuple[int, int]]]] = []
     for si in seed_idx:
         if used[si]:
             continue
         contig = oriented[si]
         anchor = cdr3_start[si] or 0            # CDR3 start within the contig
         members = [si]
+        # Each member's [start, end) in CONTIG coordinates. The 5' pass prepends, so every existing
+        # span shifts right by the length of what was prepended.
+        spans: list[tuple[int, int]] = [(0, len(contig))]
         used[si] = True
         # 3' pass: extend through the CDR3 into J (clone-specific until the germline J).
         while len(contig) - anchor < max_ext_past_cdr3:
@@ -169,6 +189,7 @@ def _greedy_contigs(
             contig += best_ext
             used[best_j] = True
             members.append(best_j)
+            spans.append((len(contig) - len(oriented[best_j]), len(contig)))
         # 5' pass: extend into the V until there is enough germline for re-annotation to call V.
         while anchor < min_v:
             head = contig[:k]
@@ -193,10 +214,12 @@ def _greedy_contigs(
                 break
             contig = best_ext + contig
             anchor += len(best_ext)
+            spans = [(a + len(best_ext), b + len(best_ext)) for a, b in spans]
             used[best_j] = True
             members.append(best_j)
+            spans.append((0, len(oriented[best_j])))
         if len(members) >= 2:
-            contigs.append((contig, members))
+            contigs.append((contig, members, spans))
     return contigs
 
 
@@ -284,6 +307,7 @@ def assemble_contigs(
     # Assemble per locus. Seeds = incomplete reads that reach the CDR3 (the ones `correct` drops).
     contig_records: list[tuple[str, str]] = []          # (contig_id, seq) for reannotate
     contig_members: list[list[int]] = []
+    contig_spans: list[list[tuple[int, int]]] = []      # each member's [start, end) in the contig
     for loc, idxs in by_locus.items():
         local_seq = [oriented[i] for i in idxs]
         local_cs = [cdr3_start[i] for i in idxs]
@@ -292,13 +316,14 @@ def assemble_contigs(
         if not seeds_local:
             continue
         report.seeds += len(seeds_local)
-        for cseq, members_local in _greedy_contigs(
+        for cseq, members_local, spans_local in _greedy_contigs(
                 local_seq, seeds_local, local_cs,
                 k=k, min_overlap=min_overlap, min_id=min_id,
                 max_ext_past_cdr3=max_ext_past_cdr3, scan_cap=scan_cap):
             gid = len(contig_records)
             contig_records.append((f"contig_{loc}_{gid}", cseq))
             contig_members.append([idxs[p] for p in members_local])
+            contig_spans.append(spans_local)
     report.contigs = len(contig_records)
     if not contig_records:
         _write_empty(output)
@@ -312,7 +337,7 @@ def assemble_contigs(
     ann_by_id = {a.get("sequence_id"): a for a in ann}
 
     rows: list[dict] = []
-    for (cid, _), members in zip(contig_records, contig_members):
+    for (cid, cseq), members, spans in zip(contig_records, contig_members, contig_spans):
         a = ann_by_id.get(cid)
         if a is None or not _complete(a.get("junction_aa"), a.get("junction")):
             continue
@@ -326,8 +351,25 @@ def assemble_contigs(
         # junction; d_sequence_start/end are CONTIG coordinates and would be meaningless here,
         # so they are not propagated.
         d = {c: a.get(c) or "" for c in _D_COLUMNS}
-        for mi in members:
+        # ⛔ ATTRIBUTION NEEDS EVIDENCE. Membership is granted on a >= `min_overlap` match, and after
+        # the extension passes have accumulated germline at the contig ends that overlap can be pure
+        # germline -- the 5' pass says so in its own docstring ("that region is shared germline, so
+        # any V-read of the gene extends it correctly"). Stamping the contig's junction onto such a
+        # member credits a read carrying ZERO clone-specific evidence to this clonotype's
+        # duplicate_count, and a read of a different clone of the same V gene is exactly the kind of
+        # thing that overlap admits. So a member is only attributed if it actually COVERED the
+        # junction. Locate the junction in the contig and require a real overlap with it.
+        #
+        # ⚠ Dropping a rescued row does not lose the read: it stays in the Stage-1 frame and
+        # `correct._assign_coverage` can still place it on evidence. What it loses is the FORCED
+        # attribution.
+        j0 = cseq.find(jn)
+        j1 = j0 + len(jn) if j0 >= 0 else -1
+        for mi, (ms, me) in zip(members, spans):
             if complete[mi]:          # already counted via the mapped AIRR; don't double-attribute
+                continue
+            if j0 >= 0 and min(me, j1) - max(ms, j0) < _MIN_JUNCTION_COVER:
+                report.members_without_junction += 1
                 continue
             rows.append({
                 "sequence_id": sid_c[mi], "locus": lc, "v_call": vc, "j_call": jc,

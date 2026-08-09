@@ -147,11 +147,11 @@ records that carry a D. Runs in ~6 s.
 
 ```
 [arda] map: 925/1035 reads mapped (89.37%); loci={'TRA': 158, 'TRB': 266, 'TRD': 128, 'IGL': 81, 'IGK': 97, 'IGH': 195}
-[arda] assemble: 107/112 complete contigs from 176 seeds; rescued 162 reads
-[arda] correct: 21 -> 21 clonotypes (0 collapsed) over 323 reads
+[arda] assemble: 107/112 complete contigs from 176 seeds; rescued 145 reads
+[arda] correct: 18 -> 18 clonotypes (0 collapsed) over 306 reads
 ```
 
-[`clones.tsv`](rnaseq/clones.tsv) has 21 clonotypes; **8 carry a `d_call`**, and one carries a
+[`clones.tsv`](rnaseq/clones.tsv) has 18 clonotypes; **8 carry a `d_call`**, and one carries a
 tandem `d2_call` — the same `TRDD2 → TRDD3` rearrangement as `dd.fasta`, recovered here from
 150 bp reads instead of the full mRNA:
 

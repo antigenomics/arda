@@ -141,9 +141,17 @@ def test_rnaseq_example_actually_demonstrates_d():
     # scaffolds (3'-truncated alleles, then unanchorable ones with an anchored sibling). Reads on a
     # dropped allele reassign to a surviving sibling of the same gene, merging rows that shared a
     # junction and differed only in v_call. Mapping is untouched -- only the V calls move.
-    assert df.height == 19
+    #
+    # 19 -> 18: assembly stopped attributing a contig's junction to members that never COVERED it.
+    # The row that went is the clean case for the change -- `CAASMAGGGNKLTF` under `TRAV13-1*01`
+    # with 2 reads, a CALL SPLIT of the same junction carried by `TRAV13-1*02` with 28. Its only
+    # support was rescued rows whose overlap with the contig was germline V, so the split was an
+    # artifact of attribution, not a second clone. ⚠ The example's read total falls 384 -> 367:
+    # a germline-only read matches no junction, so coverage cannot re-place it. That is the
+    # deliberate precision-over-recall trade, not a leak.
+    assert df.height == 18
     with_d = df.filter(pl.col("d_call").is_not_null() & (pl.col("d_call") != ""))
-    assert with_d.height == 8, "8 of 19 clonotypes carry a d_call"
+    assert with_d.height == 8, "8 of 18 clonotypes carry a d_call"
     dd = df.filter(pl.col("d2_call").is_not_null() & (pl.col("d2_call") != ""))
     assert dd.height == 1 and dd["d_call"][0] == "TRDD2*01" and dd["d2_call"][0] == "TRDD3*01"
     assert set(df["locus"].to_list()) == {"IGH", "IGK", "IGL", "TRA", "TRB", "TRD"}
