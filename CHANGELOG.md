@@ -125,9 +125,16 @@ in the meantime: separate the three populations by frequency.
 
 ### Known limitation, measured
 
-The coverage k-mer `cap` under-assigns ~1.6 % of reads in the default path, independent of the alias
-fix. On SRR5233636 with `--ec-mode fast` (no aliases exist), the clonotype table is identical at
-every cap:
+The coverage k-mer `cap` under-assigns reads in the default path, independent of the alias fix —
+but ⚠ **the size is library-dependent, not a general property**, and the release notes originally
+overstated it. It is driven by how much germline the junctions share: on a **TRA** amplicon
+(SRR5233636, short near-germline junctions, 36,741 roots sharing k-mers heavily) it is **1.6 %**,
+while on a **TRB** amplicon of comparable depth (SRR5233642, 72,339 roots, D+N-bearing junctions
+that are far more specific) the same sweep moves **+236 reads at cap 128 and +404 at cap 256 —
+0.013 %**. Same biology that made TRA the read leak's worst case.
+
+On SRR5233636 with `--ec-mode fast` (no aliases exist), the clonotype table is identical at every
+cap:
 
 | cap | reads assigned | wall |
 |----:|---------------:|-----:|

@@ -661,8 +661,12 @@ def _assign_coverage(
     #     cap  512   1,867,867          740.7 s
     #     cap 1024   1,867,904          865.0 s
     # It SATURATES at 512: the whole recoverable prize is +29,654 reads (1.6 %) and 1024 adds 37
-    # more. So the default trades ~1.6 % of coverage-based abundance for 3.6x on this stage. Peak
-    # RSS is flat across the whole sweep (~12.1 GB), so it is CPU in the alignment inner loop.
+    # more. Peak RSS is flat across the sweep (~12.1 GB), so it is CPU in the alignment inner loop.
+    # ⚠ The 1.6 % is LIBRARY-DEPENDENT, not a property of the cap. It tracks how much germline the
+    # junctions share: the TRA amplicon above has short near-germline junctions over 36,741 roots,
+    # whereas a TRB amplicon of comparable depth (SRR5233642, 72,339 roots, D+N-bearing junctions
+    # that are far more specific) gains only +236 at cap 128 and +404 at cap 256 -- 0.013 %. So the
+    # default costs almost nothing on a diverse library and ~1.6 % on a germline-like one.
     # ⛔ Do NOT "fix" this by guaranteeing every root a posting -- that was built and measured and
     # is a NO-OP: 1,838,213 at cap 64 and 1,850,917 at cap 256 on this sample, and 3,132,742 on a
     # bulk one (SRR5233642), byte-identical to the sweep in every case. No root is ever fully
