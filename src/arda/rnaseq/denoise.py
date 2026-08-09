@@ -175,6 +175,26 @@ def quality_rescue(seqs: list[str], counts: list[int], clono_q: list[float],
 
     ``clono_q`` is parallel to ``seqs``; use ``-1.0`` for a clonotype with no usable quality, which
     excludes it (absent evidence, not bad evidence).
+
+    ⛔ **V and J are deliberately IGNORED here, and that is a decision, not an omission.** The
+    abundance model in ``correct._parents`` defaults to ``require_vj=True`` on the principle that a
+    true sequencing error keeps the germline V/J call -- correct there, because it collapses
+    1-3 substitution neighbours, which rarely move an alignment onto a different gene. This
+    function targets the opposite class: the cliff, where the *whole junction window* is unreliable
+    (median mean Phred 16.5-20.1, 6-12 substitutions). **A read that bad has an unreliable V/J call
+    for exactly the same reason its junction is unreliable** -- the call came from aligning that
+    sequence -- so requiring the calls to agree would filter on the corrupted evidence and defeat
+    the rescue. Measured on SRR5233636 at full depth: of 9,025 rescues under ``amplicon``,
+    **4,593 (50.9 %) cross the V call** and 908 the J; under ``rnaseq`` (6 subs, 200x) it is 24 and
+    2 of 215. What protects a genuine clone here is not the call but the two gates that ARE
+    trustworthy: its reads must be measurably bad (``lowq_mean_q``) and the parent must be
+    ``lowq_min_ratio`` times more abundant.
+
+    ⛔ The LOCUS is a different matter and is NOT ignored -- ``correct_airr`` partitions the search
+    by it. A locus is fixed by the whole read (V, J and C genes together), not by junction bases, so
+    a locus flip is not a plausible consequence of junction miscalls, and a rearrangement of another
+    locus is not a sequencing error of this one. Measured before the partition: 3 of those 9,025
+    were 1-read TRB clonotypes absorbed into abundant TRA clonotypes at 11-12 substitutions.
     """
     rep = DenoiseReport(quality_available=any(q >= 0 for q in clono_q))
     n = len(seqs)

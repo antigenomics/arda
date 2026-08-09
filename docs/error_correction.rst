@@ -286,6 +286,27 @@ a candidate with **no** such neighbour keeps its reads.
 
 .. important::
 
+   **The rescue ignores the V and J calls on purpose, and honours the locus on purpose.**
+
+   The abundance model above defaults to ``--require-vj``: a true sequencing error keeps the
+   germline V/J call, which holds for the 1–3 substitution neighbours it collapses. The rescue
+   targets the opposite class — the cliff, where the *whole junction window* is unreliable (median
+   mean Phred 16.5–20.1). **A read that bad has an unreliable V/J call for the same reason its
+   junction is unreliable**: the call came from aligning that sequence. Requiring the calls to
+   agree would filter on the corrupted evidence. Measured on a full-depth TRA amplicon
+   (SRR5233636), of 9,025 rescues under ``amplicon`` **4,593 (50.9 %) cross the V call** and 908
+   the J; under ``rnaseq`` it is 24 and 2 of 215. What protects a genuine clone is not the call but
+   the two gates that *are* trustworthy — its reads must be measurably bad, and the parent must be
+   ``lowq_min_ratio`` times more abundant.
+
+   The **locus** is not ignored: it is fixed by the whole read (V, J *and* C together), not by
+   junction bases, so a locus flip is not a plausible consequence of miscalls, and a rearrangement
+   of another locus is not a sequencing error of this one. Before the search was partitioned by
+   locus, 3 of those 9,025 were 1-read **TRB** clonotypes absorbed into abundant **TRA** clonotypes
+   at 11–12 substitutions — misattributed expression, not lost reads.
+
+.. important::
+
    **Nothing in this framework discards a read.** A read that reached a complete junction came off
    a real rearrangement of that locus; deciding its junction carries a miscall is a statement about
    bases, not about whether the molecule existed. The rescue returns *parent assignments*, and the
