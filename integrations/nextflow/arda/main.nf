@@ -88,6 +88,39 @@ process ARDA {
         tuning += ' --indel-rescue'
     }
 
+    // DENOISING. `--ec-mode` picks how Stage 2 decides what is an error; it defaults to `fast`,
+    // which is arda's historical behaviour, so an existing pipeline that sets nothing is
+    // unchanged. ⛔ `accurate`/`amplicon`/`rnaseq` all need Stage 1 to carry per-read junction
+    // quality, and `rnaseq run` turns that on ITSELF when a mode asks for it -- do not pass
+    // `--junction-quality` here as well, and never pass a mode without meaning it: a mode that is
+    // accepted and silently does nothing is the failure this project keeps hitting.
+    def ec_mode = meta.ec_mode ?: params.getOrDefault('arda_ec_mode', 'fast') ?: 'fast'
+    def ec_modes = ['fast', 'accurate', 'amplicon', 'rnaseq'] as Set
+    if (!ec_modes.contains(ec_mode))
+        throw new IllegalArgumentException(
+            "ARDA: arda_ec_mode must be one of ${ec_modes}, got '${ec_mode}' (sample '${meta.id}')")
+    if (ec_mode != 'fast') tuning += " --ec-mode ${ec_mode}"
+
+    // ⚠ `amplicon` and `rnaseq` differ because their clonotype-SIZE distributions differ, not by
+    // taste: an amplicon clonotype is deep, so a 1-read neighbour of an abundant clone is almost
+    // always error and the quality rescue can search wide; bulk RNA-seq is 0.02-3 % receptor and
+    // its singletons are mostly real, so it stays narrow. Choosing the mode that does not match
+    // the library is a real cost, which is why this warns rather than silently accepting it.
+    if ((ec_mode == 'amplicon' && regime == 'bulk') || (ec_mode == 'rnaseq' && regime == 'amplicon'))
+        log.warn "ARDA: ec_mode '${ec_mode}' with regime '${regime}' for sample '${meta.id}' -- " +
+                 "these presets are tuned to opposite clonotype-size distributions."
+
+    // The clonotype KEY. `junction` canonicalises V/J to the junction's majority so CALL SPLITS
+    // collapse -- a junction byte-identical to an abundant clone's under a different V or J call,
+    // which no error model can see because there is no discriminating base. Measured cost on a
+    // polyclonal TRA amplicon: 0.66 % of clonotypes merge. Off by default: it changes the
+    // clonotype identity, so it is a decision, not a tuning knob.
+    def clonotype_key = params.getOrDefault('arda_clonotype_key', 'full') ?: 'full'
+    if (!(clonotype_key in ['full', 'junction']))
+        throw new IllegalArgumentException(
+            "ARDA: arda_clonotype_key must be 'full' or 'junction', got '${clonotype_key}'")
+    if (clonotype_key != 'full') tuning += " --clonotype-key ${clonotype_key}"
+
     // ⛔ Pin the aligner to the one THIS task's environment provides. An mmseqs index is only
     // reusable by the release that built it, and a cluster's cache marker differs from the shipped
     // one -- unpinned, arda may reject the precompiled reference index and rebuild a private cache

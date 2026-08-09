@@ -16,6 +16,8 @@ in a small C++ hot path — producing AIRR-formatted output that matches IgBLAST
    shm
    error_correction
    pipeline_integration
+   cluster
+   use_cases
    reference_build
    reference_export
    api

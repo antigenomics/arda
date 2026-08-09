@@ -164,12 +164,27 @@ off by default; the shipped output does not move unless you ask.
 | A D call you will act on, or a tandem D-D you will report | `--d-max-evalue 0.01` | gene agreement vs IgBLAST **.9765 → .9985** (TRB amplicon), at ~⅓ the call rate |
 | Low-frequency variant recovery (spike-in, MRD, monoclonal control) | `map --junction-quality` + `correct --error-rate 1e-5 --ec-mode accurate` | keeps both published MIGEC spike-ins **and** monoclonal purity **.96034 → .99530** |
 | SHM / lineage trees | *(default)* | `v_mutations`/`j_mutations` in germline coordinates, `+36 ms` per 100 k reads |
+| Monoclonal QC / cell-line purity | `--ec-mode amplicon --clonotype-key junction` | Jurkat **90 → 10** clonotypes, TRB purity **.98963 → .99990**, **reads unchanged at 14,531**, and **98.50 %** of them on the two published clones |
+| A targeted library that is deep | `--ec-mode amplicon` | quality-directed rescue at 12 subs / 50× — reaches the class the abundance model structurally cannot |
+| Bulk RNA-seq, where singletons are mostly real | `--ec-mode rnaseq` | the same rescue kept narrow (6 subs / 200×) |
 
 `--d-max-evalue` is a **recall/precision dial**, not a bug fix: the shipped 0.2 is deliberately the
 loosest band, because dropping two thirds of the D calls is the wrong default for a repertoire
 tool. `--ec-mode accurate` is `--min-junction-q 20` — it judges the one base that discriminates a
 clonotype from its parent on its **Phred score** rather than on abundance, which is a measurement
-the abundance model does not have. Depth: [D segments](https://docs.isalgo.dev/arda/d_segments.html),
+the abundance model does not have.
+
+⛔ **Every denoising mode MOVES reads onto a parent and never discards them** — the sum of
+`duplicate_count` is invariant across modes, and a clonotype with no qualifying parent keeps its
+reads and is reported as an orphan. That is not caution: on a polyclonal hypermutated repertoire a
+plain quality *filter* at the same threshold would strand **3.70 %** of all junction-bearing reads
+with no parent to inherit them. If the read total moves when you change `--ec-mode`, that is a
+defect — please report it.
+
+⚠ The modes are **off by default** (`fast` = arda's historical behaviour), because whether the far
+class they collapse is badly-sequenced SHM or error is not settled: on a hypermutated IGH
+repertoire `amplicon` removes 178 clonotypes carrying 179 reads, 177 of them singletons, and on the
+matched naive library it removes **zero**. Depth: [D segments](https://docs.isalgo.dev/arda/d_segments.html),
 [SHM](https://docs.isalgo.dev/arda/shm.html),
 [error correction](https://docs.isalgo.dev/arda/error_correction.html).
 
@@ -465,6 +480,28 @@ already use, and it publishes per-sample clonotype tables to `${params.outdir}/a
 conda `environment.yml` (works with `-profile conda`) and a `Dockerfile`, and emits a
 `versions.yml`. See its [README](integrations/nextflow/arda/README.md) and the
 [pipeline-integration guide](https://docs.isalgo.dev/arda/pipeline_integration.html).
+
+The module exposes the regime and the denoising framework as params, so nothing needs
+`task.ext.args` surgery:
+
+```groovy
+params {
+    regime             = 'amplicon'   // or 'bulk' (default); per-sample via meta.regime
+    arda_ec_mode       = 'amplicon'   // fast (default) | accurate | amplicon | rnaseq
+    arda_clonotype_key = 'junction'   // full (default) | junction
+    arda_mmseqs        = '/opt/conda/bin/mmseqs'
+}
+```
+
+It validates both against their allowed sets and **warns** when `arda_ec_mode` and `regime`
+disagree (e.g. the amplicon preset on a bulk library), because those presets are tuned to opposite
+clonotype-size distributions and picking the wrong one is a real cost rather than a no-op.
+
+**On a cluster**, `arda slurm` writes a `submit.sh` chaining split → `sbatch --array` →
+merge with an `afterok` dependency, and a sharded run is **byte-identical** to a single-node one.
+⛔ Shard Stage 1 only: error correction compares a clonotype against its neighbours by abundance,
+so running it per shard asks the question against a fraction of the evidence. See the
+[cluster guide](https://docs.isalgo.dev/arda/cluster.html).
 
 ## Roadmap / TODO
 

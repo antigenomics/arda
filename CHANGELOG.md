@@ -3,6 +3,46 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.13.2
+
+### Added — the denoising framework is reachable from Nextflow, and the cluster path is documented
+
+Audit of "is everything shipped and usable" found two real gaps. Both are integration, not
+behaviour: **no arda output changes in this release.**
+
+**The Nextflow module could not reach the framework.** `main.nf`, `nextflow.config` and `meta.yml`
+had zero mentions of `--ec-mode`, `--clonotype-key` or `--junction-quality`, so a pipeline user had
+no way to it short of `task.ext.args` surgery. Now:
+
+```groovy
+params {
+    arda_ec_mode       = 'amplicon'   // fast (default) | accurate | amplicon | rnaseq
+    arda_clonotype_key = 'junction'   // full (default) | junction
+}
+```
+
+Both are validated against their allowed sets, and the module **warns** when `arda_ec_mode` and
+`regime` disagree — the amplicon and rnaseq presets are tuned to opposite clonotype-size
+distributions, so the mismatch is a real cost rather than a no-op. Declared in `nextflow.config`
+with the measurement behind each, and read through `params.getOrDefault` so the module stays
+correct when included without its config.
+
+**SLURM was implemented but undocumented.** `arda slurm` / `split` / `merge` and
+`arda.cluster.render_submit_script` have shipped for releases with no page describing them. New
+`docs/cluster.rst`: the one-command chain, why `split` and `split_pairs` are not interchangeable
+(one writes FASTA and round-robins *records*, splitting a fragment's mates across shards), why
+Stage 2 must run **once globally** rather than per shard, aligner pinning, regime choice, and
+resource sizing — including that prefilter threads saturate at 16 and regress at 32.
+
+New `docs/use_cases.rst`: bulk RNA-seq, amplicon, monoclonal QC, negative controls, low-frequency
+variants, SHM, and the rules for comparing arda against another tool (name the stage; benchmark
+every tool at its best config; compare at gene level; give each call metric its own denominator).
+It also states plainly that a 200 k subsample of a bulk library yields 1–3 clonotypes and nothing
+computed on it means anything.
+
+README gains the monoclonal-QC and per-regime rows, the read-conservation invariant, and why the
+modes are off by default.
+
 ## 2.13.1
 
 ### Fixed — a Q1 base in `junction_quality` made the whole AIRR unreadable
