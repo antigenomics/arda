@@ -193,18 +193,18 @@ def test_gate_raises_when_the_column_is_absent(tmp_path):
 def test_low_quality_child_is_dropped_and_high_quality_child_survives(tmp_path):
     # `error_rate` low enough that the abundance model keeps both children: the gate is then the
     # ONLY thing that can separate them, which is the point of the test.
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("I"), prefix="hi"))
     both = _clonotypes(_airr(tmp_path, rows, "hi.tsv"), tmp_path / "hi.out",
                        error_rate=1e-6, min_junction_q=20)
     assert both.get(_CHILD) == 20                       # high-Q discriminating base: kept
 
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("5"), prefix="lo"))  # '5' = Q20-... see below
     low = _clonotypes(_airr(tmp_path, rows, "lo.tsv"), tmp_path / "lo.out",
                       error_rate=1e-6, min_junction_q=25)
     assert _CHILD not in low                            # low-Q discriminating base: gone
-    assert low[_PARENT] == 420                          # ...and its reads went to the parent
+    assert low[_PARENT] == 4020                          # ...and its reads went to the parent
 
 
 def test_the_threshold_boundary_is_inclusive(tmp_path):
@@ -212,7 +212,7 @@ def test_the_threshold_boundary_is_inclusive(tmp_path):
     at = chr(33 + 20)                                   # Phred 20
     below = chr(33 + 19)
     for qchar, expect in ((at, 20), (below, None)):
-        rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+        rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
                 + _reads(_CHILD, 20, _q(qchar), prefix="c"))
         cl = _clonotypes(_airr(tmp_path, rows, f"b{ord(qchar)}.tsv"),
                          tmp_path / f"b{ord(qchar)}.out",
@@ -223,7 +223,7 @@ def test_the_threshold_boundary_is_inclusive(tmp_path):
 def test_only_the_mismatching_bases_are_looked_at(tmp_path):
     """Every base except the discriminating one is Q0; the read survives on that one base."""
     qual = "".join(chr(33 + 40) if i == _MISPOS else "!" for i in range(len(_PARENT)))
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, qual, prefix="c"))
     cl = _clonotypes(_airr(tmp_path, rows, "m.tsv"), tmp_path / "m.out",
                      error_rate=1e-6, min_junction_q=30)
@@ -233,11 +233,11 @@ def test_only_the_mismatching_bases_are_looked_at(tmp_path):
 def test_all_zero_quality_drops_every_gated_read_but_never_the_parent(tmp_path):
     """A clonotype with no more-abundant neighbour has no hypothesis to test, so it is not gated
     -- even at Q0 across the board. Otherwise an all-``!`` library would report nothing at all."""
-    rows = (_reads(_PARENT, 400, "!" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "!" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, "!" * len(_PARENT), prefix="c"))
     cl = _clonotypes(_airr(tmp_path, rows, "z.tsv"), tmp_path / "z.out",
                      error_rate=1e-6, min_junction_q=20)
-    assert cl == {_PARENT: 420}
+    assert cl == {_PARENT: 4020}
 
 
 def test_a_clonotype_with_no_more_abundant_neighbour_is_untouched(tmp_path):
@@ -251,7 +251,7 @@ def test_a_clonotype_with_no_more_abundant_neighbour_is_untouched(tmp_path):
 
 def test_a_read_without_a_quality_string_is_kept(tmp_path):
     """Absent evidence is not evidence of error."""
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, "", prefix="c"))
     cl = _clonotypes(_airr(tmp_path, rows, "n.tsv"), tmp_path / "n.out",
                      error_rate=1e-6, min_junction_q=40)
@@ -259,7 +259,7 @@ def test_a_read_without_a_quality_string_is_kept(tmp_path):
 
 
 def test_the_report_counts_what_the_gate_removed(tmp_path):
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("!"), prefix="c"))
     rep = correct_airr(_airr(tmp_path, rows), tmp_path / "o.tsv", map_d=False,
                        error_rate=1e-6, min_junction_q=20)
@@ -270,7 +270,7 @@ def test_the_report_counts_what_the_gate_removed(tmp_path):
 # ------------------------------------------------------------------------------ the mode selector
 def test_fast_mode_is_the_shipped_default(tmp_path):
     """``--ec-mode fast`` must be a no-op: the default output cannot move."""
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("!"), prefix="c"))
     src = _airr(tmp_path, rows)
     correct_airr(src, tmp_path / "a.tsv", map_d=False, error_rate=1e-6)
@@ -280,7 +280,7 @@ def test_fast_mode_is_the_shipped_default(tmp_path):
 
 
 def test_accurate_mode_applies_the_quality_gate(tmp_path):
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("!"), prefix="c"))
     cl = _clonotypes(_airr(tmp_path, rows), tmp_path / "o.tsv",
                      error_rate=1e-6, ec_mode="accurate")
@@ -288,7 +288,7 @@ def test_accurate_mode_applies_the_quality_gate(tmp_path):
 
 
 def test_an_explicit_knob_overrides_the_mode(tmp_path):
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("!"), prefix="c"))
     cl = _clonotypes(_airr(tmp_path, rows), tmp_path / "o.tsv",
                      error_rate=1e-6, ec_mode="accurate", min_junction_q=0)
@@ -346,18 +346,18 @@ def test_a_partially_gated_clonotype_does_not_get_its_moved_reads_handed_back(tm
     still sitting on the read. Without an explicit per-read override the moved reads match that
     key again and are handed straight back, so the gate silently does nothing here.
     """
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 10, _q("5"), prefix="lo")     # Q20, below the Q25 gate
             + _reads(_CHILD, 10, _q("I"), prefix="hi"))    # Q40, above it
     cl = _clonotypes(_airr(tmp_path, rows, "part.tsv"), tmp_path / "part.out",
                      error_rate=1e-6, min_junction_q=25)
     assert cl[_CHILD] == 10, "the 10 low-Q reads must not still be sitting on the child"
-    assert cl[_PARENT] == 410, "...and they must be counted in the parent"
+    assert cl[_PARENT] == 4010, "...and they must be counted in the parent"
 
 
 def test_no_read_is_ever_lost_to_the_gate(tmp_path):
     """Total assigned reads is invariant to the gate, at every threshold."""
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("5"), prefix="lo")
             + _reads(_CHILD, 15, _q("I"), prefix="hi"))
     totals = {}
@@ -366,12 +366,12 @@ def test_no_read_is_ever_lost_to_the_gate(tmp_path):
                          error_rate=1e-6, min_junction_q=q)
         totals[q] = sum(cl.values())
     assert len(set(totals.values())) == 1, f"reads lost or duplicated by the gate: {totals}"
-    assert totals[0] == 435
+    assert totals[0] == 4035
 
 
 def test_the_report_counts_moved_reads_without_subtracting_them(tmp_path):
     """`reads_low_quality` is a move, not a loss: `reads` must not shrink when the gate fires."""
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("5"), prefix="lo"))
     src = _airr(tmp_path, rows, "rep.tsv")
     off = correct_airr(src, tmp_path / "off.out", map_d=False, error_rate=1e-6, min_junction_q=0)
@@ -388,7 +388,7 @@ def test_a_vacated_junction_stays_an_alignment_target(tmp_path):
     root by `min_ov`. It stays, pointing at the parent. (Measured: 5 such reads on Ramos, every
     one carrying no junction at all.)
     """
-    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
             + _reads(_CHILD, 20, _q("5"), prefix="lo"))
     # A partial read: it carries the child's sequence but never reached a junction of its own, so
     # only the alignment pass can place it.
@@ -398,4 +398,38 @@ def test_a_vacated_junction_stays_an_alignment_target(tmp_path):
     cl = _clonotypes(_airr(tmp_path, rows, "alias.tsv"), tmp_path / "alias.out",
                      error_rate=1e-6, min_junction_q=25)
     assert _CHILD not in cl
-    assert cl[_PARENT] == 421, "the partial read must land on the parent, not vanish"
+    assert cl[_PARENT] == 4021, "the partial read must land on the parent, not vanish"
+
+
+def test_an_implausible_parent_does_not_gate_however_much_bigger_it_is(tmp_path):
+    """⛔ "More abundant" is not evidence. The parent must be able to have PRODUCED this read.
+
+    At Q20 the discriminating base is wrong with probability 1e-2, so a parent of 400 reads is
+    expected to yield 4 misreads — observing 20 is five times that, and calling them all error is a
+    claim the data refuses. Measured consequence of not testing this: the TRA amplicons, whose
+    short junctions (median 42 nt) have many 3-substitution neighbours, lost 0.44 % and 1.39 % of
+    their reads at full depth while TRB, with longer D+N junctions, GAINED them.
+    """
+    rows = (_reads(_PARENT, 400, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo"))          # '5' = Q20
+    cl = _clonotypes(_airr(tmp_path, rows, "imp.tsv"), tmp_path / "imp.out",
+                     error_rate=1e-6, min_junction_q=25)
+    assert cl.get(_CHILD) == 20, "400 * 1e-2 = 4 < 20: not plausibly all misreads"
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo"))
+    cl = _clonotypes(_airr(tmp_path, rows, "pl.tsv"), tmp_path / "pl.out",
+                     error_rate=1e-6, min_junction_q=25)
+    assert _CHILD not in cl, "4000 * 1e-2 = 40 >= 20: plausible, so it gates"
+
+
+def test_the_plausibility_test_uses_phred_not_the_global_error_rate(tmp_path):
+    """⚠ Using ``--error-rate`` here was tried and is wrong: it makes the gate a strict subset of
+    the abundance model, which is the thing the gate exists to reach past. Measured on the MIGEC
+    spike-ins at 1e-5, error clonotypes went 1,633 -> 1,633 (from 158) because a 2-substitution
+    parent scores 293,327 * (4.8e-4)^2 = 0.068 < 1."""
+    rows = (_reads(_PARENT, 4000, "I" * len(_PARENT), prefix="p")
+            + _reads(_CHILD, 20, _q("5"), prefix="lo"))
+    src = _airr(tmp_path, rows, "er.tsv")
+    for er in (1e-3, 1e-9):                       # the gate's outcome must not depend on it
+        cl = _clonotypes(src, tmp_path / f"er{er}.out", error_rate=er, min_junction_q=25)
+        assert _CHILD not in cl, f"gate changed with error_rate={er}"

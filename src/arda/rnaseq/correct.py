@@ -197,8 +197,8 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
     return parent
 
 
-def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
-                  require_vj: bool) -> tuple[pl.DataFrame, int, int]:
+def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bool,
+                  error_rate: float = 1e-3) -> tuple[pl.DataFrame, int, int]:
     """Move reads whose junction differs from its putative parent ONLY at low-quality bases.
 
     ⛔ **The read is REASSIGNED to the parent, never discarded.** A read that reached a complete
@@ -303,15 +303,35 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int,
         q = jq[r]
         if len(q) != len(jn[r]):                           # no quality for this read: no evidence
             continue
-        if any(ord(q[p]) < cut for p in d):
-            out_loc[r], out_v[r], out_j[r], out_jn[r] = keys[par[ci]]
-            out_aa[r] = key_aa.get(par[ci])
-            # Its quality describes the junction it NO LONGER carries. A same-length quality string
-            # belonging to a different junction is the one corruption nothing downstream can detect,
-            # so it is blanked rather than carried over.
-            out_q[r] = ""
-            moved[ci] += 1
-            moved_rows.append((r, par[ci]))
+        if not any(ord(q[p]) < cut for p in d):
+            continue
+        # ⛔ AND the parent must be able to have PRODUCED this read. "More abundant" is far too
+        # weak: one extra read made anything within `max_subs` a parent, and at 3 substitutions
+        # that is a hypothesis nothing supports -- which is why the TRA amplicons, whose short
+        # junctions (median 42 nt) have many 3-sub neighbours, lost 0.44 % and 1.39 % of their
+        # reads while TRB gained.
+        #
+        # ⚠ The test uses THIS READ'S OWN PHRED, not a global `error_rate`. Using the global rate
+        # was tried and is wrong in the other direction: it makes the gate a strict subset of the
+        # abundance model, which is the thing the gate exists to reach past. Measured, MIGEC at
+        # 1e-5 went 1,633 -> 1,633 error clonotypes (from 127) because a 2-sub parent scores
+        # 293,327 * (4.8e-4)^2 = 0.068 < 1. Phred is the independent evidence here, so it is what
+        # the plausibility is computed from.
+        # ⚠ `dpos`, not `pos` -- `pos` is the clonotype-key index dict two lines up, and shadowing
+        # it made the SECOND read of the loop fail with "'int' object is not subscriptable".
+        p_read = 1.0
+        for dpos in d:
+            p_read *= 10.0 ** (-(ord(q[dpos]) - 33) / 10.0)
+        if cnt[par[ci]] * p_read < cnt[ci]:
+            continue
+        out_loc[r], out_v[r], out_j[r], out_jn[r] = keys[par[ci]]
+        out_aa[r] = key_aa.get(par[ci])
+        # Its quality describes the junction it NO LONGER carries. A same-length quality string
+        # belonging to a different junction is the one corruption nothing downstream can detect,
+        # so it is blanked rather than carried over.
+        out_q[r] = ""
+        moved[ci] += 1
+        moved_rows.append((r, par[ci]))
 
     # ⛔ Rewriting the row is not enough on its own. Coverage assignment re-derives every read's
     # clonotype from the UNFILTERED Stage-1 frame by its original ``(locus, v, j, junction)`` key,
@@ -884,7 +904,8 @@ def correct_airr(
     emptied_keys: dict[tuple[str, str, str, str], tuple[str, str, str, str]] = {}
     if min_junction_q > 0:
         df, n_low_q, n_clono_low_q, moved_sid, emptied_keys = _quality_gate(
-            df, min_q=min_junction_q, max_subs=max_subs, require_vj=require_vj)
+            df, min_q=min_junction_q, max_subs=max_subs, require_vj=require_vj,
+            error_rate=error_rate)
 
     # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
     # same nucleotide junction but a different locus/V/J are different clonotypes. `read_ids` keeps
