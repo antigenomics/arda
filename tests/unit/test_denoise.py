@@ -215,3 +215,42 @@ def test_a_q1_base_in_the_quality_string_does_not_break_the_parse(tmp_path):
     out = tmp_path / "o.tsv"
     correct_airr(src, out, map_d=False, ec_mode="accurate", error_rate=1e-6)
     assert _totals(out)[1] == 52, "every read must survive a Q1 base in the quality string"
+
+
+def test_the_rescue_never_merges_across_loci(tmp_path):
+    """⛔ A rearrangement of a DIFFERENT locus is not a sequencing error of this one.
+
+    `quality_rescue` groups candidate parents by junction LENGTH and nothing else -- there is no
+    locus guard in `_nearest_py` or in the C++ `nearest_more_abundant` -- while ``--ec-mode
+    amplicon`` opens the radius to 12 substitutions. Measured on SRR5233636 at full depth: of 9,025
+    rescues, 3 crossed the locus, all of them 1-read TRB clonotypes absorbed into abundant TRA
+    clonotypes at 11-12 substitutions. ``correct_airr`` now partitions the search by locus.
+
+    Here a low-quality 1-read TRB clonotype sits 3 substitutions from a 5,000-read TRA clonotype and
+    nothing else. It must stay put and KEEP ITS READ.
+    """
+    import polars as pl
+
+    from arda.rnaseq.correct import correct_airr
+
+    tra = "TGTGCCAGCAGTTTCTCGACCTGTTCGGCTAACTATGGCTACACCTTC"
+    trb = tra[:10] + "".join("C" if c != "C" else "G" for c in tra[10:13]) + tra[13:]  # 3 subs
+    assert len(tra) == len(trb) and sum(a != b for a, b in zip(tra, trb)) == 3
+
+    def rows(jn, n, qual, locus, vc, jc, prefix):
+        return [{"sequence_id": f"{prefix}{k}", "sequence": jn, "junction": jn,
+                 "junction_aa": "CASSLDGTGF", "v_call": vc, "j_call": jc, "locus": locus,
+                 "junction_quality": qual} for k in range(n)]
+
+    data = (rows(tra, 5000, "I" * len(tra), "TRA", "TRAV1-2*01", "TRAJ33*01", "a")
+            + rows(trb, 1, "#" * len(trb), "TRB", "TRBV12-3*01", "TRBJ1-2*01", "b"))  # '#' = Q2
+    src = tmp_path / "xloc.tsv"
+    pl.DataFrame(data).write_csv(src, separator="\t")
+    out = tmp_path / "xloc.out"
+    rep = correct_airr(src, out, map_d=False, ec_mode="amplicon")
+    got = pl.read_csv(out, separator="\t").to_dicts()
+
+    loci = {r["locus"]: r["duplicate_count"] for r in got}
+    assert "TRB" in loci, "the TRB clonotype was absorbed into a TRA clonotype"
+    assert loci["TRB"] == 1
+    assert rep.reads_assigned == sum(r["duplicate_count"] for r in got) == 5001

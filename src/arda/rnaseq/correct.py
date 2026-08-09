@@ -32,7 +32,8 @@ from ._res import Stage
 import seqtree
 
 from ..refbuild.translate import reverse_complement
-from .denoise import REGIMES, clonotype_quality, quality_rescue, read_quality
+from .denoise import (REGIMES, DenoiseReport, clonotype_quality, quality_rescue,
+                      read_quality)
 
 __all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS"]
 
@@ -999,11 +1000,38 @@ def correct_airr(
                    for i in range(len(junctions))]
         # Only clonotypes the abundance model did NOT already claim: a read routed twice is a bug,
         # and re-deciding a parent the ladder already justified would be strictly worse evidence.
-        free = [i for i in range(len(junctions)) if parent[i] is None]
-        rescued, rescue_report = quality_rescue(
-            junctions, span_counts,
-            [clono_q[i] if i in set(free) else -1.0 for i in range(len(junctions))],
-            REGIMES[regime])
+        free = set(i for i in range(len(junctions)) if parent[i] is None)
+        gated_q = [clono_q[i] if i in free else -1.0 for i in range(len(junctions))]
+        # ⛔ PER LOCUS. `quality_rescue` groups candidate parents by junction LENGTH and nothing
+        # else -- no locus guard in either `_nearest_py` or the C++ `nearest_more_abundant` -- while
+        # `amplicon` opens the radius to 12 substitutions. A rearrangement of a DIFFERENT locus is
+        # not a sequencing error of this one, so those merges are wrong by construction. Measured on
+        # SRR5233636 with `amplicon`: of 9,025 rescues, 3 crossed the locus -- 1-read TRB clonotypes
+        # absorbed into abundant TRA clonotypes at 11-12 substitutions.
+        #
+        # Partitioning here rather than adding a group argument to the extension keeps the C++ ABI
+        # (and the prebuilt wheels) untouched, and it also bounds the search: the scan is quadratic
+        # within a length bin, and on a 397k-clonotype library the single-threaded whole-table
+        # version ran over 39 minutes of CPU against ~5 for a 49k one.
+        rescued: list[int | None] = [None] * len(junctions)
+        rescue_report = DenoiseReport()
+        by_locus: dict[str, list[int]] = defaultdict(list)
+        for i in range(len(junctions)):
+            by_locus[locus[i]].append(i)
+        for _loc, idx in sorted(by_locus.items()):
+            sub, rep = quality_rescue([junctions[i] for i in idx], [span_counts[i] for i in idx],
+                                      [gated_q[i] for i in idx], REGIMES[regime])
+            for k, pi in enumerate(sub):
+                if pi is not None and pi >= 0:
+                    rescued[idx[k]] = idx[pi]              # back to global clonotype indices
+            rescue_report.lowq_clonotypes += rep.lowq_clonotypes
+            rescue_report.rescued_clonotypes += rep.rescued_clonotypes
+            rescue_report.rescued_reads += rep.rescued_reads
+            rescue_report.orphan_clonotypes += rep.orphan_clonotypes
+            rescue_report.orphan_reads += rep.orphan_reads
+            rescue_report.quality_available |= rep.quality_available
+            for d, c in rep.dist.items():
+                rescue_report.dist[d] = rescue_report.dist.get(d, 0) + c
         for i, pi in enumerate(rescued):
             # Never overwrite an abundance parent, and never create a cycle: the rescue target is
             # strictly more abundant (enforced in `nearest_more_abundant`), which is the same
