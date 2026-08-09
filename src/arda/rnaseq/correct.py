@@ -636,8 +636,23 @@ def _assign_coverage(
     # pass, none of which had a junction of its own to fall back on. Insert in DESCENDING ABUNDANCE
     # (then sequence, for a total order): the roots a partial read is most likely to belong to are
     # the ones that survive the cap, and the choice no longer depends on upstream grouping.
+    # ⛔⛔ AND A ROOT OUTRANKS AN ALIAS, unconditionally. An alias is a FALLBACK -- a junction that
+    # is no longer a clonotype, kept only so partial reads that covered it still reach the parent --
+    # but it is ordered by its PARENT's abundance, which is high by construction. So aliases sorted
+    # to the FRONT and evicted genuine low-abundance roots from the cap, and every partial read whose
+    # only home was such a root went unassigned. Measured at full depth on a TRA amplicon
+    # (SRR5233636, --ec-mode accurate, 23,360 aliases against 36,587 roots), all three arms emitting
+    # an IDENTICAL clonotype table so this is purely read assignment:
+    #     cap 64, aliases ordered by abundance   1,812,740   -25,473 vs --ec-mode fast
+    #     cap 64, aliases OFF                    1,838,181       -32
+    #     cap 1024, aliases ordered by abundance 1,869,556   +31,343
+    # i.e. the alias mechanism -- added to rescue 5 reads of 9,208 on Ramos -- was costing 25,441
+    # reads here, while the same aliases GAIN 31,343 once the index is big enough to hold both. They
+    # are worth keeping; they must simply not outrank the roots. Roots first, then aliases into
+    # whatever slots remain.
     order = sorted(range(len(tgt_jn)),
-                   key=lambda ri: (-(root_counts[tgt_root[ri]] if root_counts else 0),
+                   key=lambda ri: (ri >= len(root_jn),
+                                   -(root_counts[tgt_root[ri]] if root_counts else 0),
                                    tgt_jn[ri], ri))
     index: dict[str, list[tuple[int, int]]] = defaultdict(list)
     for ri in order:
