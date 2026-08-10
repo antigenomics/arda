@@ -34,6 +34,7 @@ from pathlib import Path
 
 import polars as pl
 
+from .. import _markup
 from ..annotate.airr_out import read_airr as _read_airr
 
 from ._res import Stage
@@ -178,8 +179,14 @@ def _greedy_contigs(
                 ov = len(contig) - start        # overlap length
                 if ov < min_overlap:
                     continue
-                a, b = contig[start:], s[:ov]
-                if sum(1 for x, y in zip(a, b) if x != y) > (1 - min_id) * ov:
+                # ⛔ Bounded, and EXACTLY equivalent. The old test summed every mismatch over the
+                # overlap and compared the total against the float budget; `mm > budget` for
+                # integer `mm` is `mm > floor(budget)`, so an int cap decides the same candidates
+                # no matter how the float lands. What changes is the work: nearly every candidate
+                # here shares one k-mer and does not overlap at all, so it is settled in a few
+                # bases -- 153 M generator iterations, 19.5 s of a 25.6 s stage, counting bases
+                # after the answer was already known.
+                if not _markup.within_mismatches(contig[start:], s[:ov], int((1 - min_id) * ov)):
                     continue
                 ext = s[ov:]
                 # ⛔ TOTAL ORDER. `len(ext) > len(best_ext)` alone leaves equal-length candidates
@@ -210,8 +217,8 @@ def _greedy_contigs(
                 ov = min(len(s) - p, len(contig))
                 if ov < min_overlap:
                     continue
-                a, b = contig[:ov], s[p:p + ov]
-                if sum(1 for x, y in zip(a, b) if x != y) > (1 - min_id) * ov:
+                # Same bounded test as the 3' pass, same equivalence argument.
+                if not _markup.within_mismatches(contig[:ov], s[p:p + ov], int((1 - min_id) * ov)):
                     continue
                 ext = s[:p]
                 # Same total order as the 3' pass above, for the same reason.

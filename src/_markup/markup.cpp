@@ -502,6 +502,29 @@ static size_t common_suffix(const std::string &a, const std::string &b) {
     return i;
 }
 
+// Do `a` and `b` agree over their common length with at most `max_mm` mismatches?
+//
+// The assembler's overlap test, and the reason it is here: `_greedy_contigs` asked
+// `sum(1 for x, y in zip(a, b) if x != y) > budget`, which counts EVERY mismatch and only then
+// compares. Nearly every candidate it tests is a read that merely shares one k-mer and does not
+// overlap at all, so the answer is decided by the first handful of bases and the rest of the count
+// is dead work. Profiled on a 100k-read TRA amplicon: 153 million generator iterations,
+// 19.5 s of the stage's 25.6 s.
+//
+// Stopping at `max_mm + 1` is what makes it cheap -- a non-overlapping pair mismatches ~3 bases in
+// 4, so it exits after a few comparisons instead of walking ~100. The RESULT is unchanged: the
+// caller only ever compared the count against the budget, never used it, so returning the boolean
+// loses nothing. Byte-identical contigs are the requirement, not a hope -- the contig sequence
+// feeds every junction derived from it.
+static bool within_mismatches(const std::string &a, const std::string &b, size_t max_mm) {
+    const size_t n = std::min(a.size(), b.size());
+    size_t mm = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (a[i] != b[i] && ++mm > max_mm) return false;
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // AIRR TSV row formatting.
 //
@@ -575,7 +598,7 @@ static std::string format_rows(const py::sequence &records, const py::sequence &
 
 PYBIND11_MODULE(_markup, m) {
     m.doc() = "arda markup-transfer hot path (C++/pybind11)";
-    m.attr("__version__") = "0.5.0";
+    m.attr("__version__") = "0.6.0";
     m.def("format_rows", &format_rows, py::arg("records"), py::arg("columns"),
           "Format AIRR records as TSV rows (one trailing newline per row). A None value and a "
           "missing key both render as an empty field.");
@@ -583,6 +606,11 @@ PYBIND11_MODULE(_markup, m) {
           "Length of the common prefix of two strings.");
     m.def("common_suffix", &common_suffix, py::arg("a"), py::arg("b"),
           "Length of the common suffix of two strings.");
+    m.def("within_mismatches", &within_mismatches,
+          py::arg("a"), py::arg("b"), py::arg("max_mm"),
+          "Do a and b agree over their common length with at most max_mm mismatches? Stops at "
+          "max_mm + 1, which is the point: the assembler's overlap test decides nearly every "
+          "candidate in the first few bases and used to count all of them.");
     m.def("project_region", &project_region,
           py::arg("qaln"), py::arg("taln"), py::arg("ref_aln_offset"),
           py::arg("qry_aln_offset"), py::arg("ref_start"), py::arg("ref_end"),

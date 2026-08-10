@@ -3,6 +3,35 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.18.0
+
+### `assemble` is 4.49× faster, byte-identical
+
+The stage's overlap test asked `sum(1 for x, y in zip(a, b) if x != y) > (1 - min_id) * ov` — it
+counted **every** mismatch across the overlap and only then compared the total against the budget.
+Nearly every candidate it tests is a read that merely shares one k-mer and does not overlap at all,
+so the answer is settled in the first few bases and everything after it is dead work. Profiled on a
+100 k-read TRA amplicon: **153 million generator iterations, 19.5 s of the stage's 25.6 s**.
+
+`_markup.within_mismatches(a, b, max_mm)` stops at `max_mm + 1`. **The candidate set is
+unchanged**, and not by luck: the caller never used the count, only `count > budget`, and for an
+integer count that is exactly `count > floor(budget)` however the float lands.
+
+| | assemble | end-to-end |
+|---|---|---|
+| TRA amplicon, 100 k reads | 15.77 s → **3.52 s** (4.49×) | 27.00 s → **12.86 s** (2.10×) |
+| bulk RNA-seq, 660 k pairs | 5.05 s → **3.53 s** (1.43×) | 23.14 s → **20.32 s** (1.14×) |
+
+⛔ **`clones.tsv` and `airr.tsv` are byte-identical on both regimes** — the requirement, not a
+hope: the contig sequence feeds every junction derived from it. Same 12 contigs and 19,841
+clonotypes on the amplicon, same 1,931 contigs and 2,213 clonotypes on bulk.
+
+⚠ **`--assemble` is still the default in both modes, and stays that way.** On the amplicon it costs
+what is now 27 % of the wall to rescue **12 reads of 43,503**; on bulk it rescues **2,584 of
+8,484**. That asymmetry is read length against CDR3 length, not amplicon-vs-bulk — a 2×150 IGH
+amplicon with long CDR3s is the case the stage exists for, and it is not measured here. The flag is
+one character away for anyone who knows their reads span.
+
 ## 2.17.0
 
 ### `--complete-junctions N` — finish a junction the read stopped short of
