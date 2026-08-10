@@ -114,7 +114,7 @@ Measured (arda 2.17.0, human, ``--complete-junctions 40``):
    * - TRA amplicon, 100 k reads
      - 44,497 → 44,527 (+0.07 %)
      - 30
-     - 12
+     - 14
 
 No junction that was already observed moves in either arm. 246 of the 247 bulk completions close on
 [FW]118; the one that does not is ``TRBJ2-7*02``, whose anchor codon really is not [FW] — the same

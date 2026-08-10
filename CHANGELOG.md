@@ -20,7 +20,7 @@ missing bases the V germline does not template either, which is what `v_anchor_p
 | library | junctions | completed | median nt imputed |
 |---|---|---|---|
 | bulk RNA-seq, 1 M pairs (SRR5233639) | 3,856 → **4,103** (+6.4 %) | 247 | 13 |
-| TRA amplicon, 100 k reads | 44,497 → 44,527 (+0.07 %) | 30 | 12 |
+| TRA amplicon, 100 k reads | 44,497 → 44,527 (+0.07 %) | 30 | 14 |
 
 **Off by default (`0`), and every completed row says so**: `junction_completed_nt` (appended last,
 after the anchor columns) carries the count, so a consumer filters or weights on the column rather
