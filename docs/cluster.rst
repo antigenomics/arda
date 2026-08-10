@@ -64,14 +64,14 @@ For a full-depth library the pattern is:
 .. code-block:: bash
 
    # Stage 1, per shard, in an array task
-   arda rnaseq map --r1 shards/shard_${SLURM_ARRAY_TASK_ID}_1.fq \
+   arda map --r1 shards/shard_${SLURM_ARRAY_TASK_ID}_1.fq \
                    --r2 shards/shard_${SLURM_ARRAY_TASK_ID}_2.fq \
                    -o out/shard_${SLURM_ARRAY_TASK_ID}.airr.tsv \
                    --junction-quality --prefilter --threads ${SLURM_CPUS_PER_TASK}
 
    # then ONCE, over the merged per-read table
    arda merge out/*.airr.tsv all.airr.tsv
-   arda rnaseq correct -i all.airr.tsv -o clones.tsv --ec-mode rnaseq
+   arda correct -i all.airr.tsv -o clones.tsv --ec-mode rnaseq
 
 .. important::
 

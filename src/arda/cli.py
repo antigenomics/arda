@@ -1,10 +1,23 @@
 """arda command-line interface.
 
-Subcommands:
+**Three MODES, named after the library.** Each owns the speed configuration that is right for its
+regime, because the two configurations do not compose and picking the wrong one is not an error —
+it is a silent 2-4x slowdown:
 
-* ``arda annotate``  — map input sequences and emit AIRR TSV (Phase 2).
-* ``arda build-db``  — (re)build the curated reference DB from IMGT + IgBLAST (Phase 1).
-* ``arda info``      — show resolved tool/data paths and versions.
+* ``arda rnaseq``     — bulk / whole-transcriptome RNA-seq  (``--prefilter``)
+* ``arda amplicon``   — targeted RepSeq / 5'RACE  (``--two-pass --fast-segments --v-only-on-segment``)
+* ``arda singlecell`` — reserved; not implemented yet
+
+⛔ Until 2.16.0 the only entry point was ``arda rnaseq run``, which was used for amplicon too and
+exposed the regime as four loose flags. ``--two-pass`` ALONE is a LOSS on both regimes (0.762x on
+bulk, 0.87x on an IGH amplicon), so the one combination that was easy to reach was the dominated
+one. Naming the mode is the fix; ``--exact`` opts out of every speedup.
+
+The pipeline STAGES are separate commands, so any of them can be run, inspected or replaced on its
+own: ``arda map`` -> ``arda assemble`` -> ``arda correct``, plus ``arda shm`` (SHM recount). Other
+commands: ``arda annotate`` (FASTA/FASTQ -> AIRR), ``arda markup``, ``arda resolve-ties``,
+``arda cluster`` (shard/submit), ``arda build-db`` / ``build-index`` / ``export-ref``,
+``arda igblast``, ``arda info``.
 """
 
 from __future__ import annotations
@@ -30,6 +43,38 @@ _D_EVALUE_HELP = (
     "calibrated operating point, 0.2 for nt and 0.05 for aa. Measured against IgBLAST at gene "
     "level on nt: 0.2 agrees .9765 on a TRB amplicon and .9417 on bulk IGH; 0.01 agrees .9985 "
     "and 1.0000, at roughly a third of the call rate.")
+
+_EXACT_HELP = (
+    "Turn OFF every speedup this mode would enable and run the shipped one-pass path. Use it when "
+    "you want the exact output the default aligner produces -- notably to avoid --prefilter's "
+    "~0.15 %% read cost on a bulk library, or to A/B a mode's preset against it.")
+
+_SHM_HELP = (
+    "SHM scoping. `framework` (default) keeps v_identity / v_mutations / j_mutations to positions "
+    "OUTSIDE the junction, using the germline anchors arda emits per read. ⛔ Segment scoping "
+    "alone is not junction exclusion -- the V germline's 3' tail and the J germline's 5' head are "
+    "inside the junction, so chew-back and N/P bases used to enter both lists: measured on a TRA "
+    "amplicon, where TCRs cannot hypermutate so every entry is spurious, 1.046 V and 1.658 J "
+    "entries per read, 86.2 %% of the J ones at germline position <= 10. `both` also emits the old "
+    "junction-inclusive values as v_identity_full / v_mutations_full / j_mutations_full. `off` "
+    "emits no SHM fields. IGH/IGK/IGL are where SHM is real; on TR the surviving entries are "
+    "allele mismatches in the templated framework, not hypermutation.")
+
+_CALL_LEVEL_HELP = (
+    "At what resolution a V/J call names a germline, BEFORE the clonotype key is formed. `allele` "
+    "(default) = TRGJ1*01. `gene` = TRGJ1, which collapses allele-level CALL SPLITS -- Jurkat "
+    "carries TRGJ1*01 at 64 reads against TRGJ1*02 at 140 on the same junction, and no error model "
+    "can see that because two identical junctions have no discriminating base. It also collapses a "
+    "tie list whose members differ only by allele. ⚠ IGH carries 4.33 alleles/gene, ~2x every "
+    "other locus, so measure the cost on your own library before quoting one.")
+
+_ISOTYPE_HELP = (
+    "Resolve the IGH isotype: `c_call` (CH1 exon) and `c_class` (IGHG / IGHM / IGHA / ...) per "
+    "read, voted once per FRAGMENT, then per clonotype. Report the CLASS, never the subclass -- "
+    "IGHG1-4 are ~95 %% identical over CH1, so the top gene ties on 26.7 %% of real reads and the "
+    "top class never does. --no-isotype drops the constant-region columns. IGH only in practice: "
+    "TRA/TRD/IGK have one C allele and IGL's seven are one class.")
+
 
 
 def _version_callback(value: bool) -> None:
@@ -247,8 +292,17 @@ def markup(
     typer.echo(f"{len(records)} records -> {output}  ({n_fixed} repaired, {n_bad} failed)")
 
 
-@app.command()
-def split(
+# ── CLUSTER ───────────────────────────────────────────────────────────────────────────────────
+# One group for every sharded/SLURM helper. They used to be split across the top level (FASTA) and
+# the `rnaseq` group (paired FASTQ) under near-identical names, which is exactly the shape that
+# lets someone shard a paired library with the round-robin FASTA splitter and separate the mates.
+cluster_app = typer.Typer(add_completion=False,
+                          help="Shard a run across a cluster (split -> array map -> reduce).")
+app.add_typer(cluster_app, name="cluster")
+
+
+@cluster_app.command("split-fasta")
+def split_fasta(
     input: Path = typer.Argument(..., help="Input FASTA/FASTQ."),
     out_dir: Path = typer.Argument(..., help="Directory for shard FASTA files."),
     shards: int = typer.Option(..., "--shards", help="Number of shards."),
@@ -256,7 +310,7 @@ def split(
     """Round-robin split an input into N shard FASTA files (amplicon / single-end).
 
     **Not for paired RNA-seq.** This writes FASTA, so quality is dropped, and it round-robins
-    *records*, so a fragment's two mates land in different shards. Use ``arda rnaseq split``.
+    *records*, so a fragment's two mates land in different shards. Use ``arda cluster split``.
     """
     from .cluster import split as _split
 
@@ -264,7 +318,7 @@ def split(
     typer.echo(f"wrote {len(paths)} shards to {out_dir}")
 
 
-@app.command()
+@cluster_app.command("merge")
 def merge(
     shard_dir: Path = typer.Argument(..., help="Directory of per-shard AIRR TSVs."),
     output: Path = typer.Argument(..., help="Combined AIRR TSV."),
@@ -276,8 +330,8 @@ def merge(
     typer.echo(f"merged -> {output}")
 
 
-@app.command()
-def slurm(
+@cluster_app.command("submit-fasta")
+def slurm_fasta(
     input: Path = typer.Option(..., "--input", "-i", help="Input FASTA/FASTQ."),
     output: Path = typer.Option(..., "--output", "-o", help="Combined AIRR TSV."),
     work_dir: Path = typer.Option(Path("arda_slurm"), help="Scratch dir for shards/outputs."),
@@ -296,7 +350,7 @@ def slurm(
 
     **Not for paired RNA-seq.** This shards FASTA into ``arda annotate``: quality is dropped
     and mates are separated. It also has no Stage 2/3, so there is no clonotype table at the
-    end. Use ``arda rnaseq slurm``.
+    end. Use ``arda cluster submit``.
     """
     import os
     import subprocess
@@ -333,11 +387,13 @@ def igblast_cmd(
     typer.echo(f"[arda] igblast AIRR -> {output}")
 
 
-rnaseq_app = typer.Typer(add_completion=False, help="RNA-seq filter/map/correct pipeline.")
-app.add_typer(rnaseq_app, name="rnaseq")
+# ── STAGES ────────────────────────────────────────────────────────────────────────────────────
+# Flat, not under a `rnaseq` group: `map`/`assemble`/`correct` are the same three stages whatever
+# the library is, and hiding them under one regime's name is what made `arda rnaseq run` the
+# amplicon entry point in the first place.
 
 
-@rnaseq_app.command("map")
+@app.command("map")
 def rnaseq_map(
     output: Path = typer.Option(..., "--output", "-o", help="AIRR TSV of mapped reads only."),
     r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
@@ -447,11 +503,12 @@ def rnaseq_map(
              "against median Q 16 for the sequencing-error cloud around it. OFF by default: it "
              "appends a non-schema column, so the default output is unchanged. Not usable with "
              "--reconstruct (a merged fragment has no single input quality string)."),
+    shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
-    """Filter + map receptor reads from RNA-seq; write only mapped reads (AIRR TSV)."""
+    """Stage 1 — filter + map receptor reads; write only the mapped ones (AIRR TSV)."""
     from .rnaseq.map import map_rnaseq
 
     rep = map_rnaseq(r1, output, r2=r2, organism=organism, threads=threads,
@@ -464,7 +521,7 @@ def rnaseq_map(
                      fast_segments=fast_segments,
                      indel_rescue=indel_rescue,
                      segment_only_v=segment_only_v,
-                     adaptive=adaptive, with_junction_quality=junction_quality,
+                     adaptive=adaptive, with_junction_quality=junction_quality, shm=shm,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
@@ -472,7 +529,7 @@ def rnaseq_map(
         f"({rep.reads_per_second:.0f} reads/s); loci={rep.per_locus}")
 
 
-@rnaseq_app.command("correct")
+@app.command("correct")
 def rnaseq_correct(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(..., "--output", "-o", help="Corrected clonotype table TSV."),
@@ -520,6 +577,8 @@ def rnaseq_correct(
              "TRB 35 -> 33 clonotypes at purity .99096 -> .99696, reads unchanged. Measured cost "
              "on a polyclonal TRA amplicon: 132 of 19,956 clonotypes merge (0.66 %), and the "
              "minority call there carries 1 read against 4-10 on a short junction."),
+    call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
+    isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
     min_junction_q: Optional[int] = typer.Option(
         None, "--min-junction-q",
         help="Reassign a read whose junction differs from its putative parent at ANY base below "
@@ -550,14 +609,14 @@ def rnaseq_correct(
         None, "--d-max-evalue", help=_D_EVALUE_HELP),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
-    """Collapse CDR3 sequencing errors into clonotypes (per-substitution/indel error model)."""
+    """Stage 2 — collapse CDR3 sequencing errors into clonotypes (per-substitution/indel model)."""
     from .rnaseq.correct import correct_airr
 
     rep = correct_airr(input, output, organism=organism, map_d=map_d,
                        d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        ec_mode=ec_mode, min_junction_q=min_junction_q,
-                       clonotype_key=clonotype_key,
+                       clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
     typer.echo(
@@ -570,7 +629,7 @@ def rnaseq_correct(
            if rep.reads_low_quality else ""))
 
 
-@rnaseq_app.command("assemble")
+@app.command("assemble")
 def rnaseq_assemble(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(
@@ -590,7 +649,7 @@ def rnaseq_assemble(
 
     Reconstructs clonotypes (V(D)J ultralong CDR3s, ~20-40 aa) that ``map`` filters but that no
     single 100-150 bp read spans, by anchored greedy overlap-extension over the mapped reads.
-    Feed the result to ``correct --extra-airr`` (``run`` does this automatically).
+    Feed the result to ``correct --extra-airr`` (the modes do this automatically).
     """
     from .rnaseq.assemble import assemble_contigs
 
@@ -601,8 +660,89 @@ def rnaseq_assemble(
         f"{rep.seeds} seeds; rescued {rep.reads_rescued} reads")
 
 
-@rnaseq_app.command("run")
-def rnaseq_run(
+@app.command("shm")
+def shm_cmd(
+    input: Path = typer.Option(..., "--input", "-i", help="AIRR TSV from `map` or `annotate`."),
+    output: Path = typer.Option(..., "--output", "-o", help="AIRR TSV with rescoped SHM fields."),
+    mode: str = typer.Option("framework", "--mode", help=_SHM_HELP),
+) -> None:
+    """Recount somatic hypermutation OUTSIDE the junction — IGH / IGK / IGL.
+
+    ``v_mutations`` / ``j_mutations`` / ``v_identity`` are scoped BY SEGMENT, and that is not the
+    same as being outside the junction: a rearranged junction is *V 3' tail + N/P + J 5' head*, so
+    the templated tails of both germlines lie inside it and every chew-back or non-templated base
+    there reads as a substitution against a germline that does not template it. arda 2.14.0
+    documented a guarantee that this could not happen; it was wrong, and this is the retraction.
+
+    ⛔ **Needs no reference and no re-map.** ``v_anchor_nt`` / ``j_anchor_nt`` and the alignment
+    strings are already in the file, so a table written by arda 2.14.0 or later can be recounted in
+    place. A file older than that has no anchor columns and this RAISES rather than copying the
+    input through with a success message.
+
+    ⚠ IGH/IGK/IGL are where SHM is real. Scoping runs on every locus anyway, because the defect is
+    not IG-specific — measured on a **TRA** amplicon, where TCRs cannot hypermutate so every entry
+    is spurious by construction: 1.046 V and 1.658 J entries per read.
+    """
+    from .shm import recount_airr
+
+    rep = recount_airr(input, output, mode=mode)
+    typer.echo(f"[arda] shm ({rep['mode']}): {rep['rows']} rows, "
+               f"{rep['mutations_in']} -> {rep['mutations_out']} mutation entries "
+               f"({rep['removed']} junction-internal) -> {output}")
+
+
+# ── MODES ─────────────────────────────────────────────────────────────────────────────────────
+# ⛔ The regime is the COMMAND NAME, not a flag combination. `arda rnaseq run` used to be the only
+# entry point and was used for amplicon too, with the regime spelled out as four loose flags that
+# do NOT compose: `--two-pass --fast-segments --v-only-on-segment` is amplicon, `--prefilter` is
+# bulk, and `--two-pass` alone -- the single flag `run` exposed for four releases -- is a LOSS on
+# both (0.762x bulk, 0.87x IGH amplicon). Naming the mode makes the dominated combination
+# unreachable by accident.
+
+#: What each mode turns on, and why. Read as: (two_pass, fast_segments, segment_only_v, prefilter).
+#:
+#: `amplicon` -- primer-anchored reads span V INTO J, so ~85 % hit both a V and a J segment and the
+#: cheap segment pass answers them structurally. Measured on IGH RepSeq at 32 threads:
+#: 316.44 s -> 76.25 s (4.15x) and 4,018 -> 1,479 MB.
+#:
+#: `rnaseq` -- 0.02-3 % of reads are receptor-derived, so MMseqs2 spends most of the run proving
+#: reads are NOT receptor reads; the 16-mer prefilter removes them before `createdb`. 1.99x.
+#: ⚠ It costs ~0.15 % of mapped reads (122 bulk datasets, up to 2.46 % on one library),
+#: concentrated in J->C and hypermutated IGH. `--exact` turns it off.
+_MODE_SPEED = {
+    "amplicon": {"two_pass": True, "fast_segments": True, "segment_only_v": True,
+                 "prefilter": False},
+    "rnaseq": {"two_pass": False, "fast_segments": False, "segment_only_v": False,
+               "prefilter": True},
+}
+
+def _mode_run(mode: str, *, exact: bool, indel_rescue: bool, **kw) -> None:
+    """Body shared by `arda rnaseq` and `arda amplicon`: resolve the preset, then run the pipeline.
+
+    ⛔ ONE body, not one per mode. The mode commands and `arda cluster reduce` already share
+    `pipeline.finish` for the same reason: two copies drift in a parameter, and then "the modes
+    only differ in their preset" is a hope rather than a property.
+    """
+    from .rnaseq import pipeline
+
+    speed = {k: False for k in _MODE_SPEED[mode]} if exact else dict(_MODE_SPEED[mode])
+    if indel_rescue:
+        # It needs the fast segment pass, which only the amplicon preset turns on. arda would
+        # otherwise ignore the flag silently -- the failure this project keeps hitting.
+        if not speed["fast_segments"]:
+            raise typer.BadParameter(
+                "--indel-rescue requires the fast segment pass, which only `arda amplicon` "
+                "enables (and --exact disables). It is ignored in every other configuration.")
+        speed["indel_rescue"] = True
+    pipeline.run(echo=typer.echo, **speed, **kw)
+    out_dir, out_prefix = kw["out_dir"], kw["out_prefix"]
+    typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
+               f"{out_dir / f'{out_prefix}.clones.tsv'}, "
+               f"{out_dir / f'{out_prefix}.arda.json'}")
+
+
+@app.command("rnaseq")
+def rnaseq_mode(
     r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
     out_prefix: str = typer.Option(
@@ -611,6 +751,39 @@ def rnaseq_run(
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    assemble: bool = typer.Option(
+        True, "--assemble/--no-assemble",
+        help="Stage 3: assemble long-CDR3 contigs no single 100-150 bp read spans (V(D)J "
+             "ultralong, ~20-40 aa) and fold them into the clonotype table. Recovers ~95%% of the "
+             "abundant long clones a filter-only pass misses. --no-assemble keeps the run on the "
+             "flat mapping-only memory profile."),
+    shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
+    isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
+    call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
+    map_d: bool = typer.Option(
+        True, "--map-d/--no-map-d",
+        help="Map D segments in all three stages. --no-map-d is ~19%% faster and yields an "
+             "identical read set, v_call and junction -- only d_call is dropped."),
+    d_max_evalue: Optional[float] = typer.Option(None, "--d-max-evalue", help=_D_EVALUE_HELP),
+    ec_mode: str = typer.Option(
+        "rnaseq", "--ec-mode",
+        help="Denoising preset; `rnaseq` is this mode's default. `fast` = the abundance model "
+             "only (arda's historical behaviour). `accurate` adds --min-junction-q 20. `rnaseq` "
+             "adds the quality-directed rescue kept NARROW (6 subs, 200x ratio) because bulk "
+             "RNA-seq singletons are mostly real. ⛔ Nothing in any mode discards a read: an "
+             "orphan with no qualifying parent keeps its reads. The Stage-1 quality column the "
+             "gates need is turned on automatically here."),
+    min_junction_q: Optional[int] = typer.Option(
+        None, "--min-junction-q",
+        help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset."),
+    clonotype_key: str = typer.Option(
+        "full", "--clonotype-key",
+        help="`full` (default) = (locus, v_call, j_call, junction). `junction` = (locus, junction) "
+             "with V/J canonicalised to the junction's majority first."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions",
+        help="Keep only complete junctions (C104..[FW]118, in frame, no stop) when forming "
+             "clonotypes."),
     reconstruct: bool = typer.Option(
         False, "--reconstruct", help="Merge overlapping paired mates into one fragment."),
     min_score: float = typer.Option(
@@ -618,109 +791,127 @@ def rnaseq_run(
     kmer: int = typer.Option(
         12, "--kmer", "-k",
         help="MMseqs2 -k (the memory knob; k=12 ~= 298 MB peak RSS). 0 = MMseqs2 default (~8 GB)."),
-    assemble: bool = typer.Option(
-        True, "--assemble/--no-assemble",
-        help="Stage 3: assemble long-CDR3 contigs the reads don't individually span (V(D)J "
-             "ultralong, ~20-40 aa) and fold them into the clonotype table. Recovers ~95%% of the "
-             "abundant long clones a filter-only pass misses; --no-assemble is faster (map+correct "
-             "only)."),
-    complete_only: bool = typer.Option(
-        True, "--complete-only/--all-junctions",
-        help="Keep only complete junctions when forming clonotypes."),
-    map_d: bool = typer.Option(
-        True, "--map-d/--no-map-d",
-        help="Map D segments. Off skips D in all three stages; the clonotype table then carries "
-             "no d_call/d2_call."),
-    d_max_evalue: Optional[float] = typer.Option(
-        None, "--d-max-evalue", help=_D_EVALUE_HELP),
     limit: int = typer.Option(
         0, "--limit", "-n",
-        help="Analyse only the first N reads (single-end) / read pairs (paired), then stop. "
-             "0 = whole file."),
-    two_pass: bool = typer.Option(
-        False, "--two-pass/--one-pass",
-        help="Shortlist ONE VxJ scaffold per read from a cheap segment search, then align only that one, instead of searching all 15,414 scaffolds. Reads it cannot resolve are realigned against the full reference, so none are dropped (measured: 0 lost at or above --min-score). **Reach for it when reads SPAN V INTO J, not by library type.** It needs a read to hit both a V and a J segment, and `fast_fraction` in the report is the predictor -- not whether the library is amplicon. Measured across regimes: 3.51x on a 48%-receptor TCR amplicon (fast path 85%), 2.96x on a 100%-receptor human TRB set (95.6%), 2.64x on mouse TRA (89%), but 1.03x SLOWER on a human IGH set of the SAME 100%-receptor data (16.3%, because those reads cover V and stop short of the short IGHJ target) and 0.762x on a 2.74%-receptor bulk library (5%), where the segment search is overhead on top of a rescue that is nearly the whole set. Needs `arda build-index`."),
-    # ⛔ These were on `rnaseq map` only, so the pipeline entry point -- the one a Nextflow/SLURM
-    # user actually calls -- could reach `--two-pass` and NOTHING ELSE. And `--two-pass` ALONE is a
-    # loss on bulk (0.762x) and on an IGH amplicon (0.87x): the single tunable it exposed was the
-    # dominated config. The winning ones are here now.
-    fast_segments: bool = typer.Option(
-        False, "--fast-segments/--no-fast-segments",
-        help="With --two-pass, nominate segments with arda's own C++ seed-and-extend instead of "
-             "MMseqs2 (100k reads x 924 targets in 0.18 s). THIS is the amplicon lever: with it, "
-             "an IGH RepSeq amplicon goes 316 s -> 76 s at 32 threads. Ignored without --two-pass."),
-    segment_only_v: bool = typer.Option(
-        False, "--v-only-on-segment/--no-v-only-on-segment",
-        help="With --two-pass, align a read that hit a V but NO J against its own V segment rather "
-             "than the full reference -- 77 % of the amplicon rescue set. Zero reads and zero "
-             "junctions lost at full depth (66 M pairs). Ignored without --two-pass."),
-    prefilter: bool = typer.Option(
-        False, "--prefilter/--no-prefilter",
-        help="Screen reads with a C++ 16-mer index before the search. THIS is the BULK lever "
-             "(1.99x); it does NOT compose with --fast-segments, which is the amplicon one."),
-    indel_rescue: bool = typer.Option(
-        False, "--indel-rescue/--no-indel-rescue",
-        help="With --fast-segments, route reads whose seed votes show two diagonals to the GAPPED "
-             "rescue. Its value tracks SHM load; a per-library call."),
-    ec_mode: str = typer.Option(
-        "fast", "--ec-mode",
-        help="Error-correction preset. `fast` (default) = the shipped abundance model, no quality "
-             "gate. `accurate` = the same model plus --min-junction-q 20, judging the base that "
-             "discriminates a clonotype from its parent on its Phred score rather than on "
-             "abundance alone. ⛔ In `run` this AUTOMATICALLY turns on the Stage-1 "
-             "--junction-quality column it needs, because both stages happen in one call and you "
-             "cannot wire that up by hand. Measured: keeping both published MIGEC spike-in "
-             "variants used to cost 3.5 points of monoclonal-Jurkat purity; with the gate it costs "
-             "none (2/2 variants at purity .99530 against .96034 ungated), and it beats every "
-             "error-model/rate combination without it (124 error clonotypes vs binom's best 208)."),
-    min_junction_q: Optional[int] = typer.Option(
-        None, "--min-junction-q",
-        help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset. "
-             "Plateaus over Q20-32 and starts eating real variants by Q35."),
-    clonotype_key: str = typer.Option(
-        "full", "--clonotype-key",
-        help="`full` (default) = (locus, v_call, j_call, junction). `junction` = (locus, junction), "
-             "which collapses CALL SPLITS -- a junction byte-identical to an abundant clone's under "
-             "a different V or J call, invisible to any error model because there is no "
-             "discriminating base. Same option as `correct --clonotype-key`; see it for the "
-             "measured cost."),
+        help="Analyse only the first N reads / read pairs, then stop. 0 = whole file."),
+    exact: bool = typer.Option(False, "--exact", help=_EXACT_HELP),
 ) -> None:
-    """One-shot RNA-seq -> clonotypes for pipeline integration: ``map`` -> ``assemble`` -> ``correct``.
+    """BULK RNA-seq -> clonotypes. map -> assemble -> correct, with the bulk speed preset.
 
-    ⛔ **Pick the lever by regime, not by habit.** ``--two-pass --fast-segments
-    --v-only-on-segment`` is the amplicon configuration; ``--prefilter`` is the bulk one; they do
-    not compose, and ``--two-pass`` on its own is *slower* than the default on both bulk and IGH
-    amplicon.
+    For whole-transcriptome libraries, where 0.02-3 % of reads are receptor-derived and a read
+    lands anywhere in a transcript rather than spanning V into J. Enables ``--prefilter`` (1.99x);
+    ``--exact`` turns it off.
 
-    Runs the three RNA-seq stages with the shipped defaults, writing under ``--out-dir``:
+    Writes under ``--out-dir``:
 
     * ``<prefix>.airr.tsv``            -- Stage-1 mapped reads (AIRR Rearrangement)
     * ``<prefix>.assembled.airr.tsv``  -- Stage-3 assembled long-CDR3 reads (if ``--assemble``)
     * ``<prefix>.clones.tsv``          -- corrected clonotype table (folds in the assembled clones)
     * ``<prefix>.arda.json``           -- merged run report
 
-    Use the ``map`` / ``assemble`` / ``correct`` commands separately to tune their knobs.
+    Run ``arda map`` / ``assemble`` / ``correct`` / ``shm`` separately to tune their own knobs.
     """
-    from .rnaseq import pipeline
-
-    # The body lives in `rnaseq.pipeline` so that `arda rnaseq reduce` -- the tail of a sharded
-    # run -- calls the SAME Stage-2/3 function, not a copy of it. Two copies would drift, and
-    # then "accuracy does not differ between run modes" would be a hope rather than a property.
-    pipeline.run(r1, out_dir, out_prefix, r2=r2, organism=organism, threads=threads,
-                 reconstruct=reconstruct, min_score=min_score,
-                 kmer=(None if kmer == 0 else kmer), assemble=assemble,
-                 complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
-                 limit=(limit or None),
-                 two_pass=two_pass, fast_segments=fast_segments, prefilter=prefilter,
-                 segment_only_v=segment_only_v, indel_rescue=indel_rescue,
-                 ec_mode=ec_mode, min_junction_q=min_junction_q,
-                 clonotype_key=clonotype_key, echo=typer.echo)
-    typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
-               f"{out_dir / f'{out_prefix}.clones.tsv'}, "
-               f"{out_dir / f'{out_prefix}.arda.json'}")
+    _mode_run("rnaseq", exact=exact, indel_rescue=False,
+              r1=r1, r2=r2, out_dir=out_dir, out_prefix=out_prefix, organism=organism,
+              threads=threads, reconstruct=reconstruct, min_score=min_score,
+              kmer=(None if kmer == 0 else kmer), assemble=assemble,
+              complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
+              limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
+              clonotype_key=clonotype_key, call_level=call_level,
+              shm=shm, isotype=isotype)
 
 
-@rnaseq_app.command("split")
+@app.command("amplicon")
+def amplicon_mode(
+    r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
+    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
+    out_prefix: str = typer.Option(
+        ..., "--out-prefix", "-p",
+        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json."),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    assemble: bool = typer.Option(
+        True, "--assemble/--no-assemble",
+        help="Stage 3: assemble long-CDR3 contigs no single read spans and fold them into the "
+             "clonotype table."),
+    shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
+    isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
+    call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
+    map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments in all stages."),
+    d_max_evalue: Optional[float] = typer.Option(None, "--d-max-evalue", help=_D_EVALUE_HELP),
+    ec_mode: str = typer.Option(
+        "amplicon", "--ec-mode",
+        help="Denoising preset; `amplicon` is this mode's default. It adds the quality-directed "
+             "rescue searching WIDE (12 subs, 50x abundance ratio), because a real clonotype in a "
+             "targeted library is deep, so a 1-read neighbour of an abundant clone is almost "
+             "always error. `fast` = the abundance model only; `accurate` = + --min-junction-q 20. "
+             "⛔ Nothing in any mode discards a read."),
+    min_junction_q: Optional[int] = typer.Option(
+        None, "--min-junction-q",
+        help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset."),
+    clonotype_key: str = typer.Option(
+        "full", "--clonotype-key",
+        help="`full` (default) = (locus, v_call, j_call, junction). `junction` = (locus, junction) "
+             "with V/J canonicalised to the junction's majority first -- it collapses call splits."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
+    reconstruct: bool = typer.Option(
+        False, "--reconstruct", help="Merge overlapping paired mates into one fragment."),
+    min_score: float = typer.Option(
+        75.0, "--min-score", help="Min MMseqs2 bit score to keep a mapped read (0 = keep all)."),
+    kmer: int = typer.Option(12, "--kmer", "-k", help="MMseqs2 -k (the memory knob)."),
+    limit: int = typer.Option(
+        0, "--limit", "-n", help="Analyse only the first N reads / pairs. 0 = whole file."),
+    indel_rescue: bool = typer.Option(
+        False, "--indel-rescue",
+        help="Route reads whose seed votes show TWO diagonals to the gapped rescue -- the "
+             "signature of an indel, visible before any extension runs. Measured on 341,294 real "
+             "IGH mates: 3.18 %% of reads carry a V indel and the rate tracks SHM load (0.74 %% at "
+             ">=98 %% V identity, 8.00 %% below 90 %%), because AID makes indels and not only "
+             "substitutions. Reads are REROUTED, never dropped. Its value is a per-library call "
+             "(+181 reads on a hypermutated repertoire, -14 on a naive one), so it never rides "
+             "the preset."),
+    exact: bool = typer.Option(False, "--exact", help=_EXACT_HELP),
+) -> None:
+    """TARGETED RepSeq / 5'RACE amplicon -> clonotypes, with the amplicon speed preset.
+
+    For primer-anchored libraries whose reads span V into J. Enables ``--two-pass
+    --fast-segments --v-only-on-segment``: on an IGH RepSeq amplicon at 32 threads that is
+    **316.44 s -> 76.25 s (4.15x)** at 4,018 -> 1,479 MB, and on a 100 k-read TRA amplicon it puts
+    arda at **5.35 s wall against MiXCR's 5.90**, at 3.6x less CPU and 4.8x less RSS.
+    ``--exact`` turns the preset off.
+
+    Same four outputs as ``arda rnaseq``; see it for the list.
+    """
+    _mode_run("amplicon", exact=exact, indel_rescue=indel_rescue,
+              r1=r1, r2=r2, out_dir=out_dir, out_prefix=out_prefix, organism=organism,
+              threads=threads, reconstruct=reconstruct, min_score=min_score,
+              kmer=(None if kmer == 0 else kmer), assemble=assemble,
+              complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
+              limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
+              clonotype_key=clonotype_key, call_level=call_level,
+              shm=shm, isotype=isotype)
+
+
+@app.command("singlecell")
+def singlecell_mode() -> None:
+    """RESERVED — single-cell (10x) mode is not implemented yet.
+
+    The name is taken now so the three-mode surface is stable and a future release adds behaviour
+    rather than a new command. arda has **no barcode or UMI concept at all**, which is the real
+    single-cell gap -- not the assembler. See ROADMAP.md.
+    """
+    typer.echo(
+        "arda singlecell is not implemented yet (scheduled -- see ROADMAP.md, single-cell).\n"
+        "Today, for 10x contigs:\n"
+        "  arda annotate -i all_contig.fasta -o contigs.airr.tsv\n"
+        "  arda correct  -i contigs.airr.tsv -o contigs.clones.tsv\n"
+        "Barcode demultiplexing and UMI consensus are not in arda.", err=True)
+    raise typer.Exit(code=2)
+
+
+@cluster_app.command("split")
 def rnaseq_split(
     r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
     out_dir: Path = typer.Option(..., "--out-dir", "-d", help="Directory for the shard FASTQs."),
@@ -729,7 +920,7 @@ def rnaseq_split(
 ) -> None:
     """Split paired FASTQ into contiguous blocks of read pairs, for a sharded Stage 1.
 
-    Unlike ``arda split`` (FASTA/amplicon) this keeps the quality strings and never separates a
+    Unlike ``arda cluster split-fasta`` (FASTA/amplicon) this keeps the quality strings and never separates a
     fragment's two mates. Blocks are contiguous, so concatenating the per-shard AIRR in shard
     order reproduces the single-node row order exactly.
     """
@@ -739,7 +930,7 @@ def rnaseq_split(
     typer.echo(f"[arda] wrote {len(written)} shard(s) to {out_dir}")
 
 
-@rnaseq_app.command("reduce")
+@cluster_app.command("reduce")
 def rnaseq_reduce(
     shard_dir: Path = typer.Option(..., "--shard-dir", help="Directory of per-shard AIRR TSVs."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
@@ -767,7 +958,7 @@ def rnaseq_reduce(
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
 
 
-@rnaseq_app.command("slurm")
+@cluster_app.command("submit")
 def rnaseq_slurm(
     r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
     out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
@@ -796,7 +987,7 @@ def rnaseq_slurm(
     """Write (and optionally submit) a SLURM script: split → array-``map`` → reduce.
 
     Only Stage 1 is distributed; Stages 2-3 run once over the merged AIRR, through the same
-    code path ``arda rnaseq run`` uses. With contiguous pair shards the result is
+    code path the mode commands use. With contiguous pair shards the result is
     byte-identical to a single-node run.
     """
     import os
@@ -818,8 +1009,6 @@ def rnaseq_slurm(
         subprocess.run(["bash", str(script)], check=True)
 
 
-if __name__ == "__main__":
-    app()
 
 @app.command("resolve-ties")
 def resolve_ties_cmd(
@@ -856,3 +1045,7 @@ def resolve_ties_cmd(
     rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank,
                        echo=typer.echo)
     typer.echo(f"[arda] wrote {output} ({rep['rows']} rows)")
+
+
+if __name__ == "__main__":
+    app()

@@ -2,27 +2,22 @@
 
 A drop-in, nf-core-style local module that runs arda's RNA-seq mode on each sample and publishes
 per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a single
-`arda rnaseq run` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
+`arda <mode>` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
 any DSL2 pipeline the same way STAR/Salmon/fastp do.
 
-Pinned to **arda 2.12.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
+Pinned to **arda 2.16.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
 
-> ⛔ **2.12.0 is a hard minimum — it is the release that carries the regime flags.** Measured
-> against the conda env Nextflow builds from `environment.yml`: released **2.11.1's
-> `arda rnaseq run` accepts `--two-pass` and none of the rest** — `--fast-segments`,
-> `--v-only-on-segment`, `--prefilter` and `--indel-rescue` all come back *"No such option"*. On
-> 2.11.1 **both regimes abort**, and the only combination it can run is `--two-pass` alone, which is
-> the one combination that is a *loss* in both regimes.
+> ⛔ **2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
+> earlier version of this module invoked — was removed there. The regime is now the **command
+> name** (`arda rnaseq` / `arda amplicon`), and each mode owns its own speed configuration, so this
+> module and the CLI move together: an older arda fails with *"Got unexpected extra argument
+> (run)"*, and an older module against 2.16.0 fails the same way.
 >
-> ⚠ A git pin does **not** rescue this yet — also measured: the commits carrying the flags are still
-> local (`master` is ahead of `origin/master`), so
-> `arda-mapper @ git+https://github.com/antigenomics/arda@master` installs 2.11.1 and fails
-> identically. **Push master and cut 2.12.0 before shipping this module to colleagues.** In the
-> meantime the only working substitute is a local-checkout pin,
-> `arda-mapper @ file:///abs/path/to/arda`.
+> It is also the first release with `--shm` (SHM scoped to the framework rather than to the V/J
+> segment) and with per-mode `--ec-mode` defaults.
 >
 > The benchmark tables below are labelled with the version they were **measured** on; the *pin* is
-> the release that ships the flags.
+> the release that ships the commands.
 
 ## What it produces (per sample `<id>`)
 
@@ -38,14 +33,19 @@ Pinned to **arda 2.12.0** (`environment.yml`, the `container` tag, and the `Dock
 arda has two tuning paths and **they do not compose**. Choosing the wrong one is not an error; it
 is a silent 2–4× slowdown. The module therefore selects the combination by name:
 
-| `--regime` | arda flags | use for |
-|---|---|---|
-| `amplicon` | `--two-pass --fast-segments --v-only-on-segment` | targeted RepSeq / 5′RACE libraries |
-| `bulk` | `--prefilter` | whole-transcriptome RNA-seq (the default) |
-| `default` | *(none)* | the shipped one-pass path, for reproducing older runs |
+| `--regime` | arda command | speed configuration it implies | use for |
+|---|---|---|---|
+| `amplicon` | `arda amplicon` | `--two-pass --fast-segments --v-only-on-segment` | targeted RepSeq / 5′RACE libraries |
+| `bulk` | `arda rnaseq` | `--prefilter` | whole-transcriptome RNA-seq (the default) |
+| `default` | `arda rnaseq --exact` | *(none)* | the shipped one-pass path, for reproducing older runs |
 
-⛔ **`--two-pass` on its own is a LOSS** — 0.762× on bulk and 0.87× on an IGH amplicon — so no
-preset ever emits it without `--fast-segments`. Do not hand-assemble these flags in `ext.args`.
+⛔ **`--two-pass` on its own is a LOSS** — 0.762× on bulk and 0.87× on an IGH amplicon — and it is
+no longer reachable by accident: arda owns the combination behind the mode name. Do not
+hand-assemble these flags in `ext.args`.
+
+⚠ `default` is **not** `arda rnaseq`. That mode turns `--prefilter` on, which costs ~0.15 % of
+mapped reads (122 bulk datasets; up to 2.46 % on one library). `--exact` is what reproduces the
+pre-2.16.0 default output.
 
 A sheet may legitimately mix the two library types: put a `regime` key in the meta map and it wins
 over `params.regime` for that sample.
@@ -143,7 +143,7 @@ and whether a tool **invents a junction it has no anchor for**.
 arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.
 
 - **`-profile conda`** works out of the box (Nextflow builds the env from `environment.yml`) — once
-  arda 2.12.0 is on PyPI; see the note at the top.
+  arda 2.16.0 is on PyPI; see the note at the top.
 - **`-profile docker`/`singularity`**: build the image from the `Dockerfile` here, push it to your
   registry, and point the module's `container` at it (see the Dockerfile header). A pinned image is
   the reproducible choice for a shared pipeline.
@@ -230,7 +230,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (boolean), `arda_organism` (string), `arda_mmseqs` (string), `arda_args` (string).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.12.0' }` to your deployment
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.16.0' }` to your deployment
    config (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:

@@ -32,7 +32,7 @@ the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for
 
 ```sh
 /opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.11.1
-COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda rnaseq map --help
+COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
 `COLUMNS=200` is not optional for `--help`: typer truncates long flag names at 80 columns, so
@@ -174,7 +174,7 @@ both a V and a J segment, and `fast_fraction` in the report is the predictor, no
 `--prefilter` costs ~1.4 GB and buys ~3 % on amplicon. Every flag's help text carries its own
 measured regime numbers; keep them there and keep them sourced to the benchmark repo. All five
 tuning flags (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilter`,
-`--indel-rescue`) are off by default and are exposed on **both** `arda rnaseq map` and
+`--indel-rescue`) are off by default and are exposed on **both** `arda map` and
 `arda rnaseq run`.
 
 ## Open loops
@@ -213,7 +213,7 @@ tuning flags (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilt
      `main.nf` (container tag), `Dockerfile` and its `README.md`. It is not covered by any CI job,
      so **bump it as part of the release checklist** or it silently rots again.
   7. The README showed `arda slurm` for a paired RNA-seq workflow, which the code itself warns is
-     "Not for paired RNA-seq". It is `arda rnaseq slurm`.
+     "Not for paired RNA-seq". It is `arda cluster submit`.
   ✅ **Verified good, do not "fix":** docs build with **zero** warnings (`make -C docs html`);
   IgBLAST auto-fetch works and ships all five `*_gl.aux` J-frame tables; the `[rnaseq]`-extra trap
   is gone (seqtree is core).

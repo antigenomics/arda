@@ -1,31 +1,55 @@
 Installation
 ============
 
-``arda`` uses a dedicated conda environment for the MMseqs2 binary and the C++
-toolchain; the package itself installs with pip and builds a small C++ extension.
+``arda`` installs with pip and builds three small C++ extensions (``_markup``, ``_segmap``,
+``_denoise``). The MMseqs2 binary is fetched and version-matched at runtime — there is nothing to
+install by hand.
 
-Bootstrap
----------
+.. code-block:: bash
+
+   pip install arda-mapper        # imports as `arda`; binary wheels ship the extensions
+
+Development bootstrap
+---------------------
+
+``setup.sh`` is **uv-based, not conda**. Conda is used only by the Nextflow integration, which
+ships its own ``environment.yml``.
 
 .. code-block:: bash
 
    bash setup.sh
-   conda activate arda
+   source .venv/bin/activate
 
 ``setup.sh`` flags:
 
-* ``--no-conda`` — use the already-active environment instead of creating ``arda``.
 * ``--build-db`` — rebuild the reference database after install (needs IgBLAST).
-* ``--tests`` — run the fast unit + synthetic suites.
+* ``--tests`` — run the unit + synthetic suites, and **fail** if they fail.
 
-What gets installed
--------------------
+What it does, and what it verifies
+-----------------------------------
 
-* The ``arda`` conda env (Python, ``mmseqs2``, a C++ compiler, perl).
-* The latest IgBLAST release into ``bin/`` (gitignored) — needed to rebuild references and to
-  run ``arda igblast``, never for annotation. A plain ``pip install`` fetches it on first use
-  instead; see `IgBLAST without a checkout`_.
-* The ``arda`` package + the ``arda._markup`` C++ extension (editable install).
+* Wipes any stale ``build/``. ⛔ Not cosmetic: scikit-build-core caches CMake's configuration
+  including the **absolute path** of the interpreter it configured against, so a ``build/`` left
+  by a venv that no longer exists makes every later on-import rebuild fail with
+  *"Could NOT find Python"* — and arda then falls back to its pure-Python markup path.
+* Creates ``.venv`` with ``uv`` and installs ``-e .[test,dev]`` with ``--no-build-isolation``, so
+  the editable on-import rebuild can find ``pybind11`` (pinned ``>=3.0.2,<4``, matching
+  ``pyproject.toml``'s build-system: ``PYBIND11_MODULE`` changed to multi-phase init in 3.0.0).
+* Downloads the latest IgBLAST release into ``bin/`` (gitignored) — needed only to rebuild
+  references and to run ``arda igblast``, never for annotation.
+* Fetches a static MMseqs2 binary into ``bin/`` unless one is already on ``PATH``.
+
+Then it checks four things, because a bare ``import arda`` checks none of them:
+
+#. ``arda._markup``, ``arda._segmap`` and ``arda._denoise`` actually imported. arda **falls back
+   to a pure-Python markup path** when they are missing, so a failed C++ build looks like a
+   successful install and surfaces much later as a silent slowdown.
+#. ``arda.__version__`` — which a unit test now pins to ``pyproject.toml``'s ``version``, because
+   they are two independent literals and a release once had them disagree.
+#. ``mmseqs`` resolves and reports its version.
+#. Every mode and stage command resolves on the **CLI** — ``rnaseq``, ``amplicon``,
+   ``singlecell``, ``map``, ``correct``, ``assemble``, ``shm``, ``cluster``, ``annotate``. A
+   deploy into the wrong environment prints a correct version and still lacks the commands.
 
 MMseqs2 without conda
 ---------------------
@@ -138,6 +162,6 @@ index there — **no ``$ARDA_HOME`` and no reference build required**. Set
 ``ARDA_NO_AUTO_FETCH`` to disable the download (air-gapped runs with a pre-populated cache).
 
 Everything ``arda rnaseq`` needs -- including ``seqtree``, the clonotype neighbour search used by
-``arda rnaseq correct`` -- comes with a plain ``pip install arda-mapper``. No extra. (``seqtree``
+``arda correct`` -- comes with a plain ``pip install arda-mapper``. No extra. (``seqtree``
 was an optional extra before 2.5.5, which meant a plain install could map and assemble a whole
 sample and only then fail, before writing any clonotype table.)

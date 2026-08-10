@@ -138,11 +138,11 @@ def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time(tmp_pa
 def test_submit_script_runs_stage23_once_and_never_in_the_array(tmp_path):
     s = render_rnaseq_submit_script("/d/r1.fq.gz", "SAMP", tmp_path, shards=8,
                                     r2="/d/r2.fq.gz", out_dir="/o", partition="medium")
-    assert s.count("arda rnaseq reduce") == 1
+    assert s.count("arda cluster reduce") == 1
     # The whole point: these must not appear as their own array steps.
     assert "arda rnaseq correct" not in s
     assert "arda rnaseq assemble" not in s
-    assert "arda rnaseq map" in s and "--array=0-7" in s
+    assert "arda map" in s and "--array=0-7" in s
     assert "--dependency=afterok:$SPLIT_JID" in s
     assert "--dependency=afterok:$ARRAY_JID" in s
     assert 'printf "%05d"' in s          # numeric shard names

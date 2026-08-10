@@ -21,6 +21,7 @@ from .. import mmseqs
 from .._locking import build_lock
 from ..paths import data_dir, vdj_dir
 from ..refbuild.translate import reverse_complement
+from ..shm import FULL_COLUMNS
 from . import io as seqio
 from .reference import load_reference, Reference, REGIONS
 from .transfer import transfer_hit, AIRR_COLUMNS
@@ -1335,6 +1336,7 @@ def _annotate_chunk(
     fast_segments: bool = False,
     indel_rescue: bool = False,
     segment_only_v: bool = False,
+    shm: str = "framework",
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1420,7 +1422,7 @@ def _annotate_chunk(
         dg = ref.d_germlines.get(entry.locus) if map_d else None
         out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
                                 d_germlines=dg, submitted_seq=qseq, anchors=ref.anchors,
-                                d_max_evalue=d_max_evalue))
+                                d_max_evalue=d_max_evalue, shm=shm))
     return out
 
 
@@ -1450,6 +1452,7 @@ def annotate_records(
     strand: str = "both",
     map_d: bool = True,
     d_max_evalue: float | None = None,
+    shm: str = "framework",
 ) -> list[dict]:
     """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
 
@@ -1462,12 +1465,15 @@ def annotate_records(
             input only — D mapping never runs for protein input).
         d_max_evalue: E-value gate on the D call(s); ``None`` keeps the shipped 0.2. Lower is
             stricter (see :func:`arda.annotate.transfer._map_d`).
+        shm: SHM scoping — ``"framework"`` (default), ``"both"`` or ``"off"``; see
+            :mod:`arda.shm`.
     """
     ref, target_db, threads, sensitivity, mm_strand = _prep(
         organism, seqtype, threads, sensitivity, strand)
     return _annotate_chunk(records, ref, target_db, seqtype,
                            threads=threads, sensitivity=sensitivity,
-                           mm_strand=mm_strand, map_d=map_d, d_max_evalue=d_max_evalue)
+                           mm_strand=mm_strand, map_d=map_d, d_max_evalue=d_max_evalue,
+                           shm=shm)
 
 
 def annotate_file(
@@ -1482,6 +1488,7 @@ def annotate_file(
     chunk_size: int = _CHUNK_SIZE,
     map_d: bool = True,
     d_max_evalue: float | None = None,
+    shm: str = "framework",
 ) -> Path:
     """Annotate a FASTA/FASTQ file and stream an AIRR TSV.
 
@@ -1513,8 +1520,9 @@ def annotate_file(
 
     t = threading.Thread(target=reader, daemon=True)
     t.start()
+    extra_cols = FULL_COLUMNS if shm == "both" else ()
     with open(output, "w") as fh:
-        fh.write(airr_header() + "\n")
+        fh.write(airr_header(extra_cols) + "\n")
         while True:
             chunk = chunks.get()
             if chunk is None:
@@ -1524,7 +1532,7 @@ def annotate_file(
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
                                    threads=threads, sensitivity=sensitivity,
                                    mm_strand=mm_strand, map_d=map_d,
-                                   d_max_evalue=d_max_evalue)
-            fh.write(format_rows(recs))
+                                   d_max_evalue=d_max_evalue, shm=shm)
+            fh.write(format_rows(recs, extra_cols))
     t.join()
     return output

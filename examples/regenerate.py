@@ -23,7 +23,7 @@ Artifacts, and what each one is for:
 * ``junctions.tsv`` / ``junctions.markup.tsv`` / ``junctions.report.txt`` -- real VDJdb
   records covering every repair outcome, including one arda reports and refuses to rewrite.
 * ``rnaseq/reads.fq.gz`` / ``rnaseq/clones.tsv`` -- a 1712-read single-end FASTQ tiled from
-  real mRNA, and the clonotype table ``arda rnaseq run`` produces from it.
+  real mRNA, and the clonotype table ``arda rnaseq`` produces from it.
 """
 
 from __future__ import annotations
@@ -167,7 +167,10 @@ def build_rnaseq() -> None:
     (EX / "rnaseq" / "reads.fq.gz").write_bytes(buf.getvalue())
     print(f"  {len(reads)} reads, {len(buf.getvalue())} bytes gzipped")
 
-    _sh(sys.executable, "-m", "arda.cli", "rnaseq", "run",
+    # `--exact` so the committed artifact is the shipped one-pass output, not the mode preset's:
+    # the example is a REGRESSION fixture for the annotation, and --prefilter costs ~0.15 % of
+    # mapped reads, which would make the committed table depend on a speed knob.
+    _sh(sys.executable, "-m", "arda.cli", "rnaseq", "--exact",
         "--r1", "examples/rnaseq/reads.fq.gz", "-p", "ex", "-d", "examples/rnaseq",
         "--organism", "human", "--threads", "4")
     # The run report carries wall time and peak RSS -- not reproducible, so don't commit it.

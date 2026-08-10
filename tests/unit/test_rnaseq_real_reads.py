@@ -356,27 +356,42 @@ def test_v_mutations_agree_with_the_alignment_strings_on_real_reads(mapped):
     The two AIRR alignment strings already contain every mismatch (verified against the shipped
     germline on 28,365 of 28,365 mapped reads of a bulk IG library, 66,526 V mismatches, zero
     disagreements). So the end-to-end property is agreement plus SCOPE: re-walking the strings and
-    keeping only the columns inside the V germline range must reproduce the field exactly -- and
-    every recorded position must lie inside `[v_germline_start, v_germline_end]`, which is the
-    structural exclusion of the NDN expressed on real data rather than on a constructed alignment.
+    keeping the columns inside the V germline range **up to Cys104** must reproduce the field.
+
+    ⛔ The upper bound is `v_anchor_nt`, NOT `v_germline_end`. Segment scoping excludes the N-pad
+    but not the junction -- the V germline's 3' tail lies *inside* it, so chew-back and N/P bases
+    entered the list as substitutions against a germline that does not template them. This fixture
+    is a **TRA** amplicon, where TCRs cannot hypermutate, so every entry past the anchor is
+    spurious by construction: before 2.16.0 read `SRR5233639.135/1` carried `T264C,G270T,A277G`
+    past its anchor on top of its two real framework entries.
     """
     out, _report = mapped
     rows = pl.read_csv(out, separator="\t", infer_schema_length=0)
     checked = 0
+    past_anchor = 0
     for r in rows.filter(pl.col("sequence_alignment") != "").iter_rows(named=True):
         t_vend = int(float(r["mmseqs2_t_vend"])) if r["mmseqs2_t_vend"] else 0
         if not t_vend:
             continue
+        # No anchor => arda does not know where this germline's junction starts and says so by
+        # leaving the list unscoped, so those rows cannot test the scope.
+        anchor = int(float(r["v_anchor_nt"])) if r["v_anchor_nt"] else 0
+        if not anchor:
+            continue
         t = int(float(r["mmseqs2_tstart"]))
-        want = []
+        want, junction_internal = [], []
         for qa, ta in zip(r["sequence_alignment"], r["germline_alignment"]):
             if ta != "-":
                 if t <= t_vend and qa != "-" and qa != ta and {qa, ta} <= set("ACGT"):
-                    want.append(f"{ta}{t}{qa}")
+                    (want if t <= anchor else junction_internal).append(f"{ta}{t}{qa}")
                 t += 1
         assert (r["v_mutations"] or "") == ",".join(want), r["sequence_id"]
+        past_anchor += len(junction_internal)
         if want:
-            lo, hi = int(r["v_germline_start"]), int(r["v_germline_end"])
-            assert all(lo <= int(m[1:-1]) <= hi for m in want), r["sequence_id"]
+            lo = int(r["v_germline_start"])
+            assert all(lo <= int(m[1:-1]) <= anchor for m in want), r["sequence_id"]
             checked += 1
     assert checked > 20, f"only {checked} mutated reads in the fixture -- the test proves little"
+    # The scope has to REMOVE something on this fixture or it is untested: a bound that excludes
+    # nothing passes every assertion above.
+    assert past_anchor > 0, "no junction-internal entries in the fixture -- the scope is untested"

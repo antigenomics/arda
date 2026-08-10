@@ -160,8 +160,8 @@ def test_the_d_evalue_cli_default_does_not_loosen_the_aa_gate():
 
     from arda import cli
 
-    commands = [cli.annotate, cli.rnaseq_map, cli.rnaseq_correct,
-                cli.rnaseq_assemble, cli.rnaseq_run, cli.rnaseq_reduce]
+    commands = [cli.annotate, cli.rnaseq_map, cli.rnaseq_correct, cli.rnaseq_assemble,
+                cli.rnaseq_mode, cli.amplicon_mode, cli.rnaseq_reduce]
     for fn in commands:
         param = inspect.signature(fn).parameters["d_max_evalue"]
         assert param.default.default is None, f"{fn.__name__} defaults to {param.default.default}"

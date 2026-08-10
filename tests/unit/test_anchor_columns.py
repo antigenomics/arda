@@ -69,17 +69,17 @@ def test_the_anchors_classify_the_measured_recurrent_variants():
         assert p <= j.anchor_nt + 3, f"J position {p} should be inside the junction"
 
 
-def test_framework_only_identity_is_recomputable_from_the_emitted_columns():
-    """The recipe ``docs/shm.rst`` documents must actually work on arda's own committed output.
+def test_framework_only_identity_is_what_arda_now_emits():
+    """Since 2.16.0 arda applies the framework scope itself — this checks it on its own output.
 
-    ``v_identity`` runs to ``t_vend``, the V germline's end, which is PAST Cys104 — so it is
-    depressed by junction diversity rather than by mutation load. The fix inside arda changes every
-    published SHM number and is deferred, but the split is computable downstream from
-    ``v_anchor_nt`` + ``v_germline_start/end`` + ``v_mutations``, which is the whole point of
-    emitting the anchors.
+    ``v_identity`` used to run to ``t_vend``, the V germline's END, which is PAST Cys104, so it was
+    depressed by junction diversity rather than by mutation load. It now stops at ``v_anchor_nt``,
+    and the anchors still ship so the split stays checkable rather than merely trusted: recomputing
+    it from ``v_anchor_nt`` + ``v_germline_start/end`` + ``v_mutations`` must reproduce the emitted
+    number.
 
     ⛔ The two TR records are the check that matters: T-cell receptors do not hypermutate, so a
-    framework-only identity below 1.0 there would mean the recipe is wrong.
+    framework-only identity below 1.0 there would mean the scope is wrong.
     """
     import re
     from pathlib import Path
@@ -108,6 +108,16 @@ def test_framework_only_identity_is_recomputable_from_the_emitted_columns():
     # TR cannot hypermutate: framework-only identity must be exactly 1.
     assert seen.get("TRBV28*02") == 1.0, seen
     assert seen.get("TRAV12-2*02") == 1.0, seen
-    # ...while the reported v_identity for that TRB record is well below 1 -- junction diversity.
+    # ...and that is now what arda REPORTS, not merely what a downstream recipe can recover.
+    # Before 2.16.0 this record's v_identity was 0.8723, depressed purely by junction diversity.
     trb = next(r for r in df.to_dicts() if (r.get("v_call") or "").startswith("TRBV28*02"))
-    assert float(trb["v_identity"]) < 0.95, "the defect this recipe works around has gone away"
+    assert float(trb["v_identity"]) == 1.0, "v_identity is still scoped past Cys104"
+    # No v_mutations entry may sit inside the junction on ANY record of the committed example.
+    for r in df.to_dicts():
+        if not r.get("v_anchor_nt"):
+            continue
+        anchor = int(r["v_anchor_nt"])
+        bad = [m.group(0) for m in
+               (mut_re.match(t) for t in (r.get("v_mutations") or "").split(",")) if m
+               and int(m.group(2)) > anchor]
+        assert not bad, f"{r['sequence_id']}: junction-internal v_mutations {bad}"

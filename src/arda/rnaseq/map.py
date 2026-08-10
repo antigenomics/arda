@@ -35,6 +35,7 @@ from ..annotate import io as seqio
 from ..annotate import mapper
 from ..annotate.airr_out import airr_header, format_rows
 from ..refbuild.translate import reverse_complement
+from ..shm import FULL_COLUMNS, SHM_MODES
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,7 @@ def map_rnaseq(
     segment_only_v: bool = False,
     prefilter: bool = False,
     with_junction_quality: bool = False,
+    shm: str = "framework",
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -538,6 +540,10 @@ def map_rnaseq(
         # exact silent-misalignment failure `junction_quality` verifies against. Refuse instead.
         raise ValueError("--junction-quality cannot be combined with --reconstruct: a merged "
                          "fragment has no single input quality string")
+    if shm not in SHM_MODES:
+        # Reject rather than fall through to the default: a mode that is accepted and silently
+        # does nothing is the failure this project keeps hitting.
+        raise ValueError(f"--shm must be one of {SHM_MODES}, got {shm!r}")
     output = Path(output)
     ref, target_db, threads, sens, mm_strand = mapper._prep(
         organism, seqtype, threads, sensitivity, strand)
@@ -579,7 +585,11 @@ def map_rnaseq(
                           min_score=min_score)
     reads_fh = open(emit_reads, "w") if emit_reads else None
     stage = Stage()
-    extra_cols: tuple[str, ...] = (JUNCTION_QUALITY,) if with_junction_quality else ()
+    # Both extras go at the END, in a fixed order, so a consumer reading the shipped set by
+    # position is unaffected whichever combination is on.
+    extra_cols: tuple[str, ...] = (
+        ((JUNCTION_QUALITY,) if with_junction_quality else ())
+        + (FULL_COLUMNS if shm == "both" else ()))
     try:
         with open(output, "w") as fh:
             fh.write(airr_header(extra_cols) + "\n")
@@ -601,7 +611,7 @@ def map_rnaseq(
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
                     fast_segments=fast_segments,
                     indel_rescue=indel_rescue,
-                    segment_only_v=segment_only_v,
+                    segment_only_v=segment_only_v, shm=shm,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)

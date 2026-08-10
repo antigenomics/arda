@@ -3,6 +3,108 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.16.0
+
+### ⛔ BREAKING — `arda rnaseq run` is removed; the regime is the command name
+
+`arda rnaseq run` was the only pipeline entry point, and it was used for **amplicon** libraries as
+well as bulk. The regime was spelled out as four loose flags that do **not** compose —
+`--two-pass --fast-segments --v-only-on-segment` is amplicon, `--prefilter` is bulk — and
+`--two-pass` **alone is a LOSS** in both regimes (0.762× on bulk, 0.87× on an IGH amplicon). For
+four releases that was the only tuning flag `run` exposed, so the one combination that was easy to
+reach was the dominated one. The Nextflow module already worked around this by naming the regime
+and building the flag string itself; that workaround is now the CLI.
+
+| was | now |
+|---|---|
+| `arda rnaseq run … --prefilter` | `arda rnaseq …` |
+| `arda rnaseq run … --two-pass --fast-segments --v-only-on-segment` | `arda amplicon …` |
+| `arda rnaseq run …` (no tuning) | `arda rnaseq … --exact` |
+| `arda rnaseq map` / `correct` / `assemble` | `arda map` / `arda correct` / `arda assemble` |
+| `arda rnaseq split` / `reduce` / `slurm` | `arda cluster split` / `reduce` / `submit` |
+| `arda split` / `merge` / `slurm` | `arda cluster split-fasta` / `merge` / `submit-fasta` |
+
+`arda singlecell` exists and **exits non-zero with a not-implemented message**. The name is
+reserved so the three-mode surface is stable; arda has no barcode or UMI concept at all, which is
+the real single-cell gap. See `ROADMAP.md`.
+
+⚠ **Two behaviour changes ride on the mode defaults.** `arda rnaseq` enables `--prefilter`, which
+costs **~0.15 % of mapped reads** (122 bulk datasets; up to 2.46 % on one library), concentrated in
+J→C and hypermutated IGH; and each mode's `--ec-mode` now defaults to its own regime (`rnaseq` /
+`amplicon`) rather than to `fast`. `--exact` plus `--ec-mode fast` reproduces the pre-2.16.0
+default output exactly. `--indel-rescue` outside `arda amplicon` now **raises** instead of being
+silently ignored.
+
+### ⛔ BREAKING — `v_identity` / `v_mutations` / `j_mutations` are scoped to the FRAMEWORK
+
+**This retracts a guarantee `docs/shm.rst` printed until 2.14.0** and changes every SHM number arda
+has published. The lists were scoped by *segment* (`t <= t_vend`, `[t_jstart, t_vjend]`), and that
+is not the same as being outside the junction: a rearranged junction is *V 3′ tail + N/P + J 5′
+head*, so both germlines' templated tails lie inside it and exonuclease chew-back reads as a
+substitution against a germline that does not template it.
+
+Measured on a **TRA** amplicon (SRR5233636, 500 k reads) — TCRs do not hypermutate, so every entry
+was spurious by construction: **1.046 V and 1.658 J entries per read**, with **86.2 %** of the J
+entries at J germline position ≤ 10. On the committed example, `TRBV28*02`'s `v_identity` was
+**0.8723** and is now **1.0000**.
+
+* `--shm framework` (default) — scoped in place, in every mode and in `arda annotate`.
+* `--shm both` — also emits the old junction-inclusive values as `v_identity_full` /
+  `v_mutations_full` / `j_mutations_full`, appended after every shipped column. ⛔ The shipped
+  column names mean the *same thing* in every mode; `both` adds, it does not swap.
+* `--shm off` — no SHM fields.
+* **`arda shm -i in.airr.tsv -o out.airr.tsv`** rescopes an existing table with **no reference and
+  no re-map** — `v_anchor_nt` / `j_anchor_nt` and the alignment strings have shipped since 2.14.0.
+  On an older file it **raises** rather than copying the input through with a success message.
+
+⚠ A read whose called allele has no usable anchor is left **unscoped**, not emptied: arda does not
+know where that germline's junction starts. The raw anchors still ship, so the scoping is
+checkable rather than merely trusted.
+
+### Added — `--call-level {allele,gene}` and `--isotype/--no-isotype`
+
+`--call-level gene` drops the allele suffix from `v_call`/`j_call` **before** the clonotype key is
+formed, so allele-level CALL SPLITS collapse — Jurkat carries `TRGJ1*01` at 64 reads against
+`TRGJ1*02` at 140 on one junction, which no error model can see because two identical junctions
+have no discriminating base. It also dedupes a tie list whose members differ only by allele
+(`TRAV1*01,TRAV1*02` → `TRAV1`), the artifact behind the 14-point spread between `v_allele_exact`
+(median .8328) and `v_allele_resolved` (.9763) across 25 cluster datasets. ⚠ IGH carries 4.33
+alleles/gene, ~2× every other locus — measure the cost on your own library. Reads are conserved;
+the relabel happens on the *unfiltered* frame, the same rule `--clonotype-key junction` follows.
+
+`--no-isotype` skips the per-fragment isotype vote, leaving `c_call`/`c_class` empty rather than
+reporting one read's opinion as the clonotype's class. Read totals are unaffected.
+
+### Fixed — the install path, verified by running it
+
+`setup.sh` was re-run end to end from a clean tree, which is how these were found:
+
+* **`arda.__version__` and `pyproject.toml`'s `version` are two independent literals with no link,
+  and they disagreed.** `publish.yml` asserts pyproject == the release tag and nothing asserted
+  this one, so a release could ship with `arda --version` reporting the *previous* one — and every
+  `arda.json` provenance block would record it. Now pinned by a unit test.
+* **`setup.sh --tests` ran a `pytest` that was never installed**, printed *"No module named
+  pytest"*, and had it swallowed by `|| true` while the script reported success. It now installs
+  `.[test,dev]` and the flag **fails** when the tests fail.
+* **`setup.sh` did not verify the C++ build.** `import arda` succeeds without the extensions — arda
+  falls back to a pure-Python markup path — so a failed build looked like a successful install and
+  surfaced later as a silent slowdown. It now asserts `_markup`, `_segmap` and `_denoise`, and
+  resolves every mode and stage command on the CLI.
+* **`setup.sh` now wipes `build/` first.** scikit-build-core caches CMake's configuration including
+  the absolute path of the interpreter it configured against; a `build/` left by a deleted venv
+  makes every later on-import rebuild fail with *"Could NOT find Python"*.
+* `pybind11` is pinned `>=3.0.2,<4` in the build-system requirements (it was unbounded, and
+  `PYBIND11_MODULE` changed to multi-phase init in 3.0.0).
+* `docs/installation.rst` described a **conda** `setup.sh` with a `--no-conda` flag that has not
+  existed for several releases. Rewritten against what the script does.
+
+### Nextflow module
+
+`params.regime` now selects the arda **command** rather than a flag string, so the preset-building
+logic is gone. New `arda_shm` and `arda_call_level` params; `arda_ec_mode` defaults to `null`
+(= let the mode choose). ⛔ Pinned to **arda 2.16.0** and this is a hard minimum in both
+directions: an older arda fails with *"Got unexpected extra argument (run)"*.
+
 ## 2.15.0
 
 ### Fixed — contig assembly (⛔ read counts and contig sequences change)

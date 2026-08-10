@@ -35,7 +35,7 @@ from ..refbuild.translate import reverse_complement
 from .denoise import (REGIMES, DenoiseReport, clonotype_quality, quality_rescue,
                       read_quality)
 
-__all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS"]
+__all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS", "CALL_LEVELS"]
 
 
 
@@ -53,7 +53,32 @@ __all__ = ["correct_airr", "CorrectReport", "CLONOTYPE_KEYS"]
 #: .99096 -> .99696, reads unchanged.
 CLONOTYPE_KEYS = ("full", "junction")
 
+#: At what resolution a V/J call names a germline.
+#:
+#: ``allele`` -- ``TRGJ1*01``, the historical behaviour and the default.
+#: ``gene`` -- ``TRGJ1``: the allele suffix is dropped before the clonotype key is formed, so
+#: **allele-level call splits collapse**. Jurkat's largest single split is exactly that shape
+#: (``TRGJ1*01`` 64 reads against ``TRGJ1*02`` 140 on the same junction), and no error model can
+#: see it because two identical junctions have no discriminating base.
+#:
+#: ⚠ It also collapses a TIE LIST whose members differ only by allele
+#: (``TRAV1*01,TRAV1*02`` -> ``TRAV1``), which is the artifact behind the 14-point spread between
+#: `v_allele_exact` (median .8328) and `v_allele_resolved` (.9763) across 25 cluster datasets.
+#: ⚠ IGH carries 4.33 alleles/gene, ~2x every other locus, so expect the effect to be far larger
+#: there than on TR — measure per library before quoting a cost.
+CALL_LEVELS = ("allele", "gene")
+
 _DNA = frozenset("ACGT")
+
+
+def _gene_level(call: str) -> str:
+    """``TRAV1*01,TRAV1*02`` -> ``TRAV1``. Order-preserving and deduped; empty stays empty."""
+    genes: dict[str, None] = {}
+    for allele in (call or "").split(","):
+        gene = allele.strip().split("*")[0]
+        if gene:
+            genes[gene] = None
+    return ",".join(genes)
 
 # The generic heavy constant `isotype_class` returns when a read's C hit spans classes (IGHG1,IGHM
 # -> IGHC): isotype unresolved. Deprioritised when aggregating a clonotype's dominant isotype.
@@ -261,7 +286,7 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bo
         # once (IgBLAST's missing `_gl.aux` produced a truth with no junctions and exit 0).
         raise ValueError(
             "--min-junction-q needs a `junction_quality` column, which this AIRR does not have. "
-            "Re-run Stage 1 with `arda rnaseq map --junction-quality` (Stage 1 is the only place "
+            "Re-run Stage 1 with `arda map --junction-quality` (Stage 1 is the only place "
             "the FASTQ quality is still in hand).")
     jn = df["junction"].to_list()
     jq = [x or "" for x in df["junction_quality"].to_list()]
@@ -803,6 +828,8 @@ def correct_airr(
     error_method: str | None = None,
     ec_mode: str = "fast",
     clonotype_key: str = "full",
+    call_level: str = "allele",
+    isotype: bool = True,
     min_junction_q: int | None = None,
     complete_only: bool = True,
     coverage: bool = True,
@@ -883,6 +910,8 @@ def correct_airr(
         raise ValueError(f"ec_mode must be one of {sorted(EC_MODES)}, got {ec_mode!r}")
     if clonotype_key not in CLONOTYPE_KEYS:
         raise ValueError(f"clonotype_key must be one of {list(CLONOTYPE_KEYS)}, got {clonotype_key!r}")
+    if call_level not in CALL_LEVELS:
+        raise ValueError(f"call_level must be one of {list(CALL_LEVELS)}, got {call_level!r}")
     preset = EC_MODES[ec_mode]
     regime = preset.get("regime", "fast")
     if error_method is None:
@@ -914,12 +943,22 @@ def correct_airr(
                 pl.col("junction").is_not_null() & (pl.col("junction") != "")).height
             asm_from = raw.height          # the assembled rows are everything from here on
             raw = pl.concat([raw, extra], how="diagonal")
+    if call_level == "gene":
+        # ⛔ On `raw`, before `df` is filtered off it and before any key is formed — coverage
+        # assignment re-derives a read's clonotype from the UNFILTERED frame by its own
+        # (locus, v, j, junction) key, so relabelling only one of the two frames strands reads.
+        # Same rule the `--clonotype-key junction` relabel below is written to.
+        raw = raw.with_columns(
+            pl.col(c).map_elements(_gene_level, return_dtype=pl.Utf8).alias(c)
+            for c in ("v_call", "j_call") if c in raw.columns)
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
     # complete-only filter below drops them, and the JUNCTION reads that build the clonotype carry no
     # ``c_class`` of their own. Link the two by FRAGMENT id (paired mates share ``<id>``): map each
     # fragment -> the isotype class(es) any of its reads carried, before any filtering.
+    # ``isotype=False`` leaves this map empty, so every clonotype's ``c_call``/``c_class`` comes
+    # out blank -- the vote is the only thing that fills them at clonotype level.
     frag_iso: dict[str, list[str]] = {}
-    if "c_class" in raw.columns:
+    if isotype and "c_class" in raw.columns:
         for sid, cl in zip(raw["sequence_id"].to_list(), raw["c_class"].to_list()):
             if cl:
                 frag_iso.setdefault(_strip_mate(sid), []).append(cl)
@@ -1041,7 +1080,7 @@ def correct_airr(
         # whole point of --ec-mode amplicon|rnaseq was quietly dropped.
         raise ValueError(
             f"--ec-mode {regime} needs a `junction_quality` column, which this AIRR does not have. "
-            "Re-run Stage 1 with `arda rnaseq map --junction-quality` (Stage 1 is the only place "
+            "Re-run Stage 1 with `arda map --junction-quality` (Stage 1 is the only place "
             "the FASTQ quality is still in hand), or use --ec-mode fast.")
     if regime and REGIMES[regime].enabled() and "junction_quality" in df.columns:
         rq = read_quality(df["junction"].to_list(),

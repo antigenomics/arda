@@ -11,6 +11,36 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
 
 ## TODO
 
+- [ ] **Single-cell (`arda singlecell`).** The command exists in 2.16.0 and **exits non-zero with a
+      not-implemented message**; the name is reserved so the three-mode surface is stable and a
+      future release adds behaviour rather than a new command. Two stages, in this order:
+
+  - [ ] **10x contig mode** (the small one). Input a Cell Ranger `all_contig.fasta` /
+        `filtered_contig.fasta`, or any contig FASTA whose ids carry the barcode
+        (`AAACCTGAGAAACCAT-1_contig_2` → `AAACCTGAGAAACCAT-1`; `--barcode-regex` to override).
+        Annotate with the existing `annotate` path, pair chains per cell
+        (TRA+TRB / TRG+TRD / IGH+(IGK|IGL)), and emit `<prefix>.cells.tsv` (barcode, chain, calls,
+        junction, reads, umis, pairing status) plus `<prefix>.clones.tsv`. An optional
+        `--contig-annotations <csv>` carries Cell Ranger's `reads`/`umis` through; ⛔ absent, those
+        columns are **null, never fabricated**. `--isotype` and `--shm` apply — IG contigs are the
+        case they were built for. Everything it needs already exists; this is composition, not new
+        machinery, which is why it is first.
+  - [ ] **Raw-FASTQ 10x mode** (the real gap). Barcode whitelist, UMI consensus, per-cell assembly.
+        ⛔ **arda has no barcode or UMI concept at all** — that, and not the assembler, is the
+        single-cell gap. It is a subsystem, so it wants its own round.
+
+- [ ] **TRUST4 head-to-head on AMPLICON at full depth, plus an IgBLAST-truth accuracy leg.**
+      Scheduled. What exists today is wall clock only, at 100 k / 500 k reads, same job and same
+      staged input (round 20): IGH_repertoire **201.05 s** vs TRUST4 615.04, IGH_naive **136.51** vs
+      359.66, migec_exp1_TCR **316.25** vs 423.96, migec_exp1_IGH 223.77 vs **225.10**. Missing: an
+      hours-scale full-depth run, and **any** amplicon accuracy figure for TRUST4 — arda's and
+      MiXCR's amplicon accuracy is measured against IgBLAST, TRUST4's is not. ⛔ Do not project the
+      hours from the per-100 k walls: a projected ratio quoted as measured is the single mistake
+      this project has made most often. The arm is `cluster/ampacc7.sbatch` in arda-benchmark
+      (IgBLAST on 10,000 pairs at stride 100, one merged single-end FASTQ so every tool sees the ids
+      arda emits); the TRUST4 leg needs writing.
+
+
 - [x] **D-segment mapping.** After V/J transfer, the V..J interior of the junction
       (between the projected `v_sequence_end` and `j_sequence_start`) is aligned
       against the per-organism D germline set by gapless local alignment in the C++
@@ -36,8 +66,8 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
         61% on injected IGH tandems but only 13-15% on TRB, where trimming usually leaves
         one D under the ~7 nt needed to see it; false `d2_call` on true single-D is 0-1%.
 
-- [x] **Multi-node sharding.** `arda split` round-robins a huge FASTA/FASTQ into N
-      shards (one pass); `arda merge` concatenates per-shard AIRR TSVs (single
+- [x] **Multi-node sharding.** `arda cluster split-fasta` round-robins a huge FASTA/FASTQ into N
+      shards (one pass); `arda cluster merge` concatenates per-shard AIRR TSVs (single
       header); `arda slurm` renders/submits a `submit.sh` chaining split →
       `sbatch --array` annotate → merge via an `afterok` dependency
       (`arda.cluster`). Split/merge/script are unit-tested; the cluster run is
@@ -127,7 +157,7 @@ out-of-frame junction translation, extended V/J-position markup, D-segment mappi
       neighbour search (`arda.rnaseq.correct`; core dep `seqtree`).
       `arda igblast`: all-loci gold-standard AIRR (`refbuild.gold`). Benchmarked in the
       `arda-benchmark` repo vs assembly-based extractors (speed) and IgBLAST (accuracy).
-  - [x] **Seamless pipeline integration.** A one-shot `arda rnaseq run` (map + correct
+  - [x] **Seamless pipeline integration.** A one-shot mode command (map + assemble + correct
         → `<prefix>.clones.tsv` / `.airr.tsv` / `.arda.json`), a top-level `--version`,
         and a drop-in nf-core-style Nextflow module (`integrations/nextflow/arda/`:
         process + conda env + Dockerfile + per-process config + README). Bulk RNA-seq

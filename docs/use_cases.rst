@@ -12,12 +12,13 @@ Bulk RNA-seq: extract a repertoire from a transcriptome
 -------------------------------------------------------
 
 The primary case. A bulk library is 0.02–3 % receptor, so almost all the work is proving that
-reads are *not* receptor reads — which is what ``--prefilter`` removes.
+reads are *not* receptor reads — which is what the mode's ``--prefilter`` removes (1.99×, at a
+measured ~0.15 % of mapped reads; ``--exact`` turns it off). ``--ec-mode rnaseq`` is this mode's
+denoising default.
 
 .. code-block:: bash
 
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -d out -p sample \
-       --prefilter --threads 16 --ec-mode rnaseq
+   arda rnaseq --r1 R1.fq.gz --r2 R2.fq.gz -d out -p sample --threads 16
 
 Read-outs, and what each is worth:
 
@@ -41,12 +42,12 @@ Targeted amplicon / RepSeq
 
 .. code-block:: bash
 
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -d out -p sample \
-       --two-pass --fast-segments --v-only-on-segment --threads 16 --ec-mode amplicon
+   arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -d out -p sample --threads 16
 
-The regime flags are **not** interchangeable with the bulk ones and do not compose; see
-:doc:`cluster`. On an IGH RepSeq amplicon the amplicon regime is **4.15×** faster than the default
-at 2.7× less memory.
+The mode carries ``--two-pass --fast-segments --v-only-on-segment`` and ``--ec-mode amplicon``.
+Those are **not** interchangeable with the bulk ones and do not compose, which is why the regime is
+the command name; see :doc:`cluster`. On an IGH RepSeq amplicon the amplicon mode is **4.15×**
+faster than ``--exact`` at 2.7× less memory.
 
 Monoclonal QC: is my cell line what it says it is?
 ---------------------------------------------------
@@ -57,7 +58,7 @@ A monoclonal line has one productive rearrangement per expressed locus, so the r
 
 .. code-block:: bash
 
-   arda rnaseq run --r1 R1.fq.gz -d out -p Jurkat --prefilter \
+   arda rnaseq --r1 R1.fq.gz -d out -p Jurkat \
        --ec-mode amplicon --clonotype-key junction
 
 Measured on Jurkat (14,531 junction-bearing reads):
@@ -113,7 +114,7 @@ Low-frequency variants: spike-ins, MRD, minor clones
 
 .. code-block:: bash
 
-   arda rnaseq correct -i s1.airr.tsv -o clones.tsv --ec-mode accurate --error-rate 1e-5
+   arda correct -i s1.airr.tsv -o clones.tsv --ec-mode accurate --error-rate 1e-5
 
 Two things decide whether a rare real variant survives:
 

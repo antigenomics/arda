@@ -8,11 +8,11 @@ reports a D **with the E-value that accepted it**, and gives you the knob to mov
 
 .. code-block:: bash
 
-   arda rnaseq map -i reads.fq -o mapped.airr.tsv                    # shipped gate, E <= 0.2
-   arda rnaseq map -i reads.fq -o mapped.airr.tsv --d-max-evalue 0.01  # the strict band
-   arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --d-max-evalue 0.01
+   arda map -i reads.fq -o mapped.airr.tsv                    # shipped gate, E <= 0.2
+   arda map -i reads.fq -o mapped.airr.tsv --d-max-evalue 0.01  # the strict band
+   arda correct -i mapped.airr.tsv -o clones.tsv --d-max-evalue 0.01
    arda annotate  -i mrna.fasta -o out.airr.tsv --d-max-evalue 0.05
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p S -d out/ --d-max-evalue 0.01
+   arda rnaseq --r1 R1.fq.gz --r2 R2.fq.gz -p S -d out/ --d-max-evalue 0.01
 
 ``--d-max-evalue`` is accepted by ``annotate`` and by every ``rnaseq`` stage that maps D
 (``map``, ``correct``, ``assemble``, ``run``, ``reduce``), and by
@@ -252,7 +252,7 @@ Using the output: D-D markup
 
 Naming a second D and giving no way to find it is not markup. Every stage now emits the
 coordinates and the non-templated stretches alongside the calls, and the clonotype table
-(``arda rnaseq correct``) carries them in **junction space**, 1-based closed, with ``-1`` for
+(``arda correct``) carries them in **junction space**, 1-based closed, with ``-1`` for
 "not located":
 
 ``v_sequence_end``, ``d_sequence_start``/``d_sequence_end``, ``d2_sequence_start``/

@@ -51,43 +51,67 @@ reads of a real bulk IG library (66,526 V mismatches, zero disagreements). What 
    (``mmseqs2_tstart``, ``mmseqs2_t_vend``, ``mmseqs2_t_jstart``, ``mmseqs2_t_vjend``); the two
    strings are also 30.7 % of the TSV.
 
-   Use ``v_mutations`` / ``j_mutations`` in preference to the alignment strings — but read the
-   defect below first.
+   Use ``v_mutations`` / ``j_mutations`` in preference to the alignment strings.
 
-.. danger::
+.. note::
 
-   **⛔ KNOWN DEFECT (open): ``v_mutations`` / ``j_mutations`` DO include junction-internal
-   positions.** This page previously claimed the opposite — that the N-pad is not a segment, so a
-   junction position "cannot enter the list by any code path". That claim is false and is
-   retracted. The pad is excluded, but the **V germline's 3' tail and the J germline's 5' head lie
-   inside the junction**, and mutations are scoped by segment (``t <= t_vend``,
-   ``[t_jstart, t_vjend]``), not by the junction boundary. So exonuclease chew-back and
-   non-templated N/P bases are emitted as substitutions against a germline that does not template
-   them.
+   **✅ FIXED IN 2.16.0 — and this is the retraction of a guarantee this page once printed.** Until
+   2.14.0 this page claimed the N-pad is not a segment, so a junction position "cannot enter the
+   list by any code path". That was false. The pad *is* excluded, but the **V germline's 3' tail
+   and the J germline's 5' head lie inside the junction**, and mutations were scoped by segment
+   (``t <= t_vend``, ``[t_jstart, t_vjend]``), not by the junction boundary — so exonuclease
+   chew-back and non-templated N/P bases were emitted as substitutions against a germline that does
+   not template them.
 
-   Measured on a **TRA amplicon** (SRR5233636, 500,000 reads) — T-cell receptors do **not**
-   somatically hypermutate, so every entry there is spurious by construction:
+   What it cost, measured on a **TRA amplicon** (SRR5233636, 500,000 reads) — T-cell receptors do
+   **not** somatically hypermutate, so every entry there was spurious by construction:
 
    * **1.046 V and 1.658 J "mutations" per read**;
-   * **86.2 % of J entries sit at J germline position <= 10**, i.e. the 5' head, inside the
+   * **86.2 % of J entries sat at J germline position <= 10**, i.e. the 5' head, inside the
      junction;
    * splitting the reported load by the frequency of each ``(allele, position, alt)`` across reads
-     carrying that allele: **13.0 % of J entries are below frequency 0.01** (sequencing error),
-     **80.8 % fall between 0.01 and 0.5** (junction diversity), and **6.2 % sit at 0.5 or above**
-     (a genuinely wrong *allele* call, e.g. ``TRAV8-6*01`` positions 281/282 at 0.88, ``TRAJ8*01``
-     position 1 at 0.67).
+     carrying that allele: **13.0 % of J entries below frequency 0.01** (sequencing error),
+     **80.8 % between 0.01 and 0.5** (junction diversity), **6.2 % at 0.5 or above** (a genuinely
+     wrong *allele* call). ⚠ **Frequency alone does not separate those populations — frequency AND
+     position against the anchor does**: the high-frequency ones are junction-internal too
+     (``TRAV8-6*01`` positions 281/282 at 0.88 against its anchor at 270; ``TRAJ8*01`` position 1
+     at 0.67 against 26), i.e. allele differences in the *templated* V/J tail.
 
-   Until this is fixed, treat the lists as *three superimposed populations*. ⚠ **Frequency alone
-   does not separate them — frequency AND position against the anchor does.** The high-frequency
-   variants are junction-internal too (``TRAV8-6*01`` positions 281/282 at 0.88 against its anchor
-   at 270; ``TRAJ8*01`` position 1 at 0.67 against 26), i.e. allele differences in the *templated*
-   V/J tail, which is neither somatic mutation nor N/P diversity.
+   Since 2.16.0 ``v_mutations``, ``j_mutations`` and ``v_identity`` are scoped to the **framework**
+   using the per-read germline anchors, in every mode. ⚠ **This moves every SHM number arda has
+   ever published.** ``--shm both`` also emits the old junction-inclusive values as
+   ``v_identity_full`` / ``v_mutations_full`` / ``j_mutations_full``, which is what you need to
+   reproduce a figure made before the fix; ``--shm off`` emits no SHM fields at all.
+
+   ⚠ A read whose called allele has **no usable anchor** is left *unscoped* rather than emptied —
+   arda does not know where that germline's junction starts, and saying so beats guessing. The raw
+   anchors still ship, so the scoping stays checkable rather than merely trusted.
+
+Recounting a table written before the fix
+------------------------------------------
+
+``arda shm`` rescopes an existing AIRR TSV. It needs **no reference and no re-map** — the anchors
+and the alignment strings are already in the file (they have shipped since 2.14.0):
+
+.. code-block:: bash
+
+   arda shm -i mapped.airr.tsv -o rescoped.airr.tsv              # framework (default)
+   arda shm -i mapped.airr.tsv -o both.airr.tsv --mode both      # + the old values as *_full
+
+⛔ On a file older than 2.14.0 — no ``v_anchor_nt`` column — this **raises**. It does not copy the
+input through with a success message; a command that reports success over an unchanged file is a
+failure mode arda has already shipped once.
+
+⚠ IGH/IGK/IGL are where SHM is real. The scoping runs on every locus anyway, because the defect was
+never IG-specific — it was measured on TRA. On the TR loci the entries that survive are allele
+mismatches in the templated framework, not hypermutation.
 
 Recomputing what you actually want
 -----------------------------------
 
-Every read now carries the junction boundary in **germline** coordinates, so the split can be done
-from the TSV alone — no reference needed:
+arda applies the framework scope itself, but every read still carries the junction boundary in
+**germline** coordinates, so the split stays checkable — and re-derivable — from the TSV alone,
+with no reference:
 
 ``v_anchor_nt``
    0-based offset of the **Cys104** codon in the called V allele. A ``v_mutations`` entry at
@@ -97,7 +121,7 @@ from the TSV alone — no reference needed:
    is junction-internal iff ``p <= j_anchor_nt + 3`` (the anchor codon is 3 nt, and the junction
    *includes* it — junction ≠ CDR3).
 
-Framework-only V identity, which is what an SHM analysis wants:
+Framework-only V identity — which is what ``v_identity`` now *is*, and this is how to verify it:
 
 .. code-block:: python
 
@@ -106,15 +130,16 @@ Framework-only V identity, which is what an SHM analysis wants:
    fw_mut = sum(1 for p in v_mutation_positions if p <= v_anchor_nt)
    identity = 1 - fw_mut / span
 
-Measured on the five records of ``examples/example.airr.tsv``:
+Measured on the five records of ``examples/example.airr.tsv``. The middle column is what arda
+emitted **before** 2.16.0; the one beside it is what it emits now:
 
 .. list-table::
    :header-rows: 1
    :widths: 30 16 16 12 12
 
    * - v_call
-     - ``v_identity``
-     - framework-only
+     - ``v_identity`` (pre-2.16.0)
+     - ``v_identity`` (2.16.0+, framework)
      - fw muts
      - junction muts
    * - **TRBV28*02**
@@ -144,9 +169,9 @@ Measured on the five records of ``examples/example.airr.tsv``:
      - 5
 
 ⛔ The first two rows are **TR** loci, where somatic hypermutation does not occur — so
-``v_identity`` reporting 0.8723 for ``TRBV28*02`` is measuring junction diversity outright. The bias
-is worst when the aligned span is mostly junction: that record covers 47 nt of germline, only 30 of
-it framework. The IG rows move much less, because their alignments are mostly framework.
+the old ``v_identity`` of 0.8723 for ``TRBV28*02`` was measuring junction diversity outright. The
+bias was worst when the aligned span is mostly junction: that record covers 47 nt of germline, only
+30 of it framework. The IG rows move much less, because their alignments are mostly framework.
 
 .. important::
 
@@ -157,8 +182,7 @@ it framework. The IG rows move much less, because their alignments are mostly fr
    N/P bases in their place, so the *V-end / NDN / J-start* partition of a junction frequently is
    not identifiable from the sequence at all. A "mutation" placed inside the NDN is a statement
    about a boundary that has no ground truth — see :doc:`d_segments` for the same rule on the D
-   side. ⚠ That is the design intent; the defect above is that the implementation does not yet
-   honour it.
+   side. That is the design intent, and since 2.16.0 the implementation honours it.
 
 Two more properties worth knowing:
 
@@ -213,8 +237,8 @@ but they come from two different stages.
 
 .. code-block:: bash
 
-   arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv
-   arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --read-map read_map.tsv
+   arda map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv
+   arda correct -i mapped.airr.tsv -o clones.tsv --read-map read_map.tsv
 
 ``--read-map`` writes ``sequence_id -> corrected junction``, which is the join key: it links each
 read's ``v_mutations`` back to the error-corrected clonotype it was assigned to. Replay the

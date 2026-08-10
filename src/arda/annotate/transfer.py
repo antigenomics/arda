@@ -19,6 +19,7 @@ import math
 
 from .. import _markup
 from ..refbuild.constant import isotype_class
+from ..shm import scope_record
 from ..refbuild.translate import translate, aa_coords_from_nt, detect_coding_frame
 from .cigar import build_cigar, segment_cigars
 from .reference import RefEntry, REGIONS
@@ -68,9 +69,12 @@ AIRR_COLUMNS = (
      # germline it reports matches the shipped allele on 28,365 of 28,365 bulk IG reads), but
      # recovering it needs arda's scaffold geometry -- a consumer that just diffs the two alignment
      # strings attributes 20.1 % of the mismatches it finds to a germline that is not there, because
-     # the scaffold's N-pad and C region are in the same strings. Scoped to V and J STRUCTURALLY:
-     # the pad is not a segment, so a junction position has no germline coordinate to be filed under
-     # and cannot enter the list by any code path (see cigar.py's module docstring).
+     # the scaffold's N-pad and C region are in the same strings.
+     # ⛔ Segment scoping alone is NOT junction exclusion, and 2.14.0 wrongly promised it was: the
+     # V germline's 3' tail and the J germline's 5' head lie INSIDE the junction, so chew-back and
+     # N/P bases enter both lists as substitutions against a germline that does not template them.
+     # Since 2.16.0 the lists (and `v_identity`) are scoped to the FRAMEWORK using `v_anchor_nt` /
+     # `j_anchor_nt`; `--shm both` also emits the old junction-inclusive values. See `arda.shm`.
      # Germline coordinates (1-based, in the V or J allele). The scaffold's V part is the V germline
      # verbatim (target pos == V-germline pos) and its J part is the full J allele, so these fall
      # straight out of the target span with a constant offset -- no separate lookup.
@@ -105,6 +109,10 @@ AIRR_COLUMNS = (
     # `j_anchor_nt` is the 0-based offset of the [FW]118 codon in the called J allele's. So a
     # `v_mutations` entry at 1-based position p is junction-internal iff p > v_anchor_nt, and a
     # `j_mutations` entry at p is junction-internal iff p <= j_anchor_nt + 3.
+    #
+    # Since 2.16.0 arda applies that rule itself (`arda.shm`); the anchors stay in the output because
+    # allele re-assignment and any other framework/junction split still need them, and because a
+    # consumer must be able to check the scoping rather than trust it.
     #
     # ⚠ Emitted RAW, exactly as the reference stores them, rather than pre-classified: frequency
     # and position together decide what a variant is, and that is the consumer's call. Measured on
@@ -660,6 +668,7 @@ def transfer_hit(
     submitted_seq: str | None = None,
     anchors: dict | None = None,
     d_max_evalue: float | None = None,
+    shm: str = "framework",
 ) -> dict:
     """Build an AIRR record by projecting ``ref`` region coords onto the query.
 
@@ -670,6 +679,9 @@ def transfer_hit(
     ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
 
     ``d_max_evalue`` overrides the D-call E-value gate; see :func:`_map_d`.
+
+    ``shm`` scopes the SHM fields — ``framework`` (default), ``both`` or ``off``; see
+    :mod:`arda.shm`.
     """
     # ⛔ ONE walk of the alignment, not four. Besides the seven regions, this function needs three
     # single scaffold positions projected onto the query: the V germline end, the J germline start,
@@ -869,4 +881,6 @@ def transfer_hit(
         # the honest answer. Same call, same columns, aa coordinates.
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call, seqtype="aa",
                d_max_evalue=d_max_evalue)
-    return rec
+    # Last, because it reads what everything above wrote: the mutation lists, the alignment
+    # strings and both anchors. See `arda.shm` for why the segment scoping is not enough.
+    return scope_record(rec, shm, identity_fn=_aln_identity)

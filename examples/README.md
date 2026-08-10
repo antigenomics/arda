@@ -138,7 +138,7 @@ can ever have used it.
 ## 4. Bulk RNA-seq — reads to clonotypes
 
 ```bash
-arda rnaseq run --r1 examples/rnaseq/reads.fq.gz -p ex -d examples/rnaseq --organism human
+arda rnaseq --exact --r1 examples/rnaseq/reads.fq.gz -p ex -d examples/rnaseq --organism human
 ```
 
 [`reads.fq.gz`](rnaseq/reads.fq.gz) is 1,035 single-end 150 bp reads (8.9 KB), tiled at stride

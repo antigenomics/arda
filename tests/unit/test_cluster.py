@@ -43,9 +43,9 @@ def test_render_submit_script_chains_steps(tmp_path):
     s = render_submit_script(
         "big.fastq", "out.airr.tsv", tmp_path / "work",
         shards=50, organism="human", seqtype="nt", threads=8, partition="cpu")
-    assert "arda split" in s
+    assert "arda cluster split-fasta" in s
     assert "--array=0-49" in s
     assert "arda annotate" in s and "shard_${SLURM_ARRAY_TASK_ID}.fasta" in s
     assert "--dependency=afterok:$ARRAY_JID" in s
-    assert "arda merge" in s
+    assert "arda cluster merge" in s
     assert "--partition=cpu" in s and "--cpus-per-task=8" in s

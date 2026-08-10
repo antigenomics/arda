@@ -28,7 +28,9 @@ input:
         description: |
           Groovy Map with sample metadata. Must carry `single_end`, which selects whether R2 is
           passed through, e.g. [ id:'sample1', single_end:false ]. May optionally carry `regime`
-          ('bulk' | 'amplicon' | 'default') to override `params.regime` for this sample only.
+          ('bulk' | 'amplicon' | 'default'), `ec_mode` or `shm` to override the corresponding
+          `params.*` for this sample only. `regime` selects the arda COMMAND: 'bulk' ->
+          `arda rnaseq`, 'amplicon' -> `arda amplicon`, 'default' -> `arda rnaseq --exact`.
     - reads:
         type: file
         description: One FASTQ for single-end, or a two-element list [R1, R2] for paired.
@@ -81,7 +83,7 @@ output:
   - versions:
       - "versions.yml":
           type: file
-          description: File containing software versions, and the regime the task ran in.
+          description: File containing software versions, plus the regime and arda mode the task ran in.
           pattern: "versions.yml"
 
 authors:

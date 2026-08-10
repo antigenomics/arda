@@ -62,12 +62,17 @@ pip install arda-mapper   # from PyPI (imports as `arda`); binary wheels ship th
 get the committed germline references on disk — use `setup.sh`:
 
 ```bash
-bash setup.sh            # uv .venv, fetches IgBLAST + static mmseqs, editable install
+bash setup.sh            # uv .venv, builds the C++ extensions, fetches IgBLAST + static mmseqs
 source .venv/bin/activate
 ```
 
-Needs [uv](https://docs.astral.sh/uv/). Flags: `--build-db` (rebuild references after
-install), `--tests` (run the fast suites). The committed `database/vdj/<organism>/`
+Needs [uv](https://docs.astral.sh/uv/). Flags: `--build-db` (rebuild references after install),
+`--tests` (run the unit + synthetic suites — and **fail** if they fail). It installs
+`.[test,dev]`, wipes any stale `build/` first, and then verifies three things that a bare
+`import arda` does **not**: that `_markup`, `_segmap` and `_denoise` actually compiled (arda falls
+back to a pure-Python markup path otherwise, so a failed build looks like a successful install and
+surfaces later as a silent slowdown), that `mmseqs` resolves, and that every mode and stage
+command resolves on the CLI. The committed `database/vdj/<organism>/`
 references mean **most users never need to build anything**. A `pip install arda-mapper`
 with no source checkout **auto-fetches** the curated references into `~/.cache/arda` on
 first use and builds the MMseqs2 index there — no `$ARDA_HOME`, no build step
@@ -78,29 +83,50 @@ Supported organisms: **human, mouse** (full IG + TR), **rat, rabbit, rhesus_monk
 
 ## CLI
 
+**Three modes, named after the library** — each owns the speed configuration that regime needs:
+
+```bash
+arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # bulk / whole-transcriptome
+arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # targeted RepSeq / 5'RACE
+arda singlecell                                               # reserved — not implemented yet
+```
+
+Each runs `map` → `assemble` → `correct` and writes `<prefix>.airr.tsv`, `<prefix>.clones.tsv`,
+`<prefix>.assembled.airr.tsv` and `<prefix>.arda.json`. `--exact` turns every speedup off.
+
+The **stages** are separate commands, so any one can be run, inspected or replaced:
+
+```bash
+arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # Stage 1: receptor reads out of RNA-seq
+arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality  # + Phred over the junction
+arda assemble -i mapped.airr.tsv -o assembled.airr.tsv         # Stage 3: CDR3s no single read spans
+arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv   # Stage 2: clonotypes
+arda correct  -i mapped.airr.tsv -o clones.tsv --ec-mode accurate    # quality-gated correction
+arda correct  -i mapped.airr.tsv -o clones.tsv --call-level gene     # collapse allele-level call splits
+arda shm      -i mapped.airr.tsv -o rescoped.airr.tsv          # recount SHM outside the junction
+```
+
+Everything else:
+
 ```bash
 arda info                                   # resolved paths + tool availability
 arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
 arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand only
-arda markup -i junctions.tsv -o marked.tsv --report -           # mark up + repair bare (CDR3aa, V, J) records
-arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv  # receptor reads out of RNA-seq
-arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality  # + Phred over the junction
-arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv   # rescue CDR3s no single read spans
-arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
-arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --ec-mode accurate  # quality-gated correction
 arda annotate -i reads.fastq -o out.airr.tsv --d-max-evalue 0.01  # the strict D band
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+assemble+correct
-arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 20 --partition cpu
+arda markup -i junctions.tsv -o marked.tsv --report -           # mark up + repair bare (CDR3aa, V, J) records
+arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv        # every germline the read cannot rule out
+arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 20 --partition cpu
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda export-ref --kind segments --locus TRB --format fasta      # the reference, out of the CLI
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
 ```
 
-`arda slurm` (no `rnaseq`) shards FASTA into `arda annotate` for **amplicon / single-end**
-work only: it drops quality and separates mates, so paired RNA-seq must use
-`arda rnaseq slurm`, which shards Stage 1 and runs Stages 2–3 once over the merged output.
+`arda cluster` holds every sharded/SLURM helper. `arda cluster submit` shards Stage 1 across an
+array and runs Stages 2–3 **once** over the merged output — byte-identical to a single-node run.
+`arda cluster split-fasta` / `submit-fasta` are the **amplicon / single-end** FASTA path: they drop
+quality and separate mates, so paired RNA-seq must not use them.
 
 **`arda export-ref`** dumps arda's most valuable offline artifact — every in-frame V·J
 scaffold with IgBLAST-quality FR1–4 / CDR1–3 coordinates — in 3 kinds × 4 formats:
@@ -125,33 +151,56 @@ Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on *
 by default (reverse-complement reads are re-oriented and flagged `rev_comp=T`); a single search
 annotates a mixed bulk RNA-seq file across all loci.
 
-## Amplicon vs bulk RNA-seq: which mode
+## Modes: pick the command, not the flags
 
-The speed flags are **regime-specific**, and picking the wrong one is slower than picking none.
+The speed configurations are **regime-specific and do not compose**, and picking the wrong one is
+slower than picking none. So the regime is the **command name**, and arda owns what it implies:
 
-> `--two-pass --fast-segments --v-only-on-segment` = the **AMPLICON** configuration
->
-> `--prefilter` = the **BULK** configuration
->
-> They do **NOT** compose. `--two-pass` **ALONE is a LOSS**: 0.762× on bulk, 0.87× on an IGH amplicon.
+| command | for | speed configuration | denoising default |
+|---|---|---|---|
+| `arda rnaseq` | whole-transcriptome bulk RNA-seq (0.02–3 % receptor) | `--prefilter` | `--ec-mode rnaseq` |
+| `arda amplicon` | targeted RepSeq / 5′RACE (reads span V into J) | `--two-pass --fast-segments --v-only-on-segment` | `--ec-mode amplicon` |
+| `arda singlecell` | *reserved — not implemented* | — | — |
 
 ```bash
-# AMPLICON / RepSeq (reads span V into J)
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ \
-    --two-pass --fast-segments --v-only-on-segment
-
-# BULK RNA-seq (1-5 % of reads are receptor-derived)
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --prefilter
+arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/
+arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/
+arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --exact   # no speedups at all
 ```
 
+⛔ Until 2.16.0 the only entry point was `arda rnaseq run`, used for amplicon as well, with the
+regime spelled out as four loose flags. **`--two-pass` alone is a LOSS** — 0.762× on bulk, 0.87× on
+an IGH amplicon — and it was the one flag that entry point exposed for four releases. Naming the
+mode makes the dominated combination unreachable by accident. `arda rnaseq run` no longer exists.
+
 The predictor is not the library's name but whether a read hits **both** a V and a J segment —
-`fast_fraction` in the run report. Primer-anchored amplicon reads do; bulk reads land anywhere
-in a transcript and mostly do not, which is why the segment path is overhead there and the
-16-mer prefilter (a scan-term optimisation) is the bulk lever instead. All four flags are off by
-default. `--indel-rescue` (with `--fast-segments`) reroutes indel-bearing reads to the gapped
-path; its value tracks SHM load, so it is a per-library call. Details and the per-flag
-measurements: `arda rnaseq map --help` and the
+`fast_fraction` in the run report. Primer-anchored amplicon reads do; bulk reads land anywhere in a
+transcript and mostly do not, which is why the segment path is overhead there and the 16-mer
+prefilter (a scan-term optimisation) is the bulk lever instead.
+
+⚠ `arda rnaseq` enables `--prefilter`, which costs **~0.15 % of mapped reads** (122 bulk datasets;
+up to 2.46 % on one library), concentrated in J→C and hypermutated IGH. Use `--exact` where that
+matters. `--indel-rescue` (amplicon only) reroutes indel-bearing reads to the gapped path; its
+value tracks SHM load, so it stays a per-library call and never rides the preset — and arda now
+**refuses** it outside the amplicon mode rather than ignoring it. Per-flag measurements:
+`arda amplicon --help`, `arda map --help` and the
 [usage guide](https://docs.isalgo.dev/arda/usage.html).
+
+### Stages, and the flags that select them
+
+`map` → `assemble` → `correct` are separate commands as well as stages inside a mode:
+
+| stage / flag | what it does |
+|---|---|
+| `--assemble` *(default on)* | contig assembly for long CDR3s no single 100–150 bp read spans; recovers ~95 % of the abundant long clones a filter-only pass misses |
+| `--shm framework` *(default)* | SHM (`v_identity`, `v_mutations`, `j_mutations`) scoped **outside the junction** — IGH/IGK/IGL is where it is real |
+| `--shm both` | also emit the pre-2.16.0 junction-inclusive values as `*_full` columns |
+| `--isotype` *(default on)* | IGH isotype: `c_call`/`c_class`, voted per fragment then per clonotype, reported as **class** never subclass |
+| `--call-level gene` | drop the allele suffix before the clonotype key, collapsing allele-level call splits |
+| `--map-d` *(default on)* | D and tandem D-D alignment into the junction |
+
+`arda shm -i in.airr.tsv -o out.airr.tsv` does the SHM recount standalone, needing **no reference
+and no re-map** — the germline anchors are already in the file.
 
 ### Accuracy regimes: which knob for which question
 
@@ -225,6 +274,20 @@ against the shipped one-pass default on hypermutated IGH:
 
 4.15× and 4.71×, at ~2.7× less memory.
 
+**vs TRUST4 on amplicon, same job, same staged input, same read cap** (round 20, 32 threads on
+aldan3; every leg of a tier ran on the same input, so no ratio here is cross-job):
+
+| dataset | reads | arda `amplicon` wall (s) | TRUST4 wall (s) |
+|---|---:|---:|---:|
+| IGH_repertoire | 100,000 | **201.05** | 615.04 |
+| IGH_naive | 100,000 | **136.51** | 359.66 |
+| migec_exp1_TCR | 500,000 | **316.25** | 423.96 |
+| migec_exp1_IGH | 500,000 | 223.77 | **225.10** |
+
+⚠ Wall clock only. The **full-depth (hours-scale) head-to-head and the IgBLAST-truth accuracy leg
+scoring both tools on amplicon are scheduled for the next release** — neither is measured yet, and
+neither is projected here.
+
 ### Synthetic benchmarks vs IgBLAST
 
 ⚠ The two tables below are **synthetic** — generated human IGH sequences, not a real library —
@@ -296,13 +359,13 @@ those are excluded.)
 1–5% of reads are receptor-derived:
 
 ```bash
-arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
-arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv
-arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
+arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
+arda assemble -i mapped.airr.tsv -o assembled.airr.tsv
+arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
 ```
 
 `--extra-airr` is what folds Stage 3 back in; **without it the assembled reads are silently
-discarded.** `arda rnaseq run` does all three in one call and wires it for you.
+discarded.** `arda rnaseq` / `arda amplicon` do all three in one call and wire it for you.
 
 - **`map`** streams paired FASTQ, keeps only reads mapping to a receptor scaffold, and writes
   them as AIRR. The reference includes **`J + C` constant-region scaffolds**, so a read spanning
@@ -337,7 +400,7 @@ consensus exists; it moves V1/Err1 to 26–76 before any correction runs.
 What to do about it:
 
 ```bash
-arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv --error-rate 1e-5
+arda correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv --error-rate 1e-5
 ```
 
 `1e-5` recovers both spike-in variants exactly. On an independent error cloud, `1e-4` kept both
@@ -352,8 +415,8 @@ from its putative parent — a measurement abundance does not have, and one that
 (the published spike-ins read median Q 34–35 there, the error cloud around them **median Q 24**):
 
 ```bash
-arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
-arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --ec-mode accurate
+arda map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
+arda correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --ec-mode accurate
 ```
 
 Both variants kept, monoclonal purity back to **.99530**, spurious junctions 297 → 62, distinct
@@ -470,7 +533,7 @@ not shipped, and is built on demand when missing.
 
 ## Pipeline integration
 
-`arda rnaseq run` writes `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped
+`arda rnaseq` / `arda amplicon` write `<prefix>.clones.tsv` (AIRR clonotypes), `<prefix>.airr.tsv` (mapped
 reads), `<prefix>.assembled.airr.tsv` and `<prefix>.arda.json` (run report). Because it is a
 plain CLI over named files, it drops into any workflow engine with no glue code.
 
