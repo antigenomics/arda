@@ -77,11 +77,76 @@ reads of a real bulk IG library (66,526 V mismatches, zero disagreements). What 
      (a genuinely wrong *allele* call, e.g. ``TRAV8-6*01`` positions 281/282 at 0.88, ``TRAJ8*01``
      position 1 at 0.67).
 
-   Until this is fixed, treat the lists as *three superimposed populations* and separate them by
-   frequency: ``>= 0.5`` is an allele artifact, ``< 0.01`` is sequencing error, and the remainder
-   on TR loci — or at J positions below the ``[FW]118`` anchor on any locus — is junction
-   diversity, not SHM. ``v_identity`` has the same scope defect: it runs to ``t_vend``, so it is
-   depressed by junction diversity rather than by mutation load.
+   Until this is fixed, treat the lists as *three superimposed populations*. ⚠ **Frequency alone
+   does not separate them — frequency AND position against the anchor does.** The high-frequency
+   variants are junction-internal too (``TRAV8-6*01`` positions 281/282 at 0.88 against its anchor
+   at 270; ``TRAJ8*01`` position 1 at 0.67 against 26), i.e. allele differences in the *templated*
+   V/J tail, which is neither somatic mutation nor N/P diversity.
+
+Recomputing what you actually want
+-----------------------------------
+
+Every read now carries the junction boundary in **germline** coordinates, so the split can be done
+from the TSV alone — no reference needed:
+
+``v_anchor_nt``
+   0-based offset of the **Cys104** codon in the called V allele. A ``v_mutations`` entry at
+   1-based position ``p`` is junction-internal iff ``p > v_anchor_nt``.
+``j_anchor_nt``
+   0-based offset of the **[FW]118** codon in the called J allele. A ``j_mutations`` entry at ``p``
+   is junction-internal iff ``p <= j_anchor_nt + 3`` (the anchor codon is 3 nt, and the junction
+   *includes* it — junction ≠ CDR3).
+
+Framework-only V identity, which is what an SHM analysis wants:
+
+.. code-block:: python
+
+   fw_hi  = min(v_germline_end, v_anchor_nt)          # framework stops at Cys104
+   span   = max(0, fw_hi - v_germline_start + 1)
+   fw_mut = sum(1 for p in v_mutation_positions if p <= v_anchor_nt)
+   identity = 1 - fw_mut / span
+
+Measured on the five records of ``examples/example.airr.tsv``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 16 16 12 12
+
+   * - v_call
+     - ``v_identity``
+     - framework-only
+     - fw muts
+     - junction muts
+   * - **TRBV28*02**
+     - 0.8723
+     - **1.0000**
+     - 0
+     - 4
+   * - TRAV12-2*02
+     - 0.9964
+     - 1.0000
+     - 0
+     - 0
+   * - IGLV1-40*01
+     - 0.9833
+     - 0.9925
+     - 2
+     - 0
+   * - IGHV3-9*01
+     - 0.9262
+     - 0.9298
+     - 20
+     - 2
+   * - IGKV1-33*01
+     - 0.6920
+     - 0.6880
+     - 78
+     - 5
+
+⛔ The first two rows are **TR** loci, where somatic hypermutation does not occur — so
+``v_identity`` reporting 0.8723 for ``TRBV28*02`` is measuring junction diversity outright. The bias
+is worst when the aligned span is mostly junction: that record covers 47 nt of germline, only 30 of
+it framework. The IG rows move much less, because their alignments are mostly framework.
 
 .. important::
 

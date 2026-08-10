@@ -67,3 +67,47 @@ def test_the_anchors_classify_the_measured_recurrent_variants():
     # and the junction INCLUDES it -- junction != CDR3).
     for p in (1, 5):                          # measured at frequency 0.67 / 0.66
         assert p <= j.anchor_nt + 3, f"J position {p} should be inside the junction"
+
+
+def test_framework_only_identity_is_recomputable_from_the_emitted_columns():
+    """The recipe ``docs/shm.rst`` documents must actually work on arda's own committed output.
+
+    ``v_identity`` runs to ``t_vend``, the V germline's end, which is PAST Cys104 — so it is
+    depressed by junction diversity rather than by mutation load. The fix inside arda changes every
+    published SHM number and is deferred, but the split is computable downstream from
+    ``v_anchor_nt`` + ``v_germline_start/end`` + ``v_mutations``, which is the whole point of
+    emitting the anchors.
+
+    ⛔ The two TR records are the check that matters: T-cell receptors do not hypermutate, so a
+    framework-only identity below 1.0 there would mean the recipe is wrong.
+    """
+    import re
+    from pathlib import Path
+
+    import polars as pl
+
+    tsv = Path(__file__).resolve().parents[2] / "examples" / "example.airr.tsv"
+    if not tsv.exists():                      # pragma: no cover - source checkout without examples
+        pytest.skip("examples/example.airr.tsv not present")
+
+    mut_re = re.compile(r"^([ACGTN])(\d+)([ACGTN])$")
+    df = pl.read_csv(tsv, separator="\t", infer_schema_length=0)
+    seen = {}
+    for r in df.to_dicts():
+        if not r.get("v_call") or not r.get("v_anchor_nt"):
+            continue
+        gs, ge = int(r["v_germline_start"]), int(r["v_germline_end"])
+        anchor = int(r["v_anchor_nt"])
+        pos = [int(m.group(2)) for m in
+               (mut_re.match(t) for t in (r.get("v_mutations") or "").split(",")) if m]
+        span = max(0, min(ge, anchor) - gs + 1)
+        assert span > 0, f"{r['v_call']}: no framework left to measure"
+        fw = sum(1 for p in pos if p <= anchor)
+        seen[r["v_call"].split(",")[0]] = round(1 - fw / span, 4)
+
+    # TR cannot hypermutate: framework-only identity must be exactly 1.
+    assert seen.get("TRBV28*02") == 1.0, seen
+    assert seen.get("TRAV12-2*02") == 1.0, seen
+    # ...while the reported v_identity for that TRB record is well below 1 -- junction diversity.
+    trb = next(r for r in df.to_dicts() if (r.get("v_call") or "").startswith("TRBV28*02"))
+    assert float(trb["v_identity"]) < 0.95, "the defect this recipe works around has gone away"
