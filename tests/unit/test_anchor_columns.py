@@ -27,10 +27,13 @@ from arda.annotate.transfer import AIRR_COLUMNS
 
 
 def test_the_anchor_columns_are_appended_last():
-    """⛔ New columns go LAST. Adding one mid-list silently shifts every later column for a
-    consumer that reads the shipped set by position -- which has happened here before."""
-    assert AIRR_COLUMNS[-2:] == ("v_anchor_nt", "j_anchor_nt") or \
-        list(AIRR_COLUMNS[-2:]) == ["v_anchor_nt", "j_anchor_nt"]
+    """⛔ New columns go LAST, and each new one goes after the last one. Adding one mid-list
+    silently shifts every later column for a consumer that reads the shipped set by position --
+    which has happened here before. So this pins the ORDER of the non-schema tail, not just that
+    the anchors are somewhere in it: 2.17.0 appended `junction_completed_nt` after them, and the
+    two anchor columns had to keep their offsets from the end of the 2.16.0 header.
+    """
+    assert list(AIRR_COLUMNS[-3:]) == ["v_anchor_nt", "j_anchor_nt", "junction_completed_nt"]
 
 
 def test_the_anchors_classify_the_measured_recurrent_variants():

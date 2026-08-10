@@ -485,12 +485,17 @@ def _best_hits(tsv: Path) -> dict[str, dict]:
     return {row["query"]: row for row in df.iter_rows(named=True)}
 
 
-# The segment pass needs only these five fields. NOT `DEFAULT_FORMAT_OUTPUT`: that carries
+# The segment pass needs only these fields. NOT `DEFAULT_FORMAT_OUTPUT`: that carries
 # `cigar`/`qaln`/`taln` for up to `--max-seqs` rows per read, which is the 194 MB / 877 MB
 # regression `top_hit` exists to prevent (see its docstring). Here we cannot reduce to one row
 # per query first -- a junction-spanning read must contribute its best V AND its best J -- so the
 # only lever is asking for fewer columns.
-_SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart"
+#
+# `tend` is asked for ONLY so the target-inverted row can be recognised and refused, exactly as
+# `_best_hits` does (see its comment for what such a row costs). `_segment_rows` drops the column
+# again after filtering, so the row dicts the consuming loop sees are the same shape the C++
+# `segmap.segment_rows` builds -- which never emits an inverted span in the first place.
+_SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart,tend"
 
 #: Segment target prefix -> which side of a scaffold that row is evidence for. Anything not listed
 #: is dropped and is NEVER silently treated as a J.
@@ -548,12 +553,31 @@ def _segment_rows(tsv: Path) -> list[dict]:
     # looks complete. An empty query id is the same malformed row and would key every downstream
     # dict on `None`. Both route the read to the full-reference rescue instead, which is the
     # guarantee `--two-pass` is built on.
+    #
+    # ⛔ The TARGET-INVERTED row (`tstart > tend`) is the third shape, and it is filtered HERE for
+    # the same reason `_best_hits` filters it -- not because this path can ship the Jurkat phantom
+    # (the implied alignments it nominates are themselves reduced by `_best_hits`, which refuses
+    # them), but because a segment row's `tstart` is read as a FORWARD target offset by both of its
+    # consumers and neither can tell. `_align_implied` builds the prefilter diagonal from
+    # `qstart - tstart`, and `_cannot_reach_cys104` walks `tstart + |qend - qstart|` forward to ask
+    # whether the read can reach the Cys codon at all. On an inverted row the first silently
+    # produces a diagonal `mmseqs align` returns nothing for -- a read demoted to the full-reference
+    # rescue, which costs time and not correctness -- but the second can answer "unreachable" for a
+    # read that does reach Cys104, and that read is then aligned V-segment-only and emits NO
+    # junction. arda's own `segmap` always emits a forward span, so this only bites `arda map
+    # --two-pass` WITHOUT `--fast-segments`; it is cheap, and leaving the rule spelled out in one
+    # of the two reductions and not the other is the divergence `_SEGMENT_SIDE` exists to prevent.
     n_before = df.height
     df = df.filter(pl.col("query").is_not_null() & (pl.col("query") != "")
-                   & pl.col("bits").is_not_null())
+                   & pl.col("bits").is_not_null()
+                   & (pl.col("tstart") <= pl.col("tend")))
     if df.height != n_before:
-        logger.warning("%d segment alignment rows were unusable (no query id or no score) and were "
-                       "dropped before best-hit selection", n_before - df.height)
+        logger.warning("%d segment alignment rows were unusable (no query id, no score, or an "
+                       "inverted target span) and were dropped before best-hit selection",
+                       n_before - df.height)
+    # Dropped once it has done its only job, so a row dict from this path and one from
+    # `segmap.segment_rows` carry the same keys.
+    df = df.drop("tend")
     # Deterministic: exact bit-score ties between paralogous targets are broken on `target`,
     # the same rule `_best_hits` uses. Resolving them by TSV row order (as an earlier draft did)
     # silently undid the determinism fix -- 25/25 tied queries flipped when rows were reversed.
@@ -1337,6 +1361,7 @@ def _annotate_chunk(
     indel_rescue: bool = False,
     segment_only_v: bool = False,
     shm: str = "framework",
+    complete_junction_nt: int = 0,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1422,7 +1447,8 @@ def _annotate_chunk(
         dg = ref.d_germlines.get(entry.locus) if map_d else None
         out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
                                 d_germlines=dg, submitted_seq=qseq, anchors=ref.anchors,
-                                d_max_evalue=d_max_evalue, shm=shm))
+                                d_max_evalue=d_max_evalue, shm=shm,
+                                complete_junction_nt=complete_junction_nt))
     return out
 
 
@@ -1453,6 +1479,7 @@ def annotate_records(
     map_d: bool = True,
     d_max_evalue: float | None = None,
     shm: str = "framework",
+    complete_junction_nt: int = 0,
 ) -> list[dict]:
     """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
 
@@ -1473,7 +1500,7 @@ def annotate_records(
     return _annotate_chunk(records, ref, target_db, seqtype,
                            threads=threads, sensitivity=sensitivity,
                            mm_strand=mm_strand, map_d=map_d, d_max_evalue=d_max_evalue,
-                           shm=shm)
+                           shm=shm, complete_junction_nt=complete_junction_nt)
 
 
 def annotate_file(
@@ -1489,6 +1516,7 @@ def annotate_file(
     map_d: bool = True,
     d_max_evalue: float | None = None,
     shm: str = "framework",
+    complete_junction_nt: int = 0,
 ) -> Path:
     """Annotate a FASTA/FASTQ file and stream an AIRR TSV.
 
@@ -1532,7 +1560,8 @@ def annotate_file(
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
                                    threads=threads, sensitivity=sensitivity,
                                    mm_strand=mm_strand, map_d=map_d,
-                                   d_max_evalue=d_max_evalue, shm=shm)
+                                   d_max_evalue=d_max_evalue, shm=shm,
+                                   complete_junction_nt=complete_junction_nt)
             fh.write(format_rows(recs, extra_cols))
     t.join()
     return output

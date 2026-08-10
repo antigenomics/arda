@@ -80,6 +80,53 @@ column, so the default output does not move) and refused with ``--reconstruct``.
 only place the FASTQ quality is still in hand, and it is what ``correct --min-junction-q`` gates
 on: see :ref:`quality gate`.
 
+Finishing a truncated junction from the germline
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A read can reach Cys104, run into the J, and stop before [FW]118 — a junction arda declines
+because its 3' boundary was never observed. ``--complete-junctions N`` finishes it from the called
+J's germline, taking at most ``N`` nt.
+
+This is sound for one reason, and only in one direction: the J's 5' chew-back and the N/P additions
+all lie **upstream** of the read's last aligned J base, so everything from there to [FW]118 is
+germline-**templated**. The V side has no counterpart — a read short at the 5' end is missing bases
+the V germline does not template either, which is why ``v_anchor_prefix`` refuses rather than
+extrapolates.
+
+⛔ **The added bases are imputed, not observed.** Every completed row carries the count in
+``junction_completed_nt``, so a consumer filters or weights on that column instead of trusting the
+junction; an empty value means the junction is entirely observed, which is what every junction is
+unless the flag is passed. Off by default (``0``).
+
+Measured (arda 2.17.0, human, ``--complete-junctions 40``):
+
+.. list-table::
+   :header-rows: 1
+
+   * - library
+     - junctions
+     - completed
+     - median nt imputed
+   * - bulk RNA-seq, 1 M pairs (SRR5233639)
+     - 3,856 → 4,103 (**+6.4 %**)
+     - 247
+     - 13
+   * - TRA amplicon, 100 k reads
+     - 44,497 → 44,527 (+0.07 %)
+     - 30
+     - 14
+
+No junction that was already observed moves in either arm. 246 of the 247 bulk completions close on
+[FW]118; the one that does not is ``TRBJ2-7*02``, whose anchor codon really is not [FW] — the same
+allele biology as ``TRAJ35*01``'s Cys anchor, and read from ``anchor_nt`` rather than from a motif.
+
+⚠ **Two caveats, both measured.** On IG the imputed span can hide the SHM the read would have
+shown, biasing a completed junction's 3' end toward germline — and IG is where the yield is (175 of
+the 247 bulk completions are IGH). And a read whose alignment stops more than a partial codon short
+of its own 3' end is **refused**: on the TRA amplicon 236 of 266 candidates run from the V straight
+into ``TRAC`` with no J at all, while the aligner still names a J off a few coincidental bases.
+Completing those would have manufactured one junction per chimera.
+
 Python library
 --------------
 

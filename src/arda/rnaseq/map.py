@@ -473,6 +473,7 @@ def map_rnaseq(
     prefilter: bool = False,
     with_junction_quality: bool = False,
     shm: str = "framework",
+    complete_junction_nt: int = 0,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -612,6 +613,7 @@ def map_rnaseq(
                     fast_segments=fast_segments,
                     indel_rescue=indel_rescue,
                     segment_only_v=segment_only_v, shm=shm,
+                    complete_junction_nt=complete_junction_nt,
                     report=report.segment_search if segment_db else None)
                 if drop_constant_only:
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
