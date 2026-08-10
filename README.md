@@ -321,6 +321,48 @@ SLURM `--mem` from Stage 3, never Stage 1.
 
 ## Accuracy
 
+### Recall on bulk RNA-seq — arda vs TRUST4 vs MiXCR
+
+The three-way comparison, on the **same 16 datasets where every tool ran**, 5,273 real fragments,
+Wilson 95 % CIs. Best bold; ties bold together.
+
+| tool | config | recall | precision (lower bound) | false positives | FP / 1M reads | peak RSS |
+|---|---|---|---|---:|---:|---:|
+| **arda** | shipped defaults | **0.986** [.982–.989] | **0.889** [.881–.897] | **70** | **21.9** | **254 MB** |
+| **TRUST4** | defaults | **0.987** [.984–.990] | 0.160 [.156–.164] | 22,185 | 6,932.8 | 306 MB |
+| MiXCR | `-OallowNoCDR3PartAlignments=true -OminSumScore=40` | 0.964 [.958–.969] | 0.051 [.050–.052] | 91,229 | 28,509.1 | 1,213 MB |
+| MiXCR | `align --preset rna-seq` as shipped | 0.193 [.183–.204] | 0.565 [.542–.588] | 91 | 28.4 | 1,213 MB |
+| arda | `--reconstruct` (6 paired datasets) | 0.995 | 0.905 | 14 | 11.7 | 249 MB |
+
+**Recall is a statistical tie between arda and TRUST4** — a 6-fragment gap with overlapping CIs, so
+both are marked winners and neither should be quoted as "higher recall" than the other.
+**Precision is not a tie**: arda's lower bound (0.881) sits above every competitor's *upper* bound.
+
+⚠ **Benchmark MiXCR at its best config, not its default.** `align --preset rna-seq` as shipped
+gives 0.193 recall; the two free options above take it to 0.964. Quoting the default alone is the
+mistake this project made and had to retract.
+
+⚠ Precision here is a **lower bound** — the grey band `30 ≤ v_score < 70` is scored under neither
+metric. ⛔ And TRUST4's recall and FP are scored on its **candidate extraction**, a different (and
+much less filtered) stage than arda's post-`--min-score` output; the two are not like-for-like on
+FP, which is why the FP column carries a per-1M normalisation rather than a bare ratio.
+
+What explains the table is the **J→C class — 22 % of real fragments** on bulk:
+
+| tool | V-covered reads (n = 4,117) | J→C agreement (n = 1,156) |
+|---|---:|---:|
+| arda | 0.9864 | **0.9844** |
+| TRUST4 | 0.9944 | 0.9611 |
+| MiXCR (recall config) | **0.9990** | 0.8382 |
+| MiXCR (default) | 0.1482 | 0.3538 |
+
+On V-covered reads every tool is ≥ 0.986. arda's overall recall rests on the 345 `J + C` scaffolds
+in its reference, which took that class from 0.0606 to 0.9844 and overall recall from 0.78 to 0.986.
+⚠ Reported as *agreement*, not recall: arda now ships C scaffolds, so the adjudicator is no longer
+independent of it there.
+
+### Gene calls on a targeted amplicon
+
 Against an IgBLAST truth on a TRA amplicon, 100,000 reads:
 
 | metric | arda 2.11.1 | MiXCR 4.7.0 |
