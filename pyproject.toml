@@ -1,10 +1,14 @@
 [build-system]
-requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+# ⛔ pybind11 is UPPER-BOUNDED. `PYBIND11_MODULE` changed to multi-phase init in 3.0.0, so an
+# unbounded requirement builds wheels against whatever PyPI serves that day. Measured: 3.0.4
+# and 2.13.6 differ by ~13 % on a 6-arg noop binding call and are otherwise equivalent, so
+# the pin is for REPRODUCIBILITY, not speed.
+requires = ["scikit-build-core>=0.10", "pybind11>=3.0.2,<4"]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.15.0"
+version = "2.16.0"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"

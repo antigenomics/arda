@@ -266,4 +266,4 @@ def build_segment_reference(organism: str = "human", *, out_dir: Path | None = N
 # outscore a short V segment on raw bits, and taking only the single best hit would discard the
 # V call on most amplicon reads. The consumer must take the best V hit AND the best J hit per
 # read and merge them. Until that exists in the mapper, this reference is built and validated
-# but not wired into `arda rnaseq map`.
+# but not wired into `arda map`.

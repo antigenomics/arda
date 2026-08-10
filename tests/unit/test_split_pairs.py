@@ -127,7 +127,7 @@ def test_single_end_yields_no_r2(tmp_path):
 def test_fasta_input_is_refused_and_names_the_right_command(tmp_path):
     fa = tmp_path / "in.fasta"
     fa.write_text(">s0\nACGT\n>s1\nTGCA\n")
-    with pytest.raises(ValueError, match="arda split"):
+    with pytest.raises(ValueError, match="arda cluster split-fasta"):
         split_pairs(fa, tmp_path / "sh", shards=2)
 
 

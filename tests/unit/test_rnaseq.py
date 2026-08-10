@@ -492,8 +492,8 @@ def test_default_kmer_keeps_every_receptor_read(tmp_path, human_scaffolds):
 
 @requires_mmseqs
 @requires_human_db
-def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_scaffolds):
-    """``arda rnaseq run`` is ``map`` piped into ``correct``: three named outputs + a merged report.
+def test_rnaseq_mode_maps_then_corrects_and_merges_the_report(tmp_path, human_scaffolds):
+    """``arda rnaseq`` is ``map`` piped into ``correct``: three named outputs + a merged report.
 
     The mapping and correction themselves are covered above; this pins the one-shot glue -- the
     ``<prefix>.airr/.clones/.arda.json`` naming from ``--out-prefix``, and that the report carries
@@ -506,7 +506,8 @@ def test_rnaseq_run_maps_then_corrects_and_merges_the_report(tmp_path, human_sca
     fq = _write_fastq(tmp_path / "in.fastq", recs)
 
     res = CliRunner().invoke(
-        app, ["rnaseq", "run", "--r1", str(fq), "-p", "SAMPLE", "-d", str(tmp_path), "--threads", "2"])
+        app, ["rnaseq", "--r1", str(fq), "-p", "SAMPLE", "-d", str(tmp_path), "--threads", "2",
+              "--exact"])
     assert res.exit_code == 0, res.output
 
     airr, clones, rep = (tmp_path / f"SAMPLE.{ext}" for ext in ("airr.tsv", "clones.tsv", "arda.json"))

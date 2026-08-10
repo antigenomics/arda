@@ -13,13 +13,13 @@ precise, and a vaguer definition here would be a lie rather than a simplificatio
     stage**. Monotone across stages: it can only rise. `getrusage` reports high-water marks
     only -- `RUSAGE_SELF` since process start, `RUSAGE_CHILDREN` cumulative over children --
     and there is no per-stage reset, so a stage cannot be charged its own peak in isolation
-    when all three run in one process (`arda rnaseq run`).
+    when all three run in one process (`arda rnaseq` / `arda amplicon`).
 ``rss_gain_mb``
     How much *this* stage raised that mark; 0 if it stayed under an earlier stage's peak.
 
 The monotone number is the one an operator actually needs: it is what the process required at
 that point, which is what a memory directive has to cover. For per-stage attribution, run the
-stage in its own process (`arda rnaseq map|assemble|correct` separately) -- then
+stage in its own process (`arda map|assemble|correct` separately) -- then
 ``peak_rss_mb`` is that stage alone.
 """
 

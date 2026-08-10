@@ -194,15 +194,17 @@ arda info                                   # versions + available references
 arda annotate -i reads.fastq.gz -o out.airr.tsv --organism human --seqtype nt
 arda annotate -i prot.fasta -o out.tsv --seqtype aa --no-map-d
 arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report -   # bare (CDR3aa, V, J) records
-arda rnaseq map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # bulk RNA-seq: filter receptor reads
-arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv    # rescue CDR3s no read spans
-arda rnaseq correct -i mapped.airr.tsv -o clones.tsv            # collapse CDR3 errors into clonotypes
-arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # one-shot map+assemble+correct
+arda map --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv   # bulk RNA-seq: filter receptor reads
+arda assemble -i mapped.airr.tsv -o assembled.airr.tsv    # rescue CDR3s no read spans
+arda correct -i mapped.airr.tsv -o clones.tsv            # collapse CDR3 errors into clonotypes
+arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # BULK mode: map+assemble+correct
+arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # AMPLICON mode: same, other preset
+arda shm -i mapped.airr.tsv -o rescoped.airr.tsv                # recount SHM outside the junction
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda build-db --organism all                # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for local mmseqs version
 arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node AMPLICON: split → array → merge
-arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-node RNA-SEQ
+arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-node RNA-SEQ
 ```
 
 ## Cluster: two adapters, and picking the wrong one fails silently
@@ -210,7 +212,7 @@ arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-nod
 | input | command | shard unit |
 |---|---|---|
 | amplicon / single-end FASTA | `arda slurm` (`arda split` + `arda merge`) | one record |
-| bulk paired RNA-seq | `arda rnaseq slurm` (`arda rnaseq split` + `rnaseq reduce`) | one read **pair** |
+| bulk paired RNA-seq | `arda cluster submit` (`arda cluster split` + `cluster reduce`) | one read **pair** |
 
 **Never point `arda split` / `arda slurm` at paired RNA-seq.** They write FASTA — dropping the
 quality strings `--reconstruct` needs — and round-robin *records*, which puts a fragment's two
@@ -219,8 +221,8 @@ mates in different shards. There is no error; the numbers just come out wrong.
 **Never shard Stage 2 or Stage 3.** `correct` counts distinct fragments and collapses error
 variants globally; `assemble` grows contigs across reads. Per shard, a clone split across N
 shards is counted N times and the long-CDR3 contigs Stage 3 exists for are never built, because
-the reads that tile them never meet. `arda rnaseq slurm` distributes only `map` and runs the
-rest once, through the same function `arda rnaseq run` uses — so a sharded run is
+the reads that tile them never meet. `arda cluster submit` distributes only `map` and runs the
+rest once, through the same function the mode commands use — so a sharded run is
 **byte-identical** to a single-node one (verified on real data, all three artifacts).
 
 ## mmseqs: nothing to install, and nothing to pin
@@ -318,7 +320,7 @@ and `build-db` / `build-index`.
 
 ### `--prefilter`: the bulk lever
 
-`arda rnaseq map --prefilter` drops reads that share no exact 16-mer with the reference **before**
+`arda map --prefilter` drops reads that share no exact 16-mer with the reference **before**
 they reach MMseqs2. On bulk RNA-seq the receptor fraction is 0.02–3 %, so `mmseqs search` spends
 essentially all of its time proving reads are *not* receptor reads; the fitted cost model says so
 directly — `wall ≈ reads/46,353 + hits/350`, dominated by the **read count**, not the answer.
@@ -417,7 +419,7 @@ Off by default because there is no library type that predicts it — run a sampl
 
 ### `--fast-segments`: the segment pass without a homology search
 
-`arda rnaseq map --two-pass --fast-segments` replaces the segment `mmseqs search` with
+`arda map --two-pass --fast-segments` replaces the segment `mmseqs search` with
 `arda._segmap`, a C++ seed → vote-by-diagonal → ungapped-extension mapper over the same
 `segments.fasta`. It only **nominates**: every candidate is still aligned against the full
 `V+pad+J` scaffold and scored by MMseqs2, so this is not a second aligner.
@@ -477,7 +479,7 @@ Two constants make it equivalent, and both were wrong first:
 
 ### `--indel-rescue`: what an ungapped extension structurally cannot score
 
-`arda rnaseq map --two-pass --fast-segments --indel-rescue`. An ungapped extension follows ONE
+`arda map --two-pass --fast-segments --indel-rescue`. An ungapped extension follows ONE
 diagonal, so a read carrying an indel relative to germline scores only up to the indel — measured
 in the unit test: a 120 nt read scores **240** clean and **120**, exactly half, with one base
 deleted. Its scaffold is then chosen on truncated evidence.
@@ -624,5 +626,5 @@ against **7.2 % of bulk** reads, which mostly do not span a junction at all.
 - `map_d=True` on synthetic/partial input with no real junction simply finds no
   D — harmless; pass `map_d=False` to skip the search.
 - IgBLAST is needed only to build references, never at annotation time.
-- `arda rnaseq correct` uses `seqtree` (a core dependency since 2.5.5);
+- `arda correct` uses `seqtree` (a core dependency since 2.5.5);
   without it every `correct` test **skips silently** rather than failing.

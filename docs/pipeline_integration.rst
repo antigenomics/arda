@@ -2,17 +2,19 @@ Pipeline integration
 ====================
 
 arda is a plain CLI over named files, so it embeds in any workflow engine without glue code.
-This page covers the one-shot RNA-seq command and the ready-made Nextflow module.
+This page covers the one-shot mode commands and the ready-made Nextflow module.
 
-One-shot command
-----------------
+One-shot commands
+-----------------
 
-``arda rnaseq run`` runs ``map``, ``assemble`` and ``correct`` in a single call — the three steps
-a bulk RNA-seq pipeline almost always wants together:
+``arda rnaseq`` (bulk) and ``arda amplicon`` (targeted RepSeq) each run ``map``, ``assemble`` and
+``correct`` in a single call — the three steps a pipeline almost always wants together — with the
+speed and denoising configuration that regime needs:
 
 .. code-block:: bash
 
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz --out-prefix SAMPLE --out-dir results/
+   arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz --out-prefix SAMPLE --out-dir results/
+   arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz --out-prefix SAMPLE --out-dir results/
 
 It writes four files under ``--out-dir``:
 
@@ -29,15 +31,24 @@ It writes four files under ``--out-dir``:
 
 Single-end input drops ``--r2``. The defaults match the individual commands (``--min-score 75``,
 ``--kmer 12`` for ~300 MB peak RSS, complete-junction clonotypes, D mapping on); use ``map``,
-``assemble`` and ``correct`` separately when you need to tune their individual knobs, and
+``assemble``, ``correct`` and ``shm`` separately when you need to tune their individual knobs, and
 ``--no-map-d`` to skip D in all three stages.
+
+.. warning::
+
+   ``arda rnaseq run`` was **removed in 2.16.0**. It was the entry point for amplicon libraries as
+   well, with the regime spelled out as four loose flags that do not compose — and the one flag it
+   exposed for four releases, ``--two-pass``, is a *loss* in both regimes (0.762× on bulk, 0.87× on
+   an IGH amplicon). The regime is now the command name. ``--exact`` turns every speedup off and
+   reproduces the pre-2.16.0 default output; note that ``arda rnaseq`` without it enables
+   ``--prefilter``, which costs ~0.15 % of mapped reads.
 
 Nextflow module
 ---------------
 
 A drop-in, nf-core-style local module ships in ``integrations/nextflow/arda/`` (``main.nf``,
 ``environment.yml``, ``Dockerfile``, ``nextflow.config``, ``README.md``). It wraps one
-``arda rnaseq run`` call per sample, emits a ``versions.yml``, and publishes to
+``arda <mode>`` call per sample, emits a ``versions.yml``, and publishes to
 ``${params.outdir}/arda/``.
 
 Requirements
@@ -70,7 +81,7 @@ Runtime & resources
 ~~~~~~~~~~~~~~~~~~~~~
 
 arda is **CPU-bound** — the MMseqs2 search dominates — so give it cores. Measured on bulk tumor
-RNA-seq at 32 cores, ``arda rnaseq run --assemble`` (map + assemble + correct):
+RNA-seq at 32 cores, ``arda rnaseq --assemble`` (map + assemble + correct):
 
 .. list-table::
    :header-rows: 1

@@ -35,7 +35,7 @@ def airr_header(extra_columns: tuple[str, ...] = ()) -> str:
     """The AIRR TSV header line (no trailing newline).
 
     ``extra_columns`` appends non-schema fields (today only ``junction_quality``, emitted by
-    ``arda rnaseq map --junction-quality``). They go at the END, after every shipped column, so a
+    ``arda map --junction-quality``). They go at the END, after every shipped column, so a
     consumer reading the shipped set by position is unaffected; with the default ``()`` the header
     is byte-identical to what it has always been.
     """

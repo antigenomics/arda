@@ -148,7 +148,7 @@ the class, never the subclass:** IGHG1–4 are ~95% identical over CH1, so the t
 gene ties often while the top class is unique; `c_class` collapses to `IGHG`/`IGHM`/
 `IGHA`/…, or the locus constant (`IGHC`) when calls straddle classes. In paired bulk
 RNA-seq the isotype of a CDR3-bearing read is recovered from its constant-region
-mate (`arda rnaseq map`).
+mate (`arda map`).
 
 ## Contig annotation
 

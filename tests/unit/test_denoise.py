@@ -287,3 +287,74 @@ def test_the_rescue_raises_when_junction_quality_is_absent(tmp_path):
     # ...and `fast`, which needs no quality, still works on the same input.
     rep = correct_airr(src, tmp_path / "noq_fast.out", map_d=False, ec_mode="fast")
     assert rep.reads_assigned == 5
+
+
+# --- `--call-level gene` -----------------------------------------------------------------------
+
+_SPLIT_ALLELE = "TRBV20-1*02"      # an ALLELE-level split of the dominant clone's own V gene
+
+
+def _fixture_allele_split(tmp_path):
+    """Jurkat's shape: a junction byte-identical to the dominant clone's, under another ALLELE.
+
+    Measured there as `TRGJ1*01` at 64 reads against `TRGJ1*02` at 140 on one junction. No error
+    model can reach it -- two identical junctions have no discriminating base -- and the junction
+    key merges it only because the V differs at all; at gene level it is not a split in the first
+    place.
+    """
+    q = "I" * len(_PARENT)
+    rows = (_rows(_PARENT, 140, q, prefix="a")
+            + _rows(_PARENT, 64, q, prefix="b", v=_SPLIT_ALLELE))
+    p = tmp_path / "allele_split.tsv"
+    pl.DataFrame(rows).write_csv(p, separator="\t")
+    return p
+
+
+def test_gene_level_calls_collapse_an_allele_split_and_carry_its_reads(tmp_path):
+    src = _fixture_allele_split(tmp_path)
+    allele, gene = tmp_path / "allele.tsv", tmp_path / "gene.tsv"
+    correct_airr(src, allele, map_d=False, call_level="allele", error_rate=1e-6)
+    correct_airr(src, gene, map_d=False, call_level="gene", error_rate=1e-6)
+    n_a, r_a = _totals(allele)
+    n_g, r_g = _totals(gene)
+    assert n_a == 2 and n_g == 1, "the two alleles are one clonotype at gene level"
+    assert r_g == r_a == 204, "⛔ and no read may be lost doing it"
+    assert pl.read_csv(gene, separator="\t")["v_call"][0] == "TRBV20-1"
+
+
+def test_gene_level_dedupes_a_tie_list_that_differs_only_by_allele(tmp_path):
+    """`TRAV1*01,TRAV1*02` is ONE gene stated twice -- the artifact behind the 14-point spread
+    between v_allele_exact (.8328) and v_allele_resolved (.9763) across 25 cluster datasets."""
+    q = "I" * len(_PARENT)
+    rows = _rows(_PARENT, 10, q, prefix="t", v="TRBV20-1*01,TRBV20-1*02")
+    src = tmp_path / "ties.tsv"
+    pl.DataFrame(rows).write_csv(src, separator="\t")
+    out = tmp_path / "gene.tsv"
+    correct_airr(src, out, map_d=False, call_level="gene", error_rate=1e-6)
+    assert pl.read_csv(out, separator="\t")["v_call"][0] == "TRBV20-1"
+
+
+def test_an_unknown_call_level_raises_rather_than_defaulting(tmp_path):
+    with pytest.raises(ValueError, match="call_level"):
+        correct_airr(_fixture(tmp_path), tmp_path / "o.tsv", map_d=False, call_level="Gene")
+
+
+# --- `--no-isotype` ----------------------------------------------------------------------------
+
+def test_no_isotype_leaves_the_constant_columns_empty(tmp_path):
+    """Isotype resolution is a VOTE over the fragment's constant-region reads; turning it off must
+    leave `c_call` blank rather than reporting one read's opinion as the clonotype's class."""
+    q = "I" * len(_PARENT)
+    rows = _rows(_PARENT, 6, q, prefix="i")
+    for r in rows:
+        r["c_call"], r["c_class"] = "IGHG1*01", "IGHG"
+    src = tmp_path / "iso.tsv"
+    pl.DataFrame(rows).write_csv(src, separator="\t")
+    on, off = tmp_path / "on.tsv", tmp_path / "off.tsv"
+    correct_airr(src, on, map_d=False, isotype=True, error_rate=1e-6)
+    correct_airr(src, off, map_d=False, isotype=False, error_rate=1e-6)
+    # The CLASS, never the subclass: IGHG1-4 are ~95 % identical over CH1, so the top gene ties on
+    # 26.7 % of real reads and the top class never does.
+    assert pl.read_csv(on, separator="\t")["c_call"][0] == "IGHG"
+    assert not pl.read_csv(off, separator="\t", infer_schema_length=0)["c_call"][0]
+    assert _totals(on)[1] == _totals(off)[1] == 6, "the isotype switch must not move reads"

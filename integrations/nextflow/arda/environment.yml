@@ -17,19 +17,12 @@ dependencies:
   - pip:
       # seqtree (needed by `arda rnaseq correct`) is a core dependency -- there is no extra to add.
       #
-      # ⛔ 2.12.0 IS THE MINIMUM, and it is not a nicety. MEASURED against the released 2.11.1 env
-      # that Nextflow builds from this very file: `arda rnaseq run` there accepts `--two-pass` and
-      # NOTHING ELSE of the tuning set --
-      #     PRESENT --two-pass
-      #     MISSING --fast-segments --v-only-on-segment --prefilter --indel-rescue
-      # -- so BOTH regime presets abort with "No such option: --fast-segments" / "--prefilter", and
-      # the only combination 2.11.1 can run is `--two-pass` alone, which is the one combination
-      # that is a LOSS in both regimes (0.762x bulk, 0.87x IGH amplicon).
+      # ⛔ 2.16.0 IS THE MINIMUM, and it is a hard requirement, not a nicety: `arda rnaseq run`
+      # -- the command every earlier version of this module invoked -- WAS REMOVED in 2.16.0. The
+      # regime is now the command name (`arda rnaseq` / `arda amplicon`), so this module and the
+      # CLI must move together. An older arda fails with "Got unexpected extra argument (run)";
+      # a newer module against an older arda fails the same way.
       #
-      # ⚠ A git pin does NOT rescue this yet, and that was measured too: the commits carrying the
-      # flags are still LOCAL -- `master` is ahead of `origin/master`, so
-      # `arda-mapper @ git+https://github.com/antigenomics/arda@master` builds and installs 2.11.1
-      # WITHOUT them, failing identically. Until master is pushed and 2.12.0 released, the only
-      # working substitute is a local checkout:
-      #   - "arda-mapper @ file:///abs/path/to/arda"
-      - arda-mapper==2.12.0
+      # It is also the first release where `--shm` exists, and where each mode's `--ec-mode`
+      # default matches its regime rather than being `fast`.
+      - arda-mapper==2.16.0

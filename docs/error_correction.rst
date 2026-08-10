@@ -1,13 +1,13 @@
 Error correction
 ================
 
-``arda rnaseq correct`` turns a table of mapped reads into a table of clonotypes. Two things
+``arda correct`` turns a table of mapped reads into a table of clonotypes. Two things
 happen there: reads are aggregated on the clonotype key, and CDR3 variants that are better
 explained as sequencing error than as biology are collapsed onto the clone they came from.
 
 .. code-block:: bash
 
-   arda rnaseq correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
+   arda correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
 
 The clonotype key is ``(locus, v_call, j_call, junction)``. Abundance is the AIRR
 ``duplicate_count`` — every read that encompasses the junction, spanning or partial, assigned by
@@ -123,8 +123,8 @@ below Q**.
 
 .. code-block:: bash
 
-   arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
-   arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --min-junction-q 20
+   arda map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
+   arda correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --min-junction-q 20
 
 Three properties of the gate, each deliberate:
 
@@ -626,8 +626,8 @@ Cross-lineage false positives are 0 throughout. The gate does not overrule ``--e
 .. code-block:: bash
 
    # low-frequency variant recovery, without paying for it in spurious clonotypes
-   arda rnaseq map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
-   arda rnaseq correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --ec-mode accurate
+   arda map     --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --junction-quality
+   arda correct -i mapped.airr.tsv -o clones.tsv --error-rate 1e-5 --ec-mode accurate
 
 The template-error floor: why V2 stays unrecoverable
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

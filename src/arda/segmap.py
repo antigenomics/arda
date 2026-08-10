@@ -21,7 +21,7 @@ the full V+pad+J scaffold by MMseqs2 and scored there, so the contract is that a
 must not move — not that these scores match mmseqs' bit scores. They are on a different scale by
 design (see ``MATCH``/``MISMATCH`` in ``src/_segmap/segmap.cpp``).
 
-Off by default. Enable with ``arda rnaseq map --two-pass --fast-segments``.
+Off by default. Enable with ``arda map --two-pass --fast-segments``.
 """
 
 from __future__ import annotations

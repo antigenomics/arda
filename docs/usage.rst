@@ -74,7 +74,7 @@ consume the D-D markup: :doc:`d_segments`.
 Quality over the junction
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-``arda rnaseq map --junction-quality`` adds a ``junction_quality`` column — the read's Phred+33
+``arda map --junction-quality`` adds a ``junction_quality`` column — the read's Phred+33
 string over exactly the bases of ``junction``, same orientation. Off by default (it is a non-schema
 column, so the default output does not move) and refused with ``--reconstruct``. Stage 1 is the
 only place the FASTQ quality is still in hand, and it is what ``correct --min-junction-q`` gates
@@ -99,17 +99,18 @@ Bulk RNA-seq mode
 -----------------
 
 ``arda rnaseq`` extracts the receptor repertoire from bulk RNA-seq, where only
-1–5% of reads are receptor-derived. The pipeline has three stages — ``map``,
-``assemble``, ``correct`` — run individually or in one shot with ``run``:
+1–5% of reads are receptor-derived; ``arda amplicon`` is the same pipeline with the
+targeted-library configuration. The pipeline has three stages — ``map``, ``assemble``,
+``correct`` — run individually or in one shot by the mode:
 
 .. code-block:: bash
 
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/     # map + assemble + correct
+   arda rnaseq --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/     # map + assemble + correct
 
    # or the stages separately:
-   arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
-   arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv      # long-CDR3 contigs
-   arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
+   arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
+   arda assemble -i mapped.airr.tsv -o assembled.airr.tsv      # long-CDR3 contigs
+   arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
 
 **map** streams paired FASTQ and writes only the reads that map to a receptor
 scaffold. The reference includes ``J + C`` constant-region scaffolds, so a read
@@ -142,7 +143,7 @@ gold-standard reference for benchmarking.
 Choosing a mode
 ---------------
 
-``arda rnaseq map`` ships a default one-pass path plus two **alternative** accelerations. They
+``arda map`` ships a default one-pass path plus two **alternative** accelerations. They
 attack different terms of the cost, and picking one by habit rather than by regime is the
 easiest way to make arda slower than its own default.
 
@@ -182,22 +183,21 @@ Amplicon / RepSeq
 
 .. code-block:: bash
 
-   # one shot
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --threads 8 \
-       --two-pass --fast-segments --v-only-on-segment
+   # one shot -- the mode carries the configuration
+   arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --threads 8
 
    # or stage by stage
-   arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report map.json \
+   arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report map.json \
        --threads 8 --two-pass --fast-segments --v-only-on-segment
-   arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv --report assemble.json
-   arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv \
+   arda assemble -i mapped.airr.tsv -o assembled.airr.tsv --report assemble.json
+   arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv \
        -o clones.tsv --report correct.json
 
 .. important::
 
    ``correct`` takes the Stage-3 output through ``--extra-airr``. Omit it and the contigs
    ``assemble`` just built are silently discarded — the clonotypes whose CDR3 no single read
-   spans never reach the table. ``arda rnaseq run --assemble`` wires this up for you.
+   spans never reach the table. ``arda rnaseq`` / ``arda amplicon`` wire this up for you.
 
 Measured on the same 100 k-read TRA amplicon, in one job, at 8 threads:
 
@@ -252,14 +252,14 @@ Bulk RNA-seq
 
 .. code-block:: bash
 
-   # one shot
-   arda rnaseq run --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --threads 8 --prefilter
+   # one shot -- the mode carries the configuration
+   arda rnaseq --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --threads 8
 
    # or stage by stage
-   arda rnaseq map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report map.json \
+   arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report map.json \
        --threads 8 --prefilter
-   arda rnaseq assemble -i mapped.airr.tsv -o assembled.airr.tsv --report assemble.json
-   arda rnaseq correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv \
+   arda assemble -i mapped.airr.tsv -o assembled.airr.tsv --report assemble.json
+   arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv \
        -o clones.tsv --report correct.json
 
 ``--prefilter`` drops reads that share no exact 16-mer with the reference before ``createdb``
@@ -378,14 +378,14 @@ or gzipped. There are two cluster adapters, and they are **not** interchangeable
 ``arda slurm`` — amplicon / single-end
   Shards one FASTA across an array of ``arda annotate`` tasks and concatenates the results.
 
-``arda rnaseq slurm`` — bulk RNA-seq
-  Shards paired FASTQ across an array of ``arda rnaseq map`` tasks, then runs Stages 2-3
+``arda cluster submit`` — bulk RNA-seq
+  Shards paired FASTQ across an array of ``arda map`` tasks, then runs Stages 2-3
   **once** over the merged Stage-1 AIRR::
 
-      arda rnaseq slurm --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8 \
+      arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8 \
           --partition medium --submit
 
-  The result is **byte-identical** to the equivalent ``arda rnaseq run``. Two properties make
+  The result is **byte-identical** to the equivalent single-node ``arda rnaseq``. Two properties make
   that true, and both are easy to break:
 
   * shards are **contiguous blocks of read pairs** (never round-robin), so concatenating the
@@ -396,15 +396,16 @@ or gzipped. There are two cluster adapters, and they are **not** interchangeable
 
 .. warning::
 
-   Do not point ``arda split`` or ``arda slurm`` at paired RNA-seq. They write FASTA, so the
+   Do not point ``arda cluster split-fasta`` or ``arda cluster submit-fasta`` at paired RNA-seq.
+   They write FASTA, so the
    quality strings ``--reconstruct`` needs are discarded, and they round-robin *records*, which
-   puts a fragment's two mates in different shards. Use ``arda rnaseq split`` /
-   ``arda rnaseq slurm``.
+   puts a fragment's two mates in different shards. Use ``arda cluster split`` /
+   ``arda cluster submit``.
 
 Run reports
 -----------
 
-``--report`` (per stage) and ``arda rnaseq run`` (merged, ``<prefix>.arda.json``) record what
+``--report`` (per stage) and the modes (merged, ``<prefix>.arda.json``) record what
 happened and what it cost. Three resource fields appear on every stage:
 
 ``wall_seconds``
@@ -420,7 +421,7 @@ happened and what it cost. Three resource fields appear on every stage:
 
 ``rss_gain_mb``
    How much *that* stage raised the mark. For an unambiguous per-stage figure, run the stage in
-   its own process (``arda rnaseq map`` / ``assemble`` / ``correct`` separately); then
+   its own process (``arda map`` / ``assemble`` / ``correct`` separately); then
    ``peak_rss_mb`` is that stage alone.
 
 .. note::
