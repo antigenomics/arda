@@ -135,12 +135,19 @@ def test_mode_passes_its_preset_through(monkeypatch, tmp_path):
 
 def test_indel_rescue_without_fast_segments_raises(monkeypatch, tmp_path):
     """⛔ A flag that is accepted and silently does nothing is the failure this project keeps
-    hitting. `--indel-rescue` needs the fast segment pass, so `--exact` must reject it."""
-    monkeypatch.setattr("arda.rnaseq.pipeline.run", lambda **kw: None)
+    hitting. `--indel-rescue` needs the fast segment pass, so `--exact` must reject it.
+
+    Asserted on BEHAVIOUR — non-zero exit, and the pipeline never started — not on the message.
+    typer renders errors through rich, in a box wrapped to the terminal width, so a substring
+    assertion over that passes on an 80-column laptop and fails on a CI runner that wraps
+    `--indel-rescue` across the line break. It did exactly that.
+    """
+    called = []
+    monkeypatch.setattr("arda.rnaseq.pipeline.run", lambda **kw: called.append(kw))
     res = runner.invoke(app, ["amplicon", "--r1", "r1.fq", "-p", "S", "-d", str(tmp_path),
                               "--indel-rescue", "--exact"])
     assert res.exit_code != 0
-    assert "indel-rescue" in (res.stdout + str(res.stderr))
+    assert not called, "the pipeline ran despite an unsatisfiable flag combination"
 
 
 def test_the_two_version_literals_agree():
