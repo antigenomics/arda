@@ -3,6 +3,108 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.15.0
+
+### Fixed — contig assembly (⛔ read counts and contig sequences change)
+
+A second audit went over SHM calling and contig assembly. Eight defects, each with a regression test
+verified to fail without it.
+
+**⛔ Contigs were READ-ORDER DEPENDENT.** The extension tie-break was `len(ext) > len(best_ext)` with
+a strict `>`, so equal-length candidates were resolved by the order the posting list happened to be
+in — which is AIRR row order, which comes from a threaded MMseqs2 search. The contig *sequence*, and
+every junction derived from it, could differ between runs on the same input. Now ordered on
+`(length, sequence)`, a total order, in both the 3′ and 5′ passes.
+
+**A contig's junction is now only attributed to members that COVERED it.** Membership is granted on
+a `min_overlap` match, and once the extension passes have accumulated germline at the contig ends
+that match can be *pure germline V* — the 5′ pass says so itself: "that region is shared germline, so
+any V-read of the gene extends it correctly". Every incomplete member was nonetheless stamped with
+the contig's junction, so a read of a **different clone of the same V gene** was credited to this
+clonotype's `duplicate_count` on no clone-specific evidence. Members now carry their span in contig
+coordinates and must cover the junction by ≥10 nt.
+
+⚠ **This reduces reported abundance.** On the committed 1,035-read example: rescued members 162 →
+145, reads counted 384 → 367, clonotypes 19 → 18. Those 17 reads are *genuinely uncounted, not
+moved* — a germline-only read matches no junction, so coverage assignment cannot re-place it. It is a
+deliberate precision-over-recall trade, unlike the error-correction path where read conservation is
+an invariant. ✅ The clonotype that went is the case *for* the change: `CAASMAGGGNKLTF` under
+`TRAV13-1*01` with 2 reads against the same junction under `TRAV13-1*02` with 28 — two alleles of one
+gene, i.e. de-duplication rather than loss.
+
+**A rejected contig now releases its reads.** `used` was set as reads were recruited but a contig
+dropped for having <2 members never gave them back, so a seed that failed to extend was permanently
+consumed and could not join a later contig even as an ordinary extension member. Seeds are tried
+longest-CDR3-tail first, so this stranded exactly the short-tailed reads that most need a contig.
+
+**The assembly k-mer index is bounded at insert.** It posted every k-mer position of every mapped
+read of the locus with no cap; `scan_cap` bounded only how many postings were *consumed*, and
+`--assemble` is on by default. ⚠ Proved equivalent before shipping, since a cap that changes the
+candidate set is a behaviour change and not an optimisation: both consumers already slice
+`[:scan_cap]`. Measured on 20,000 reads sharing a 60 nt germline prefix — candidate sets identical
+for every k-mer, postings 1,600,000 → 784,000, ~112 MB → ~82 MB.
+
+### Fixed — clonotype reporting
+
+**Isotype is one vote per FRAGMENT, at last.** `_dominant_ccall` deduplicated its read list down to
+fragments and then re-expanded to one entry *per row*, so a fragment whose two mates both carried a
+`c_class` voted twice, and an assembly-rescued fragment voted again. A one-fragment minority could
+outvote a two-fragment majority. ⛔ The tally was also order-dependent — `Counter.most_common(1)`
+breaks ties by insertion order — so a two-way isotype tie could report a different class run to run.
+Now lexicographic.
+
+**Under `--all-junctions`, an assembled row outranks the read's own truncated junction**, and a
+clonotype left with no reads is not emitted. Coverage pass 1 walks the concatenated frame mapped-rows
+first, so the read's own *truncated* junction won the race and the contig's clonotype was emitted with
+`duplicate_count` 0 — measured on a 2-read fixture: `CAKGALQ` dup=2 beside `CAKGALQKW` dup=0. Neither
+half touches read conservation: the reads move, and a dropped row has none by definition.
+
+**`reads_with_junction` no longer double-counts assembly-rescued reads** (once for the incomplete
+Stage-1 row, once for the assembled row) while being documented as a Stage-1 statistic.
+`reads_from_assembly` and `empty_clonotypes` report the two new quantities separately.
+
+### Fixed — `arda resolve-ties` degraded silently without a reference
+
+It caught `OSError` per locus, continued with an empty germline set, and returned output
+byte-identical to its input with `expanded: 0` — indistinguishable from a library that genuinely had
+no ties. The same "raise, never degrade" rule `--min-junction-q` and the quality rescue already
+follow. ⚠ This had kept CI red since tie lists were added.
+
+### Added — the junction boundary in GERMLINE coordinates
+
+`v_anchor_nt` and `j_anchor_nt` (0-based Cys104 / [FW]118 offsets in the called allele) are emitted
+per read, appended last. They existed only inside the reference before, so a consumer holding the TSV
+could not tell a framework mutation from a junction one. Now:
+
+* a `v_mutations` entry at 1-based `p` is junction-internal iff `p > v_anchor_nt`;
+* a `j_mutations` entry at `p` is junction-internal iff `p <= j_anchor_nt + 3`.
+
+This is what makes allele re-assignment and SHM correction a *downstream* job — see
+`docs/shm.rst` for the framework-only identity recipe and the measured split.
+
+### Changed
+
+**`scripts/pack_reference.sh` rejects an empty reference file**, not just a missing one. A
+`build-db` run without IgBLAST emits 0-byte `alleles.*`/`markup.*`, which passed the presence check,
+shipped, and crashed every fresh install with `NoDataError: empty CSV` — v2.5.7 shipped exactly that.
+The smallest genuine file is 24,372 B against a 1,000 B floor (#83).
+
+**Correction to the 2.14.0 notes:** the coverage k-mer cap's under-assignment is **library-dependent**,
+not a general property. It tracks how much germline the junctions share: **1.6 %** on a TRA amplicon
+(short, near-germline junctions over 36,741 roots) against **0.013 %** on a TRB amplicon of comparable
+depth (72,339 roots, D+N-bearing junctions that are far more specific).
+
+### Known defects, documented not fixed
+
+`v_mutations` / `j_mutations` **and** `v_identity` include junction-internal positions — the V
+germline's 3′ tail and the J germline's 5′ head lie inside the junction, and both are scoped by
+segment rather than by the junction boundary. Measured on a TRA amplicon, where TCRs cannot
+hypermutate so every entry is spurious by construction: **1.046 V and 1.658 J entries per read**, and
+`v_identity` reporting **0.8723 on a TCR** whose framework-only identity is **1.0000**. ⚠ Frequency
+alone does not separate error from allele from junction diversity — frequency **and** position against
+the anchor does. Fixing it inside arda changes every published SHM number, so it gets its own round;
+`docs/shm.rst` carries the recipe and the measurements meanwhile.
+
 ## 2.14.0
 
 ### Fixed — a full-depth read leak in coverage assignment (⛔ read counts change)
