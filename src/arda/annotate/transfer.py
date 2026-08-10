@@ -122,6 +122,14 @@ AIRR_COLUMNS = (
     # its anchor at 270; TRAJ8*01 position 1 at 0.67 against its anchor at 26) -- i.e. an allele
     # difference in the templated V/J tail, not somatic mutation and not N/P diversity.
     + ["v_anchor_nt", "j_anchor_nt"]
+    # ⛔ How many of this junction's 3' bases arda IMPUTED from the called J's germline rather than
+    # reading them off the query (`--complete-junctions`, off by default). Empty means the junction
+    # is entirely observed, which is what every junction was before 2.17.0 and what every junction
+    # still is unless the flag is passed. It is a COLUMN and not a silent behaviour because
+    # "does this tool invent a junction it has no anchor for" is the question every accuracy metric
+    # here rests on, and a consumer must be able to answer it per row -- filter on it, or weight by
+    # it, without re-deriving anything.
+    + ["junction_completed_nt"]
 )
 
 _VSIDE = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3")
@@ -412,6 +420,59 @@ def _junction_nt(query_seq, cs, f4, coding_start, v_end_q):
     return junction_nt, junction_aa, cdr3_aa, phase
 
 
+#: Query bases past the J alignment end that a completed junction is allowed to discard.
+#:
+#: A read whose alignment stops well before its own 3' end stopped for a REASON -- an indel, an
+#: adapter, a run of miscalls -- and pasting germline over that is not completion, it is
+#: overwriting the evidence with the answer. 3 nt covers the ordinary case: a final partial codon
+#: that an ungapped extension would not carry.
+_MAX_UNALIGNED_TAIL_NT = 3
+
+
+def _germline_completed_junction(query_seq, cs, coding_start, v_end_q, *, j_call, j_germline_end,
+                                 q_aln_end, anchors, max_nt):
+    """``(junction_nt, junction_aa, cdr3_aa, phase, n_completed)``, or ``None``.
+
+    For a read that reached Cys104 and ran into the J germline but stopped before [FW]118. The
+    junction's 3' boundary is the only one arda can rebuild without observing it: the J's 5'
+    chew-back and the N/P additions are all UPSTREAM of the read's last aligned J base, so
+    everything from there to [FW]118 is J-germline **templated**. ``cdr3_anchors.tsv`` stores
+    exactly that span -- a J's ``germline_nt`` runs from the allele's 5' end through the [FW]118
+    codon -- so the missing tail is ``germline_nt[j_germline_end:]`` and nothing needs aligning to
+    find it. The V side has no counterpart: a read short at the 5' end is missing bases the V
+    germline does not template either (that is what ``v_anchor_prefix`` refuses).
+
+    ⛔ **These bases are IMPUTED, not observed**, which is why the whole path is off unless asked
+    for and why the caller records the count in ``junction_completed_nt`` rather than leaving a
+    consumer to infer it. On IG the imputed span can carry the SHM the read would have shown, so a
+    completed junction's 3' end is biased toward germline; on TR, which does not hypermutate, it is
+    templated sequence and nothing else.
+    """
+    if not anchors or not j_call or not j_germline_end or not max_nt:
+        return None
+    # The FIRST allele of a tie list, which is the one `j_anchor_nt` and the J germline coordinates
+    # in `j_germline_end` are already expressed against -- mixing in a sibling allele here would
+    # measure the tail against one germline and cut it from another.
+    a = anchors.get(("J", (j_call or "").split(",")[0].strip()))
+    if a is None or a.status != "ok" or not a.germline_nt:
+        return None
+    tail = a.germline_nt[j_germline_end:]
+    if not tail or len(tail) > max_nt:
+        return None
+    # Anchor the graft at the last ALIGNED base, not the read's end, and refuse when that discards
+    # more than a partial codon of observed sequence -- see `_MAX_UNALIGNED_TAIL_NT`.
+    if q_aln_end < 1 or len(query_seq) - q_aln_end > _MAX_UNALIGNED_TAIL_NT:
+        return None
+    extended = query_seq[:q_aln_end] + tail
+    # `germline_nt` ends ON the [FW]118 codon's last base, so FR4 opens 2 nt back from the end --
+    # which is what `_junction_nt` means by `f4`. Reusing it keeps the out-of-frame N-bridging,
+    # the `_` codon rendering and the phase in ONE implementation.
+    jnt, jaa, c3aa, phase = _junction_nt(extended, cs, len(extended) - 2, coding_start, v_end_q)
+    if not jaa:
+        return None
+    return jnt, jaa, c3aa, phase, len(tail)
+
+
 def _best_d(interior, d_germlines, min_score, exclude=None):
     """Best-aligning D against ``interior`` as ``(score, length, alleles, s, e)``.
 
@@ -669,6 +730,7 @@ def transfer_hit(
     anchors: dict | None = None,
     d_max_evalue: float | None = None,
     shm: str = "framework",
+    complete_junction_nt: int = 0,
 ) -> dict:
     """Build an AIRR record by projecting ``ref`` region coords onto the query.
 
@@ -682,6 +744,11 @@ def transfer_hit(
 
     ``shm`` scopes the SHM fields — ``framework`` (default), ``both`` or ``off``; see
     :mod:`arda.shm`.
+
+    ``complete_junction_nt`` > 0 lets a read that reached Cys104 but stopped before [FW]118 have
+    its junction finished from the called J's germline, up to that many nt; the count lands in
+    ``junction_completed_nt``. 0 (the default) emits observed junctions only. See
+    :func:`_germline_completed_junction`.
     """
     # ⛔ ONE walk of the alignment, not four. Besides the seven regions, this function needs three
     # single scaffold positions projected onto the query: the V germline end, the J germline start,
@@ -840,6 +907,25 @@ def transfer_hit(
                     jaa, phase = "", None
                 if jaa:
                     rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
+            elif "cdr3" in region_q and complete_junction_nt:
+                # Cys104 reached, [FW]118 not. The read ran into the J germline and stopped, so the
+                # remainder is templated and can be grafted on -- off unless asked for, because
+                # those bases are imputed. See `_germline_completed_junction`.
+                done = _germline_completed_junction(
+                    query_seq, region_q["cdr3"][0], coding_start, v_end_q,
+                    j_call=ref.j_call, j_germline_end=rec["j_germline_end"] or 0,
+                    q_aln_end=int(hit["qend"]), anchors=anchors,
+                    max_nt=complete_junction_nt)
+                if done is not None:
+                    jnt, jaa, c3aa, phase, n_done = done
+                    # The same Cys104 gate the observed path applies: a junction opening on bases
+                    # the called V never templates is 5'-over-extended whether or not its 3' end
+                    # was completed, and completing it does not make it any less wrong.
+                    if anchors and v_anchor_prefix(jnt, ref.v_call, anchors) < MIN_V_ANCHOR_PREFIX:
+                        phase = None
+                    else:
+                        rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
+                        rec["junction_completed_nt"] = n_done
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
             # `phase is None` means the read never reached BOTH cdr3 and fwr4, so no junction was

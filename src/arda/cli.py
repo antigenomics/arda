@@ -60,6 +60,16 @@ _SHM_HELP = (
     "emits no SHM fields. IGH/IGK/IGL are where SHM is real; on TR the surviving entries are "
     "allele mismatches in the templated framework, not hypermutation.")
 
+_COMPLETE_JUNCTION_HELP = (
+    "Finish a junction whose read reached Cys104 but stopped before [FW]118, taking up to N nt "
+    "from the called J's germline. 0 (default) emits observed junctions only. The J's 5' chew-back "
+    "and the N/P additions are all UPSTREAM of the read's last aligned J base, so what is missing "
+    "is germline-TEMPLATED -- unlike the V side, where a short read is missing bases nothing "
+    "templates. ⛔ The added bases are IMPUTED, not observed: every completed row carries the count "
+    "in `junction_completed_nt`, so filter or weight on that column rather than trusting the "
+    "junction. ⚠ On IG the imputed span can hide the SHM the read would have shown, biasing a "
+    "completed junction's 3' end toward germline; TR does not hypermutate and has no such cost.")
+
 _CALL_LEVEL_HELP = (
     "At what resolution a V/J call names a germline, BEFORE the clonotype key is formed. `allele` "
     "(default) = TRGJ1*01. `gene` = TRGJ1, which collapses allele-level CALL SPLITS -- Jurkat "
@@ -504,6 +514,8 @@ def rnaseq_map(
              "appends a non-schema column, so the default output is unchanged. Not usable with "
              "--reconstruct (a merged fragment has no single input quality string)."),
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
+    complete_junction_nt: int = typer.Option(
+        0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -522,6 +534,7 @@ def rnaseq_map(
                      indel_rescue=indel_rescue,
                      segment_only_v=segment_only_v,
                      adaptive=adaptive, with_junction_quality=junction_quality, shm=shm,
+                     complete_junction_nt=complete_junction_nt,
                      emit_reads=emit_reads, report_path=report)
     typer.echo(
         f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
@@ -758,6 +771,8 @@ def rnaseq_mode(
              "abundant long clones a filter-only pass misses. --no-assemble keeps the run on the "
              "flat mapping-only memory profile."),
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
+    complete_junction_nt: int = typer.Option(
+        0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
     isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
     call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
     map_d: bool = typer.Option(
@@ -818,7 +833,8 @@ def rnaseq_mode(
               complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
               limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
               clonotype_key=clonotype_key, call_level=call_level,
-              shm=shm, isotype=isotype)
+              shm=shm, isotype=isotype,
+              complete_junction_nt=complete_junction_nt)
 
 
 @app.command("amplicon")
@@ -836,6 +852,8 @@ def amplicon_mode(
         help="Stage 3: assemble long-CDR3 contigs no single read spans and fold them into the "
              "clonotype table."),
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
+    complete_junction_nt: int = typer.Option(
+        0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
     isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
     call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments in all stages."),
@@ -891,7 +909,8 @@ def amplicon_mode(
               complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
               limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
               clonotype_key=clonotype_key, call_level=call_level,
-              shm=shm, isotype=isotype)
+              shm=shm, isotype=isotype,
+              complete_junction_nt=complete_junction_nt)
 
 
 @app.command("singlecell")

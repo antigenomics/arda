@@ -18,6 +18,11 @@ from arda.annotate.mapper import _MAX_TIED, _MAX_TIED_J, _MAX_TIED_V, _SEGMENT_F
 
 def _write(tmp_path, rows):
     p = tmp_path / "seg.tsv"
+    # Rows are written in `_SEGMENT_FORMAT` order. A case that does not care about the target span
+    # gives the first six fields and gets a FORWARD `tend`, so only the inverted-row cases have to
+    # spell one out. `_brute` never reads `tend`, and `zip` stops at the shorter of the two, so it
+    # takes the unpadded rows unchanged.
+    rows = [r if len(r) == 7 else (*r, r[5] + 40) for r in rows]
     p.write_text("".join("\t".join(str(c) for c in r) + "\n" for r in rows))
     return p
 
@@ -102,6 +107,40 @@ def _key(rows):
 def test_reduction_keeps_exactly_the_actionable_rows(tmp_path, rows):
     got = _segment_rows(_write(tmp_path, rows))
     assert _key(got) == _key(_brute(rows))
+
+
+def test_a_target_inverted_segment_row_is_refused(tmp_path):
+    """`tstart > tend` must not survive the reduction, on this path as well as `_best_hits`.
+
+    A segment row's `tstart` is read as a FORWARD target offset by both of its consumers, and
+    neither can tell that it is not one. `_align_implied` builds its prefilter diagonal from
+    `qstart - tstart`, so an inverted row demotes the read to the full-reference rescue (time, not
+    reads); `_cannot_reach_cys104` walks `tstart + |qend - qstart|` forward against the segment's
+    cdr3 start, so it can answer "unreachable" for a read that does reach Cys104 -- and that read
+    is then aligned V-segment-only and emits no junction at all.
+    """
+    inverted = ("r1", "V|TRAV1*01", 100, 1, 50, 180, 1)
+    assert _segment_rows(_write(tmp_path, [inverted])) == []
+
+
+def test_an_inverted_segment_row_never_displaces_a_forward_one(tmp_path):
+    """Refusal must survive the sort: outscoring a real hit is the case where keeping it does the
+    damage, because the reduction keeps the top row per `(query, side)`."""
+    good = ("r1", "V|TRAV1*01", 100, 1, 50, 1, 50)
+    inverted = ("r1", "V|TRAV2*01", 243, 1, 50, 180, 1)
+
+    for name, rows in (("inv_first", [inverted, good]), ("good_first", [good, inverted])):
+        got = _segment_rows(_write(tmp_path, rows))
+        assert [r["target"] for r in got] == ["V|TRAV1*01"], name
+
+
+def test_the_reduction_returns_the_keys_segmap_builds(tmp_path):
+    """`tend` is asked of mmseqs only to refuse the inverted row and must not leak downstream:
+    `segmap.segment_rows` builds its dicts by hand and has no such key, and the two feed the same
+    consuming loop."""
+    got = _segment_rows(_write(tmp_path, [("r1", "V|TRAV1*01", 100, 1, 50, 1)]))
+    assert "tend" not in got[0]
+    assert set(got[0]) == {"query", "target", "bits", "qstart", "qend", "tstart"}
 
 
 def test_reduction_is_invariant_to_input_row_order(tmp_path):

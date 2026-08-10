@@ -3,6 +3,74 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.17.0
+
+### `--complete-junctions N` — finish a junction the read stopped short of
+
+A read that reaches Cys104, runs into the J and stops before [FW]118 has no observed 3' boundary,
+so arda declined it. It no longer has to: the J's 5' chew-back and the N/P additions all lie
+**upstream** of the read's last aligned J base, so everything from there to [FW]118 is
+germline-**templated**, and `cdr3_anchors.tsv` already stores exactly that span (a J's
+`germline_nt` runs the allele's 5' end through the [FW]118 codon). The missing tail is
+`germline_nt[j_germline_end:]` — nothing has to be aligned to find it.
+
+⛔ There is no V-side counterpart and there will not be one. A read short at the *5'* end is
+missing bases the V germline does not template either, which is what `v_anchor_prefix` refuses.
+
+| library | junctions | completed | median nt imputed |
+|---|---|---|---|
+| bulk RNA-seq, 1 M pairs (SRR5233639) | 3,856 → **4,103** (+6.4 %) | 247 | 13 |
+| TRA amplicon, 100 k reads | 44,497 → 44,527 (+0.07 %) | 30 | 12 |
+
+**Off by default (`0`), and every completed row says so**: `junction_completed_nt` (appended last,
+after the anchor columns) carries the count, so a consumer filters or weights on the column rather
+than trusting the junction. Empty means entirely observed — which is what every junction is unless
+the flag is passed. No already-observed junction moves in either arm.
+
+⚠ **On IG the imputed span can hide the SHM the read would have shown**, biasing a completed
+junction's 3' end toward germline — and IG is where the yield is (175 of the 247 bulk completions
+are IGH). 246 of 247 close on [FW]118; the exception is `TRBJ2-7*02`, whose anchor codon really is
+not [FW] — the same allele biology as `TRAJ35*01`'s Cys anchor, read from `anchor_nt` and not from
+a motif.
+
+⛔ **A read whose alignment stops more than a partial codon short of its own 3' end is REFUSED**,
+and that guard is most of the feature. On the TRA amplicon **236 of 266 candidates run from the V
+straight into `TRAC` with no J at all** — the aligner still names a J off a few coincidental bases —
+so completing them would have manufactured one junction per chimera. Of the 30 that survive, 30/30
+close on [FW]118, 22 of 23 extend the (itself truncated) IgBLAST junction, and 7 are byte-identical
+to a junction the same library observes in full on other reads.
+
+### `_segment_rows` refuses a target-inverted row, as `_best_hits` already did
+
+`_SEGMENT_FORMAT` did not ask MMseqs2 for `tend`, so 2.10.0's target-inverted-row guard could not
+cover the two-pass segment reduction — the rule was spelled out in one of the two reductions and
+not the other, which is the divergence `_SEGMENT_SIDE` exists to prevent. A segment row's `tstart`
+is read as a forward target offset by both of its consumers: `_align_implied` builds its prefilter
+diagonal from `qstart - tstart` (an inverted row costs a rescue, i.e. time), and
+`_cannot_reach_cys104` walks `tstart + |qend - qstart|` forward, so it can answer "unreachable" for
+a read that does reach Cys104 — and that read is then aligned V-segment-only and emits **no
+junction**. arda's own `segmap` always emits a forward span, so this only ever bit `arda map
+--two-pass` without `--fast-segments`. `tend` is dropped again after filtering, so the row dicts
+both segment paths hand the consuming loop stay the same shape.
+
+### Measured, not changed
+
+`--call-level gene` shipped in 2.16.0 with its cost on a polyclonal library **unmeasured**. It is
+now measured, and read conservation holds exactly (7,178 and 43,506 reads, `Δ = 0` on both arms):
+
+| arm | locus | allele | gene | Δ | % |
+|---|---|---|---|---|---|
+| bulk RNA-seq, 1 M pairs | IGH | 592 | 566 | −26 | −4.39 |
+| | IGK | 621 | 605 | −16 | −2.58 |
+| | IGL | 475 | 460 | −15 | −3.16 |
+| | TRB | 34 | 34 | 0 | 0.00 |
+| TRA amplicon, 100 k | TRA | 19,735 | 19,709 | −26 | −0.13 |
+
+Same direction as the `--clonotype-key junction` precedent — IG ≫ TR, IGH largest, which is what
+4.33 alleles/gene predicts — but roughly half the magnitude (4.39 % against that key's 6.9–10.6 %
+on IGH, 0.13 % against 0.66 % on TRA). ⚠ The bulk TR arm is underpowered (n = 34 / 18 / 1) and the
+IG numbers rest on one library.
+
 ## 2.16.0
 
 ### ⛔ BREAKING — `arda rnaseq run` is removed; the regime is the command name

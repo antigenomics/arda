@@ -136,6 +136,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
         ec_mode: str = "fast", min_junction_q: int | None = None,
         clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
         shm: str = "framework",
+        complete_junction_nt: int = 0,
         echo=None) -> dict:
     """Single-node map -> assemble -> correct."""
     from .map import map_rnaseq
@@ -157,7 +158,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
                       # asking for the gate has to imply producing its input, or `--ec-mode
                       # accurate` would silently do nothing here.
                       with_junction_quality=(ec_mode != "fast" or min_junction_q is not None),
-                      shm=shm)
+                      shm=shm, complete_junction_nt=complete_junction_nt)
     say(f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
         f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
 
