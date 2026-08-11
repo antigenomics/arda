@@ -26,6 +26,7 @@ from pathlib import Path
 
 import polars as pl
 
+from .. import _markup
 from ..annotate.airr_out import read_airr as _read_airr
 
 from ._res import Stage
@@ -751,13 +752,14 @@ def _assign_coverage(
                 # Overlap first, then FEWER MISMATCHES. Both were already computed.
                 if ov < best_ov or ov < min_ov:
                     continue
+                # ⛔ Bounded in C++, and EXACTLY equivalent -- see `_markup.count_mismatches`.
+                # The old inline scan compared an integer count against a FLOAT budget, and for an
+                # integer `mm`, `mm > budget` is `mm > floor(budget)`; the true count is still
+                # returned whenever the row is accepted, so the fewer-mismatches tie-break below
+                # sees what it always saw. This is the hot path of the whole stage: measured 3.55 M
+                # candidate diagonals over 20,000 reads, 7.2 base comparisons each.
                 budget = max_mm * ov
-                mm = 0
-                for kk in range(lo, hi):
-                    if s[kk] != jr[kk + d]:
-                        mm += 1
-                        if mm > budget:
-                            break
+                mm = _markup.count_mismatches(s, lo, jr, lo + d, hi - lo, int(budget))
                 if mm <= budget and (best_ri is None or ov > best_ov or mm < best_mm):
                     best_ov, best_mm, best_ri = ov, mm, ri
         if best_ri is not None:
