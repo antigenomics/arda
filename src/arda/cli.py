@@ -70,6 +70,17 @@ _COMPLETE_JUNCTION_HELP = (
     "junction. ⚠ On IG the imputed span can hide the SHM the read would have shown, biasing a "
     "completed junction's 3' end toward germline; TR does not hypermutate and has no such cost.")
 
+_CHIMERA_HELP = (
+    "Also emit `chimera_parents`: for each clonotype, two MORE ABUNDANT clonotypes of the same "
+    "locus that explain it as prefix+suffix across one breakpoint -- the PCR template-switch "
+    "signature. ⛔ FLAG ONLY, never a filter: measured 0.40 % of clonotypes / 0.18 % of reads on "
+    "bulk RNA-seq (IG) against 0.01 % on a TRA amplicon, a 20x enrichment in the direction "
+    "template-switch chemistry predicts but far too small to justify deleting clonotypes -- and the "
+    "signature cannot separate a true chimera from two real clones sharing a prefix and a suffix. "
+    "⛔ The breakpoint must sit in the NON-TEMPLATED core: a junction is V 3' tail + N/P/D + J 5' "
+    "head, both tails germline, so the same test run on the raw junction calls 52 % of clonotypes "
+    "chimeric. Requires the reference (no anchors -> no flags, never a germline-driven guess).")
+
 _CALL_LEVEL_HELP = (
     "At what resolution a V/J call names a germline, BEFORE the clonotype key is formed. `allele` "
     "(default) = TRGJ1*01. `gene` = TRGJ1, which collapses allele-level CALL SPLITS -- Jurkat "
@@ -591,6 +602,7 @@ def rnaseq_correct(
              "on a polyclonal TRA amplicon: 132 of 19,956 clonotypes merge (0.66 %), and the "
              "minority call there carries 1 read against 4-10 on a short junction."),
     call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
+    flag_chimeras: bool = typer.Option(False, "--flag-chimeras", help=_CHIMERA_HELP),
     isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
     min_junction_q: Optional[int] = typer.Option(
         None, "--min-junction-q",
@@ -630,6 +642,7 @@ def rnaseq_correct(
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        ec_mode=ec_mode, min_junction_q=min_junction_q,
                        clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
+                       flag_chimeras=flag_chimeras,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
     typer.echo(

@@ -768,6 +768,126 @@ def _assign_coverage(
     return assigned
 
 
+#: Non-templated nt required on EACH side of a chimeric breakpoint.
+#:
+#: ⛔ THIS CONSTANT IS THE WHOLE FILTER. A junction is `V 3' tail` + `N/P/D` + `J 5' head`, and the
+#: two tails are GERMLINE -- every clonotype on a given V starts with the same bases and every one
+#: on a given J ends with them. Measured on a TRA amplicon: median 10 nt of V-templated prefix and
+#: 25 nt of J-templated suffix against a median clone-specific core of 5 nt. So a prefix/suffix
+#: agreement test run on the raw junction rediscovers the germline and calls **52.20 % of
+#: clonotypes chimeric** (35.50 % of reads). With the templated tails excluded and 6 non-templated
+#: nt required each side it is 0.02 %.
+#:
+#: ⛔ Cell Ranger's published rule -- contigs sharing a V prefix >= 25 nt with different CDR3s --
+#: is NOT portable to bulk, and not because of the constant. It relies on the BARCODE PARTITION:
+#: within one cell there is ~1 clone per chain, so a second V-sharing contig is an artifact. A
+#: polyclonal bulk repertoire has thousands of real clones per V gene, where that rule describes
+#: almost every pair. What ports is UCHIME's shape -- a query explained by two MORE ABUNDANT
+#: parents -- because abundance ordering, not the partition, is what makes it a claim.
+_CHIMERA_MIN_SPECIFIC_NT = 6
+
+
+def _templated_span(junction: str, call: str, anchors, segment: str) -> int:
+    """How much of ``junction`` the called allele's own junction germline explains.
+
+    V: the longest common PREFIX (the germline runs Cys104 -> 3' end). J: the longest common
+    SUFFIX (5' end -> [FW]118). Both use the FIRST allele of a tie list, which is the one every
+    other germline-relative number in the row is expressed against.
+    """
+    allele = (call or "").split(",")[0].strip()
+    a = anchors.get((segment, allele)) if allele else None
+    g = getattr(a, "germline_nt", "") if a is not None and a.status == "ok" else ""
+    if not g or not junction:
+        return 0
+    if segment == "V":
+        return _markup.common_prefix(junction, g)
+    return _markup.common_suffix(junction, g)
+
+
+def _flag_chimeras(out: pl.DataFrame, organism: str,
+                   min_specific: int = _CHIMERA_MIN_SPECIFIC_NT) -> pl.Series:
+    """Per clonotype: ``"<parentA>,<parentB>@<breakpoint>"`` for a PCR/template-switch signature.
+
+    A clonotype is flagged when two **strictly more abundant** clonotypes of the same locus explain
+    it as prefix + suffix across one breakpoint, and the breakpoint sits inside the non-templated
+    core with at least ``min_specific`` clone-specific nt on each side (see
+    :data:`_CHIMERA_MIN_SPECIFIC_NT` for why that is the entire filter).
+
+    ⚠ **Flag, never delete.** Measured rate: **0.40 % of clonotypes / 0.18 % of reads on bulk
+    RNA-seq (IG)** against **0.01 % on a TRA amplicon** -- a 20x enrichment in the direction
+    template-switch chemistry predicts, but far too small to justify silently removing clonotypes,
+    and the signature cannot separate a true chimera from two real clones that happen to share both
+    a prefix and a suffix. The caller decides; this only says which rows to look at.
+    """
+    from ..cdr3fix import load_anchors
+    try:
+        anchors = load_anchors(organism)
+    except Exception:                                    # no reference: cannot exclude germline
+        anchors = {}
+    n = out.height
+    flags = [""] * n
+    if not anchors or n < 3:
+        # ⛔ Without anchors the germline cannot be excluded, and the test then reports ~52 %.
+        # Returning empty is the only safe answer -- a silently germline-driven flag is worse than
+        # no flag, and this is the same "degraded silently without a reference" failure `resolve_airr`
+        # already shipped once.
+        return pl.Series("chimera_parents", flags, dtype=pl.Utf8)
+
+    jn = out["junction"].to_list()
+    cnt = [int(x or 0) for x in out["duplicate_count"].to_list()]
+    loc = [x or "" for x in out["locus"].to_list()]
+    vt = [_templated_span(j, v, anchors, "V") for j, v in zip(jn, out["v_call"].to_list())]
+    jt = [_templated_span(j, c, anchors, "J") for j, c in zip(jn, out["j_call"].to_list())]
+
+    order = sorted(range(n), key=lambda i: (-cnt[i], jn[i] or ""))   # abundant first, total order
+    by_loc: dict[str, list[int]] = defaultdict(list)
+    for i in order:
+        if jn[i]:
+            by_loc[loc[i]].append(i)
+
+    for idxs in by_loc.values():
+        pref: dict[str, int] = {}
+        suff: dict[str, int] = {}
+        for i in idxs:                                   # descending abundance: first wins
+            j = jn[i]
+            for p in range(1, len(j)):
+                pref.setdefault(j[:p], i)
+                suff.setdefault(j[p:], i)
+        for qi in idxs:
+            j = jn[qi]
+            lo = vt[qi] + min_specific
+            hi = len(j) - jt[qi] - min_specific
+            for p in range(max(1, lo), min(len(j), hi + 1)):
+                a, b = pref.get(j[:p]), suff.get(j[p:])
+                if a is None or b is None or a == qi or b == qi:
+                    continue
+                if cnt[a] <= cnt[qi] or cnt[b] <= cnt[qi]:
+                    continue
+                # ⛔ A point mutant of a parent is NOT a chimera, and on IG that class is large:
+                # SHM manufactures near-variants continuously, and without this the flag fires on
+                # hypermutation. Equal length + <= 2 substitutions from either parent means the
+                # error model already explains it.
+                #
+                # ⚠ This also subsumes the IDENTICAL-parent case, so no separate guard for it: a
+                # call split -- two clonotypes sharing a junction byte-identically under different
+                # V/J calls -- gives Hamming 0, and the twin claims every prefix AND suffix of the
+                # query, so it would otherwise be reported as a chimera of itself. Mutation-testing
+                # the separate guard showed it could never fire; it was removed rather than left as
+                # dead code that looks load-bearing.
+                if min(_hamming(j, jn[a]), _hamming(j, jn[b])) <= 2:
+                    continue
+                flags[qi] = f"{jn[a]},{jn[b]}@{p}"
+                break
+    return pl.Series("chimera_parents", flags, dtype=pl.Utf8)
+
+
+def _hamming(a: str, b: str) -> int:
+    """Substitutions between equal-length strings; a large sentinel when the lengths differ."""
+    if len(a) != len(b):
+        return 1 << 20
+    return _markup.count_mismatches(a, 0, b, 0, len(a), len(a))
+
+
 def _gene3(x: str | None) -> str:
     g = (x or "").split(",")[0].split("(")[0].strip()
     return g[:3] if g[:3] in ("IGH", "IGK", "IGL", "TRA", "TRB", "TRG", "TRD") else ""
@@ -831,6 +951,7 @@ def correct_airr(
     ec_mode: str = "fast",
     clonotype_key: str = "full",
     call_level: str = "allele",
+    flag_chimeras: bool = False,
     isotype: bool = True,
     min_junction_q: int | None = None,
     complete_only: bool = True,
@@ -1287,6 +1408,10 @@ def correct_airr(
     })
     if map_d:
         out = out.with_columns(_clonotype_d(out, organism, d_max_evalue))
+    if flag_chimeras:
+        # ⛔ Appended LAST and never used to drop a row -- see `_flag_chimeras` for the measured
+        # rate (0.40 % of bulk IG clonotypes) and why that does not justify deletion.
+        out = out.with_columns(_flag_chimeras(out, organism))
     out.write_csv(output, separator="\t", quote_style="never")
 
     if read_map is not None:

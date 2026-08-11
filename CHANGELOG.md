@@ -3,6 +3,45 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.19.0
+
+### `correct --flag-chimeras` — the PCR template-switch signature, as a flag
+
+A template-switch chimera is a query junction explained by two **more abundant** parents as
+prefix + suffix across one breakpoint. `chimera_parents` names them and the breakpoint. Off by
+default; **it never drops a row**.
+
+⛔ **The germline trap, measured, because it is the whole filter.** A junction is
+`V 3' tail` + `N/P/D` + `J 5' head`, and both tails are germline — every clonotype on a V starts
+with the same bases and every one on a J ends with them. On a TRA amplicon the median V-templated
+prefix is **10 nt** and the median J-templated suffix **25 nt** against a median clone-specific core
+of **5 nt**. So the same prefix/suffix test run on the raw junction rediscovers the germline and
+calls **52.20 % of clonotypes chimeric** (35.50 % of reads). With the templated tails excluded and
+6 non-templated nt required each side: **0.02 %**.
+
+⛔ **Cell Ranger's published rule does not port to bulk, and not because of the constant.** Contigs
+sharing a V prefix ≥ 25 nt with differing CDR3s is a chimera signature *within a barcode*, where
+there is ~1 clone per chain. A polyclonal bulk repertoire has thousands of real clones per V gene,
+where that rule describes almost every pair. What ports is UCHIME's shape — two more abundant
+parents — because the abundance ordering, not the partition, is what makes it a claim.
+
+Measured rate: **0.40 % of clonotypes / 0.18 % of reads on bulk RNA-seq (IG)** against **0.01 % on a
+TRA amplicon** — a 20× enrichment in the direction template-switch chemistry predicts, but far too
+small to justify deleting clonotypes, and the signature cannot separate a true chimera from two real
+clones that happen to share a prefix and a suffix. Hence a flag, not a filter.
+
+Requires the reference: with no anchors the germline cannot be excluded, so it emits **nothing**
+rather than a germline-driven guess.
+
+⚠ Every guard is mutation-tested, and **three of the first five tests passed with the bug in**. The
+germline test needed a query sharing only germline with each parent; the abundance test needed the
+query to sort last (`setdefault` on a descending list otherwise makes it claim its own prefix, so
+the check is never consulted); the SHM test needed both parents to genuinely match. A fifth guard
+proved unreachable — an identical twin has Hamming 0, already caught by the ≤ 2 SHM check — and was
+removed rather than left looking load-bearing.
+
+Default output is byte-identical; the column appears only with `--flag-chimeras`.
+
 ## 2.18.1
 
 ### `correct`'s coverage assignment, bounded in C++ — byte-identical
