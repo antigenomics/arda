@@ -525,6 +525,33 @@ static bool within_mismatches(const std::string &a, const std::string &b, size_t
     return true;
 }
 
+// Mismatches between `a[a_off, a_off+n)` and `b[b_off, b_off+n)`, stopping once the count exceeds
+// `max_mm` (which it then returns as `max_mm + 1`).
+//
+// `correct._assign_coverage`'s inner loop, and the same shape as `within_mismatches` -- except
+// that this caller NEEDS the count, not a verdict: a read joins the root with the longest overlap
+// and, on a tie, the FEWER MISMATCHES. That tie-break is load-bearing. When a phantom clonotype
+// competed with the true Jurkat clone, ~47 % of the 5,758 reads it stole were exact 48-vs-48
+// overlap ties on which the losing TRUE root matched with 0 mismatches against the phantom's 1.
+//
+// Equivalence with the Python it replaces, which compared an integer count against a FLOAT budget
+// (`max_mm * ov`): for integer `mm`, `mm > budget` is exactly `mm > floor(budget)`, so the caller
+// passes `int(budget)` and the accept test `mm <= budget` is unchanged. When the scan completes,
+// the value returned IS the true count, so the tie-break sees exactly what it saw before; when it
+// exceeds, the row is rejected on the same comparison either way.
+static int count_mismatches(const std::string &a, size_t a_off,
+                            const std::string &b, size_t b_off,
+                            size_t n, int max_mm) {
+    if (a_off > a.size() || b_off > b.size()) return max_mm + 1;
+    n = std::min(n, std::min(a.size() - a_off, b.size() - b_off));
+    int mm = 0;
+    const char *pa = a.data() + a_off, *pb = b.data() + b_off;
+    for (size_t i = 0; i < n; ++i) {
+        if (pa[i] != pb[i] && ++mm > max_mm) return max_mm + 1;
+    }
+    return mm;
+}
+
 // ---------------------------------------------------------------------------
 // AIRR TSV row formatting.
 //
@@ -611,6 +638,12 @@ PYBIND11_MODULE(_markup, m) {
           "Do a and b agree over their common length with at most max_mm mismatches? Stops at "
           "max_mm + 1, which is the point: the assembler's overlap test decides nearly every "
           "candidate in the first few bases and used to count all of them.");
+    m.def("count_mismatches", &count_mismatches,
+          py::arg("a"), py::arg("a_off"), py::arg("b"), py::arg("b_off"),
+          py::arg("n"), py::arg("max_mm"),
+          "Mismatches between a[a_off, a_off+n) and b[b_off, b_off+n), stopping at max_mm + 1. "
+          "Returns the TRUE count when it does not exceed max_mm -- the coverage assignment "
+          "breaks equal-overlap ties on it.");
     m.def("project_region", &project_region,
           py::arg("qaln"), py::arg("taln"), py::arg("ref_aln_offset"),
           py::arg("qry_aln_offset"), py::arg("ref_start"), py::arg("ref_end"),
