@@ -3,6 +3,27 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.18.1
+
+### `correct`'s coverage assignment, bounded in C++ — byte-identical
+
+`_assign_coverage` is 80 % of the stage (2.20 s of 2.74 s on a 100 k TRA amplicon). Its inner scan
+compared an integer mismatch count against a FLOAT budget one base at a time in Python, over a
+measured 3.55 M candidate diagonals per 20,000 reads.
+
+⛔ Unlike the assembler's overlap test in 2.18.0, this caller needs the **count**, not a verdict: a
+read joins the root with the longest overlap and, on a tie, the fewer mismatches — the tie-break
+~47 % of the reads the Jurkat phantom clonotype stole were decided by. `_markup.count_mismatches`
+returns the true count whenever the row is accepted and collapses to `max_mm + 1` only when the row
+is rejected anyway, so both the accept test and the tie-break see exactly what they saw before.
+
+| | before | after |
+|---|---|---|
+| `correct`, TRA amplicon 100 k | 3.23 s | **2.84 s** (1.14×) |
+| `correct`, bulk RNA-seq 660 k pairs | 1.10 s | **0.95 s** (1.16×) |
+
+`clones.tsv` byte-identical on both regimes. A patch release: no output, flag or default moves.
+
 ## 2.18.0
 
 ### `assemble` is 4.49× faster, byte-identical
