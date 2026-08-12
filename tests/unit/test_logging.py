@@ -75,16 +75,30 @@ def test_results_go_to_stdout_and_progress_to_stderr(tmp_path):
     assert "project_root" in result.stdout
 
 
-def test_the_global_options_come_before_the_subcommand(tmp_path):
-    """Typer puts callback options on the top-level parser only; a run that passed ``-v`` after
-    the command name would fail, and the help text says so."""
-    # ⛔ `COLUMNS` is not optional. Click falls back to an 80-column terminal when stdout is not a
-    # tty -- which it is not on CI -- and typer then truncates `--verbose` to `--verbo...`, so this
-    # test passed on a wide local terminal and failed on CI. Same trap as `COLUMNS=200 arda --help`.
-    result = runner.invoke(app, ["--help"], env={"COLUMNS": "200"})
+def test_the_global_options_come_before_the_subcommand():
+    """The three options live on the TOP-LEVEL parser, so ``arda -v map ...`` works and
+    ``arda map -v ...`` does not.
+
+    ⛔ Asserted against click's parameter list, NOT against the rendered ``--help``. Typer renders
+    help through rich, whose output depends on the terminal width and its own styling: on CI,
+    where stdout is not a tty, ``--verbose`` did not appear in the help text as a contiguous
+    string at all. That is a property of the renderer, not of arda.
+    """
+    import typer.main
+
+    flags = {opt for p in typer.main.get_command(app).params for opt in p.opts}
+    assert {"-v", "--verbose", "-q", "--quiet", "--log-file"} <= flags
+
+    # ...and the subcommands do NOT redeclare them, which would shadow the global with a
+    # per-command one that configures nothing.
+    for name, command in typer.main.get_command(app).commands.items():
+        local = {opt for p in command.params for opt in p.opts}
+        assert not local & {"--verbose", "--quiet", "--log-file"}, name
+
+
+def test_the_help_renders():
+    result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for flag in ("--verbose", "--quiet", "--log-file"):
-        assert flag in result.stdout
 
 
 def test_stats_writes_the_path_to_stdout_and_the_count_to_the_log(tmp_path):
