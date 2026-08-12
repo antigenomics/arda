@@ -17,7 +17,7 @@ the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for
 
 | path | what |
 |---|---|
-| `src/arda/` | the package. `cli.py` (typer), `annotate/` (mapper, transfer, cigar, dmap, reference), `rnaseq/` (map/assemble/correct/pipeline), `refbuild/` (offline DB build from IMGT + IgBLAST), `cdr3fix.py`, `refexport.py`, `segmap.py`, `prefilter.py`, `paths.py`, `_locking.py`, the three `*_fetch.py` |
+| `src/arda/` | the package. `cli.py` (typer), `annotate/` (mapper, transfer, cigar, dmap, reference), `rnaseq/` (map/assemble/correct/pipeline), `refbuild/` (offline DB build from IMGT + IgBLAST), `cdr3fix.py`, `refexport.py`, `segmap.py`, `prefilter.py`, `stats.py` (run QC), `paths.py`, `_log.py` (the one `arda` logger + `Throttle` + `peak_rss_mb`), `_locking.py`, the three `*_fetch.py` |
 | `src/_markup/`, `src/_prefilter/`, `src/_segmap/` | the three pybind11 C++ extensions (one .cpp each) |
 | `database/` | **committed** curated reference: `vdj/<org>/{alleles,markup,combinations,cdr3_anchors,d_germlines}`, precompiled `mmseqs/` indexes, `c_genes/`, `germline/` |
 | `tests/` | `unit/`, `synthetic/`, `realworld/` (offline, committed fixtures), `benchmark/` (opt-in) |
@@ -31,7 +31,7 @@ the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for
 ⛔ **`conda run -n arda …` does NOT work on this Mac.** Use the binary directly:
 
 ```sh
-/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.11.1
+/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.20.0
 COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
@@ -51,7 +51,7 @@ binary.
 ## Build, test, lint, docs
 
 ```sh
-python -m pytest tests/unit tests/synthetic tests/realworld -q    # 650 tests, the CI gate
+python -m pytest tests/unit tests/synthetic tests/realworld -q    # 892 tests, the CI gate
 ruff check src/                                                    # PINNED to 0.15.9 in CI
 make -C docs html                                                  # -W --keep-going; zero warnings required
 env RUN_BENCHMARK=1 ARDA_MMSEQS=$(which mmseqs) python -m pytest tests/benchmark -q
@@ -174,20 +174,38 @@ both a V and a J segment, and `fast_fraction` in the report is the predictor, no
 `--prefilter` costs ~1.4 GB and buys ~3 % on amplicon. Every flag's help text carries its own
 measured regime numbers; keep them there and keep them sourced to the benchmark repo. All five
 tuning flags (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilter`,
-`--indel-rescue`) are off by default and are exposed on **both** `arda map` and
-`arda rnaseq run`.
+`--indel-rescue`) are off by default. Since 2.16.0 they are not loose flags on a mode: the mode
+NAME picks the preset (`_MODE_SPEED` in `cli.py`), `--exact` turns every one off, and `arda map`
+still exposes them individually for A/B work.
 
 ## Open loops
 
-- **⛔ `ruff check src/` is currently RED on master** — `E731` at `src/arda/cdr3fix.py:292`
-  (`decisive = lambda a: …`). CI has not seen it: master is **3 commits ahead of origin**
-  (`0b49de3` export-ref, `a92b129` segments self-heal + `rnaseq run` flags, `9d7bdc3` anchor
-  conflict resolution). Rewrite as a `def` before pushing, or the lint gate fails the next PR.
-- **Unreleased on master, for 2.12.0** — all verified working: `arda export-ref` (3 kinds ×
-  4 formats, `--locus`, `--seqtype`); `segments.fasta` auto-generated when missing;
-  `arda rnaseq run` exposing `--fast-segments`/`--v-only-on-segment`/`--prefilter`/`--indel-rescue`
-  (it previously exposed only `--two-pass`, the dominated config); deterministic `cdr3_anchors`
-  conflict resolution.
+- **Unreleased in the working tree, for 2.20.0** — verified: `ruff check src/` green,
+  892 tests pass, `sphinx-build -W` clean, and a real amplicon mode run writes all five artifacts.
+  - `arda stats` + `src/arda/stats.py`, and `<prefix>.stats.tsv` written by every mode run
+    (`pipeline.write_stats_for`, called AFTER the report JSON is final so the `run` scope carries
+    the whole-run wall time, not Stages 2-3's).
+  - `map --mutation-quality` -> `v_mutation_quality` / `j_mutation_quality`.
+  - `src/arda/_log.py`: one `arda` logger, global `-v` / `-q` / `--log-file`, throttled `map`
+    progress. `peak_rss_mb` MOVED here from `rnaseq/_res.py` (which re-exports it) — the other
+    direction is an import cycle, because `arda.rnaseq.__init__` imports `map` and `map` needs
+    `Throttle`.
+  - `map --report` now records `paired` / `input_bytes` / `read_length_min|max|mean`.
+  - Nextflow module bumped 2.16.0 -> 2.20.0 (release-checklist item 5) and emits `stats`.
+- **⛔ QC traps, all live in tests — do not undo them.**
+  1. **Mutation quality must be driven by the EMITTED list, not by re-walking for mismatches.**
+     `_markup.segment_cigars` finds a SUPERSET of what the columns carry (`arda.shm` drops the
+     junction-internal entries afterwards) — 25 of 242 V rows on `tests/data/rnaseq_real`. A
+     re-derived list lines up in length only by accident. `mutation_quality` builds
+     *germline position -> query position* and looks each emitted entry up.
+  2. **The two quality columns use different encodings.** `junction_quality` is raw Phred+33
+     characters, `v_mutation_quality` is comma-joined integers. Reading one as the other gives
+     plausible numbers off by 33 — it shipped that way for one commit.
+  3. **Every arda writer uses `quote_style="never"` and every reader `quote_char=None`.** A test
+     fixture written with polars' DEFAULT quoting turns a blank `chimera_parents` into the
+     2-character value `""`, and every clonotype reads as chimeric.
+  4. **A metric with no input is OMITTED, never 0.** A run without `--junction-quality` must not
+     read as "mean quality 0".
 - **⛔ Documentation invariants — seven defects were found by an audit that RAN everything
   (2026-08-08, all now fixed in the working tree; do not let them come back).** Every one was a
   claim no artifact supported, or a command that silently did the wrong thing:

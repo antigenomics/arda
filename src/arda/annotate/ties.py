@@ -40,6 +40,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from .._log import logger
+
 __all__ = ["TieResolver", "rank_ties", "resolve_airr"]
 
 try:                                              # optional: built by scikit-build-core
@@ -248,8 +250,8 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
             report["reranked"][seg] = sum(1 for a, b in zip(widened, ranked) if a != b)
             widened = ranked
         df = df.with_columns(pl.Series(call_col, widened))
-        if echo:
-            echo(f"[arda] {seg}_call: +{report['expanded'].get(seg, 0)} tie lists, "
-                 f"{report['reranked'].get(seg, 0)} reordered")
+        (echo or logger.info)(
+            f"{seg}_call: +{report['expanded'].get(seg, 0)} tie lists, "
+            f"{report['reranked'].get(seg, 0)} reordered")
     df.write_csv(out, separator="\t", quote_style="never")
     return report

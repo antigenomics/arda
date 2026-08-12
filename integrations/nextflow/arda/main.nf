@@ -30,7 +30,7 @@ process ARDA {
     // than the one this module was validated with. If you must override it from a config, it goes
     // under `withName: 'ARDA' { conda = ... }` -- see nextflow.config beside this file.
     conda "${moduleDir}/environment.yml"
-    container "arda-mapper:2.16.0"
+    container "arda-mapper:2.20.0"
 
     input:
     tuple val(meta), path(reads)
@@ -42,6 +42,9 @@ process ARDA {
     tuple val(meta), path("${task.ext.prefix ?: meta.id}.airr.tsv"),  emit: airr
     tuple val(meta), path("*.assembled.airr.tsv"),                    emit: assembled_airr, optional: true
     tuple val(meta), path("*.arda.json"),                             emit: report
+    // Run QC (arda >= 2.20.0), written by every mode run. `optional` so this module still runs
+    // against an older arda in an environment someone pinned themselves.
+    tuple val(meta), path("*.stats.tsv"),                             emit: stats, optional: true
     path "versions.yml",                                              emit: versions
 
     when:

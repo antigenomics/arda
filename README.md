@@ -92,7 +92,9 @@ arda singlecell                                               # reserved — not
 ```
 
 Each runs `map` → `assemble` → `correct` and writes `<prefix>.airr.tsv`, `<prefix>.clones.tsv`,
-`<prefix>.assembled.airr.tsv` and `<prefix>.arda.json`. `--exact` turns every speedup off.
+`<prefix>.assembled.airr.tsv`, `<prefix>.arda.json` and `<prefix>.stats.tsv` (the QC table below).
+`--exact` turns every speedup off. Progress goes to **stderr**; the output paths, one per line, to
+**stdout**.
 
 The **stages** are separate commands, so any one can be run, inspected or replaced:
 
@@ -104,6 +106,7 @@ arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv  
 arda correct  -i mapped.airr.tsv -o clones.tsv --ec-mode accurate    # quality-gated correction
 arda correct  -i mapped.airr.tsv -o clones.tsv --call-level gene     # collapse allele-level call splits
 arda shm      -i mapped.airr.tsv -o rescoped.airr.tsv          # recount SHM outside the junction
+arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv   # run QC
 ```
 
 Everything else:
@@ -122,6 +125,62 @@ arda export-ref --kind segments --locus TRB --format fasta      # the reference,
 arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
 ```
+
+### Run QC, verbosity and logging
+
+Every mode run writes **`<prefix>.stats.tsv`** — the numbers that decide whether a sample is
+usable, without re-reading the FASTQ. `arda stats` produces the same table from any subset of a
+run's artifacts, so it also works on a bare `arda annotate` output:
+
+```bash
+arda stats -i SAMPLE.airr.tsv -c SAMPLE.clones.tsv -r SAMPLE.arda.json \
+           --r1 R1.fq.gz --r2 R2.fq.gz -o SAMPLE.stats.tsv
+```
+
+Four columns — `scope`, `key`, `metric`, `value` — one value per cell, so a metric can be grepped,
+`join`ed across samples or plotted without reshaping:
+
+| scope | key | what |
+|---|---|---|
+| `run` | `map` / `correct` / `assemble` | the run report verbatim: total and mapped reads, FASTQ bytes, read length, paired, threads, wall time, peak RSS |
+| `sample` | — | library-wide totals, junction lengths and quality, SHM rate, V/J gene coverage |
+| `chain` | `TRB`, `IGH`, … | per locus, **reads and clonotypes**: functional / non-functional, stop codons, truncated junctions, min/max/mean junction length, junction quality, SHM rate, chimeras |
+| `v_gene` / `j_gene` | `TRBV19` | reads and clonotypes per germline gene |
+| `allele_candidate` | `TRBV19*01:G45A` | a recurrent, high-quality V mutation, with its frequency and mean Phred |
+
+```
+$ awk -F'\t' '$1=="chain" && $2=="IGH"' SAMPLE.stats.tsv
+chain  IGH  reads                       104
+chain  IGH  reads_truncated_junction    1
+chain  IGH  junction_nt_mean            48.75
+chain  IGH  junction_quality_mean       35.6718
+chain  IGH  shm_rate                    0.0413
+chain  IGH  clonotypes_chimeric         2
+```
+
+A metric with no input is **omitted, never reported as 0** — a run without `--junction-quality`
+does not read as "mean quality 0". Two columns feed the quality metrics and both are opt-in on
+`map`: `--junction-quality` (Phred over the junction bases) and `--mutation-quality` (the Phred
+behind each `v_mutations` / `j_mutations` entry, one-for-one).
+
+⚠ **`allele_candidate` is a shortlist, not a genotype call.** A novel allele, somatic
+hypermutation and a base miscall are the same string in the mutation list; what separates them is
+how often the mutation recurs across an allele's reads and how good the base is. Both are reported
+per variant and the thresholds are yours (`--allele-min-frac`, `--allele-min-reads`). arda does not
+genotype. Likewise the chimera, non-functional and stop-codon counts are **flags, never filters** —
+nothing in `stats` removes a row from any output.
+
+Logging is a stdlib logger configured by three **global** options, before the subcommand:
+
+```bash
+arda -v --log-file run.log amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/
+arda -q rnaseq --r1 R1.fq.gz -p SAMPLE -d out/          # warnings and errors only
+```
+
+Default prints the stage lines and a throttled progress line (reads seen, reads mapped, reads/s,
+RSS). `-v` adds DEBUG with the level and module name. `--log-file` is **always DEBUG whatever the
+console level is**, and stamps every line with a timestamp and the process peak RSS — so a quiet
+cluster job still leaves a full record.
 
 `arda cluster` holds every sharded/SLURM helper. `arda cluster submit` shards Stage 1 across an
 array and runs Stages 2–3 **once** over the merged output — byte-identical to a single-node run.
@@ -198,6 +257,8 @@ value tracks SHM load, so it stays a per-library call and never rides the preset
 | `--isotype` *(default on)* | IGH isotype: `c_call`/`c_class`, voted per fragment then per clonotype, reported as **class** never subclass |
 | `--call-level gene` | drop the allele suffix before the clonotype key, collapsing allele-level call splits |
 | `--map-d` *(default on)* | D and tandem D-D alignment into the junction |
+| `map --junction-quality` | Phred+33 string over exactly the bases of `junction`; needed by `correct --min-junction-q` and by `stats`' junction-quality metrics |
+| `map --mutation-quality` | Phred behind each `v_mutations` / `j_mutations` entry, comma-joined and one-for-one; what `stats` scores `allele_candidate` on |
 
 `arda shm -i in.airr.tsv -o out.airr.tsv` does the SHM recount standalone, needing **no reference
 and no re-map** — the germline anchors are already in the file.

@@ -200,21 +200,30 @@ arda correct -i mapped.airr.tsv -o clones.tsv            # collapse CDR3 errors 
 arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # BULK mode: map+assemble+correct
 arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # AMPLICON mode: same, other preset
 arda shm -i mapped.airr.tsv -o rescoped.airr.tsv                # recount SHM outside the junction
+arda stats -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv  # run QC
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
+arda export-ref --kind segments --locus TRB --format fasta      # the reference, out of the CLI
 arda build-db --organism all                # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for local mmseqs version
-arda slurm -i big.fastq -o big.airr.tsv --shards 50   # multi-node AMPLICON: split → array → merge
+arda cluster submit-fasta -i big.fastq -o big.airr.tsv --shards 50   # multi-node AMPLICON/FASTA
 arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-node RNA-SEQ
 ```
+
+⛔ **`-v` / `-q` / `--log-file` are GLOBAL and go BEFORE the subcommand**
+(`arda -v --log-file run.log amplicon --r1 ...`). Progress goes to **stderr**, results to
+**stdout** — a mode run prints its output paths one per line and nothing else, so
+`$(arda map ...)` and `arda export-ref ... > out.tsv` are safe. `--log-file` is always DEBUG
+whatever the console level is, and stamps every line with a timestamp and peak RSS; `-q` does not
+silence it.
 
 ## Cluster: two adapters, and picking the wrong one fails silently
 
 | input | command | shard unit |
 |---|---|---|
-| amplicon / single-end FASTA | `arda slurm` (`arda split` + `arda merge`) | one record |
+| amplicon / single-end FASTA | `arda cluster submit-fasta` (`cluster split-fasta` + `cluster merge`) | one record |
 | bulk paired RNA-seq | `arda cluster submit` (`arda cluster split` + `cluster reduce`) | one read **pair** |
 
-**Never point `arda split` / `arda slurm` at paired RNA-seq.** They write FASTA — dropping the
+**Never point `arda cluster split-fasta` / `submit-fasta` at paired RNA-seq.** They write FASTA — dropping the
 quality strings `--reconstruct` needs — and round-robin *records*, which puts a fragment's two
 mates in different shards. There is no error; the numbers just come out wrong.
 
@@ -243,11 +252,37 @@ at ~300–650 MB at any depth, but the clone set scales with repertoire richness
 `correct` peaked at **2,071.7 MB** on a B-cell-rich tumour (28,444 clonotypes from 105 M reads),
 versus **549 MB** for a colder sample with *more* reads (139 M). Budget ~4 GB.
 
+## Run QC: `arda stats`
+
+Every mode run also writes `<prefix>.stats.tsv`; `arda stats` builds the same table from any
+subset of a run's artifacts (`--airr`, `--clones`, `--report`, `--r1`/`--r2`), reading only what
+already exists — no re-read of the FASTQ, no alignment.
+
+Four columns, `scope` / `key` / `metric` / `value`, one value per cell. Scopes: `run` (the report
+verbatim — reads, FASTQ bytes, read length, paired, threads, wall time, peak RSS), `sample`,
+`chain` (per locus, **reads AND clonotypes**: productive/non-functional, stop codons, out-of-frame,
+truncated junctions, junction length min/max/mean, junction quality, SHM rate, chimeras),
+`v_gene`/`j_gene`, and `allele_candidate`.
+
+⛔ Long, not wide — the metric set differs per scope, so a wide table is mostly empty cells.
+⛔ A metric with **no input is omitted, never emitted as 0**: a run without `--junction-quality`
+has no `junction_quality_mean` row rather than a zero that reads like a terrible library.
+⛔ Truncation, a stop codon and an out-of-frame junction are counted **separately**; `_COMPLETE`
+folds them together and a QC table must not.
+⚠ `allele_candidate` is a **shortlist, not a genotype call** — arda does not genotype. A novel
+allele, SHM and a miscall are the same string in the mutation list; recurrence within the allele
+(`--allele-min-frac`) and Phred are what separate them, and both are reported per variant.
+⛔ Chimera / non-functional / stop-codon counts are **flags, never filters**.
+
+The two quality columns feeding it are opt-in on `map` and use **different encodings**:
+`--junction-quality` writes raw Phred+33 *characters* over `junction`; `--mutation-quality` writes
+comma-joined *integers*, one per `v_mutations` / `j_mutations` entry, in the same order.
+
 ## Bulk RNA-seq mode (`arda rnaseq`)
 
-For libraries where only 1–5% of reads are receptor-derived. Three stages, run separately or
-in one shot with `rnaseq run` (which does all three by default). Needs the `rnaseq` extra:
-`pip install arda-mapper`.
+For libraries where only 1–5% of reads are receptor-derived. Three stages, run separately or in
+one shot with `arda rnaseq` / `arda amplicon` (which do all three by default). `seqtree` and
+`dnaio` are core deps; the `rnaseq` extra is an empty alias kept so old pins resolve.
 
 **`map`** — streams paired FASTQ (`--r1`/`--r2`), keeps only reads mapping to a receptor
 scaffold, writes them as AIRR. Recall-first, with `--min-score`/`--kmer`/`--max-seqs` around

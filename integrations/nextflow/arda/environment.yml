@@ -25,4 +25,4 @@ dependencies:
       #
       # It is also the first release where `--shm` exists, and where each mode's `--ec-mode`
       # default matches its regime rather than being `fast`.
-      - arda-mapper==2.16.0
+      - arda-mapper==2.20.0

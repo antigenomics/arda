@@ -23,9 +23,10 @@ import json
 from pathlib import Path
 
 from .. import __version__
+from .._log import logger
 from ._res import Stage
 
-__all__ = ["finish", "run", "reduce", "OUTPUTS"]
+__all__ = ["finish", "run", "reduce", "write_stats_for", "OUTPUTS"]
 
 #: Output basenames, relative to ``out_dir`` and given ``prefix``.
 OUTPUTS = {
@@ -33,6 +34,7 @@ OUTPUTS = {
     "assembled_airr": "{prefix}.assembled.airr.tsv",
     "clones": "{prefix}.clones.tsv",
     "report": "{prefix}.arda.json",
+    "stats": "{prefix}.stats.tsv",
 }
 
 
@@ -72,7 +74,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
            d_max_evalue: float | None = None,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
-           map_report: dict | None = None, echo=None) -> dict:
+           map_report: dict | None = None, write_qc: bool = True, echo=None) -> dict:
     """Run Stages 2-3 over a Stage-1 AIRR and write the clonotype table + merged report.
 
     Called by both :func:`run` (single node) and :func:`reduce` (after a sharded Stage 1).
@@ -92,7 +94,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
     out_dir.mkdir(parents=True, exist_ok=True)
     airr = Path(airr)
     paths = {k: out_dir / v.format(prefix=out_prefix) for k, v in OUTPUTS.items()}
-    say = echo or (lambda _m: None)
+    say = echo or logger.info
 
     stage = Stage()
     arep = None
@@ -103,7 +105,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
         extra = paths["assembled_airr"]
         arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d,
                                 d_max_evalue=d_max_evalue)
-        say(f"[arda] assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
+        say(f"assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
     crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d,
@@ -111,7 +113,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
                         min_junction_q=min_junction_q, clonotype_key=clonotype_key,
                         call_level=call_level, isotype=isotype,
                         complete_only=complete_only, extra_airr=extra)
-    say(f"[arda] correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
+    say(f"correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")
 
     report = {
@@ -122,7 +124,33 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
         "correct": crep.as_dict(),
     }
     paths["report"].write_text(json.dumps(report, indent=2) + "\n")
+    if write_qc:
+        write_stats_for(out_dir, out_prefix, organism=organism, say=say)
     return report
+
+
+def write_stats_for(out_dir: str | Path, out_prefix: str, *, organism: str = "human",
+                    say=None) -> int:
+    """Write ``<prefix>.stats.tsv`` from the run's own artifacts. Returns the row count.
+
+    ⛔ Written unconditionally, not behind a flag. It reads only files that already exist and
+    costs one pass over each; the alternative is that the numbers an operator needs to decide
+    whether a sample is usable exist only if they knew to ask for them BEFORE the run.
+
+    ⛔ Called AFTER the report JSON is final. :func:`run` rewrites it with the whole-run wall time
+    once Stages 2-3 return, so collecting inside :func:`finish` would put the Stage-2/3 time in
+    the ``run`` scope under the name ``wall_seconds`` -- a wrong number that looks like a right one.
+    """
+    from ..stats import collect, write_stats
+
+    out_dir = Path(out_dir)
+    paths = {k: out_dir / v.format(prefix=out_prefix) for k, v in OUTPUTS.items()}
+    rows = collect(airr=paths["airr"] if paths["airr"].exists() else None,
+                   clones=paths["clones"] if paths["clones"].exists() else None,
+                   report=paths["report"], organism=organism)
+    write_stats(rows, paths["stats"])
+    (say or logger.info)(f"stats: {len(rows)} rows -> {paths['stats']}")
+    return len(rows)
 
 
 def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
@@ -144,7 +172,7 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     airr = out_dir / OUTPUTS["airr"].format(prefix=out_prefix)
-    say = echo or (lambda _m: None)
+    say = echo or logger.info
 
     whole = Stage()
     mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
@@ -159,18 +187,17 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
                       # accurate` would silently do nothing here.
                       with_junction_quality=(ec_mode != "fast" or min_junction_q is not None),
                       shm=shm, complete_junction_nt=complete_junction_nt)
-    say(f"[arda] map: {mrep.mapped_reads}/{mrep.total_reads} reads mapped "
-        f"({mrep.mapped_fraction * 100:.2f}%); loci={mrep.per_locus}")
 
     report = finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
                     ec_mode=ec_mode, min_junction_q=min_junction_q,
                     clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                     d_max_evalue=d_max_evalue,
-                    map_report=mrep.as_dict(), echo=echo)
+                    map_report=mrep.as_dict(), write_qc=False, echo=echo)
     report["wall_seconds"] = round(whole.wall_seconds, 3)
     (out_dir / OUTPUTS["report"].format(prefix=out_prefix)).write_text(
         json.dumps(report, indent=2) + "\n")
+    write_stats_for(out_dir, out_prefix, organism=organism, say=say)
     return report
 
 
@@ -224,18 +251,18 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
 
     shard_dir, out_dir = Path(shard_dir), Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    say = echo or (lambda _m: None)
+    say = echo or logger.info
 
     shards = sorted(shard_dir.glob(RNASEQ_SHARD_GLOB))
     if not shards:
         raise FileNotFoundError(f"no {RNASEQ_SHARD_GLOB} under {shard_dir}")
     airr = out_dir / OUTPUTS["airr"].format(prefix=out_prefix)
     merge(shards, airr)
-    say(f"[arda] merged {len(shards)} shard AIRRs -> {airr}")
+    say(f"merged {len(shards)} shard AIRRs -> {airr}")
 
     mrep = _merge_map_reports(sorted(shard_dir.glob("shard_*.map.json")))
     if mrep:
-        say(f"[arda] map (summed over {mrep['shards']} shards): "
+        say(f"map (summed over {mrep['shards']} shards): "
             f"{mrep['mapped_reads']}/{mrep['total_reads']} reads mapped; loci={mrep['per_locus']}")
     return finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                   assemble=assemble, complete_only=complete_only, map_d=map_d,

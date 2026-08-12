@@ -3,6 +3,90 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.20.0
+
+### `arda stats` — run QC as one long-format TSV, written by every mode run
+
+Every `arda rnaseq` / `arda amplicon` run now also writes `<prefix>.stats.tsv`, and `arda stats`
+builds the same table from any subset of a run's artifacts (so it works on a bare `arda annotate`
+output too). It reads only what a run already wrote — no re-read of the FASTQ, no alignment.
+
+Four columns, `scope` / `key` / `metric` / `value`, one value per cell:
+
+| scope | key | what |
+|---|---|---|
+| `run` | `map` / `correct` / `assemble` | the run report verbatim: total and mapped reads, FASTQ bytes, read length, paired, threads, wall time, peak RSS, per-locus counts |
+| `sample` | — | library-wide totals, junction lengths and quality, SHM rate, V/J gene coverage |
+| `chain` | `TRB`, `IGH`, … | per locus, **reads and clonotypes**: productive / non-functional, stop codons, out-of-frame, truncated junctions, min/max/mean junction length, junction quality, SHM rate, chimeras |
+| `v_gene` / `j_gene` | `TRBV19` | reads and clonotypes per germline gene |
+| `allele_candidate` | `TRBV19*01:G45A` | a recurrent, high-quality V mutation, with frequency and mean Phred |
+
+⛔ **Long, not wide.** The metric set differs per scope — a gene has no junction length, a chain
+has no allele frequency — so a wide table is mostly empty cells. Long format is what `grep`, `join`
+and a per-metric plot across samples want.
+
+⛔ **A metric with no input is omitted, never emitted as 0.** A run without `--junction-quality`
+has no `junction_quality_mean` row rather than a zero that reads like a terrible library.
+
+⛔ **Truncation, a stop codon and an out-of-frame junction are counted separately.** `_COMPLETE`
+folds all three together because Stage 2 only needs the conjunction; a QC table that did the same
+would attribute a short read to biology.
+
+⚠ **`allele_candidate` is a shortlist, not a genotype call.** A novel allele, somatic hypermutation
+and a base miscall are the same string in the mutation list; what separates them is how often the
+mutation recurs across an allele's reads (`--allele-min-frac`, default 0.5) and how good the base
+is. Both are reported per variant so the classification can be re-derived. arda does not genotype.
+Likewise the chimera, non-functional and stop-codon counts are **flags, never filters** — nothing
+in `stats` removes a row from any output.
+
+Gene coverage is measured against the shipped `cdr3_anchors.tsv`, i.e. the germline set arda
+actually maps to, rather than a hand-kept list that drifts from it.
+
+### `map --mutation-quality` — the Phred behind each mutation
+
+`v_mutation_quality` / `j_mutation_quality`: the read base's Phred for each entry of
+`v_mutations` / `j_mutations`, comma-joined, one-for-one and in the same order. Off by default
+(non-schema columns) and refused with `--reconstruct`, exactly like `--junction-quality`.
+
+⛔ **Driven by the mutation list that was emitted, not by re-deriving one.** Walking the alignment
+and scoring every mismatch reproduces what `_markup.segment_cigars` found, which since 2.16.0 is a
+**superset** of what the columns carry — `arda.shm` then drops the junction-internal entries. On
+this repo's own real-read fixture that is 25 of 242 V rows, and the result would line up in length
+only by accident while pairing entry *i* with a different base's score. So the walk builds
+*germline position → query position* and each emitted entry looks its own position up; an entry the
+alignment does not cover yields `""` for the whole segment rather than a short, misaligned list.
+
+⛔ **The two quality columns use different encodings.** `junction_quality` is raw Phred+33
+characters (it lines up byte-for-byte with `junction`); `v_mutation_quality` is comma-joined
+integers (there is no string to line up with). Reading one as the other gives plausible numbers off
+by 33.
+
+### Logging, verbosity and progress
+
+Three global options, before the subcommand: `-v/--verbose` (repeatable, DEBUG with level and
+module names), `-q/--quiet` (warnings and errors only), and `--log-file PATH`.
+
+* `--log-file` is **always DEBUG whatever the console level is**, with a timestamp and the process
+  peak RSS on every line. `-q` does not silence it — a quiet cluster job should still leave a full
+  record, and re-running a 10-hour bulk sample because the console was at the default level is not
+  a diagnosis.
+* `map` emits a **throttled** progress line — reads seen, reads mapped, reads/s, peak RSS, at most
+  one every 30 s. Time is the right axis, not chunk count: a bulk sample flushes hundreds of chunks
+  and chunk wall time varies ~50× with the receptor fraction.
+* Every module already logged through `logging.getLogger(__name__)`, so one `arda` logger
+  configures all of them.
+
+⚠ **Progress moved from stdout to stderr.** The stage lines were `typer.echo` on stdout, so
+`arda export-ref ... > out.tsv` interleaved a progress line into the data and `$(arda map ...)`
+captured prose. Results stay on stdout: a mode run prints its output paths, one per line, and
+nothing else.
+
+### `map --report` records the library, not just the receptor subset
+
+`paired`, `input_bytes`, `read_length_min` / `_max` / `_mean`. The AIRR holds only the reads that
+mapped, so its row count, its `sequence` lengths and its mate suffixes all describe the receptor
+subset — nothing downstream could recover the library's shape.
+
 ## 2.19.0
 
 ### `correct --flag-chimeras` — the PCR template-switch signature, as a flag

@@ -101,6 +101,19 @@ Bulk RNA-seq
    :undoc-members:
    :show-inheritance:
 
+Run QC and logging
+------------------
+
+.. automodule:: arda.stats
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda._log
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Cluster sharding
 ----------------
 
