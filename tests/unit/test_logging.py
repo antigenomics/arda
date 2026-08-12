@@ -78,7 +78,10 @@ def test_results_go_to_stdout_and_progress_to_stderr(tmp_path):
 def test_the_global_options_come_before_the_subcommand(tmp_path):
     """Typer puts callback options on the top-level parser only; a run that passed ``-v`` after
     the command name would fail, and the help text says so."""
-    result = runner.invoke(app, ["--help"])
+    # ⛔ `COLUMNS` is not optional. Click falls back to an 80-column terminal when stdout is not a
+    # tty -- which it is not on CI -- and typer then truncates `--verbose` to `--verbo...`, so this
+    # test passed on a wide local terminal and failed on CI. Same trap as `COLUMNS=200 arda --help`.
+    result = runner.invoke(app, ["--help"], env={"COLUMNS": "200"})
     assert result.exit_code == 0
     for flag in ("--verbose", "--quiet", "--log-file"):
         assert flag in result.stdout
