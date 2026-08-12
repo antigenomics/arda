@@ -30,7 +30,8 @@ try:                      # C-accelerated FASTQ/FASTA parsing; see _read_pairs_d
 except ImportError:       # pure-Python fallback below keeps a source checkout working
     _dnaio = None
 
-from ._res import Stage
+from ._res import Stage, peak_rss_mb
+from .._log import Throttle
 from ..annotate import io as seqio
 from ..annotate import mapper
 from ..annotate.airr_out import airr_header, format_rows
@@ -39,7 +40,8 @@ from ..shm import FULL_COLUMNS, SHM_MODES
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["map_rnaseq", "read_pairs", "merge_pair", "junction_quality", "RnaseqReport"]
+__all__ = ["map_rnaseq", "read_pairs", "merge_pair", "junction_quality", "mutation_quality",
+           "RnaseqReport"]
 
 _MERGE_ANCHOR = 12  # exact k-mer used to locate the R1/rc(R2) overlap in O(len)
 
@@ -47,6 +49,83 @@ _MERGE_ANCHOR = 12  # exact k-mer used to locate the R1/rc(R2) overlap in O(len)
 #: exactly the bases of ``junction``, in the same orientation, so position *i* of one indexes
 #: position *i* of the other. Stage 2 reads it for ``correct --min-junction-q``.
 JUNCTION_QUALITY = "junction_quality"
+
+#: Non-schema AIRR columns written by ``--mutation-quality``: the Phred score of the READ BASE
+#: behind each entry of ``v_mutations`` / ``j_mutations``, comma-joined, one-for-one and in the
+#: same order. This is what separates a NOVEL ALLELE from somatic hypermutation from a miscall:
+#: all three look identical in the mutation list, and only a recurrent, high-quality mutation is
+#: evidence of a germline the reference does not carry. ``arda stats`` reads them.
+MUTATION_QUALITY = ("v_mutation_quality", "j_mutation_quality")
+
+
+def mutation_quality(rec: dict, qual: str) -> dict[str, str]:
+    """Per-mutation Phred scores for ``rec["v_mutations"]`` / ``rec["j_mutations"]``.
+
+    ⛔ **Driven by the mutation list that was EMITTED, not by re-deriving one.** Walking the
+    alignment and scoring every mismatch reproduces what ``_markup.segment_cigars`` found -- which
+    since 2.16.0 is a SUPERSET of what the columns carry, because ``arda.shm`` then drops the
+    junction-internal entries (measured on this repo's own fixture: 25 of 242 V rows had more
+    mismatches than mutations). The result lines up in length only by accident and pairs entry *i*
+    with a different base's score. So the walk builds *germline position -> query position* and
+    each emitted entry looks its own position up; an entry whose position the alignment does not
+    cover yields ``""`` for the whole segment rather than a short, misaligned list.
+
+    ⛔ Quality is oriented like the READ AS SUBMITTED; the alignment and every coordinate here are
+    on the coding strand. Same reversal rule as :func:`junction_quality`.
+
+    ``ponytail:`` a Python pass over the alignment, not a second output from the C++ walk that
+    already visits these columns. It rides its own flag, so it never lands on a mode run; move it
+    into ``segment_cigars`` if it ever shows up in a profile.
+    """
+    out = {c: "" for c in MUTATION_QUALITY}
+    qaln, taln = rec.get("sequence_alignment") or "", rec.get("germline_alignment") or ""
+    lists = [str(rec.get(c) or "") for c in ("v_mutations", "j_mutations")]
+    if not qaln or not taln or not qual or not any(lists):
+        return out
+    seq = rec.get("sequence") or ""
+    if str(rec.get("rev_comp") or "").upper() in ("T", "TRUE", "1"):
+        qual, seq = qual[::-1], reverse_complement(seq)
+    if len(qual) != len(seq):
+        return out
+    try:
+        # `_num` writes these as floats, a bare producer as ints; both parse through float().
+        q = int(float(rec["mmseqs2_qstart"]))
+        t = int(float(rec["mmseqs2_tstart"]))
+        t_vend = int(float(rec.get("mmseqs2_t_vend") or 0))
+        t_jstart = int(float(rec.get("mmseqs2_t_jstart") or 0))
+        t_vjend = int(float(rec.get("mmseqs2_t_vjend") or 0))
+    except (KeyError, TypeError, ValueError):
+        return out
+
+    # germline position -> 1-based query position, for V (0) and J (1). Same segment test as
+    # `seg_key`: the N-pad between them and the C region carry no SHM evidence.
+    where: tuple[dict[int, int], dict[int, int]] = ({}, {})
+    for qc, tc in zip(qaln, taln):
+        cq, ct = qc != "-", tc != "-"
+        if cq and ct:
+            if t_vend and t <= t_vend:
+                where[0][t] = q
+            elif t_jstart and t_vjend and t_jstart <= t <= t_vjend:
+                where[1][t - t_jstart + 1] = q
+        q += cq
+        t += ct
+
+    for col, entries, table in zip(MUTATION_QUALITY, lists, where):
+        if not entries:
+            continue
+        scores: list[str] = []
+        for entry in entries.split(","):
+            try:                              # `G191C` -> germline position 191
+                pos = table[int(entry[1:-1])]
+            except (KeyError, ValueError):
+                scores = []
+                break
+            if not 1 <= pos <= len(qual):
+                scores = []
+                break
+            scores.append(str(ord(qual[pos - 1]) - 33))
+        out[col] = ",".join(scores)
+    return out
 
 
 def junction_quality(rec: dict, qual: str) -> str:
@@ -414,6 +493,14 @@ class RnaseqReport:
 
     input: str
     organism: str
+    #: Library shape, recorded here because nothing downstream can recover it: the AIRR carries
+    #: only the reads that mapped, so its row count, its `sequence` lengths and its mate suffixes
+    #: all describe the receptor subset rather than the library. `arda stats` reports them.
+    paired: bool = False
+    input_bytes: int = 0                # sum of the R1 (+ R2) file sizes AS SUBMITTED (gzip: compressed)
+    read_length_min: int = 0
+    read_length_max: int = 0
+    read_length_mean: float = 0.0
     total_reads: int = 0
     mapped_reads: int = 0
     per_locus: dict[str, int] = field(default_factory=dict)
@@ -472,6 +559,7 @@ def map_rnaseq(
     segment_only_v: bool = False,
     prefilter: bool = False,
     with_junction_quality: bool = False,
+    with_mutation_quality: bool = False,
     shm: str = "framework",
     complete_junction_nt: int = 0,
 ) -> RnaseqReport:
@@ -535,6 +623,10 @@ def map_rnaseq(
     Returns:
         The run :class:`RnaseqReport` (also printed by the CLI).
     """
+    want_qual = with_junction_quality or with_mutation_quality
+    if with_mutation_quality and reconstruct:
+        raise ValueError("--mutation-quality cannot be combined with --reconstruct: a merged "
+                         "fragment has no single input quality string")
     if with_junction_quality and reconstruct:
         # A merged fragment's bases come from two reads, so no input quality string describes it.
         # Emitting one of the two would put a quality beside bases it does not belong to -- the
@@ -571,7 +663,7 @@ def map_rnaseq(
     def reader():
         try:
             pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit,
-                               with_qual=with_junction_quality)
+                               with_qual=want_qual)
             for chunk in chunked_fragments(pairs, chunk_size):
                 chunks.put(chunk)
         except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
@@ -583,14 +675,21 @@ def map_rnaseq(
     t.start()
 
     report = RnaseqReport(input=str(r1), organism=organism, threads=threads,
-                          min_score=min_score)
+                          min_score=min_score, paired=r2 is not None,
+                          input_bytes=sum(Path(p).stat().st_size
+                                          for p in (r1, r2) if p and Path(p).exists()))
     reads_fh = open(emit_reads, "w") if emit_reads else None
     stage = Stage()
-    # Both extras go at the END, in a fixed order, so a consumer reading the shipped set by
+    tick = Throttle()
+    _len_sum = 0
+    # Every extra goes at the END, in a fixed order, so a consumer reading the shipped set by
     # position is unaffected whichever combination is on.
     extra_cols: tuple[str, ...] = (
         ((JUNCTION_QUALITY,) if with_junction_quality else ())
+        + (MUTATION_QUALITY if with_mutation_quality else ())
         + (FULL_COLUMNS if shm == "both" else ()))
+    logger.info("map: %s%s -> %s | %d threads, chunk %d, min_score %g",
+                r1, f" + {r2}" if r2 else "", output, threads, chunk_size, min_score)
     try:
         with open(output, "w") as fh:
             fh.write(airr_header(extra_cols) + "\n")
@@ -598,7 +697,7 @@ def map_rnaseq(
             def flush(batch: list) -> None:
                 """Search one batch and write its mapped reads."""
                 quals = {}
-                if with_junction_quality:
+                if want_qual:
                     # Split the quality off HERE, not in the reader: `_annotate_chunk`,
                     # `write_fasta` and `prefilter.keep_records` all take `(id, sequence)` pairs,
                     # and a third element would reach every one of them.
@@ -627,6 +726,9 @@ def map_rnaseq(
                 if with_junction_quality:
                     for r in keep:
                         r[JUNCTION_QUALITY] = junction_quality(r, quals.get(r["sequence_id"], ""))
+                if with_mutation_quality:
+                    for r in keep:
+                        r.update(mutation_quality(r, quals.get(r["sequence_id"], "")))
                 fh.write(format_rows(keep, extra_cols))
                 report.mapped_reads += len(keep)
                 for r in keep:
@@ -665,9 +767,25 @@ def map_rnaseq(
                         raise reader_exc[0]
                     break
                 report.total_reads += len(chunk)
+                # Read length, over the WHOLE library rather than the mapped subset -- the AIRR
+                # only holds reads that mapped, so nothing downstream can recover this. One pass
+                # over a list already in memory; `_len_sum` divides at the end, so a 300 M-read
+                # library costs one int per chunk rather than a length histogram.
+                lens = [len(r[1]) for r in chunk]
+                if lens:
+                    _len_sum += sum(lens)
+                    lo, hi = min(lens), max(lens)
+                    report.read_length_min = lo if not report.read_length_min else min(
+                        report.read_length_min, lo)
+                    report.read_length_max = max(report.read_length_max, hi)
+                if tick.ready():
+                    logger.info("map: %s reads read, %s mapped (%.2f %%), %.0f reads/s, %.0f MB",
+                                f"{report.total_reads:,}", f"{report.mapped_reads:,}",
+                                100.0 * report.mapped_reads / max(1, report.total_reads),
+                                report.total_reads / max(1e-9, stage.wall_seconds), peak_rss_mb())
                 if prefilter and seqtype == "nt":
                     from ..prefilter import keep_records  # noqa: PLC0415 — optional native ext
-                    if with_junction_quality:
+                    if want_qual:
                         qmap = {r[0]: r[2] for r in chunk}
                         survivors = [(i, s, qmap[i]) for i, s in
                                      keep_records([(r[0], r[1]) for r in chunk],
@@ -694,6 +812,11 @@ def map_rnaseq(
     stage.finish(report)   # wall_seconds / peak_rss_mb / rss_gain_mb, same definition as Stages 2-3
     report.reads_per_second = round(
         report.total_reads / report.wall_seconds if report.wall_seconds else 0.0, 1)
+    report.read_length_mean = round(_len_sum / report.total_reads, 1) if report.total_reads else 0.0
+    logger.info("map: %s/%s reads mapped (%.2f %%) in %.1f s (%.0f reads/s), peak %.0f MB; loci=%s",
+                f"{report.mapped_reads:,}", f"{report.total_reads:,}",
+                report.mapped_fraction * 100, report.wall_seconds, report.reads_per_second,
+                report.peak_rss_mb, report.per_locus)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
     return report

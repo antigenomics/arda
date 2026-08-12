@@ -25,24 +25,14 @@ stage in its own process (`arda map|assemble|correct` separately) -- then
 
 from __future__ import annotations
 
-import resource
-import sys
 import time
 
+# Defined in `arda._log` -- the module with no arda imports -- because `arda._log.Throttle` is
+# needed by `rnaseq.map`, and `arda.rnaseq.__init__` imports `map`. Re-exported here so every
+# existing `from ._res import peak_rss_mb` keeps working.
+from .._log import peak_rss_mb
+
 __all__ = ["peak_rss_mb", "Stage"]
-
-
-def peak_rss_mb() -> float:
-    """Peak RSS of this process AND its children, in MB.
-
-    ``RUSAGE_SELF`` alone is wrong and was: 92 % of a `map` run's wall time is spent inside the
-    `mmseqs` **subprocess**, whose nucleotide prefilter allocates a ``4**k`` index table that
-    dominates the footprint. Reporting only the Python process understated peak RSS by roughly
-    an order of magnitude. ``ru_maxrss`` is bytes on macOS, KB on Linux.
-    """
-    scale = 1024 * 1024 if sys.platform == "darwin" else 1024
-    return max(resource.getrusage(who).ru_maxrss
-               for who in (resource.RUSAGE_SELF, resource.RUSAGE_CHILDREN)) / scale
 
 
 class Stage:

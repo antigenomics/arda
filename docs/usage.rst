@@ -15,6 +15,10 @@ Command line
    arda info
    arda annotate -i reads.fastq -o out.airr.tsv --organism human --seqtype nt
    arda annotate -i prot.fasta  -o out.airr.tsv --organism human --seqtype aa
+   arda stats -i out.airr.tsv -o out.stats.tsv          # run QC, long-format TSV
+
+``-v`` / ``-q`` / ``--log-file`` are global and go **before** the subcommand
+(``arda -v --log-file run.log map ...``); progress goes to stderr and results to stdout.
 
 The output is a **spec-valid AIRR Rearrangement** TSV (it passes ``airr.schema``
 validation) with 1-based, closed region coordinates (``fwr1_start``/``fwr1_end`` …
@@ -79,6 +83,29 @@ string over exactly the bases of ``junction``, same orientation. Off by default 
 column, so the default output does not move) and refused with ``--reconstruct``. Stage 1 is the
 only place the FASTQ quality is still in hand, and it is what ``correct --min-junction-q`` gates
 on: see :ref:`quality gate`.
+
+Quality at each mutation
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+``arda map --mutation-quality`` adds ``v_mutation_quality`` / ``j_mutation_quality`` — the Phred of
+the read base behind each entry of ``v_mutations`` / ``j_mutations``, comma-joined, one-for-one and
+in the same order. A novel allele, somatic hypermutation and a base miscall are the same string in
+the mutation list; the recurrence separates the first from the second and the Phred separates both
+from the third. ``arda stats`` reads it to score its ``allele_candidate`` shortlist.
+
+⛔ The two quality columns use **different encodings**: ``junction_quality`` is raw Phred+33
+characters (it lines up byte-for-byte with ``junction``), and ``v_mutation_quality`` is comma-joined
+integers. Off by default and refused with ``--reconstruct``, like ``--junction-quality``. See
+:doc:`qc`.
+
+Run QC
+~~~~~~
+
+``arda stats`` turns a finished run into one long-format QC TSV — reads and clonotypes per chain,
+functional / non-functional / stop-codon / truncated-junction counts, junction length and quality,
+SHM rate, chimeras, V/J gene coverage and a candidate-allele shortlist. The mode commands write it
+automatically as ``<prefix>.stats.tsv``. Full description, plus the verbosity and ``--log-file``
+options: :doc:`qc`.
 
 Finishing a truncated junction from the germline
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

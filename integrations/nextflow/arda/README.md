@@ -5,7 +5,7 @@ per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a sin
 `arda <mode>` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
 any DSL2 pipeline the same way STAR/Salmon/fastp do.
 
-Pinned to **arda 2.16.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
+Pinned to **arda 2.20.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
 
 > ⛔ **2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
 > earlier version of this module invoked — was removed there. The regime is now the **command
@@ -143,7 +143,7 @@ and whether a tool **invents a junction it has no anchor for**.
 arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.
 
 - **`-profile conda`** works out of the box (Nextflow builds the env from `environment.yml`) — once
-  arda 2.16.0 is on PyPI; see the note at the top.
+  arda 2.20.0 is on PyPI; see the note at the top.
 - **`-profile docker`/`singularity`**: build the image from the `Dockerfile` here, push it to your
   registry, and point the module's `container` at it (see the Dockerfile header). A pinned image is
   the reproducible choice for a shared pipeline.
@@ -230,7 +230,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (boolean), `arda_organism` (string), `arda_mmseqs` (string), `arda_args` (string).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.16.0' }` to your deployment
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.20.0' }` to your deployment
    config (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:

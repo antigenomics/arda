@@ -28,6 +28,7 @@ from typing import Optional
 import typer
 
 from . import __version__
+from ._log import logger as log
 
 app = typer.Typer(add_completion=False, help="Antigen Receptor Domain Annotation")
 
@@ -109,8 +110,30 @@ def _main(
     version: bool = typer.Option(
         False, "--version", callback=_version_callback, is_eager=True,
         help="Show the arda version and exit."),
+    verbose: int = typer.Option(
+        0, "-v", "--verbose", count=True,
+        help="Raise console verbosity. Default prints the stage and progress lines; -v adds "
+             "DEBUG (per-chunk accounting, reference and index decisions, the fallbacks a run "
+             "took silently) with the level and module on each line. Repeatable."),
+    quiet: bool = typer.Option(
+        False, "-q", "--quiet",
+        help="Console warnings and errors only. Does NOT quieten --log-file, which stays at "
+             "DEBUG -- so a cluster job can be silent and still leave a full record."),
+    log_file: Optional[Path] = typer.Option(
+        None, "--log-file",
+        help="Also write a DEBUG log here, with a timestamp and the process peak RSS on every "
+             "line. This is the artifact to keep from a long run: re-running a 10-hour bulk "
+             "sample because the console was at the default level is not a diagnosis."),
 ) -> None:
-    """Antigen Receptor Domain Annotation."""
+    """Antigen Receptor Domain Annotation.
+
+    Progress goes to **stderr** and results to **stdout**, so ``arda export-ref ... > out.tsv``
+    and ``arda ... | head`` are safe. ``-v`` / ``-q`` / ``--log-file`` go BEFORE the subcommand:
+    ``arda -v --log-file run.log amplicon --r1 ...``.
+    """
+    from ._log import setup
+
+    setup(verbosity=verbose, quiet=quiet, log_file=log_file)
 
 
 @app.command()
@@ -524,6 +547,16 @@ def rnaseq_map(
              "against median Q 16 for the sequencing-error cloud around it. OFF by default: it "
              "appends a non-schema column, so the default output is unchanged. Not usable with "
              "--reconstruct (a merged fragment has no single input quality string)."),
+    mutation_quality: bool = typer.Option(
+        False, "--mutation-quality/--no-mutation-quality",
+        help="Also emit `v_mutation_quality` / `j_mutation_quality`: the read's Phred score at "
+             "each entry of `v_mutations` / `j_mutations`, comma-joined, one-for-one and in the "
+             "same order. A NOVEL ALLELE, somatic hypermutation and a base-miscall are the same "
+             "string in the mutation list -- what separates them is how often the mutation recurs "
+             "across an allele's reads and how good the base is, and only the second of those "
+             "needs a column. `arda stats` reads it for `allele_candidate mean_quality`. OFF by "
+             "default (non-schema columns, and it re-walks the alignment in Python); not usable "
+             "with --reconstruct."),
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
     complete_junction_nt: int = typer.Option(
         0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
@@ -534,23 +567,22 @@ def rnaseq_map(
     """Stage 1 — filter + map receptor reads; write only the mapped ones (AIRR TSV)."""
     from .rnaseq.map import map_rnaseq
 
-    rep = map_rnaseq(r1, output, r2=r2, organism=organism, threads=threads,
-                     sensitivity=sensitivity, strand=strand, chunk_size=chunk_size,
-                     map_d=map_d, d_max_evalue=d_max_evalue,
-                     reconstruct=reconstruct, min_score=min_score,
-                     max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
-                     drop_constant_only=drop_constant_only,
-                     limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
-                     fast_segments=fast_segments,
-                     indel_rescue=indel_rescue,
-                     segment_only_v=segment_only_v,
-                     adaptive=adaptive, with_junction_quality=junction_quality, shm=shm,
-                     complete_junction_nt=complete_junction_nt,
-                     emit_reads=emit_reads, report_path=report)
-    typer.echo(
-        f"[arda] {rep.mapped_reads}/{rep.total_reads} reads mapped "
-        f"({rep.mapped_fraction * 100:.2f}%) in {rep.wall_seconds:.1f}s "
-        f"({rep.reads_per_second:.0f} reads/s); loci={rep.per_locus}")
+    map_rnaseq(r1, output, r2=r2, organism=organism, threads=threads,
+                    sensitivity=sensitivity, strand=strand, chunk_size=chunk_size,
+                    map_d=map_d, d_max_evalue=d_max_evalue,
+                    reconstruct=reconstruct, min_score=min_score,
+                    max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
+                    drop_constant_only=drop_constant_only,
+                    limit=(limit or None), two_pass=two_pass, prefilter=prefilter,
+                    fast_segments=fast_segments,
+                    indel_rescue=indel_rescue,
+                    segment_only_v=segment_only_v,
+                    adaptive=adaptive, with_junction_quality=junction_quality,
+                    with_mutation_quality=mutation_quality, shm=shm,
+                    complete_junction_nt=complete_junction_nt,
+                    emit_reads=emit_reads, report_path=report)
+    # `map_rnaseq` already logged the summary line; only the output path belongs on stdout.
+    typer.echo(str(output))
 
 
 @app.command("correct")
@@ -645,14 +677,15 @@ def rnaseq_correct(
                        flag_chimeras=flag_chimeras,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
                        report_path=report)
-    typer.echo(
-        f"[arda] {rep.clonotypes_in} -> {rep.clonotypes_out} clonotypes "
+    log.info(
+        f"correct: {rep.clonotypes_in} -> {rep.clonotypes_out} clonotypes "
         f"({rep.collapsed} collapsed) over {rep.reads} reads"
         + (f"; dropped {rep.reads_incomplete}/{rep.reads_with_junction} incomplete junctions"
            if rep.reads_incomplete else "")
         + (f"; moved {rep.reads_low_quality} reads onto their parent on --min-junction-q "
            f"({rep.clonotypes_low_quality} clonotypes emptied)"
            if rep.reads_low_quality else ""))
+    typer.echo(str(output))
 
 
 @app.command("assemble")
@@ -681,9 +714,80 @@ def rnaseq_assemble(
 
     rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d,
                            d_max_evalue=d_max_evalue, report_path=report)
-    typer.echo(
-        f"[arda] assemble: {rep.contigs_complete}/{rep.contigs} complete contigs from "
-        f"{rep.seeds} seeds; rescued {rep.reads_rescued} reads")
+    log.info("assemble: %d/%d complete contigs from %d seeds; rescued %d reads",
+             rep.contigs_complete, rep.contigs, rep.seeds, rep.reads_rescued)
+    typer.echo(str(output))
+
+
+@app.command("stats")
+def stats_cmd(
+    output: Path = typer.Option(..., "--output", "-o", help="QC TSV ('-' for stdout)."),
+    airr: Optional[Path] = typer.Option(
+        None, "--airr", "-i",
+        help="Mapped-reads AIRR TSV (`map` or `annotate`): the per-read and per-chain rows, "
+             "the per-gene read counts, and the candidate-allele shortlist."),
+    clones: Optional[Path] = typer.Option(
+        None, "--clones", "-c",
+        help="Clonotype table (`correct`): the per-chain clonotype rows, chimera counts and "
+             "per-gene clonotype counts."),
+    report: Optional[Path] = typer.Option(
+        None, "--report", "-r",
+        help="`<prefix>.arda.json` (or a single-stage `--report` JSON). This is where total and "
+             "mapped reads, threads, wall time and peak RSS come from -- the AIRR holds only the "
+             "reads that mapped, so nothing in it can recover them."),
+    r1: Optional[Path] = typer.Option(
+        None, "--r1", help="Input FASTQ, read ONLY for its size on disk and to record that the "
+                           "library is paired. Neither is recoverable from the AIRR."),
+    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ (marks the library paired)."),
+    organism: str = typer.Option(
+        "human", help="Reference organism, used for the V/J gene universe behind the coverage "
+                      "fractions."),
+    allele_min_frac: float = typer.Option(
+        0.5, "--allele-min-frac",
+        help="A V mutation is a CANDIDATE ALLELE at or above this frequency among the reads "
+             "calling that allele. A germline the reference does not carry is in essentially "
+             "every read of its allele; somatic hypermutation is per-clone and does not reach "
+             "half. ⚠ A shortlist to look at, never a genotype call -- arda does not genotype."),
+    allele_min_reads: int = typer.Option(
+        10, "--allele-min-reads",
+        help="...and in at least this many reads, so a 2-read allele cannot mint a candidate off "
+             "one read."),
+) -> None:
+    """Run QC — reads, clonotypes, chains, genes and candidate alleles as one long-format TSV.
+
+    Reads only what a run already wrote, adds no alignment, and never filters anything. Four
+    columns, ``scope``/``key``/``metric``/``value``, so a metric can be grepped, joined across
+    samples, or plotted without reshaping:
+
+    \b
+      run               map / correct / assemble   the run report, flattened verbatim
+      sample            (blank)                    library-wide totals and coverage
+      chain             TRB, IGH, ...              per locus, reads AND clonotypes
+      v_gene / j_gene   TRBV19                     reads and clonotypes per germline gene
+      allele_candidate  TRBV19*01:G45A             a recurrent, high-quality V mutation
+
+    Every input is optional and contributes its own scopes, so this works on a bare ``annotate``
+    output as well as on a full run directory::
+
+        arda stats -i s.airr.tsv -c s.clones.tsv -r s.arda.json --r1 s_1.fq.gz --r2 s_2.fq.gz \\
+                   -o s.stats.tsv
+
+    ⚠ ``junction_quality_mean`` needs ``map --junction-quality``, and the
+    ``allele_candidate mean_quality`` / ``shm_variant_mean_quality`` rows need
+    ``map --mutation-quality``. Rows that have no input are omitted, never emitted as 0.
+    """
+    import sys
+
+    from .stats import collect, write_stats
+
+    if airr is None and clones is None and report is None:
+        raise typer.BadParameter("give at least one of --airr / --clones / --report")
+    rows = collect(airr=airr, clones=clones, report=report, r1=r1, r2=r2, organism=organism,
+                   allele_min_frac=allele_min_frac, allele_min_reads=allele_min_reads)
+    write_stats(rows, sys.stdout if str(output) == "-" else output)
+    log.info("stats: %d rows over %d scopes", len(rows), len({r[0] for r in rows}))
+    if str(output) != "-":
+        typer.echo(str(output))
 
 
 @app.command("shm")
@@ -712,9 +816,9 @@ def shm_cmd(
     from .shm import recount_airr
 
     rep = recount_airr(input, output, mode=mode)
-    typer.echo(f"[arda] shm ({rep['mode']}): {rep['rows']} rows, "
-               f"{rep['mutations_in']} -> {rep['mutations_out']} mutation entries "
-               f"({rep['removed']} junction-internal) -> {output}")
+    log.info("shm (%s): %d rows, %d -> %d mutation entries (%d junction-internal)",
+             rep["mode"], rep["rows"], rep["mutations_in"], rep["mutations_out"], rep["removed"])
+    typer.echo(str(output))
 
 
 # ── MODES ─────────────────────────────────────────────────────────────────────────────────────
@@ -760,11 +864,14 @@ def _mode_run(mode: str, *, exact: bool, indel_rescue: bool, **kw) -> None:
                 "--indel-rescue requires the fast segment pass, which only `arda amplicon` "
                 "enables (and --exact disables). It is ignored in every other configuration.")
         speed["indel_rescue"] = True
-    pipeline.run(echo=typer.echo, **speed, **kw)
-    out_dir, out_prefix = kw["out_dir"], kw["out_prefix"]
-    typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.airr.tsv'}, "
-               f"{out_dir / f'{out_prefix}.clones.tsv'}, "
-               f"{out_dir / f'{out_prefix}.arda.json'}")
+    pipeline.run(**speed, **kw)
+    out_dir, out_prefix = Path(kw["out_dir"]), kw["out_prefix"]
+    # One path per line on stdout, so `arda amplicon ... | tail -1` and `$(...)` work. Everything
+    # else this run said went to stderr through the logger.
+    for name in ("airr", "clones", "report", "stats"):
+        path = out_dir / pipeline.OUTPUTS[name].format(prefix=out_prefix)
+        if path.exists():
+            typer.echo(str(path))
 
 
 @app.command("rnaseq")
@@ -773,7 +880,7 @@ def rnaseq_mode(
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
     out_prefix: str = typer.Option(
         ..., "--out-prefix", "-p",
-        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json."),
+        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
@@ -836,6 +943,7 @@ def rnaseq_mode(
     * ``<prefix>.assembled.airr.tsv``  -- Stage-3 assembled long-CDR3 reads (if ``--assemble``)
     * ``<prefix>.clones.tsv``          -- corrected clonotype table (folds in the assembled clones)
     * ``<prefix>.arda.json``           -- merged run report
+    * ``<prefix>.stats.tsv``           -- run QC, long format (see ``arda stats``)
 
     Run ``arda map`` / ``assemble`` / ``correct`` / ``shm`` separately to tune their own knobs.
     """
@@ -856,7 +964,7 @@ def amplicon_mode(
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
     out_prefix: str = typer.Option(
         ..., "--out-prefix", "-p",
-        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json."),
+        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
@@ -986,7 +1094,7 @@ def rnaseq_reduce(
 
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
-                    d_max_evalue=d_max_evalue, echo=typer.echo)
+                    d_max_evalue=d_max_evalue)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
 
 
@@ -1074,9 +1182,9 @@ def resolve_ties_cmd(
     from .annotate.ties import resolve_airr
 
     segs = tuple(x.strip() for x in segments.split(",") if x.strip())
-    rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank,
-                       echo=typer.echo)
-    typer.echo(f"[arda] wrote {output} ({rep['rows']} rows)")
+    rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank)
+    log.info("resolve-ties: %d rows", rep["rows"])
+    typer.echo(str(output))
 
 
 if __name__ == "__main__":
