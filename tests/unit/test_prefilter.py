@@ -17,9 +17,15 @@ pytest.importorskip("arda._prefilter", reason="native prefilter extension not bu
 from arda._prefilter import Prefilter  # noqa: E402
 
 
+def _random_dna(seed: int, length: int) -> str:
+    """Build a deterministic DNA sequence from one advancing RNG."""
+    rng = random.Random(seed)
+    return "".join(rng.choice("ACGT") for _ in range(length))
+
+
 def test_a_read_that_is_a_substring_of_a_target_always_passes():
     """The floor: an exact fragment of the reference can obviously align, so it must survive."""
-    target = "".join(random.Random(1).choice("ACGT") for _ in range(300))
+    target = _random_dna(1, 300)
     idx = Prefilter([target], 16)
     for start in range(0, len(target) - 60, 37):
         frag = target[start:start + 60]
@@ -29,14 +35,14 @@ def test_a_read_that_is_a_substring_of_a_target_always_passes():
 def test_the_reverse_complement_of_a_target_passes():
     """Reads come off both strands. Indexing one strand would drop ~half the library, and on a
     stranded paired library that is precisely the R2 mates."""
-    target = "".join(random.Random(2).choice("ACGT") for _ in range(200))
+    target = _random_dna(2, 200)
     rc = target[::-1].translate(str.maketrans("ACGT", "TGCA"))
     idx = Prefilter([target], 16)
     assert idx.hits(rc[20:100], 1) >= 1
 
 
 def test_unrelated_sequence_is_rejected():
-    idx = Prefilter(["".join(random.Random(3).choice("ACGT") for _ in range(300))], 16)
+    idx = Prefilter([_random_dna(3, 300)], 16)
     rnd = random.Random(4)
     junk = ["".join(rnd.choice("ACGT") for _ in range(100)) for _ in range(2000)]
     passed = sum(idx.mask(junk, 1, 1))
@@ -55,7 +61,7 @@ def test_a_window_covering_an_N_is_dropped_not_guessed():
 
 def test_hits_stops_counting_at_min_hits():
     """`hits` is capped so the pass case exits early; it is a threshold test, not a census."""
-    target = "".join(random.Random(5).choice("ACGT") for _ in range(500))
+    target = _random_dna(5, 500)
     idx = Prefilter([target], 16)
     assert idx.hits(target, 1) == 1
     assert idx.hits(target, 3) == 3
@@ -64,7 +70,7 @@ def test_hits_stops_counting_at_min_hits():
 def test_threading_does_not_change_the_answer():
     """`mask` writes from several threads into one buffer. std::vector<bool> would be a bitfield
     and would race; this asserts the answer is thread-count invariant."""
-    target = "".join(random.Random(6).choice("ACGT") for _ in range(400))
+    target = _random_dna(6, 400)
     idx = Prefilter([target], 16)
     rnd = random.Random(7)
     seqs = [target[i % 300:i % 300 + 80] if i % 3 == 0
@@ -92,9 +98,9 @@ def test_keep_records_indexes_the_fasta_mmseqs_searches(tmp_path):
     of real reads, 69.27 % of them J->C -- so what gets indexed is the whole ballgame, and this
     asserts the wiring reads the same FASTA rather than a hand-listed segment set."""
     fa = tmp_path / "alleles.fasta"
-    target = "".join(random.Random(8).choice("ACGT") for _ in range(300))
+    target = _random_dna(8, 300)
     fa.write_text(f">t1\n{target[:150]}\n{target[150:]}\n")   # wrapped: the reader must join lines
-    recs = [("hit", target[100:200]), ("miss", "A" * 100)]
+    recs = [("hit", target[142:158]), ("miss", "A" * 100)]
     assert prefilter.keep_records(recs, fa, threads=2) == [recs[0]]
 
 
