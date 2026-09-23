@@ -343,17 +343,44 @@ def _merge_map_reports(shards: list[dict]) -> dict:
         # prefilter_seen` is the only number that says whether the prefilter earned its keep on
         # this library, and a sharded run used to report nothing at all.
         "prefilter_stats": _sum_counters(shards, "prefilter_stats"),
-        "segment_search": _sum_counters(shards, "segment_search"),
+        "segment_search": _merge_segment_reports(shards),
     }
 
 
 def _sum_counters(shards: list[dict], key: str) -> dict:
-    """Add up one report sub-dict of integer counters across shards, keeping key order."""
+    """Add up one report sub-dict of FLAT integer counters across shards, keeping key order.
+
+    Only ``prefilter_stats`` (``seen`` / ``passed``) has that shape. ``segment_search`` does not:
+    see :func:`_merge_segment_reports`.
+    """
     out: dict[str, int] = {}
     for s in shards:
         for k, v in (s.get(key) or {}).items():
             out[k] = out.get(k, 0) + int(v)
     return out
+
+
+def _merge_segment_reports(shards: list[dict]) -> dict:
+    """Combine the per-shard two-pass accounting, through the merge Stage 1 already uses.
+
+    Never: ``segment_search`` is NOT a flat counter dict, and summing it as one is wrong twice
+    over. It nests ``reasons``, and it carries ``fast_fraction`` -- a RATIO. Added up over four
+    read groups, a library whose true fast fraction is 0.1717 reports 0.6868, which is the number
+    the regime rule is read off: it would say "these reads span V into J, use the amplicon preset"
+    about a library where they do not.
+
+    :func:`arda.annotate.mapper._merge_segment_report` already accumulates exactly this shape
+    across chunks and recomputes the fraction from the totals, so it is reused rather than
+    reimplemented -- a second copy would drift the moment a counter is added, which is how
+    ``v_only_on_segment`` was silently lost once already.
+    """
+    from ..annotate.mapper import _merge_segment_report
+
+    acc: dict = {}
+    for s in shards:
+        if s.get("segment_search"):
+            _merge_segment_report(acc, s["segment_search"])
+    return acc
 
 
 def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,

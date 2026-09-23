@@ -160,6 +160,35 @@ def test_merge_map_reports_keeps_the_library_shape_and_the_prefilter_accounting(
     assert m["segment_search"] == {}
 
 
+def test_segment_search_is_merged_not_summed_because_it_carries_a_ratio():
+    """Never: `fast_fraction` is a RATIO and `reasons` is nested; `segment_search` is not a counter dict.
+
+    Summed over four read groups, a library whose true fast fraction is 0.1717 would report
+    0.6868 -- and that is the number the regime rule is read off. It would say "these reads span V
+    into J, use the amplicon preset" about a library where they do not. (Summing it also just
+    crashes on the nested `reasons`, which is how this was found.)
+    """
+    def seg(implied, rescued, v_only):
+        n = implied + rescued
+        return {"implied": implied, "rescued": rescued, "no_segment_hit": 7,
+                "v_only_on_segment": 12, "reasons": {"v_only": v_only, "j_only": 3},
+                "fast_fraction": round(implied / n, 4)}
+
+    shards = [dict(_shard_report(100, 10, 5.0, 300.0), segment_search=seg(17, 83, 40)),
+              dict(_shard_report(100, 20, 9.0, 280.0), segment_search=seg(25, 75, 60))]
+    s = pipeline._merge_map_reports(shards)["segment_search"]
+    assert s["implied"] == 42 and s["rescued"] == 158
+    assert s["no_segment_hit"] == 14 and s["v_only_on_segment"] == 24
+    assert s["reasons"] == {"v_only": 100, "j_only": 6}
+    # Recomputed from the totals: 42 / (42 + 158), NOT 0.17 + 0.25.
+    assert s["fast_fraction"] == 0.21
+
+
+def test_segment_search_stays_empty_when_the_two_pass_never_ran():
+    shards = [_shard_report(100, 10, 5.0, 300.0), _shard_report(100, 20, 9.0, 280.0)]
+    assert pipeline._merge_map_reports(shards)["segment_search"] == {}
+
+
 def test_a_shard_that_mapped_nothing_does_not_drag_the_read_length_to_zero():
     """An empty shard has a wall time but no reads; its zeroed length fields are not a measurement."""
     shards = [_shard_report(100, 10, 5.0, 300.0, length=100),
