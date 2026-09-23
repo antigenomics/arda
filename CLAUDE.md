@@ -33,7 +33,7 @@ the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for
 **Never: `conda run -n arda …` does NOT work on this Mac.** Use the binary directly:
 
 ```sh
-/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.20.0
+/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.21.0
 COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
@@ -182,18 +182,11 @@ still exposes them individually for A/B work.
 
 ## Open loops
 
-- **Unreleased in the working tree, for 2.20.0** — verified: `ruff check src/` green,
-  892 tests pass, `sphinx-build -W` clean, and a real amplicon mode run writes all five artifacts.
-  - `arda stats` + `src/arda/stats.py`, and `<prefix>.stats.tsv` written by every mode run
-    (`pipeline.write_stats_for`, called AFTER the report JSON is final so the `run` scope carries
-    the whole-run wall time, not Stages 2-3's).
-  - `map --mutation-quality` -> `v_mutation_quality` / `j_mutation_quality`.
-  - `src/arda/_log.py`: one `arda` logger, global `-v` / `-q` / `--log-file`, throttled `map`
-    progress. `peak_rss_mb` MOVED here from `rnaseq/_res.py` (which re-exports it) — the other
-    direction is an import cycle, because `arda.rnaseq.__init__` imports `map` and `map` needs
-    `Throttle`.
-  - `map --report` now records `paired` / `input_bytes` / `read_length_min|max|mean`.
-  - Nextflow module bumped 2.16.0 -> 2.20.0 (release-checklist item 5) and emits `stats`.
+- **Released 2.21.0 — `arda cells`.** Single-cell S0-S3 of `project/design-singlecell.md` are
+  done and shipped: `src/arda/cell.py` (barcode dialects), `cell_id` as an AIRR column,
+  `locus`/`clone_row` in `correct --read-map`, and `arda cells` itself
+  (`src/arda/{singlecell,partition,scplot}.py`, `docs/singlecell.rst`, `notebooks/singlecell_qc.py`).
+  Open: **S4 `umi_count`**, blocked on a migec format decision, not on arda.
 - **Never: QC traps, all live in tests — do not undo them.**
   1. **Mutation quality must be driven by the EMITTED list, not by re-walking for mismatches.**
      `_markup.segment_cigars` finds a SUPERSET of what the columns carry (`arda.shm` drops the

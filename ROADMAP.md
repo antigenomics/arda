@@ -7,7 +7,9 @@ D germlines), MMseqs2 runtime mapping, C++ markup transfer, spec-valid AIRR outp
 orientation via `rev_comp`), reverse-complement handling, all-loci single-DB
 querying, streaming/bounded-memory FASTQ I/O (optional quality retention),
 out-of-frame junction translation, extended V/J-position markup, D-segment mapping
-(incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures.
+(incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures,
+run QC (`arda stats`), and single-cell support (`arda cells`: reference-free per-cell
+contig assembly, chain pairing, doublet flagging, and the QC surface).
 
 ## TODO
 
