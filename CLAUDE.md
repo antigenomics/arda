@@ -25,6 +25,7 @@ the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for
 | `project/` | the design record, one file per subsystem. `design-singlecell.md` is authoritative for the single-cell work; `ROADMAP.md` indexes it |
 | `notebooks/` | marimo notebooks; `singlecell_qc.py` reads what `arda cells` writes |
 | `integrations/nextflow/arda/` | the Gamaleya/ISP NF module (`main.nf`, `environment.yml`, `Dockerfile`) |
+| `integrations/snakemake/arda/` | the Snakemake workflow (`Snakefile`, `config.yaml`); one job per READ GROUP. Covered by `tests/unit/test_snakemake_integration.py`, which execs the prelude |
 | `scripts/` | `fetch_igblast.py`, `fetch_mmseqs.py`, `pack_reference.sh`, `build_test_fixtures.py`, `build_d_priors.py`, the `bench_*.py` |
 | gitignored | `bin/` (IgBLAST + mmseqs binaries), `data/` (IMGT zip, intermediates), `build/`, `.claude/`, `promt.md` (the original spec, kept for intent) |
 
@@ -33,7 +34,7 @@ the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for
 **Never: `conda run -n arda …` does NOT work on this Mac.** Use the binary directly:
 
 ```sh
-/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.21.0
+/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.22.0
 COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
@@ -182,6 +183,16 @@ still exposes them individually for A/B work.
 
 ## Open loops
 
+- **Released 2.22.0 — read groups.** A sample may arrive in several FASTQ pairs; `arda.samples`
+  parses the grouping (repeatable `--r1`/`--r2`/`--id`, or an nf-core-shaped `--samples` sheet) and
+  `pipeline.run` takes read groups. Never: it is an ALREADY-SHARDED sample -- map each, concatenate
+  in DECLARED order, call the existing `finish`. `correct.py`'s key, `assemble.py`'s bucketing and
+  the AIRR column list were deliberately NOT touched. `arda cluster plan` /
+  `cluster submit-samples` / the Snakemake workflow schedule at READ-GROUP granularity;
+  `cluster.regime_flags` is the single place that knows a regime's map+reduce flags, because
+  `--ec-mode rnaseq` reads a column only `--junction-quality` writes and two separate jobs cannot
+  wire that themselves. Open: `--jobs N` for concurrent samples on one box, only if a
+  many-small-samples sheet measures a win.
 - **Released 2.21.0 — `arda cells`.** Single-cell S0-S3 of `project/design-singlecell.md` are
   done and shipped: `src/arda/cell.py` (barcode dialects), `cell_id` as an AIRR column,
   `locus`/`clone_row` in `correct --read-map`, and `arda cells` itself

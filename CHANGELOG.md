@@ -3,6 +3,101 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.22.0
+
+### A sample may arrive in several FASTQ pairs
+
+Illumina writes one FASTQ per lane (`PT01_S1_L001_R1_001.fastq.gz`, `..._L002_...`) and in-house
+pipelines chunk a run their own way. Those are **one repertoire** and now give **one** clonotype
+table, without `cat`-ing anything first.
+
+`--r1` / `--r2` / `--id` are repeatable on `arda rnaseq` and `arda amplicon`, matched **by
+position**; repeat an id to merge those read groups into one sample. `--samples sheet.tsv|csv`
+takes the same grouping from a sheet whose columns are nf-core's `sample, fastq_1, fastq_2`, so an
+existing nf-core samplesheet works unmodified — repeated `sample` values merge in row order, which
+is nf-core's own re-sequencing rule. One sample → one set of outputs, named by its id.
+
+**A multi-file sample is an ALREADY-SHARDED sample**, which is why nothing below Stage 1 changed.
+`cluster.split_pairs` exists to cut one pair into contiguous blocks precisely so the per-block
+Stage-1 AIRR can be concatenated in block order and handed to Stages 2-3 once; a sample delivered
+as four lane FASTQs has simply been sharded by whoever wrote it. So `pipeline.run` takes read
+groups, maps each, merges in **declared** order and calls the same `finish`. The clonotype key
+(`correct.py`), the contig layout (`assemble.py`) and the AIRR column list are untouched — they
+are where this project's determinism guarantees live.
+
+Measured on `tests/data/rnaseq_real` cut into four with `arda cluster split`: `.airr.tsv`,
+`.assembled.airr.tsv` and `.clones.tsv` are **byte-identical** to the one-file run.
+
+**Never: the grouping is declared, never inferred.** Given `RNA-SAMPLE_ID:12:00XX919:3_1.fastq.gz`
+no rule can say which colon-separated field is the sample, and a rule that guesses wrong splits one
+repertoire into four with no error anywhere. More than one `--r1` without `--id` is refused.
+
+**Never: read groups are never sorted by filename.** `A_L010` sorts before `A_L002` and the
+clonotype fold is not permutation-invariant — `correct` collapses an error child onto the parent it
+meets first. Declared order = command-line order = sheet row order.
+
+**Never: a sample is not split to parallelise it.** Contigs that tile across the split are never
+built: 57 reads as one sample against 41 + 17 = 58 as two on the test fixture. With `--no-assemble`
+the two partition exactly (35 + 16 = 51 reads, 34 + 15 = 49 clonotypes), which is what says
+`correct` neither double-counts nor drops anything at a sample boundary.
+
+`--cell-from auto` is sniffed once, on the first read group, and the concrete dialect used for the
+rest — otherwise a barcode ambiguous in lane 1 and clear in lane 2 parses two ways inside one cell
+namespace, silently merging or splitting cells.
+
+### The read group is the unit of parallel work; the sample is not
+
+Several samples in one CLI call run **sequentially**, each with every core: mmseqs threads
+internally, so N samples at cores/N each is slower than N in a row plus dispatch. Parallelism
+belongs to the scheduler, and there the unit is the read group — a sheet of 5 samples × 4 lanes is
+**20 independent jobs, not 5**.
+
+* **`arda cluster plan`** writes `readgroups.tsv` (sample, index, r1, r2, part paths) and
+  `samples.tsv`, creates the per-sample shard dirs, and prints both commands **filled in**. Any
+  scheduler then needs nothing else from arda: one `arda map` per readgroups row, one
+  `arda cluster reduce` per samples row.
+* **`arda cluster submit-samples`** renders the same DAG as two SLURM arrays — map over read
+  groups, then reduce over samples gated on the whole map array with `afterok` (not `aftercorr`,
+  whose index-for-index pairing is wrong when one sample consumes many map tasks). No split step.
+* **Snakemake**, new in `integrations/snakemake/arda/`: `map_read_group` per read group,
+  `reduce_sample` per sample, `--profile slurm` for free.
+* **Nextflow** now takes N files per sample. The module indexed `reads[0]`/`reads[1]` and so could
+  not accept a lane-split sample at all; it collates the nf-core flat list pair-adjacent instead. A
+  single-lane sample renders byte-for-byte the command it rendered before.
+
+Verified end to end: driving arda purely from the manifests, one `arda map` per row and one
+`arda cluster reduce` per sample, reproduces the in-process run byte-for-byte across all six files
+of a two-sample sheet.
+
+### Fixed: the cluster path denoised differently from the mode commands
+
+Both defects are pre-existing and were found by making the new path share the old one.
+
+* `arda rnaseq` defaults `--ec-mode rnaseq`, and the mode body turns on Stage-1
+  `--junction-quality` because "asking for the gate has to imply producing its input". Nothing
+  linked the two when `map` and `reduce` are separate jobs, so the quality column was simply absent
+  and the **quality-directed rescue silently never ran**. New `arda.cluster.regime_flags` is the one
+  place that knows; `plan`, both submit renderers and both workflow integrations use it.
+* `arda cluster reduce` had no `--ec-mode` at all, so a sharded run denoised with `fast` while
+  `arda rnaseq` over the same reads used `rnaseq`. It now takes `--ec-mode`, `--min-junction-q`,
+  `--call-level` and `--isotype`.
+
+### Fixed: `_merge_map_reports` dropped what a sharded run needs to describe itself
+
+* The **library shape** — `paired`, `input_bytes`, `read_length_{min,max,mean}` — so a sharded run
+  wrote no `run`/`map` shape rows in `<prefix>.stats.tsv` while a single-node run over the same
+  reads did. Nothing downstream can recover them: the AIRR holds only the reads that mapped, so its
+  row count and sequence lengths describe the receptor subset. The mean is weighted by reads, and a
+  shard that mapped nothing no longer drags the minimum to zero.
+* `prefilter_stats` and `segment_search`. `passed / seen` is the only number that says whether the
+  prefilter earned its keep on a library.
+
+### Docs
+
+New `docs/samples.rst`. `docs/cluster.rst` referred throughout to `arda split`, `arda slurm` and
+`arda merge` — three commands that have not existed since they moved under `arda cluster`, so every
+copy-pasteable line on that page failed.
+
 ## 2.21.0
 
 ### `arda cells` — reference-free per-cell contigs, chain pairing, doublets and QC

@@ -33,7 +33,13 @@ input:
           `arda rnaseq`, 'amplicon' -> `arda amplicon`, 'default' -> `arda rnaseq --exact`.
     - reads:
         type: file
-        description: One FASTQ for single-end, or a two-element list [R1, R2] for paired.
+        description: |
+          The sample's FASTQs, PAIR-ADJACENT: [R1, R2] for one paired read group, [R1] for one
+          single-end one, and [R1, R2, R1, R2, ...] for a sample split across lanes or chunks --
+          which is what `groupTuple().map { m, l -> [m, l.flatten()] }` gives you. All of them are
+          one repertoire and produce ONE clonotype table: arda maps each read group and
+          concatenates before Stages 2-3, byte-identically to the same reads in one file, so do
+          not `cat` them first. Lane order is preserved and must not be sorted.
         pattern: "*.{fastq,fq}{,.gz}"
 
 output:

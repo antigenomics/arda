@@ -87,6 +87,34 @@ _CELL_REGEX_HELP = (
     "`(?P<cell>...)` group and is matched against the start of `sequence_id`. For a platform "
     "whose identifier none of the shipped dialects covers.")
 
+_R1_HELP = (
+    "FASTQ (single-end, or R1 of a pair). REPEATABLE: give one --r1 per read group and name the "
+    "sample each belongs to with --id. A sample split across Illumina lanes "
+    "(`S_S1_L001_R1_001.fastq.gz`, `..._L002_...`) or in-house chunks is one repertoire and gets "
+    "one clonotype table -- arda maps each read group and concatenates before Stages 2-3, which "
+    "is byte-identical to the same reads in one file and never needs you to `cat` them first.")
+
+_R2_HELP = (
+    "R2 FASTQ for paired input. REPEATABLE, matched to --r1 BY POSITION: the i-th --r2 is the "
+    "mate of the i-th --r1. Give one per --r1 or none at all.")
+
+_ID_HELP = (
+    "Sample id for the matching --r1, BY POSITION. Repeat the SAME id to merge those read groups "
+    "into one sample: `--id A --id A --id B` over three pairs is two samples, the first from two "
+    "read groups. The id becomes the output basename, so --out-prefix is not used with it. "
+    "Never: arda does NOT infer the grouping from filenames. Given "
+    "`RNA-SAMPLE_ID:12:00XX919:3_1.fastq.gz` no rule can say which field is the sample, and a rule "
+    "that guesses wrong splits one repertoire into four with no error anywhere -- so more than one "
+    "--r1 without --id is refused, not guessed at.")
+
+_SAMPLES_HELP = (
+    "Sample sheet (TSV, or CSV by the `.csv` extension) instead of --r1/--r2/--id. Columns "
+    "`sample`, `fastq_1` and optionally `fastq_2` -- nf-core's spelling, so an existing nf-core "
+    "samplesheet works here unmodified, extra columns and all. Repeated `sample` values merge in "
+    "ROW ORDER, which is nf-core's re-sequencing rule. Relative paths resolve against the sheet's "
+    "own directory, so a sheet travels with its data. One sample -> one set of outputs, named by "
+    "the id.")
+
 _CHIMERA_HELP = (
     "Also emit `chimera_parents`: for each clonotype, two MORE ABUNDANT clonotypes of the same "
     "locus that explain it as prefix+suffix across one breakpoint -- the PCR template-switch "
@@ -865,14 +893,27 @@ _MODE_SPEED = {
                "prefilter": True},
 }
 
-def _mode_run(mode: str, *, exact: bool, indel_rescue: bool, **kw) -> None:
-    """Body shared by `arda rnaseq` and `arda amplicon`: resolve the preset, then run the pipeline.
+def _mode_run(mode: str, *, exact: bool, indel_rescue: bool,
+              r1, r2, ids, samples_sheet, out_prefix, **kw) -> None:
+    """Body shared by `arda rnaseq` and `arda amplicon`: resolve the preset, then run each sample.
 
     Never: ONE body, not one per mode. The mode commands and `arda cluster reduce` already share
     `pipeline.finish` for the same reason: two copies drift in a parameter, and then "the modes
     only differ in their preset" is a hope rather than a property.
+
+    Never: samples run SEQUENTIALLY, each with every core. mmseqs threads internally, so N samples
+    at cores/N each is slower than N in a row and adds dispatch on top. Parallelism over samples
+    belongs to the scheduler, at read-group granularity -- `arda cluster plan`, `cluster submit
+    --samples`, the Nextflow module, or the Snakemake workflow.
     """
+    from . import samples as samples_mod
     from .rnaseq import pipeline
+
+    try:
+        resolved = samples_mod.load(r1=r1, r2=r2, ids=ids, sheet=samples_sheet,
+                                    out_prefix=out_prefix)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
     speed = {k: False for k in _MODE_SPEED[mode]} if exact else dict(_MODE_SPEED[mode])
     if indel_rescue:
@@ -883,23 +924,35 @@ def _mode_run(mode: str, *, exact: bool, indel_rescue: bool, **kw) -> None:
                 "--indel-rescue requires the fast segment pass, which only `arda amplicon` "
                 "enables (and --exact disables). It is ignored in every other configuration.")
         speed["indel_rescue"] = True
-    pipeline.run(**speed, **kw)
-    out_dir, out_prefix = Path(kw["out_dir"]), kw["out_prefix"]
-    # One path per line on stdout, so `arda amplicon ... | tail -1` and `$(...)` work. Everything
-    # else this run said went to stderr through the logger.
-    for name in ("airr", "clones", "report", "stats"):
-        path = out_dir / pipeline.OUTPUTS[name].format(prefix=out_prefix)
-        if path.exists():
-            typer.echo(str(path))
+
+    out_dir = Path(kw["out_dir"])
+    if len(resolved) > 1:
+        log.info("%d samples, %d read groups; running them one at a time so each gets "
+                    "every core", len(resolved),
+                    sum(len(s.pairs) for s in resolved))
+    for s in resolved:
+        if len(resolved) > 1 or len(s.pairs) > 1:
+            log.info("sample %s: %d read group(s)", s.id, len(s.pairs))
+        pipeline.run(list(s.pairs), out_prefix=s.id, **speed, **kw)
+        # One path per line on stdout, so `arda amplicon ... | tail -1` and `$(...)` work.
+        # Everything else this run said went to stderr through the logger.
+        for name in ("airr", "clones", "report", "stats"):
+            path = out_dir / pipeline.OUTPUTS[name].format(prefix=s.id)
+            if path.exists():
+                typer.echo(str(path))
 
 
 @app.command("rnaseq")
 def rnaseq_mode(
-    r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
-    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
-    out_prefix: str = typer.Option(
-        ..., "--out-prefix", "-p",
-        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv."),
+    r1: list[Path] = typer.Option([], "--r1", help=_R1_HELP),
+    r2: list[Path] = typer.Option([], "--r2", help=_R2_HELP),
+    ids: list[str] = typer.Option([], "--id", help=_ID_HELP),
+    samples_sheet: Optional[Path] = typer.Option(None, "--samples", help=_SAMPLES_HELP),
+    out_prefix: Optional[str] = typer.Option(
+        None, "--out-prefix", "-p",
+        help="Output basename for a SINGLE sample given as one --r1/--r2. Writes "
+             "<prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv. "
+             "With --id or --samples the sample id is the basename and this is not used."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
@@ -969,7 +1022,8 @@ def rnaseq_mode(
     Run ``arda map`` / ``assemble`` / ``correct`` / ``shm`` separately to tune their own knobs.
     """
     _mode_run("rnaseq", exact=exact, indel_rescue=False,
-              r1=r1, r2=r2, out_dir=out_dir, out_prefix=out_prefix, organism=organism,
+              r1=r1, r2=r2, ids=ids, samples_sheet=samples_sheet, out_prefix=out_prefix,
+              out_dir=out_dir, organism=organism,
               threads=threads, reconstruct=reconstruct, min_score=min_score,
               kmer=(None if kmer == 0 else kmer), assemble=assemble,
               complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
@@ -982,11 +1036,15 @@ def rnaseq_mode(
 
 @app.command("amplicon")
 def amplicon_mode(
-    r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
-    r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
-    out_prefix: str = typer.Option(
-        ..., "--out-prefix", "-p",
-        help="Output basename. Writes <prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv."),
+    r1: list[Path] = typer.Option([], "--r1", help=_R1_HELP),
+    r2: list[Path] = typer.Option([], "--r2", help=_R2_HELP),
+    ids: list[str] = typer.Option([], "--id", help=_ID_HELP),
+    samples_sheet: Optional[Path] = typer.Option(None, "--samples", help=_SAMPLES_HELP),
+    out_prefix: Optional[str] = typer.Option(
+        None, "--out-prefix", "-p",
+        help="Output basename for a SINGLE sample given as one --r1/--r2. Writes "
+             "<prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv. "
+             "With --id or --samples the sample id is the basename and this is not used."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
@@ -1048,7 +1106,8 @@ def amplicon_mode(
     Same four outputs as ``arda rnaseq``; see it for the list.
     """
     _mode_run("amplicon", exact=exact, indel_rescue=indel_rescue,
-              r1=r1, r2=r2, out_dir=out_dir, out_prefix=out_prefix, organism=organism,
+              r1=r1, r2=r2, ids=ids, samples_sheet=samples_sheet, out_prefix=out_prefix,
+              out_dir=out_dir, organism=organism,
               threads=threads, reconstruct=reconstruct, min_score=min_score,
               kmer=(None if kmer == 0 else kmer), assemble=assemble,
               complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
@@ -1222,6 +1281,22 @@ def rnaseq_reduce(
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
     d_max_evalue: Optional[float] = typer.Option(
         None, "--d-max-evalue", help=_D_EVALUE_HELP),
+    ec_mode: str = typer.Option(
+        "fast", "--ec-mode",
+        help="Denoising preset, and it must MATCH the one the mode command would have used or a "
+             "sharded run quietly denoises differently from a single-node one: `arda rnaseq` "
+             "defaults to `rnaseq` and `arda amplicon` to `amplicon`, while this command and "
+             "`arda correct` default to `fast`. `arda cluster plan` and `submit-samples` fill it "
+             "in from --regime. Anything but `fast` also needs Stage 1 to have been run with "
+             "--junction-quality, or the gate reads a column that is not there and does nothing."),
+    min_junction_q: Optional[int] = typer.Option(
+        None, "--min-junction-q",
+        help="Drop clonotypes whose junction mean Phred is below this (needs Stage-1 "
+             "--junction-quality). Overrides the --ec-mode preset's own value."),
+    call_level: str = typer.Option(
+        "allele", "--call-level", help="`allele` (default) or `gene`, BEFORE the clonotype key."),
+    isotype: bool = typer.Option(
+        True, "--isotype/--no-isotype", help="Resolve the IGH isotype (`c_call` / `c_class`)."),
 ) -> None:
     """Merge a sharded Stage 1, then run Stages 2-3 ONCE over the whole thing.
 
@@ -1233,8 +1308,74 @@ def rnaseq_reduce(
 
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
-                    d_max_evalue=d_max_evalue)
+                    d_max_evalue=d_max_evalue, ec_mode=ec_mode,
+                    min_junction_q=min_junction_q, call_level=call_level, isotype=isotype)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
+
+
+def _load_samples(r1, r2, ids, sheet, out_prefix=None):
+    """Resolve the sample options, turning a parse error into a typer one."""
+    from . import samples as samples_mod
+
+    try:
+        return samples_mod.load(r1=r1, r2=r2, ids=ids, sheet=sheet, out_prefix=out_prefix)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@cluster_app.command("plan")
+def cluster_plan(
+    samples_sheet: Optional[Path] = typer.Option(None, "--samples", help=_SAMPLES_HELP),
+    work_dir: Path = typer.Option(Path("arda_work"), "--work-dir",
+                                  help="Scratch root; each sample gets work-dir/<id>/."),
+    r1: list[Path] = typer.Option([], "--r1", help=_R1_HELP),
+    r2: list[Path] = typer.Option([], "--r2", help=_R2_HELP),
+    ids: list[str] = typer.Option([], "--id", help=_ID_HELP),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d",
+                                 help="Where the final per-sample outputs will land."),
+    regime: str = typer.Option(
+        "rnaseq", "--regime",
+        help="`rnaseq` (bulk) or `amplicon` (targeted RepSeq). Decides the flags printed for "
+             "both steps. The two speed levers do NOT compose and each is a loss in the other's "
+             "regime, so name the library rather than the flags."),
+    threads: int = typer.Option(8, help="mmseqs threads per worker."),
+    organism: str = typer.Option("human", help="Reference organism."),
+) -> None:
+    """Emit the READ-GROUP work units a scheduler allocates workers to.
+
+    arda's unit of parallel work is the read group, not the sample: Stage 1 is per read and shards
+    perfectly, so a sheet of 5 samples x 4 lanes is 20 independent jobs rather than 5. Stages 2-3
+    are global PER SAMPLE -- a clone split across read groups would be counted once per group, and
+    a contig tiling across them would never be built -- so they run once per sample.
+
+    Writes ``<work-dir>/readgroups.tsv`` (one row per read group: sample, index, r1, r2, and the
+    Stage-1 part paths) and ``<work-dir>/samples.tsv`` (one row per sample). Any scheduler then
+    needs nothing else from arda: run one ``arda map`` per readgroups row, then one
+    ``arda cluster reduce`` per samples row. `arda cluster submit --samples` renders exactly that
+    as a SLURM script; this command is for a scheduler that is not SLURM.
+    """
+    from .cluster import plan, regime_flags
+
+    resolved = _load_samples(r1, r2, ids, samples_sheet)
+    try:
+        map_flags, reduce_flags = regime_flags(regime, organism=organism, threads=threads)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    rg_path, s_path = plan(resolved, work_dir)
+    n_rg = sum(len(s.pairs) for s in resolved)
+    typer.echo(f"[arda] {len(resolved)} sample(s), {n_rg} read group(s)")
+    typer.echo(str(rg_path))
+    typer.echo(str(s_path))
+    # The flags are printed FILLED IN, never as `<flags>`. The mode commands wire Stage 1 to
+    # Stage 2 themselves (`--ec-mode rnaseq` needs `--junction-quality`); a scheduler driving the
+    # two as separate jobs cannot know that, and the gate then silently never runs.
+    typer.echo("")
+    typer.echo(f"# one worker per row of {rg_path.name}:")
+    typer.echo(f'#   arda map --r1 "$r1" ${{r2:+--r2 "$r2"}} -o "$part_airr" '
+               f'--report "$part_report" {map_flags}')
+    typer.echo(f"# then one per row of {s_path.name}, after ALL of its read groups finish:")
+    typer.echo(f'#   arda cluster reduce --shard-dir "$shard_dir" --out-dir {out_dir} '
+               f'--out-prefix "$out_prefix" {reduce_flags}')
 
 
 @cluster_app.command("submit")
@@ -1287,6 +1428,72 @@ def rnaseq_slurm(
     if submit:
         subprocess.run(["bash", str(script)], check=True)
 
+
+@cluster_app.command("submit-samples")
+def samples_slurm(
+    samples_sheet: Optional[Path] = typer.Option(None, "--samples", help=_SAMPLES_HELP),
+    r1: list[Path] = typer.Option([], "--r1", help=_R1_HELP),
+    r2: list[Path] = typer.Option([], "--r2", help=_R2_HELP),
+    ids: list[str] = typer.Option([], "--id", help=_ID_HELP),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    work_dir: Path = typer.Option(Path("arda_slurm"), help="Scratch for manifests + submit.sh."),
+    regime: str = typer.Option(
+        "rnaseq", "--regime",
+        help="`rnaseq` (bulk: --prefilter) or `amplicon` (--two-pass --fast-segments "
+             "--v-only-on-segment). The two speed levers do NOT compose and each is a loss in "
+             "the other's regime, so name the library rather than the flags."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(8, help="--cpus-per-task, and mmseqs threads."),
+    kmer: int = typer.Option(12, "--kmer", "-k", help="MMseqs2 -k (the memory knob)."),
+    min_score: float = typer.Option(75.0, "--min-score", help="Min bit score to keep a read."),
+    reconstruct: bool = typer.Option(False, "--reconstruct", help="Merge overlapping mates."),
+    assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
+    map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
+    partition: Optional[str] = typer.Option(None, help="SLURM partition."),
+    time_limit: str = typer.Option("04:00:00", "--time", help="Walltime per map task."),
+    mem: str = typer.Option("8G", help="Memory per map task (Stage 1 is flat, ~300-650 MB)."),
+    reduce_time: str = typer.Option("08:00:00", help="Walltime per reduce task."),
+    reduce_mem: str = typer.Option(
+        "16G", help="Memory per reduce task. Stage 3 holds the clone set: budget ~4 GB, more for "
+                    "a B-cell-rich sample (2,071.7 MB measured on 28,444 clonotypes)."),
+    submit: bool = typer.Option(False, "--submit", help="Run the generated script."),
+) -> None:
+    """Write (and optionally submit) a SLURM script for a whole sheet: array-``map`` -> reduce.
+
+    The array is over READ GROUPS across every sample, so a sheet of 5 samples x 4 lanes is 20
+    concurrent tasks rather than 5. There is no split step -- a sample delivered as several FASTQs
+    was already sharded by whoever wrote it, and the read groups are consumed in sheet order, so
+    each sample's result is byte-identical to its reads concatenated into one file.
+
+    Stages 2-3 are global per sample and run once each, in a second array gated on the whole map
+    array. For a single sample you want to split yourself, use ``arda cluster submit --shards N``.
+    """
+    import os
+    import subprocess
+
+    from .cluster import plan, render_samples_submit_script
+
+    resolved = _load_samples(r1, r2, ids, samples_sheet)
+    if regime not in ("rnaseq", "amplicon"):
+        raise typer.BadParameter(f"--regime must be rnaseq or amplicon, got {regime!r}")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    rg_path, s_path = plan(resolved, work_dir)
+    n_rg = sum(len(s.pairs) for s in resolved)
+
+    script = work_dir / "submit.sh"
+    script.write_text(render_samples_submit_script(
+        rg_path, s_path, n_read_groups=n_rg, n_samples=len(resolved), out_dir=out_dir,
+        organism=organism, threads=threads, kmer=kmer, min_score=min_score,
+        reconstruct=reconstruct, assemble=assemble, complete_only=complete_only, map_d=map_d,
+        regime=regime, partition=partition, time=time_limit, mem=mem, reduce_time=reduce_time,
+        reduce_mem=reduce_mem, arda_mmseqs=os.environ.get("ARDA_MMSEQS")))
+    script.chmod(0o755)
+    typer.echo(f"[arda] {len(resolved)} sample(s), {n_rg} read group(s)")
+    typer.echo(f"[arda] wrote {script}")
+    if submit:
+        subprocess.run(["bash", str(script)], check=True)
 
 
 @app.command("resolve-ties")

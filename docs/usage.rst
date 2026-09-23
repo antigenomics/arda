@@ -212,6 +212,23 @@ actually do, and where the method reaches its limit.
 ``arda igblast -i reads.fastq -o truth.airr.tsv`` runs IgBLAST across all loci as a
 gold-standard reference for benchmarking.
 
+A sample split across lanes or chunks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``--r1``, ``--r2`` and ``--id`` are repeatable and matched by position; repeat an id to merge
+those read groups into one sample. ``--samples sheet.tsv|csv`` takes the same grouping from an
+nf-core-shaped sheet. Either way one sample produces one set of outputs, and the result is
+byte-identical to the same reads concatenated into one file:
+
+.. code-block:: bash
+
+   arda rnaseq -d out/ --r1 L1_1.fq.gz --r2 L1_2.fq.gz --id PT01 \
+                       --r1 L2_1.fq.gz --r2 L2_2.fq.gz --id PT01
+   arda rnaseq --samples sheet.tsv -d out/
+
+See :doc:`samples` for the sheet format, why arda refuses to guess the grouping from filenames,
+and how to schedule one worker per read group.
+
 .. _choosing a mode:
 
 Choosing a mode

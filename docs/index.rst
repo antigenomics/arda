@@ -12,6 +12,7 @@ in a small C++ hot path — producing AIRR-formatted output that matches IgBLAST
 
    installation
    usage
+   samples
    d_segments
    shm
    error_correction

@@ -21,6 +21,8 @@ import json
 import polars as pl
 import pytest
 
+from pathlib import Path
+
 from arda.cluster import merge, render_rnaseq_submit_script
 from arda.rnaseq import pipeline
 
@@ -113,18 +115,21 @@ def test_finish_report_records_provenance(tmp_path):
     assert on_disk["arda_version"] == report["arda_version"]
 
 
-def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time(tmp_path):
-    shards = []
-    for i, (total, mapped, wall, rss) in enumerate([(100, 10, 5.0, 300.0), (100, 20, 9.0, 280.0)]):
-        p = tmp_path / f"shard_{i:05d}.map.json"
-        p.write_text(json.dumps({
-            "organism": "human", "total_reads": total, "mapped_reads": mapped,
+def _shard_report(total, mapped, wall, rss, *, length=100, nbytes=1000):
+    return {"organism": "human", "total_reads": total, "mapped_reads": mapped,
             "per_locus": {"IGH": mapped}, "constant_only_fragments": 1, "isotype_from_mate": 2,
-            "min_score": 75.0, "threads": 8, "wall_seconds": wall, "peak_rss_mb": rss}))
-        shards.append(p)
+            "min_score": 75.0, "threads": 8, "wall_seconds": wall, "peak_rss_mb": rss,
+            "paired": True, "input": "r1.fq", "input_bytes": nbytes,
+            "read_length_min": length, "read_length_max": length,
+            "read_length_mean": float(length),
+            "prefilter_stats": {"seen": total, "passed": mapped}, "segment_search": {}}
+
+
+def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time():
+    shards = [_shard_report(100, 10, 5.0, 300.0), _shard_report(100, 20, 9.0, 280.0)]
 
     m = pipeline._merge_map_reports(shards)
-    assert m["shards"] == 2
+    assert m["shards"] == 2 and m["read_groups"] == 2
     assert m["total_reads"] == 200 and m["mapped_reads"] == 30
     assert m["per_locus"] == {"IGH": 30}
     assert m["constant_only_fragments"] == 2 and m["isotype_from_mate"] == 4
@@ -132,6 +137,64 @@ def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time(tmp_pa
     assert m["peak_rss_mb_max"] == 300.0
     # Summing 40 array tasks' wall time and calling it "wall_seconds" would be a lie.
     assert "wall_seconds" not in m and "peak_rss_mb" not in m
+
+
+def test_merge_map_reports_keeps_the_library_shape_and_the_prefilter_accounting():
+    """Never: these survive the merge or a sharded run silently describes a different library.
+
+    `paired`, `input_bytes` and the read lengths are recorded by Stage 1 because nothing
+    downstream can recover them -- the AIRR holds only the reads that mapped, so its row count and
+    its sequence lengths describe the receptor subset. And `passed / seen` is the only number that
+    says whether the prefilter earned its keep; dropping it reported nothing at all.
+    """
+    shards = [_shard_report(100, 10, 5.0, 300.0, length=100, nbytes=1000),
+              _shard_report(300, 20, 9.0, 280.0, length=150, nbytes=4000)]
+    m = pipeline._merge_map_reports(shards)
+    assert m["paired"] is True
+    assert m["input"] == ["r1.fq", "r1.fq"]
+    assert m["input_bytes"] == 5000
+    assert m["read_length_min"] == 100 and m["read_length_max"] == 150
+    # Weighted by reads, not by shard: 100 reads at 100 nt and 300 at 150 nt is 137.5, not 125.
+    assert m["read_length_mean"] == 137.5
+    assert m["prefilter_stats"] == {"seen": 400, "passed": 30}
+    assert m["segment_search"] == {}
+
+
+def test_segment_search_is_merged_not_summed_because_it_carries_a_ratio():
+    """Never: `fast_fraction` is a RATIO and `reasons` is nested; `segment_search` is not a counter dict.
+
+    Summed over four read groups, a library whose true fast fraction is 0.1717 would report
+    0.6868 -- and that is the number the regime rule is read off. It would say "these reads span V
+    into J, use the amplicon preset" about a library where they do not. (Summing it also just
+    crashes on the nested `reasons`, which is how this was found.)
+    """
+    def seg(implied, rescued, v_only):
+        n = implied + rescued
+        return {"implied": implied, "rescued": rescued, "no_segment_hit": 7,
+                "v_only_on_segment": 12, "reasons": {"v_only": v_only, "j_only": 3},
+                "fast_fraction": round(implied / n, 4)}
+
+    shards = [dict(_shard_report(100, 10, 5.0, 300.0), segment_search=seg(17, 83, 40)),
+              dict(_shard_report(100, 20, 9.0, 280.0), segment_search=seg(25, 75, 60))]
+    s = pipeline._merge_map_reports(shards)["segment_search"]
+    assert s["implied"] == 42 and s["rescued"] == 158
+    assert s["no_segment_hit"] == 14 and s["v_only_on_segment"] == 24
+    assert s["reasons"] == {"v_only": 100, "j_only": 6}
+    # Recomputed from the totals: 42 / (42 + 158), NOT 0.17 + 0.25.
+    assert s["fast_fraction"] == 0.21
+
+
+def test_segment_search_stays_empty_when_the_two_pass_never_ran():
+    shards = [_shard_report(100, 10, 5.0, 300.0), _shard_report(100, 20, 9.0, 280.0)]
+    assert pipeline._merge_map_reports(shards)["segment_search"] == {}
+
+
+def test_a_shard_that_mapped_nothing_does_not_drag_the_read_length_to_zero():
+    """An empty shard has a wall time but no reads; its zeroed length fields are not a measurement."""
+    shards = [_shard_report(100, 10, 5.0, 300.0, length=100),
+              _shard_report(0, 0, 0.5, 60.0, length=0, nbytes=0)]
+    m = pipeline._merge_map_reports(shards)
+    assert m["read_length_min"] == 100 and m["read_length_mean"] == 100.0
 
 
 def test_submit_script_runs_stage23_once_and_never_in_the_array(tmp_path):
@@ -160,3 +223,122 @@ def test_submit_script_threads_flags_through(tmp_path):
                                     assemble=False, map_d=False)
     assert "--organism mouse" in s and "--kmer 13" in s and "--min-score 0.0" in s
     assert "--reconstruct" in s and "--no-map-d" in s and "--no-assemble" in s
+
+
+# ---------------------------------------------------------- the multi-sample / read-group path
+
+def _samples(tmp_path, spec):
+    """Build real FASTQs and resolve them, so `plan` sees what the CLI would hand it."""
+    from arda.samples import load
+
+    r1, r2, ids = [], [], []
+    for sid, n in spec:
+        for i in range(n):
+            a = tmp_path / f"{sid}_{i}_1.fq"
+            b = tmp_path / f"{sid}_{i}_2.fq"
+            a.write_text("@r\nACGT\n+\nIIII\n")
+            b.write_text("@r\nACGT\n+\nIIII\n")
+            r1.append(a)
+            r2.append(b)
+            ids.append(sid)
+    return load(r1=r1, r2=r2, ids=ids)
+
+
+def test_plan_writes_one_row_per_read_group_and_one_per_sample(tmp_path):
+    from arda.cluster import READGROUP_COLUMNS, SAMPLE_COLUMNS, plan
+
+    samples = _samples(tmp_path, [("A", 3), ("B", 1)])
+    rg_path, s_path = plan(samples, tmp_path / "work")
+
+    rg = [r.split("\t") for r in rg_path.read_text().splitlines()]
+    assert tuple(rg[0]) == READGROUP_COLUMNS
+    assert len(rg) == 1 + 4                       # 3 read groups for A, 1 for B
+    assert [r[0] for r in rg[1:]] == ["A", "A", "A", "B"]
+    assert [r[1] for r in rg[1:]] == ["0", "1", "2", "0"]
+
+    sm = [r.split("\t") for r in s_path.read_text().splitlines()]
+    assert tuple(sm[0]) == SAMPLE_COLUMNS
+    assert [r[0] for r in sm[1:]] == ["A", "B"]
+    # Per-sample shard dirs: two samples in one work dir must not collide on part names.
+    assert len({r[1] for r in sm[1:]}) == 2
+    for r in sm[1:]:
+        assert Path(r[1]).is_dir()
+
+
+def test_plan_part_names_sort_numerically_within_a_sample(tmp_path):
+    """`reduce` merges parts in NAME order and that order IS read order."""
+    from arda.cluster import plan
+
+    samples = _samples(tmp_path, [("A", 12)])
+    rg_path, _ = plan(samples, tmp_path / "work")
+    parts = [Path(r.split("\t")[4]).name for r in rg_path.read_text().splitlines()[1:]]
+    assert parts == sorted(parts), "shard_10 must not sort before shard_2"
+    assert parts[0] == "shard_00000.airr.tsv" and parts[-1] == "shard_00011.airr.tsv"
+
+
+def test_regime_flags_wires_stage1_to_the_denoising_preset():
+    """Never: `--ec-mode rnaseq` reads a column Stage 1 only writes when asked for it.
+
+    The mode commands make that link themselves because both stages happen in one call. A path
+    that runs `map` and `reduce` as separate jobs cannot, so the flags must carry it -- otherwise
+    the gate reads a column that is not there and silently does nothing.
+    """
+    from arda.cluster import regime_flags
+
+    m, r = regime_flags("rnaseq", threads=4)
+    assert "--prefilter" in m and "--two-pass" not in m
+    assert "--junction-quality" in m
+    assert "--ec-mode rnaseq" in r
+
+    m, r = regime_flags("amplicon", threads=4)
+    assert "--two-pass --fast-segments --v-only-on-segment" in m and "--prefilter" not in m
+    assert "--ec-mode amplicon" in r
+
+    # `fast` is the one preset that reads no quality column, so it must not demand one.
+    m, _ = regime_flags("rnaseq", ec_mode="fast")
+    assert "--junction-quality" not in m
+
+    with pytest.raises(ValueError, match="regime must be one of"):
+        regime_flags("bulk")
+
+
+def test_samples_submit_arrays_over_read_groups_then_reduces_per_sample(tmp_path):
+    from arda.cluster import plan, render_samples_submit_script
+
+    samples = _samples(tmp_path, [("A", 3), ("B", 1)])
+    rg_path, s_path = plan(samples, tmp_path / "work")
+    s = render_samples_submit_script(rg_path, s_path, n_read_groups=4, n_samples=2,
+                                     out_dir="/o", partition="medium", regime="rnaseq")
+
+    # The map array is sized by READ GROUPS across every sample, the reduce array by samples.
+    assert "--array=0-3" in s and "--job-name=arda-map" in s
+    assert "--array=0-1" in s and "--job-name=arda-reduce" in s
+    # One reduce per sample, gated on the WHOLE map array -- not `aftercorr`, whose
+    # index-for-index pairing is wrong when one sample consumes many map tasks.
+    assert "--dependency=afterok:$MAP_JID" in s
+    assert "aftercorr" not in s
+    # No split step: a sample delivered as several files is already sharded.
+    assert "arda cluster split" not in s
+    # Stages 2-3 appear exactly once, and never inside the map array.
+    assert s.count("arda cluster reduce") == 1
+    assert "--junction-quality" in s and "--ec-mode rnaseq" in s
+
+
+def test_samples_submit_reads_its_inputs_from_the_manifest_not_from_filenames(tmp_path):
+    from arda.cluster import plan, render_samples_submit_script
+
+    samples = _samples(tmp_path, [("A", 2)])
+    rg_path, s_path = plan(samples, tmp_path / "work")
+    s = render_samples_submit_script(rg_path, s_path, n_read_groups=2, n_samples=1)
+    assert str(rg_path) in s and str(s_path) in s
+    # Row i is line i+2: line 1 is the header and sed is 1-based.
+    assert "+ 2 ))p" in s
+    # Never: fields come out with `cut -f`, never with `IFS=$'\t' read`. The body is passed to
+    # sbatch inside `--wrap '...'`, and a single-quoted string cannot contain `$'\t'` -- bash
+    # closes the quote at the `$` and it degrades to `IFS=$t`. Under the script's own `set -u`
+    # that is an unbound variable and the task dies; without it, default IFS collapses a
+    # single-end row's blank `r2` and every later field shifts left.
+    assert "IFS=" not in s
+    assert "cut -f3" in s and "cut -f4" in s
+    # A blank r2 must drop the flag, not pass an empty path.
+    assert '${r2:+--r2 "$r2"}' in s

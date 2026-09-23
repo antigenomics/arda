@@ -1,0 +1,16 @@
+# Example: `snakemake -s Snakefile --configfile config.yaml -c 32`
+# Every key is also settable with --config key=value. See README.md.
+
+samples: sheet.tsv          # required: sample, fastq_1[, fastq_2]; repeated ids merge in row order
+outdir: results
+# workdir: results/work     # Stage-1 parts, one directory per sample
+
+regime: rnaseq              # rnaseq (bulk) | amplicon (targeted RepSeq). Name the library, not the flags.
+organism: human
+
+# arda is CPU-bound on the MMseqs2 search and threads internally: raise this before raising -c.
+map_threads: 8
+reduce_threads: 8
+
+# arda: /path/to/env/bin/arda
+# extra: "--complete-junctions 12"

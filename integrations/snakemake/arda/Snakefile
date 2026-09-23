@@ -1,0 +1,120 @@
+# arda — sample-sheet driven, ONE JOB PER READ GROUP.
+#
+#   snakemake -s Snakefile --config samples=sheet.tsv outdir=results -c 32
+#   snakemake -s Snakefile --config samples=sheet.tsv outdir=results --profile slurm
+#
+# The work unit is the read group (one FASTQ pair), not the sample. Stage 1 (`arda map`) is
+# per-read and shards perfectly, so every read group of every sample is an independent job and
+# Snakemake schedules them all at once -- a sheet of 5 samples x 4 lanes is 20 concurrent jobs,
+# not 5. Stages 2-3 (`assemble`, `correct`) are GLOBAL PER SAMPLE: a clone split across read
+# groups would be counted once per group, and contigs that tile across them would never be built.
+# So they run once per sample, in `arda cluster reduce`, over that sample's merged Stage-1 AIRR.
+#
+# Read groups are consumed in SHEET ORDER, which makes each sample's result byte-identical to its
+# reads concatenated into one file. Do not sort them: `A_L010` sorts before `A_L002`, and the
+# clonotype fold is not permutation-invariant.
+#
+# Give `arda map` real cores. It is CPU-bound on the MMseqs2 search and threads internally, so a
+# few big jobs beat many small ones -- prefer raising `map_threads` over raising `-c`.
+
+import csv
+from pathlib import Path
+
+
+# ── configuration ─────────────────────────────────────────────────────────────────────────────
+if not config.get("samples"):
+    raise WorkflowError(
+        "set --config samples=<sheet.tsv|csv>. Columns: sample, fastq_1[, fastq_2]; repeated "
+        "`sample` values merge, in row order. This is the same sheet `arda rnaseq --samples` and "
+        "`arda cluster plan --samples` read."
+    )
+
+SHEET    = Path(config["samples"]).resolve()
+OUTDIR   = Path(config.get("outdir", "results")).resolve()
+WORKDIR  = Path(config.get("workdir", OUTDIR / "work")).resolve()
+REGIME   = config.get("regime", "rnaseq")            # rnaseq (bulk) | amplicon (targeted)
+ORGANISM = config.get("organism", "human")
+ARDA     = config.get("arda", "arda")
+MAP_THREADS    = int(config.get("map_threads", 8))
+REDUCE_THREADS = int(config.get("reduce_threads", 8))
+EXTRA    = config.get("extra", "")
+
+if REGIME not in ("rnaseq", "amplicon"):
+    raise WorkflowError(f"regime must be rnaseq or amplicon, got {REGIME!r}")
+
+# The two speed levers do NOT compose and each is a loss in the other's regime, and a denoising
+# preset other than `fast` reads a Stage-1 column that only `--junction-quality` writes. arda owns
+# that knowledge; ask it rather than restating it here and drifting.
+from arda.cluster import regime_flags
+
+MAP_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=MAP_THREADS)[0]
+REDUCE_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=REDUCE_THREADS)[1]
+
+
+# ── the sheet ─────────────────────────────────────────────────────────────────────────────────
+def _read_sheet(path):
+    """sample -> [(r1, r2|None), ...] in row order. Repeated `sample` values merge."""
+    delim = "," if path.suffix.lower() == ".csv" else "\t"
+    groups = {}
+    with path.open(newline="") as fh:
+        for n, row in enumerate(csv.DictReader(fh, delimiter=delim), start=2):
+            sid = (row.get("sample") or "").strip()
+            r1 = (row.get("fastq_1") or "").strip()
+            r2 = (row.get("fastq_2") or "").strip()
+            if not sid or not r1:
+                raise WorkflowError(f"{path}:{n}: needs both `sample` and `fastq_1`")
+            resolve = lambda v: str(Path(v) if Path(v).is_absolute() else path.parent / v)
+            groups.setdefault(sid, []).append((resolve(r1), resolve(r2) if r2 else None))
+    if not groups:
+        raise WorkflowError(f"{path}: sample sheet has a header but no rows")
+    return groups
+
+
+READ_GROUPS = _read_sheet(SHEET)
+SAMPLES = list(READ_GROUPS)
+
+
+def part(sample, i):
+    # `%05d` so `sorted()` is numeric: `arda cluster reduce` merges the parts in NAME order, and
+    # that order IS read order. shard_10 must not precede shard_2.
+    return f"{WORKDIR}/{sample}/shard_{i:05d}.airr.tsv"
+
+
+rule all:
+    input:
+        expand(f"{OUTDIR}/{{sample}}.clones.tsv", sample=SAMPLES),
+        expand(f"{OUTDIR}/{{sample}}.stats.tsv", sample=SAMPLES),
+
+
+rule map_read_group:
+    """Stage 1 for ONE read group. This is the unit workers are allocated by."""
+    output:
+        airr   = f"{WORKDIR}/{{sample}}/shard_{{rg}}.airr.tsv",
+        report = f"{WORKDIR}/{{sample}}/shard_{{rg}}.map.json",
+    params:
+        r1 = lambda w: READ_GROUPS[w.sample][int(w.rg)][0],
+        r2 = lambda w: (f"--r2 {READ_GROUPS[w.sample][int(w.rg)][1]}"
+                        if READ_GROUPS[w.sample][int(w.rg)][1] else ""),
+        flags = MAP_FLAGS,
+    threads: MAP_THREADS
+    shell:
+        "{ARDA} map --r1 {params.r1} {params.r2}"
+        " -o {output.airr} --report {output.report} {params.flags} {EXTRA}"
+
+
+rule reduce_sample:
+    """Stages 2-3, ONCE over this sample's read groups merged in sheet order."""
+    input:
+        lambda w: [part(w.sample, i) for i in range(len(READ_GROUPS[w.sample]))],
+    output:
+        clones = f"{OUTDIR}/{{sample}}.clones.tsv",
+        airr   = f"{OUTDIR}/{{sample}}.airr.tsv",
+        report = f"{OUTDIR}/{{sample}}.arda.json",
+        stats  = f"{OUTDIR}/{{sample}}.stats.tsv",
+    params:
+        shard_dir = lambda w: f"{WORKDIR}/{w.sample}",
+        flags = REDUCE_FLAGS,
+    threads: REDUCE_THREADS
+    shell:
+        "{ARDA} cluster reduce --shard-dir {params.shard_dir}"
+        " --out-dir {OUTDIR} --out-prefix {wildcards.sample} {params.flags}"

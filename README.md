@@ -245,6 +245,55 @@ value tracks SHM load, so it stays a per-library call and never rides the preset
 `arda amplicon --help`, `arda map --help` and the
 [usage guide](https://docs.isalgo.dev/arda/usage.html).
 
+### Samples split across files
+
+Illumina writes one FASTQ per lane (`PT01_S1_L001_R1_001.fastq.gz`, `..._L002_...`), and in-house
+pipelines chunk a run their own way. Those are **one repertoire** and get **one** clonotype table.
+Don't `cat` them: arda maps each *read group* and concatenates after Stage 1, which is
+byte-identical to the same reads in one file and skips a full copy of the data.
+
+`--r1`, `--r2` and `--id` are repeatable and matched **by position**; repeat an id to merge:
+
+```bash
+# five pairs, three samples — the first three read groups are one repertoire
+arda rnaseq -d out/ \
+    --r1 s1_1.fq.gz --r2 s1_2.fq.gz --id A \
+    --r1 s2_1.fq.gz --r2 s2_2.fq.gz --id A \
+    --r1 s3_1.fq.gz --r2 s3_2.fq.gz --id A \
+    --r1 s4_1.fq.gz --r2 s4_2.fq.gz --id B \
+    --r1 s5_1.fq.gz --r2 s5_2.fq.gz --id C
+```
+
+Or `--samples sheet.tsv|csv`, whose columns are nf-core's (`sample, fastq_1, fastq_2`) so an
+existing nf-core samplesheet works unmodified — repeated `sample` values merge in row order:
+
+```bash
+arda rnaseq --samples sheet.tsv -d out/
+```
+
+The grouping is **declared, never guessed**: given `RNA-SAMPLE_ID:12:00XX919:3_1.fastq.gz` no rule
+can say which field is the sample, so more than one `--r1` without `--id` is refused rather than
+split into four repertoires silently. A sample id becomes the output basename, so `--out-prefix` is
+for the one-pair case only.
+
+Verified byte-for-byte: `tests/data/rnaseq_real` cut into four read groups gives identical
+`.airr.tsv`, `.assembled.airr.tsv` and `.clones.tsv` to the one-file run.
+
+**The unit of parallel work is the read group, not the sample.** Several samples in one CLI call
+run one at a time, each with every core — MMseqs2 threads internally, so *N* samples at `cores/N`
+is slower than *N* in a row. Scale out instead:
+
+```bash
+arda cluster plan --samples sheet.tsv --work-dir work/ -d out/   # work units for any scheduler
+arda cluster submit-samples --samples sheet.tsv -d out/ --submit # the same DAG as SLURM arrays
+```
+
+`plan` writes `readgroups.tsv` (one row per read group) and `samples.tsv` (one per sample) and
+prints both commands filled in — a sheet of 5 samples × 4 lanes is 20 independent jobs, not 5. The
+Snakemake (`integrations/snakemake/arda/`) and Nextflow (`integrations/nextflow/arda/`) workflows
+schedule the same way. Full guide: [samples split across
+files](https://docs.isalgo.dev/arda/samples.html).
+
 ### Stages, and the flags that select them
 
 `map` → `assemble` → `correct` are separate commands as well as stages inside a mode:

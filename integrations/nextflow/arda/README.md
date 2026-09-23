@@ -5,7 +5,7 @@ per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a sin
 `arda <mode>` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
 any DSL2 pipeline the same way STAR/Salmon/fastp do.
 
-Pinned to **arda 2.21.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
+Pinned to **arda 2.22.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
 
 > **Never: 2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
 > earlier version of this module invoked — was removed there. The regime is now the **command
@@ -143,7 +143,7 @@ and whether a tool **invents a junction it has no anchor for**.
 arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.
 
 - **`-profile conda`** works out of the box (Nextflow builds the env from `environment.yml`) — once
-  arda 2.21.0 is on PyPI; see the note at the top.
+  arda 2.22.0 is on PyPI; see the note at the top.
 - **`-profile docker`/`singularity`**: build the image from the `Dockerfile` here, push it to your
   registry, and point the module's `container` at it (see the Dockerfile header). A pinned image is
   the reproducible choice for a shared pipeline.
@@ -200,6 +200,44 @@ sample,fastq_1,fastq_2
 bulk_rnaseq,/data/SRR5233637_1.fq,/data/SRR5233637_2.fq
 ```
 
+## A sample split across lanes
+
+One FASTQ per Illumina lane (`S_S1_L001_R1_001.fastq.gz`, `..._L002_...`), or per in-house chunk,
+is still **one repertoire** and must give **one** clonotype table. Do not `cat` them: arda maps
+each read group and concatenates before Stages 2-3, which is byte-identical to the same reads in
+one file and skips a full copy of the data.
+
+The module takes them straight off a `groupTuple`. `reads` is the usual nf-core flat list, kept
+**pair-adjacent** — `[r1, r2, r1, r2, ...]` — which is exactly what grouping per-lane
+`[meta, [r1, r2]]` tuples produces:
+
+```nextflow
+Channel
+    .fromPath(params.input)                          // sample,fastq_1,fastq_2 — repeat `sample`
+    .splitCsv(header: true)                          // for each lane, as nf-core does
+    .map { row ->
+        def single = !row.fastq_2
+        [ [id: row.sample, single_end: single],
+          single ? [file(row.fastq_1)] : [file(row.fastq_1), file(row.fastq_2)] ]
+    }
+    .groupTuple()                                    // one entry per SAMPLE
+    .map { meta, lanes -> [meta, lanes.flatten()] }  // [r1, r2, r1, r2, ...], lane order kept
+    .set { reads }
+ARDA(reads)
+```
+
+A one-lane sample is unchanged by this — a 2-element list is one pair — so the snippet is safe to
+use everywhere.
+
+> **Never sort the lanes.** `A_L010` sorts before `A_L002`, and the clonotype fold is not
+> permutation-invariant: `correct` collapses an error child onto the parent it meets first. Let the
+> channel's order stand, and it will match what `arda rnaseq --samples sheet.tsv` produces from
+> the same sheet.
+
+For a cluster without Nextflow, `arda cluster plan --samples sheet.tsv` emits the same DAG as two
+TSV manifests (one row per read group, one per sample), and `arda cluster submit-samples` renders
+it as SLURM arrays. There is also a Snakemake workflow in `integrations/snakemake/arda/`.
+
 ## Drop into an nf-core/rnaseq (v3.x) pipeline
 
 The module consumes the same per-sample FASTQ channel the aligners do, so it needs no sample-sheet
@@ -230,7 +268,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (boolean), `arda_organism` (string), `arda_mmseqs` (string), `arda_args` (string).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.21.0' }` to your deployment
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.22.0' }` to your deployment
    config (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:
