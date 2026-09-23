@@ -1281,6 +1281,22 @@ def rnaseq_reduce(
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
     d_max_evalue: Optional[float] = typer.Option(
         None, "--d-max-evalue", help=_D_EVALUE_HELP),
+    ec_mode: str = typer.Option(
+        "fast", "--ec-mode",
+        help="Denoising preset, and it must MATCH the one the mode command would have used or a "
+             "sharded run quietly denoises differently from a single-node one: `arda rnaseq` "
+             "defaults to `rnaseq` and `arda amplicon` to `amplicon`, while this command and "
+             "`arda correct` default to `fast`. `arda cluster plan` and `submit-samples` fill it "
+             "in from --regime. Anything but `fast` also needs Stage 1 to have been run with "
+             "--junction-quality, or the gate reads a column that is not there and does nothing."),
+    min_junction_q: Optional[int] = typer.Option(
+        None, "--min-junction-q",
+        help="Drop clonotypes whose junction mean Phred is below this (needs Stage-1 "
+             "--junction-quality). Overrides the --ec-mode preset's own value."),
+    call_level: str = typer.Option(
+        "allele", "--call-level", help="`allele` (default) or `gene`, BEFORE the clonotype key."),
+    isotype: bool = typer.Option(
+        True, "--isotype/--no-isotype", help="Resolve the IGH isotype (`c_call` / `c_class`)."),
 ) -> None:
     """Merge a sharded Stage 1, then run Stages 2-3 ONCE over the whole thing.
 
@@ -1292,8 +1308,74 @@ def rnaseq_reduce(
 
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
-                    d_max_evalue=d_max_evalue)
+                    d_max_evalue=d_max_evalue, ec_mode=ec_mode,
+                    min_junction_q=min_junction_q, call_level=call_level, isotype=isotype)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
+
+
+def _load_samples(r1, r2, ids, sheet, out_prefix=None):
+    """Resolve the sample options, turning a parse error into a typer one."""
+    from . import samples as samples_mod
+
+    try:
+        return samples_mod.load(r1=r1, r2=r2, ids=ids, sheet=sheet, out_prefix=out_prefix)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+@cluster_app.command("plan")
+def cluster_plan(
+    samples_sheet: Optional[Path] = typer.Option(None, "--samples", help=_SAMPLES_HELP),
+    work_dir: Path = typer.Option(Path("arda_work"), "--work-dir",
+                                  help="Scratch root; each sample gets work-dir/<id>/."),
+    r1: list[Path] = typer.Option([], "--r1", help=_R1_HELP),
+    r2: list[Path] = typer.Option([], "--r2", help=_R2_HELP),
+    ids: list[str] = typer.Option([], "--id", help=_ID_HELP),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d",
+                                 help="Where the final per-sample outputs will land."),
+    regime: str = typer.Option(
+        "rnaseq", "--regime",
+        help="`rnaseq` (bulk) or `amplicon` (targeted RepSeq). Decides the flags printed for "
+             "both steps. The two speed levers do NOT compose and each is a loss in the other's "
+             "regime, so name the library rather than the flags."),
+    threads: int = typer.Option(8, help="mmseqs threads per worker."),
+    organism: str = typer.Option("human", help="Reference organism."),
+) -> None:
+    """Emit the READ-GROUP work units a scheduler allocates workers to.
+
+    arda's unit of parallel work is the read group, not the sample: Stage 1 is per read and shards
+    perfectly, so a sheet of 5 samples x 4 lanes is 20 independent jobs rather than 5. Stages 2-3
+    are global PER SAMPLE -- a clone split across read groups would be counted once per group, and
+    a contig tiling across them would never be built -- so they run once per sample.
+
+    Writes ``<work-dir>/readgroups.tsv`` (one row per read group: sample, index, r1, r2, and the
+    Stage-1 part paths) and ``<work-dir>/samples.tsv`` (one row per sample). Any scheduler then
+    needs nothing else from arda: run one ``arda map`` per readgroups row, then one
+    ``arda cluster reduce`` per samples row. `arda cluster submit --samples` renders exactly that
+    as a SLURM script; this command is for a scheduler that is not SLURM.
+    """
+    from .cluster import plan, regime_flags
+
+    resolved = _load_samples(r1, r2, ids, samples_sheet)
+    try:
+        map_flags, reduce_flags = regime_flags(regime, organism=organism, threads=threads)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    rg_path, s_path = plan(resolved, work_dir)
+    n_rg = sum(len(s.pairs) for s in resolved)
+    typer.echo(f"[arda] {len(resolved)} sample(s), {n_rg} read group(s)")
+    typer.echo(str(rg_path))
+    typer.echo(str(s_path))
+    # The flags are printed FILLED IN, never as `<flags>`. The mode commands wire Stage 1 to
+    # Stage 2 themselves (`--ec-mode rnaseq` needs `--junction-quality`); a scheduler driving the
+    # two as separate jobs cannot know that, and the gate then silently never runs.
+    typer.echo("")
+    typer.echo(f"# one worker per row of {rg_path.name}:")
+    typer.echo(f'#   arda map --r1 "$r1" ${{r2:+--r2 "$r2"}} -o "$part_airr" '
+               f'--report "$part_report" {map_flags}')
+    typer.echo(f"# then one per row of {s_path.name}, after ALL of its read groups finish:")
+    typer.echo(f'#   arda cluster reduce --shard-dir "$shard_dir" --out-dir {out_dir} '
+               f'--out-prefix "$out_prefix" {reduce_flags}')
 
 
 @cluster_app.command("submit")
@@ -1346,6 +1428,72 @@ def rnaseq_slurm(
     if submit:
         subprocess.run(["bash", str(script)], check=True)
 
+
+@cluster_app.command("submit-samples")
+def samples_slurm(
+    samples_sheet: Optional[Path] = typer.Option(None, "--samples", help=_SAMPLES_HELP),
+    r1: list[Path] = typer.Option([], "--r1", help=_R1_HELP),
+    r2: list[Path] = typer.Option([], "--r2", help=_R2_HELP),
+    ids: list[str] = typer.Option([], "--id", help=_ID_HELP),
+    out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    work_dir: Path = typer.Option(Path("arda_slurm"), help="Scratch for manifests + submit.sh."),
+    regime: str = typer.Option(
+        "rnaseq", "--regime",
+        help="`rnaseq` (bulk: --prefilter) or `amplicon` (--two-pass --fast-segments "
+             "--v-only-on-segment). The two speed levers do NOT compose and each is a loss in "
+             "the other's regime, so name the library rather than the flags."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    threads: int = typer.Option(8, help="--cpus-per-task, and mmseqs threads."),
+    kmer: int = typer.Option(12, "--kmer", "-k", help="MMseqs2 -k (the memory knob)."),
+    min_score: float = typer.Option(75.0, "--min-score", help="Min bit score to keep a read."),
+    reconstruct: bool = typer.Option(False, "--reconstruct", help="Merge overlapping mates."),
+    assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
+    complete_only: bool = typer.Option(
+        True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
+    map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments."),
+    partition: Optional[str] = typer.Option(None, help="SLURM partition."),
+    time_limit: str = typer.Option("04:00:00", "--time", help="Walltime per map task."),
+    mem: str = typer.Option("8G", help="Memory per map task (Stage 1 is flat, ~300-650 MB)."),
+    reduce_time: str = typer.Option("08:00:00", help="Walltime per reduce task."),
+    reduce_mem: str = typer.Option(
+        "16G", help="Memory per reduce task. Stage 3 holds the clone set: budget ~4 GB, more for "
+                    "a B-cell-rich sample (2,071.7 MB measured on 28,444 clonotypes)."),
+    submit: bool = typer.Option(False, "--submit", help="Run the generated script."),
+) -> None:
+    """Write (and optionally submit) a SLURM script for a whole sheet: array-``map`` -> reduce.
+
+    The array is over READ GROUPS across every sample, so a sheet of 5 samples x 4 lanes is 20
+    concurrent tasks rather than 5. There is no split step -- a sample delivered as several FASTQs
+    was already sharded by whoever wrote it, and the read groups are consumed in sheet order, so
+    each sample's result is byte-identical to its reads concatenated into one file.
+
+    Stages 2-3 are global per sample and run once each, in a second array gated on the whole map
+    array. For a single sample you want to split yourself, use ``arda cluster submit --shards N``.
+    """
+    import os
+    import subprocess
+
+    from .cluster import plan, render_samples_submit_script
+
+    resolved = _load_samples(r1, r2, ids, samples_sheet)
+    if regime not in ("rnaseq", "amplicon"):
+        raise typer.BadParameter(f"--regime must be rnaseq or amplicon, got {regime!r}")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    rg_path, s_path = plan(resolved, work_dir)
+    n_rg = sum(len(s.pairs) for s in resolved)
+
+    script = work_dir / "submit.sh"
+    script.write_text(render_samples_submit_script(
+        rg_path, s_path, n_read_groups=n_rg, n_samples=len(resolved), out_dir=out_dir,
+        organism=organism, threads=threads, kmer=kmer, min_score=min_score,
+        reconstruct=reconstruct, assemble=assemble, complete_only=complete_only, map_d=map_d,
+        regime=regime, partition=partition, time=time_limit, mem=mem, reduce_time=reduce_time,
+        reduce_mem=reduce_mem, arda_mmseqs=os.environ.get("ARDA_MMSEQS")))
+    script.chmod(0o755)
+    typer.echo(f"[arda] {len(resolved)} sample(s), {n_rg} read group(s)")
+    typer.echo(f"[arda] wrote {script}")
+    if submit:
+        subprocess.run(["bash", str(script)], check=True)
 
 
 @app.command("resolve-ties")

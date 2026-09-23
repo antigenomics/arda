@@ -359,8 +359,18 @@ def _sum_counters(shards: list[dict], key: str) -> dict:
 def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
            organism: str = "human", threads: int = 0, assemble: bool = True,
            complete_only: bool = True, map_d: bool = True,
-           d_max_evalue: float | None = None, echo=None) -> dict:
+           d_max_evalue: float | None = None,
+           ec_mode: str = "fast", min_junction_q: int | None = None,
+           clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
+           echo=None) -> dict:
     """Merge sharded Stage-1 output, then run Stages 2-3 once over the whole thing.
+
+    Never: the Stage-2/3 knobs are reachable here for one reason -- a sharded run must be able to
+    reproduce what the mode command would have done. `arda rnaseq` defaults ``ec_mode`` to
+    ``"rnaseq"`` and `arda amplicon` to ``"amplicon"``, while this function defaults to ``"fast"``
+    like `arda correct` does. A caller that forwards neither gets a different clonotype table from
+    the same reads and nothing says so. :func:`arda.cluster.regime_flags` is what fills them in for
+    the generated scripts.
 
     The shard AIRRs are merged from an **explicit sorted list**, not a bare ``*.tsv`` glob:
     shard names are zero-padded so ``sorted()`` is numeric (``shard_10`` must not precede
@@ -388,4 +398,6 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
             f"{mrep['mapped_reads']}/{mrep['total_reads']} reads mapped; loci={mrep['per_locus']}")
     return finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                   assemble=assemble, complete_only=complete_only, map_d=map_d,
-                  d_max_evalue=d_max_evalue, map_report=mrep or None, echo=echo)
+                  d_max_evalue=d_max_evalue, ec_mode=ec_mode, min_junction_q=min_junction_q,
+                  clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
+                  map_report=mrep or None, echo=echo)
