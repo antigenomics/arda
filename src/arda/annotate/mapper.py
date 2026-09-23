@@ -344,6 +344,15 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
             return None                       # generation failed; the caller falls back, as before
     if _has_jc_targets(fasta):
         _regenerate_segments(fasta, organism)
+    # Never: `ref` was loaded BEFORE this function ran, so on the first run against a fresh
+    # reference its `entries` carried no segment targets at all (generation) or the stale-format
+    # ones (regeneration), and every segment hit above resolved to None -- see
+    # `Reference.load_segment_markup` for what that cost. Unconditional and last, so that whatever
+    # is on disk when this returns is what the live reference holds, however it got there: a
+    # `written` flag would still miss the case where the fasta survived and its markup sibling did
+    # not, which is the same "existence is not a readiness gate" shape. ~5 ms for 924 rows, once
+    # per run, against a mmseqs build.
+    ref.load_segment_markup()
     cache = data_dir() / "mmseqs_db" / f"{organism}_segments"
     cache.mkdir(parents=True, exist_ok=True)
     db = cache / "db"

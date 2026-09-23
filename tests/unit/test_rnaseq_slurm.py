@@ -200,11 +200,11 @@ def test_a_shard_that_mapped_nothing_does_not_drag_the_read_length_to_zero():
 def test_submit_script_runs_stage23_once_and_never_in_the_array(tmp_path):
     s = render_rnaseq_submit_script("/d/r1.fq.gz", "SAMP", tmp_path, shards=8,
                                     r2="/d/r2.fq.gz", out_dir="/o", partition="medium")
-    assert s.count("arda cluster reduce") == 1
+    assert s.count('"$ARDA" cluster reduce') == 1
     # The whole point: these must not appear as their own array steps.
     assert "arda rnaseq correct" not in s
     assert "arda rnaseq assemble" not in s
-    assert "arda map" in s and "--array=0-7" in s
+    assert '"$ARDA" map' in s and "--array=0-7" in s
     assert "--dependency=afterok:$SPLIT_JID" in s
     assert "--dependency=afterok:$ARRAY_JID" in s
     assert 'printf "%05d"' in s          # numeric shard names
@@ -318,9 +318,9 @@ def test_samples_submit_arrays_over_read_groups_then_reduces_per_sample(tmp_path
     assert "--dependency=afterok:$MAP_JID" in s
     assert "aftercorr" not in s
     # No split step: a sample delivered as several files is already sharded.
-    assert "arda cluster split" not in s
+    assert '"$ARDA" cluster split ' not in s
     # Stages 2-3 appear exactly once, and never inside the map array.
-    assert s.count("arda cluster reduce") == 1
+    assert s.count('"$ARDA" cluster reduce') == 1
     assert "--junction-quality" in s and "--ec-mode rnaseq" in s
 
 

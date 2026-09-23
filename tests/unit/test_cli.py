@@ -70,8 +70,8 @@ def test_slurm_writes_executable_submit_script(tmp_path):
     body = submit.read_text()
     # The script must name commands that EXIST — the whole point of moving them into one group
     # is that a generated script cannot invoke a command the CLI no longer has.
-    assert "arda cluster split-fasta" in body and "--array=0-3" in body
-    assert "arda cluster merge" in body
+    assert '"$ARDA" cluster split-fasta' in body and "--array=0-3" in body
+    assert '"$ARDA" cluster merge' in body
 
 
 # ── the 2.16.0 mode surface ───────────────────────────────────────────────────────────────────
@@ -250,5 +250,5 @@ def test_cluster_submit_samples_renders_two_arrays_without_submitting(two_sample
     assert "--array=0-1" in script                        # 2 samples
     assert "--dependency=afterok:$MAP_JID" in script      # not aftercorr: one sample, many tasks
     assert "--partition=medium" in script
-    assert "arda map" in script and "arda cluster reduce" in script
+    assert '"$ARDA" map' in script and '"$ARDA" cluster reduce' in script
     assert "IFS=" not in script and "cut -f3" in script   # see render_samples_submit_script
