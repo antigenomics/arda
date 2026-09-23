@@ -342,3 +342,18 @@ def test_samples_submit_reads_its_inputs_from_the_manifest_not_from_filenames(tm
     assert "cut -f3" in s and "cut -f4" in s
     # A blank r2 must drop the flag, not pass an empty path.
     assert '${r2:+--r2 "$r2"}' in s
+
+
+def test_merge_map_reports_carries_a_throughput_number_like_a_single_node_run():
+    """A cohort mixing one-file and many-file samples needs ONE throughput column, not two.
+
+    Stage 1 reports `reads_per_second` for a single pair. The merge reported none at all, so in a
+    cohort where some samples arrive as one pair and some as four lanes the QC table had a
+    half-empty column -- and the missing half was exactly the samples big enough to be split.
+    The denominator is the SUMMED per-shard wall, the same quantity the single-node number
+    divides by; `wall_seconds_max` would be the rate of a fan-out this function cannot know about.
+    """
+    shards = [_shard_report(100, 10, 5.0, 300.0), _shard_report(200, 20, 5.0, 280.0)]
+    m = pipeline._merge_map_reports(shards)
+    assert m["wall_seconds_sum"] == 10.0
+    assert m["reads_per_second"] == 30.0           # 300 reads / 10.0 s
