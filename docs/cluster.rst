@@ -45,6 +45,14 @@ is a plain ``arda cluster merge`` rather than a reduce.
 Add ``--submit`` to submit it instead of only writing it. Export ``ARDA_MMSEQS`` to pin the aligner
 into the array tasks.
 
+The **arda binary is pinned for you**. Every generated script opens with ``export ARDA="<absolute
+path>"`` — the arda that rendered it — and calls ``"$ARDA"`` rather than ``arda``, so an array task
+cannot pick up a different version from the worker's ``PATH``. That is not hypothetical: a run
+whose map array succeeded against one version failed its reduce array with ``No such option:
+--ec-mode`` against an older one on the same cluster. The path is absolute but not
+symlink-resolved, so a module system's stable name still points wherever the site means it to.
+Override it by editing the ``export ARDA=`` line, or from Python with ``arda_bin=``.
+
 .. warning::
 
    **Pin the aligner.** An MMseqs2 index is only reusable by the release that built it. If array

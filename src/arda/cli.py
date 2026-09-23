@@ -1354,7 +1354,7 @@ def cluster_plan(
     ``arda cluster reduce`` per samples row. `arda cluster submit --samples` renders exactly that
     as a SLURM script; this command is for a scheduler that is not SLURM.
     """
-    from .cluster import plan, regime_flags
+    from .cluster import arda_binary, plan, regime_flags
 
     resolved = _load_samples(r1, r2, ids, samples_sheet)
     try:
@@ -1369,12 +1369,16 @@ def cluster_plan(
     # The flags are printed FILLED IN, never as `<flags>`. The mode commands wire Stage 1 to
     # Stage 2 themselves (`--ec-mode rnaseq` needs `--junction-quality`); a scheduler driving the
     # two as separate jobs cannot know that, and the gate then silently never runs.
+    # And the binary is printed RESOLVED, for the same reason `ARDA_MMSEQS` is pinned: a foreign
+    # scheduler's workers need not share this shell's PATH. A real cluster ran the whole map array
+    # against one arda and then failed the reduce with `No such option: --ec-mode` against another.
+    arda = arda_binary()
     typer.echo("")
     typer.echo(f"# one worker per row of {rg_path.name}:")
-    typer.echo(f'#   arda map --r1 "$r1" ${{r2:+--r2 "$r2"}} -o "$part_airr" '
+    typer.echo(f'#   {arda} map --r1 "$r1" ${{r2:+--r2 "$r2"}} -o "$part_airr" '
                f'--report "$part_report" {map_flags}')
     typer.echo(f"# then one per row of {s_path.name}, after ALL of its read groups finish:")
-    typer.echo(f'#   arda cluster reduce --shard-dir "$shard_dir" --out-dir {out_dir} '
+    typer.echo(f'#   {arda} cluster reduce --shard-dir "$shard_dir" --out-dir {out_dir} '
                f'--out-prefix "$out_prefix" {reduce_flags}')
 
 
