@@ -1,16 +1,16 @@
 Running on a cluster (SLURM)
 ============================
 
-arda ships two ways to spread a run over a scheduler, and which one you want depends on how the
-data arrived.
+``arda cluster submit`` cuts one large FASTQ pair into contiguous shards, maps them across a
+SLURM array and runs Stages 2-3 once over the merged result. That is the common case and the rest
+of this page.
 
-* **A sheet of samples, or any sample delivered as several FASTQs.** ``arda cluster plan`` and
-  ``arda cluster submit-samples``. There is no split step — the files already are the shards —
-  and the unit of work is the **read group**. Start at :ref:`samples-readgroups`.
-* **One very large pair, to be cut up.** ``arda cluster split`` + ``arda cluster submit``, below.
+If instead you have a *sheet* of samples, or a sample that arrived as several FASTQs, there is no
+split step — the files already are the shards — and ``arda cluster submit-samples`` schedules one
+task per read group: see :doc:`samples`.
 
-Both are a thin layer over the same per-shard CLI you would run by hand, so nothing about the
-result depends on the scheduler.
+Either way this is a thin layer over the same per-shard CLI you would run by hand, so nothing
+about the result depends on the scheduler.
 
 .. important::
 

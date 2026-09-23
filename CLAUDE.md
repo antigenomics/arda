@@ -252,7 +252,11 @@ still exposes them individually for A/B work.
   8. **The docs nav is four captioned toctrees, not one flat list**, rendered whole in the
      sidebar by `docs/_templates/site-nav.html` (pydata's stock `sidebar-nav-bs` shows only the
      CHILDREN of the current top-level page, and every page here is a top-level sibling, so it
-     drew an empty "Section Navigation"). `conf.py` parses `release` out of
+     drew an empty "Section Navigation"). ⚠ `header_links_before_dropdown: 4` means the FIRST
+     FOUR toctree entries are the whole top navbar and everything after them is hidden under
+     "More" — so toctree ORDER is the emphasis dial. It is currently installation / usage /
+     singlecell / examples, i.e. the three modes plus the recipes; `samples` (multi-file samples)
+     sits under "At scale" deliberately, because it is a minor feature that was over-weighted. `conf.py` parses `release` out of
      `src/arda/__init__.py` — the literal that used to sit there said 2.10.0 for twelve releases.
      Same layout as seqtree and mhcmatch; copy from them rather than inventing a third.
   9. **`docs/examples.rst` is RUN before it is written.** Every command and every polars snippet

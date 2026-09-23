@@ -14,7 +14,7 @@ arda
        <p class="proj-intro__links">
          <a href="installation.html">Install</a>
          <span>&middot;</span>
-         <a href="usage.html">Usage</a>
+         <a href="usage.html">The three modes</a>
          <span>&middot;</span>
          <a href="examples.html">Recipes</a>
          <span>&middot;</span>
@@ -29,12 +29,14 @@ arda
        <p>pip, conda or a source checkout; the reference fetches itself on first use.</p>
      </a>
      <a class="proj-card" href="usage.html">
-       <h3>Usage</h3>
-       <p>The three modes, what each one is for, and the flags that make them fast.</p>
+       <h3>Bulk RNA-seq &amp; amplicon</h3>
+       <p><code>arda rnaseq</code> and <code>arda amplicon</code>: which one your library wants,
+       and what each writes.</p>
      </a>
-     <a class="proj-card" href="samples.html">
-       <h3>Samples split across files</h3>
-       <p>Lanes and chunks are read groups: many FASTQ pairs in, one clonotype table out.</p>
+     <a class="proj-card" href="singlecell.html">
+       <h3>Single cell</h3>
+       <p><code>arda cells</code>: reference-free per-cell contigs from UMI consensus, chain
+       pairing, doublets and QC.</p>
      </a>
      <a class="proj-card" href="examples.html">
        <h3>Recipes</h3>
@@ -45,7 +47,7 @@ arda
    <div class="proj-feature-grid">
      <div class="proj-feature">
        <h3>One command, FASTQ to clonotypes</h3>
-       <p><code>arda rnaseq</code> / <code>arda amplicon</code> / <code>arda cells</code> run
+       <p><code>arda rnaseq</code> and <code>arda amplicon</code> run
        map &rarr; assemble &rarr; correct in one call and write an AIRR table, a clonotype table,
        a run report and a QC table. The mode <em>name</em> picks the speed configuration, because
        the two speed levers do not compose and each is a loss in the other's regime.</p>
@@ -71,17 +73,19 @@ arda
        the same rescue kept narrow for bulk RNA-seq, or nothing at all.</p>
      </div>
      <div class="proj-feature">
-       <h3>Read groups, and one worker per read group</h3>
-       <p>A sample delivered as four lane FASTQs is an <em>already-sharded</em> sample: arda maps
-       each pair, concatenates in declared order and runs the global stages once &mdash;
-       byte-identical to the same reads in one file. A sheet of 5 samples &times; 4 lanes is
-       <strong>20 independent jobs, not 5</strong>.</p>
+       <h3>Single cell, with the doublets called</h3>
+       <p>From one UMI consensus per molecule, <code>arda cells</code> assembles each cell's
+       contigs with <em>no germline reference</em>, then annotates, pairs the chains and flags
+       multiplets. Against Cell Ranger on <code>sc5p_v2_hs_PBMC_1k</code> VDJ-T,
+       <strong>98.2&nbsp;%</strong> of its 943 CDR3s appear verbatim inside one of arda's
+       contigs.</p>
      </div>
      <div class="proj-feature">
        <h3>It runs where your data is</h3>
        <p>The same sheet drives the CLI, a SLURM array, the Nextflow module and the Snakemake
        workflow, and all four ask <code>arda.cluster.regime_flags</code> for a regime's flags
-       rather than restating them.</p>
+       rather than restating them. A sample delivered as several lane FASTQs is handled in one
+       call &mdash; see <a href="samples.html">samples split across files</a>.</p>
      </div>
    </div>
 
@@ -96,7 +100,7 @@ repository so they can be re-run: see the ``README`` benchmark tables and
 
    installation
    usage
-   samples
+   singlecell
    examples
 
 .. toctree::
@@ -108,7 +112,6 @@ repository so they can be re-run: see the ``README`` benchmark tables and
    error_correction
    shm
    d_segments
-   singlecell
 
 .. toctree::
    :hidden:
@@ -116,6 +119,7 @@ repository so they can be re-run: see the ``README`` benchmark tables and
    :maxdepth: 2
 
    cluster
+   samples
    pipeline_integration
    qc
 
