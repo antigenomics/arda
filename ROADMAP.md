@@ -8,8 +8,9 @@ orientation via `rev_comp`), reverse-complement handling, all-loci single-DB
 querying, streaming/bounded-memory FASTQ I/O (optional quality retention),
 out-of-frame junction translation, extended V/J-position markup, D-segment mapping
 (incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures,
-run QC (`arda stats`), and single-cell support (`arda cells`: reference-free per-cell
-contig assembly, chain pairing, doublet flagging, and the QC surface).
+run QC (`arda stats`), single-cell support (`arda cells`: reference-free per-cell
+contig assembly, chain pairing, doublet flagging, and the QC surface), and multi-file
+samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
 
 ## TODO
 
@@ -98,6 +99,23 @@ contig assembly, chain pairing, doublet flagging, and the QC surface).
         `np1`/`np2`/`np3` partition the junction between V, the D(s), and J. Recall is
         61% on injected IGH tandems but only 13-15% on TRB, where trimming usually leaves
         one D under the ~7 nt needed to see it; false `d2_call` on true single-D is 0-1%.
+
+- [x] **Samples split across files (read groups).** `--r1`/`--r2`/`--id` are repeatable and
+      position-matched, and `--samples sheet.tsv|csv` reads the nf-core `sample, fastq_1, fastq_2`
+      spelling with repeated ids merging in row order. `arda.samples` is the only new concept.
+      Never: a multi-file sample is an ALREADY-SHARDED sample -- `pipeline.run` maps each read
+      group and concatenates in DECLARED order before the existing `finish`, so nothing below
+      Stage 1 changed. Byte-identical to the same reads in one file, verified on
+      `tests/data/rnaseq_real` cut into four.
+  - [x] **The read group is the unit of parallel work, the sample is not.** `arda cluster plan`
+        emits `readgroups.tsv` + `samples.tsv` for any scheduler with the commands FILLED IN;
+        `arda cluster submit-samples` renders them as two SLURM arrays; Snakemake
+        (`integrations/snakemake/arda/`) and Nextflow schedule the same way. 5 samples x 4 lanes
+        is 20 jobs, not 5. Never: samples run SEQUENTIALLY in one CLI call -- mmseqs threads
+        internally, so N samples at cores/N is slower than N in a row.
+  - [ ] **`--jobs N` for concurrent samples on one box** is deliberately absent. It can only pay
+        when each sample is too small to saturate mmseqs; measure a many-small-samples sheet
+        before adding it.
 
 - [x] **Multi-node sharding.** `arda cluster split-fasta` round-robins a huge FASTA/FASTQ into N
       shards (one pass); `arda cluster merge` concatenates per-shard AIRR TSVs (single

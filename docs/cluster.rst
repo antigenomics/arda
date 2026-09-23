@@ -1,9 +1,16 @@
 Running on a cluster (SLURM)
 ============================
 
-arda ships three commands for splitting a large input across a scheduler and putting the pieces
-back together: ``arda split``, ``arda slurm`` and ``arda merge``. They are a thin layer over the
-same per-shard CLI you would run by hand, so nothing about the result depends on the scheduler.
+arda ships two ways to spread a run over a scheduler, and which one you want depends on how the
+data arrived.
+
+* **A sheet of samples, or any sample delivered as several FASTQs.** ``arda cluster plan`` and
+  ``arda cluster submit-samples``. There is no split step — the files already are the shards —
+  and the unit of work is the **read group**. Start at :ref:`samples-readgroups`.
+* **One very large pair, to be cut up.** ``arda cluster split`` + ``arda cluster submit``, below.
+
+Both are a thin layer over the same per-shard CLI you would run by hand, so nothing about the
+result depends on the scheduler.
 
 .. important::
 
@@ -18,20 +25,25 @@ same per-shard CLI you would run by hand, so nothing about the result depends on
 One command for the whole chain
 -------------------------------
 
+For paired RNA-seq, which is almost always what you have:
+
 .. code-block:: bash
 
-   arda slurm reads.fq annotated.tsv work/ \
-       --shards 32 --threads 8 --time 02:00:00 --mem 16G --partition medium
+   arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 32 \
+       --work-dir work/ -d results/ --threads 8 --time 02:00:00 --mem 16G --partition medium
 
-That writes ``work/submit.sh``, which chains three steps with an ``afterok`` dependency so the
-merge runs only once every shard has succeeded:
+That writes ``work/submit.sh``, which chains three steps with ``afterok`` dependencies so each
+runs only once the previous has fully succeeded:
 
-1. ``arda split`` — one cheap pass over the input;
-2. ``sbatch --array=0-31`` — one ``arda annotate`` per shard;
-3. ``arda merge`` — concatenate the per-shard AIRR TSVs under a single header.
+1. ``arda cluster split`` — one cheap pass, into contiguous blocks of read **pairs**;
+2. ``sbatch --array=0-31`` — one ``arda map`` per shard;
+3. ``arda cluster reduce`` — merge, then ``assemble`` and ``correct`` **once** over the whole thing.
 
-Add ``--submit`` to submit it instead of only writing it. ``--arda-mmseqs`` exports
-``ARDA_MMSEQS`` into the array tasks.
+For single-end FASTA/amplicon the sibling chain is ``arda cluster submit-fasta``, whose last step
+is a plain ``arda cluster merge`` rather than a reduce.
+
+Add ``--submit`` to submit it instead of only writing it. Export ``ARDA_MMSEQS`` to pin the aligner
+into the array tasks.
 
 .. warning::
 
@@ -45,16 +57,17 @@ Splitting by hand
 
 .. code-block:: bash
 
-   arda split reads.fq shards/ --shards 32               # single-end / amplicon, FASTA out
+   arda cluster split-fasta reads.fq shards/ --shards 32    # single-end / amplicon, FASTA out
    # paired input, contiguous blocks of PAIRS, quality preserved:
-   python -c "from arda.cluster import split_pairs; split_pairs('r1.fq','shards',shards=32,r2='r2.fq')"
+   arda cluster split --r1 r1.fq --r2 r2.fq --out-dir shards/ --shards 32
 
 .. warning::
 
-   ``split`` and ``split_pairs`` are **not** interchangeable. ``split`` writes FASTA — which drops
-   the quality string that ``merge_pair``'s per-base tie-break needs under ``--reconstruct`` — and
-   round-robins *records*, which puts the two mates of one fragment in different shards. Use
-   ``split_pairs`` for paired FASTQ: it writes contiguous blocks of read **pairs**, byte for byte.
+   ``split-fasta`` and ``split`` are **not** interchangeable. ``split-fasta`` writes FASTA — which
+   drops the quality string that ``merge_pair``'s per-base tie-break needs under ``--reconstruct``
+   — and round-robins *records*, which puts the two mates of one fragment in different shards. Use
+   ``arda cluster split`` for paired FASTQ: it writes contiguous blocks of read **pairs**, byte for
+   byte.
 
 Very large inputs: shard Stage 1, run Stage 2 once
 --------------------------------------------------
@@ -70,8 +83,24 @@ For a full-depth library the pattern is:
                    --junction-quality --prefilter --threads ${SLURM_CPUS_PER_TASK}
 
    # then ONCE, over the merged per-read table
-   arda merge out/*.airr.tsv all.airr.tsv
-   arda correct -i all.airr.tsv -o clones.tsv --ec-mode rnaseq
+   arda cluster reduce --shard-dir out/ --out-dir results/ --out-prefix SAMPLE --ec-mode rnaseq
+
+.. important::
+
+   **Pass ``--ec-mode``, and match Stage 1 to it.** ``arda cluster reduce`` defaults to ``fast``,
+   like ``arda correct`` does, while ``arda rnaseq`` defaults to ``rnaseq`` and ``arda amplicon``
+   to ``amplicon``. Forward neither and a sharded run quietly produces a different clonotype table
+   from the same reads. Any preset but ``fast`` also reads a column Stage 1 writes **only** under
+   ``--junction-quality`` — which is why it is in the array command above. The mode commands wire
+   the two together themselves; two separate jobs cannot, so
+   :func:`arda.cluster.regime_flags` exists to hand you both halves:
+
+   .. code-block:: python
+
+      from arda.cluster import regime_flags
+      map_flags, reduce_flags = regime_flags("rnaseq", threads=16)
+
+   ``arda cluster plan`` and both submit commands print or embed exactly that.
 
 .. important::
 

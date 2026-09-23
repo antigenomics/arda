@@ -29,6 +29,20 @@ It writes four files under ``--out-dir``:
                                  per-locus counts, isotype/constant fragments, timing, peak RSS)
 ===============================  ============================================================
 
+A sample delivered as several FASTQs — one per Illumina lane, or per in-house chunk — is named
+once and produces one set of outputs. ``--r1``/``--r2``/``--id`` are repeatable and matched by
+position, and ``--samples sheet.tsv`` reads the same grouping from an nf-core-shaped sheet:
+
+.. code-block:: bash
+
+   arda rnaseq -d results/ --r1 L1_1.fq.gz --r2 L1_2.fq.gz --id PT01 \
+                           --r1 L2_1.fq.gz --r2 L2_2.fq.gz --id PT01
+   arda rnaseq --samples sheet.tsv -d results/
+
+See :doc:`samples`, which also covers scheduling **one worker per read group** —
+``arda cluster plan`` for any scheduler, ``arda cluster submit-samples`` for SLURM, and the
+Snakemake workflow in ``integrations/snakemake/arda/``.
+
 Single-end input drops ``--r2``. The defaults match the individual commands (``--min-score 75``,
 ``--kmer 12`` for ~300 MB peak RSS, complete-junction clonotypes, D mapping on); use ``map``,
 ``assemble``, ``correct`` and ``shm`` separately when you need to tune their individual knobs, and
