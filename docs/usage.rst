@@ -7,6 +7,11 @@ locus, the two human reads that carry a tandem D-D, six VDJdb records covering e
 junction-repair outcome, and a 1,035-read FASTQ that runs the whole bulk RNA-seq pipeline in
 about six seconds.
 
+This page is the reference for what each command and flag does. For copy-paste recipes — the
+three one-liners, annotating sequences you already have, and the polars snippets that turn a
+clonotype table into clonal fractions, gene usage, repertoire overlap and cohort QC — see
+:doc:`examples`.
+
 Command line
 ------------
 

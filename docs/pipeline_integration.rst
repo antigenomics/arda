@@ -150,3 +150,38 @@ Tuning
 Extra arda flags pass through the module's ``ext.args`` (``--reconstruct``, ``--min-score 0``,
 ``--kmer 11`` …); a static ``ext.args`` string overrides the genome-driven ``--organism`` default.
 ``--threads`` is wired to ``task.cpus`` automatically.
+
+Snakemake workflow
+------------------
+
+``integrations/snakemake/arda/`` ships a workflow that reads the same sheet as
+``arda rnaseq --samples`` and schedules at **read-group** granularity:
+
+.. code-block:: bash
+
+   snakemake -s integrations/snakemake/arda/Snakefile \
+       --config samples=sheet.tsv outdir=results regime=rnaseq -c 32
+
+   # the same DAG on SLURM, one task per read group
+   snakemake -s integrations/snakemake/arda/Snakefile \
+       --config samples=sheet.tsv outdir=results regime=rnaseq --profile slurm
+
+Two rules: ``map_read_group`` runs ``arda map`` once per ``(R1, R2)`` pair — a sheet of 5 samples
+× 4 lanes is **20 concurrent jobs, not 5** — and ``reduce_sample`` runs ``arda cluster reduce``
+once per sample over that sample's parts, merged in **sheet order**. Outputs land in
+``outdir/<sample>.{airr,clones,stats}.tsv`` and ``<sample>.arda.json``; the Stage-1 parts stay
+under ``outdir/work/<sample>/``.
+
+Knobs are ``--config`` keys, all optional: ``regime`` (``rnaseq`` | ``amplicon``), ``organism``,
+``arda`` (path to the binary), ``map_threads``, ``reduce_threads``, ``workdir`` and ``extra``
+(passed through to ``arda map``).
+
+.. important::
+
+   The workflow does **not** carry its own copy of the regime presets or of the sheet rules — it
+   asks :func:`arda.cluster.regime_flags` and :func:`arda.samples.read_sheet`, so what it accepts
+   and how it runs cannot drift from what ``arda rnaseq --samples`` does. It therefore needs
+   ``arda`` importable in the environment Snakemake itself runs in, not only on ``$PATH``.
+
+Give ``arda map`` real cores. It is CPU-bound on the MMseqs2 search and threads internally, so a
+few big jobs beat many small ones: prefer raising ``map_threads`` over raising ``-c``.

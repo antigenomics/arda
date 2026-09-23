@@ -195,3 +195,15 @@ def test_it_runs_on_any_one_input_alone(run_dir):
     for kw in ({"airr": run_dir / "s.airr.tsv"}, {"clones": run_dir / "s.clones.tsv"},
                {"report": run_dir / "s.arda.json"}):
         assert collect(**kw)
+
+
+def test_a_multi_file_input_still_records_which_files_it_read(tmp_path):
+    """`input` is a string for one read group and a LIST for several.
+
+    The flattener dropped every list, so the provenance row vanished exactly when a sample had
+    more than one input file -- the case where "which files was this?" is a real question.
+    """
+    (tmp_path / "m.json").write_text(json.dumps(
+        {"map": {"input": ["L001_R1.fq.gz", "L002_R1.fq.gz"], "total_reads": 10}}))
+    got = _index(collect(report=tmp_path / "m.json"))
+    assert got[("run", "map", "input")] == "L001_R1.fq.gz,L002_R1.fq.gz"

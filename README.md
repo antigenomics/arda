@@ -593,6 +593,25 @@ records = arda.annotate_sequences(
 # The TSV is a spec-valid AIRR Rearrangement file (passes airr.schema validation).
 ```
 
+### Analysing the output
+
+Every arda TSV is written with quoting **off**, so read it with quoting off — polars' default
+turns a blank field into the two-character value `""`:
+
+```python
+import polars as pl
+
+clones = pl.read_csv("results/PT01.clones.tsv", separator="\t", quote_char=None)
+top = (clones.filter(pl.col("locus") == "TRB")
+       .with_columns((pl.col("duplicate_count") / pl.col("duplicate_count").sum()).alias("frequency"))
+       .sort("duplicate_count", descending=True)
+       .select("junction_aa", "v_call", "j_call", "duplicate_count", "frequency"))
+```
+
+Clonal fractions per locus, V-gene usage, repertoire overlap, SHM per read, gating a run on
+`<prefix>.arda.json` and cohort QC from the `stats.tsv` files, all runnable:
+[recipes](https://docs.isalgo.dev/arda/examples.html).
+
 ### Records with no read behind them
 
 A VDJdb row is a CDR3 amino acid, a V call and a J call. There is nothing to align, but the

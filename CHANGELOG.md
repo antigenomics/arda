@@ -3,6 +3,44 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.22.1
+
+### Documentation: a site you can navigate, and recipes you can paste
+
+The docs were fifteen pages in one flat toctree, so the left sidebar was a wall of full page
+titles in source order with nothing marking where the reader was, and `conf.py` carried a literal
+`release = "2.10.0"` -- twelve releases of pages naming the wrong version. Both are fixed the way
+seqtree and mhcmatch already do it: four captioned groups (Start here / Analysis / At scale /
+Reference) rendered whole in the sidebar on every page, the version read from the package source,
+a landing page with a card grid instead of a bare toctree, and the on-page TOC two levels deep.
+
+New **`docs/examples.rst`** ("Recipes"): the three mode one-liners and what they write, a sample
+split across lanes, a cohort from one sheet, annotating sequences that never were reads
+(`arda annotate`, `arda markup`), the Python entry point, and polars snippets for clonal fraction
+per locus, chain composition, V-gene usage, repertoire overlap, SHM per read, gating a run on its
+own `arda.json`, and cohort QC concatenated from the `stats.tsv` files. Every command and script
+on the page was executed against `tests/data/rnaseq_real` before it was written down.
+
+### Two report gaps the recipes found by running
+
+- **`reads_per_second` is reported for a multi-read-group sample too**, over the summed per-shard
+  wall -- the same quantity the single-pair path divides by. A cohort mixing one-file and
+  many-file samples had a half-empty throughput column, and the missing half was exactly the
+  samples big enough to be split. `wall_seconds_max` / `wall_seconds_sum` stay as they are: summing
+  forty array tasks' wall time and calling it "wall seconds" would still be a lie.
+- **`<prefix>.stats.tsv` keeps the `input` row when a sample has several input files.** `input` is
+  a string for one read group and a LIST for several, and the flattener dropped every list -- so
+  the provenance row vanished precisely when "which files was this?" is a real question. Lists of
+  scalars are now comma-joined, the way AIRR encodes a tied `v_call`.
+
+### Also
+
+- `Sample.paired` and `Sample.files` are gone: nothing but their own tests called them.
+- `arda cluster plan` and `arda cluster submit-samples` have CLI tests. `cluster.plan` and the
+  script renderer were covered; the wiring around them -- the regime check, the sheet load, and
+  the recipe it prints with the flags **filled in** -- was not, and that wiring is where a typo
+  reaches someone's job array.
+
 ## 2.22.0
 
 ### A sample may arrive in several FASTQ pairs

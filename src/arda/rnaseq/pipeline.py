@@ -315,6 +315,7 @@ def _merge_map_reports(shards: list[dict]) -> dict:
     sized = [s for s in shards if int(s.get("total_reads", 0)) > 0
              and float(s.get("read_length_max", 0)) > 0]
     weights = [int(s["total_reads"]) for s in sized]
+    wall_sum = round(sum(float(s.get("wall_seconds", 0.0)) for s in shards), 3)
     return {
         "shards": len(shards),
         "read_groups": len(shards),
@@ -336,8 +337,14 @@ def _merge_map_reports(shards: list[dict]) -> dict:
         "min_score": shards[0].get("min_score"),
         "threads": shards[0].get("threads"),
         "wall_seconds_max": max(float(s.get("wall_seconds", 0.0)) for s in shards),
-        "wall_seconds_sum": round(sum(float(s.get("wall_seconds", 0.0)) for s in shards), 3),
+        "wall_seconds_sum": wall_sum,
         "peak_rss_mb_max": max(float(s.get("peak_rss_mb", 0.0)) for s in shards),
+        # Reads per second of MAPPING, i.e. total reads over the summed per-shard wall -- the
+        # same quantity a single-node run reports, so a cohort mixing one-file and many-file
+        # samples has one throughput column rather than two half-empty ones. Not divided by
+        # `wall_seconds_max`: that would be the aggregate rate of a fan-out this function cannot
+        # know happened.
+        "reads_per_second": round(total / wall_sum, 1) if wall_sum else 0.0,
         # Both are empty dicts when their feature is off, and both are pure counters when it is
         # on, so summing is the whole merge. Dropping them is not neutral: `prefilter_passed /
         # prefilter_seen` is the only number that says whether the prefilter earned its keep on

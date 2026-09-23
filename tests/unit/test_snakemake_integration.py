@@ -1,9 +1,10 @@
 """The Snakemake workflow's Python prelude, exercised without Snakemake installed.
 
 `integrations/snakemake/arda/Snakefile` is not importable -- `rule` is Snakemake syntax, not
-Python -- but everything that can actually be *wrong* lives above the first rule: parsing the
-sheet, merging repeated sample ids in row order, resolving relative paths, and asking arda for the
-regime's flags rather than restating them. So the prelude is sliced off and executed here.
+Python -- but everything that can actually be *wrong* lives above the first rule: reading the
+sheet through arda rather than through a second copy of the parsing rules, turning arda's
+`ValueError` into Snakemake's `WorkflowError`, and asking arda for the regime's flags. So the
+prelude is sliced off and executed here.
 
 Without this the integration is covered by nothing: it ships in a directory no test touches, which
 is exactly how the Nextflow module sat four releases stale.
@@ -27,56 +28,66 @@ def _prelude(config):
     src = SNAKEFILE.read_text()
     cut = src.index("\nrule ")
     ns = {"config": config, "WorkflowError": _WorkflowError, "expand": lambda *a, **k: []}
-    exec(compile(src[:cut], str(SNAKEFILE), "exec"), ns)  # noqa: S102 — our own file
+    exec(compile(src[:cut], str(SNAKEFILE), "exec"), ns)  # noqa: S102 -- our own file
     return ns
 
 
 @pytest.fixture
 def sheet(tmp_path):
-    def make(rows, name="s.tsv"):
+    """Write a sheet whose FASTQs exist: arda validates its inputs at parse time."""
+    def make(rows, name="s.tsv", reads_dir=None):
         delim = "," if name.endswith(".csv") else "\t"
+        d = tmp_path / reads_dir if reads_dir else tmp_path
+        d.mkdir(parents=True, exist_ok=True)
+        out = []
+        for sid, r1, r2 in rows:
+            for f in (r1, r2):
+                if f:
+                    (d / f).write_text("@r\nACGT\n+\nIIII\n")
+            pre = f"{reads_dir}/" if reads_dir else ""
+            out.append((sid, f"{pre}{r1}" if r1 else "", f"{pre}{r2}" if r2 else ""))
         p = tmp_path / name
         head = delim.join(["sample", "fastq_1", "fastq_2"])
-        p.write_text(head + "\n" + "".join(delim.join(r) + "\n" for r in rows))
+        p.write_text(head + "\n" + "".join(delim.join(r) + "\n" for r in out))
         return p
     return make
 
 
 def test_the_prelude_merges_repeated_samples_in_row_order(sheet, tmp_path):
-    s = sheet([("A", "/d/a0_1.fq", "/d/a0_2.fq"),
-               ("A", "/d/a1_1.fq", "/d/a1_2.fq"),
-               ("B", "/d/b0_1.fq", "/d/b0_2.fq")])
+    s = sheet([("A", "a0_1.fq", "a0_2.fq"),
+               ("A", "a1_1.fq", "a1_2.fq"),
+               ("B", "b0_1.fq", "b0_2.fq")])
     ns = _prelude({"samples": str(s), "outdir": str(tmp_path / "out")})
     assert ns["SAMPLES"] == ["A", "B"]
-    assert ns["READ_GROUPS"]["A"] == [("/d/a0_1.fq", "/d/a0_2.fq"),
-                                      ("/d/a1_1.fq", "/d/a1_2.fq")]
-    assert ns["READ_GROUPS"]["B"] == [("/d/b0_1.fq", "/d/b0_2.fq")]
+    assert ns["READ_GROUPS"]["A"] == [(str(tmp_path / "a0_1.fq"), str(tmp_path / "a0_2.fq")),
+                                      (str(tmp_path / "a1_1.fq"), str(tmp_path / "a1_2.fq"))]
+    assert ns["READ_GROUPS"]["B"] == [(str(tmp_path / "b0_1.fq"), str(tmp_path / "b0_2.fq"))]
 
 
 def test_part_names_are_zero_padded_so_sorted_is_numeric(sheet, tmp_path):
     """`arda cluster reduce` merges parts in NAME order and that order IS read order."""
-    ns = _prelude({"samples": str(sheet([("A", "/d/x_1.fq", "")])), "outdir": str(tmp_path)})
+    ns = _prelude({"samples": str(sheet([("A", "x_1.fq", "")])), "outdir": str(tmp_path)})
     names = [Path(ns["part"]("A", i)).name for i in (2, 10)]
     assert names == ["shard_00002.airr.tsv", "shard_00010.airr.tsv"]
     assert sorted(names) == names
 
 
 def test_a_blank_fastq_2_is_single_end_not_an_empty_path(sheet, tmp_path):
-    ns = _prelude({"samples": str(sheet([("A", "/d/x_1.fq", "")])), "outdir": str(tmp_path)})
-    assert ns["READ_GROUPS"]["A"] == [("/d/x_1.fq", None)]
+    ns = _prelude({"samples": str(sheet([("A", "x_1.fq", "")])), "outdir": str(tmp_path)})
+    assert ns["READ_GROUPS"]["A"] == [(str(tmp_path / "x_1.fq"), None)]
 
 
 def test_relative_paths_resolve_against_the_sheet(sheet, tmp_path):
-    s = sheet([("A", "reads/x_1.fq", "reads/x_2.fq")])
+    s = sheet([("A", "x_1.fq", "x_2.fq")], reads_dir="reads")
     ns = _prelude({"samples": str(s), "outdir": str(tmp_path / "out")})
-    assert ns["READ_GROUPS"]["A"] == [(str(s.parent / "reads/x_1.fq"),
-                                       str(s.parent / "reads/x_2.fq"))]
+    assert ns["READ_GROUPS"]["A"] == [(str(tmp_path / "reads/x_1.fq"),
+                                       str(tmp_path / "reads/x_2.fq"))]
 
 
 def test_csv_is_read_as_csv(sheet, tmp_path):
-    s = sheet([("A", "/d/x_1.fq", "/d/x_2.fq")], name="s.csv")
+    s = sheet([("A", "x_1.fq", "x_2.fq")], name="s.csv")
     ns = _prelude({"samples": str(s), "outdir": str(tmp_path)})
-    assert ns["READ_GROUPS"]["A"] == [("/d/x_1.fq", "/d/x_2.fq")]
+    assert ns["READ_GROUPS"]["A"] == [(str(tmp_path / "x_1.fq"), str(tmp_path / "x_2.fq"))]
 
 
 def test_the_flags_come_from_arda_not_from_a_restatement(sheet, tmp_path):
@@ -86,7 +97,7 @@ def test_the_flags_come_from_arda_not_from_a_restatement(sheet, tmp_path):
     column that only `--junction-quality` writes. A second copy of that knowledge drifts, and the
     symptom is a silent 2-4x slowdown or a gate that never runs.
     """
-    cfg = {"samples": str(sheet([("A", "/d/x_1.fq", "")])), "outdir": str(tmp_path),
+    cfg = {"samples": str(sheet([("A", "x_1.fq", "")])), "outdir": str(tmp_path),
            "regime": "amplicon", "map_threads": 16, "reduce_threads": 4}
     ns = _prelude(cfg)
     assert ns["MAP_FLAGS"] == regime_flags("amplicon", threads=16)[0]
@@ -95,14 +106,26 @@ def test_the_flags_come_from_arda_not_from_a_restatement(sheet, tmp_path):
     assert "--ec-mode amplicon" in ns["REDUCE_FLAGS"]
 
 
+def test_the_sheet_is_parsed_by_arda_so_the_cli_rules_apply_here_too(sheet, tmp_path):
+    """Never: the workflow must not carry its own copy of the SHEET rules either.
+
+    The prelude used to re-implement the parse, and the copy accepted a sample whose read groups
+    mix paired with single-end -- which `arda rnaseq --samples` refuses, because half a sample's
+    reads silently losing their mate is not a configuration. One parser, one answer.
+    """
+    s = sheet([("A", "p_1.fq", "p_2.fq"), ("A", "s_1.fq", "")])
+    with pytest.raises(_WorkflowError, match="mixes paired and single-end"):
+        _prelude({"samples": str(s), "outdir": str(tmp_path)})
+
+
 def test_a_missing_sheet_or_a_bad_regime_is_refused_up_front(sheet, tmp_path):
     with pytest.raises(_WorkflowError, match="samples="):
         _prelude({})
     with pytest.raises(_WorkflowError, match="regime must be"):
-        _prelude({"samples": str(sheet([("A", "/d/x_1.fq", "")])), "outdir": str(tmp_path),
+        _prelude({"samples": str(sheet([("A", "x_1.fq", "")])), "outdir": str(tmp_path),
                   "regime": "bulk"})
-    with pytest.raises(_WorkflowError, match="needs both"):
-        _prelude({"samples": str(sheet([("", "/d/x_1.fq", "")])), "outdir": str(tmp_path)})
+    with pytest.raises(_WorkflowError, match="empty sample id"):
+        _prelude({"samples": str(sheet([("", "x_1.fq", "")])), "outdir": str(tmp_path)})
 
 
 def test_an_empty_sheet_is_refused(tmp_path):

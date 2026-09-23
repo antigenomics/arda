@@ -17,7 +17,6 @@
 # Give `arda map` real cores. It is CPU-bound on the MMseqs2 search and threads internally, so a
 # few big jobs beat many small ones -- prefer raising `map_threads` over raising `-c`.
 
-import csv
 from pathlib import Path
 
 
@@ -52,25 +51,18 @@ REDUCE_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=REDUCE_THREADS)[1
 
 
 # ── the sheet ─────────────────────────────────────────────────────────────────────────────────
-def _read_sheet(path):
-    """sample -> [(r1, r2|None), ...] in row order. Repeated `sample` values merge."""
-    delim = "," if path.suffix.lower() == ".csv" else "\t"
-    groups = {}
-    with path.open(newline="") as fh:
-        for n, row in enumerate(csv.DictReader(fh, delimiter=delim), start=2):
-            sid = (row.get("sample") or "").strip()
-            r1 = (row.get("fastq_1") or "").strip()
-            r2 = (row.get("fastq_2") or "").strip()
-            if not sid or not r1:
-                raise WorkflowError(f"{path}:{n}: needs both `sample` and `fastq_1`")
-            resolve = lambda v: str(Path(v) if Path(v).is_absolute() else path.parent / v)
-            groups.setdefault(sid, []).append((resolve(r1), resolve(r2) if r2 else None))
-    if not groups:
-        raise WorkflowError(f"{path}: sample sheet has a header but no rows")
-    return groups
+# Parsed by arda, not here. A second copy of "repeated `sample` values merge in ROW ORDER,
+# relative paths resolve against the sheet, blank `fastq_2` is single-end, and a sample may not
+# mix paired with single-end" drifts from the one the CLI enforces -- and the drift is silent.
+from arda.samples import read_sheet
 
+try:
+    _samples = read_sheet(SHEET)
+except ValueError as exc:                    # arda speaks ValueError; Snakemake wants its own
+    raise WorkflowError(str(exc)) from exc
 
-READ_GROUPS = _read_sheet(SHEET)
+READ_GROUPS = {s.id: [(str(r1), str(r2) if r2 else None) for r1, r2 in s.pairs]
+               for s in _samples}
 SAMPLES = list(READ_GROUPS)
 
 

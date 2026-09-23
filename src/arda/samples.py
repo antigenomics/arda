@@ -45,14 +45,6 @@ class Sample:
     id: str
     pairs: tuple[tuple[Path, Path | None], ...]
 
-    @property
-    def paired(self) -> bool:
-        return self.pairs[0][1] is not None
-
-    @property
-    def files(self) -> list[Path]:
-        return [p for pair in self.pairs for p in pair if p is not None]
-
 
 def _check_id(sid: str, where: str) -> str:
     sid = sid.strip()

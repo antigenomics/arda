@@ -27,14 +27,12 @@ def test_one_pair_with_out_prefix_is_the_historical_invocation(fq):
     a, b = fq("s_1.fq"), fq("s_2.fq")
     got = load(r1=[a], r2=[b], out_prefix="S1")
     assert got == [Sample("S1", ((a, b),))]
-    assert got[0].paired
 
 
 def test_single_end_needs_no_r2(fq):
     a = fq("s_1.fq")
     got = load(r1=[a], out_prefix="S1")
     assert got == [Sample("S1", ((a, None),))]
-    assert not got[0].paired
 
 
 def test_five_pairs_five_ids_are_five_samples(fq):
@@ -165,8 +163,3 @@ def test_an_empty_sheet_is_refused(tmp_path):
     with pytest.raises(ValueError, match="no rows"):
         read_sheet(sheet)
 
-
-def test_files_lists_every_read_group_file_in_order(fq):
-    rows = [(fq(f"l{i}_1.fq"), fq(f"l{i}_2.fq")) for i in range(2)]
-    s = load(r1=[r[0] for r in rows], r2=[r[1] for r in rows], ids=["A", "A"])[0]
-    assert s.files == [rows[0][0], rows[0][1], rows[1][0], rows[1][1]]

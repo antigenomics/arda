@@ -130,7 +130,13 @@ def _flatten_report(rep: dict, out: list[tuple], section: str = "") -> None:
                 for sk, sv in sorted(v.items()):
                     if not isinstance(sv, (dict, list, tuple)):
                         out.append(("run", section, f"{k}.{sk}", _fmt(sv)))
-        elif not isinstance(v, (list, tuple)):
+        elif isinstance(v, (list, tuple)):
+            # A list of scalars is comma-joined, the way AIRR encodes a tied `v_call`. `input` is
+            # a plain string for one read group and a LIST for several, so dropping lists here
+            # deleted the provenance row exactly when a sample had more than one input file.
+            if v and not any(isinstance(x, (dict, list, tuple)) for x in v):
+                out.append(("run", section, k, ",".join(str(x) for x in v)))
+        else:
             out.append(("run", section, k, _fmt(v)))
 
 
