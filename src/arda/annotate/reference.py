@@ -119,6 +119,34 @@ class Reference:
     def get(self, scaffold_id: str) -> RefEntry | None:
         return self.entries.get(scaffold_id)
 
+    def load_segment_markup(self) -> None:
+        """Pick up a ``segments.markup.tsv`` written AFTER this reference was loaded.
+
+        Never: The segment reference is GENERATED, not shipped, and it is generated on the map
+        path (``mapper._cached_segment_db``) — i.e. *after* ``load_reference`` has already read
+        `entries`. So on the FIRST run against a fresh reference the two-pass search found its
+        segment targets and then resolved every one of them to ``None``: `segment_j_call` handed
+        the raw target name to the combination lookup (`no_such_combination` for every J→C read)
+        and `_cannot_reach_cys104` saw no CDR3 markup, so `--v-only-on-segment` routed nothing.
+        Measured on ``tests/data/rnaseq_real``: **185 of 313** AIRR rows differed from every later
+        run, `fast_fraction` read **0.0771** against **0.1707**, and the `v_only_on_segment`
+        counter was absent from the report. Correct output, exit 0, none of the speed — and the
+        first run is the one a new user, a fresh container and a fresh CI checkout all get.
+
+        Segment keys are re-read wholesale rather than merged: a pre-2.8.0 file already loaded
+        into `entries` names its targets ``JC|<scaffold>`` where the regenerated one names them
+        ``C|<allele>``, so the stale keys must go or they outlive the file they came from. Base
+        scaffold ids never contain ``|`` (that separator is what marks a segment target), so the
+        two key spaces are exactly separable.
+        """
+        path = self.target_fasta.parent / "segments.markup.tsv"
+        if self.seqtype != "nt" or not path.exists():
+            return
+        for key in [k for k in self.entries if "|" in k]:
+            del self.entries[key]
+        _load_markup(path, self.entries)
+        self._jc_combos = None          # derived from `entries`; recomputed on next access
+
 
 def _load_d_germlines(base: Path) -> dict[str, list[tuple[str, str]]]:
     """Load ``d_germlines.fasta`` (``>locus|allele``) grouped by locus.
@@ -159,6 +187,34 @@ def _load_d_germlines_aa(base: Path) -> dict[str, list[tuple[str, str]]]:
     return out
 
 
+def _int(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _load_markup(path: Path, entries: dict[str, RefEntry]) -> None:
+    """Read one markup TSV into ``entries``, keyed by ``scaffold_id``. Later rows win."""
+    start_cols = [f"{r}_start" for r in REGIONS]
+    end_cols = [f"{r}_end" for r in REGIONS]
+    df = pl.read_csv(path, separator="\t", infer_schema_length=0)
+    has_vj = "v_sequence_end" in df.columns and "j_sequence_start" in df.columns
+    for row in df.iter_rows(named=True):
+        entries[row["scaffold_id"]] = RefEntry(
+            locus=row["locus"],
+            v_call=row["v_call"],
+            j_call=row["j_call"],
+            starts=[int(row[c]) for c in start_cols],
+            ends=[int(row[c]) for c in end_cols],
+            v_sequence_end=_int(row["v_sequence_end"]) if has_vj else 0,
+            j_sequence_start=_int(row["j_sequence_start"]) if has_vj else 0,
+            # absent from reference builds that predate the constant-region scaffolds
+            c_call=row.get("c_call") or "",
+            vj_end=_int(row.get("vj_end")),
+        )
+
+
 def load_reference(organism: str, seqtype: str = "nt") -> Reference:
     """Load reference markup + target FASTA path for an organism."""
     base = vdj_dir(organism)
@@ -173,34 +229,8 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
         markup_path = base / "markup.tsv"
         target_fasta = base / "alleles.fasta"
 
-    start_cols = [f"{r}_start" for r in REGIONS]
-    end_cols = [f"{r}_end" for r in REGIONS]
-
-    def _int(v) -> int:
-        try:
-            return int(v)
-        except (TypeError, ValueError):
-            return 0
-
-    def _load(path: Path, entries: dict[str, RefEntry]) -> None:
-        df = pl.read_csv(path, separator="\t", infer_schema_length=0)
-        has_vj = "v_sequence_end" in df.columns and "j_sequence_start" in df.columns
-        for row in df.iter_rows(named=True):
-            entries[row["scaffold_id"]] = RefEntry(
-                locus=row["locus"],
-                v_call=row["v_call"],
-                j_call=row["j_call"],
-                starts=[int(row[c]) for c in start_cols],
-                ends=[int(row[c]) for c in end_cols],
-                v_sequence_end=_int(row["v_sequence_end"]) if has_vj else 0,
-                j_sequence_start=_int(row["j_sequence_start"]) if has_vj else 0,
-                # absent from reference builds that predate the constant-region scaffolds
-                c_call=row.get("c_call") or "",
-                vj_end=_int(row.get("vj_end")),
-            )
-
     entries: dict[str, RefEntry] = {}
-    _load(markup_path, entries)
+    _load_markup(markup_path, entries)
     # Segment targets (`V|allele`, `J|allele`, `JC|scaffold`) share the schema and live in the
     # same key space, so they load through the identical path. Without them every segment hit
     # resolves to None and `_annotate_chunk` drops the read as unmapped -- which is why searching
@@ -214,7 +244,7 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
     # optional by design, never an error.
     seg_markup = markup_path.parent / "segments.markup.tsv"
     if seqtype == "nt" and seg_markup.exists():
-        _load(seg_markup, entries)
+        _load_markup(seg_markup, entries)
     d_germlines = _load_d_germlines_aa(base) if seqtype == "aa" else _load_d_germlines(base)
     # Per-allele junction germlines: they pin `v_sequence_end` / `j_sequence_start` far
     # better than projecting the scaffold's N-pad boundaries (see transfer._anchored_vj_bounds).
