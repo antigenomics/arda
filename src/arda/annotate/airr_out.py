@@ -88,7 +88,7 @@ def _format_rows_py(records: list[dict], cols=_COLUMNS) -> str:
 def read_airr(path):
     """Read an AIRR TSV, tolerating BOTH dialects arda has written.
 
-    ⛔ ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
+    Never: ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
     **chr 34 is ``"``, i.e. Q1** -- a legitimate score any low-quality base produces. polars' reader
     treats it as a quote character, so ONE such base collapses the parse of the whole file
     (``CSV malformed: expected 1 rows, actual 155 rows``). Measured on a real Raji run: exactly one

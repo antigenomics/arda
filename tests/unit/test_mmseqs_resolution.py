@@ -10,7 +10,6 @@ These tests use fake `mmseqs` shims -- no real binary, no network, no DB.
 
 from __future__ import annotations
 
-import os
 import stat
 import textwrap
 

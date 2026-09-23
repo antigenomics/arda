@@ -98,7 +98,7 @@ and the alignment strings are already in the file (they have shipped since 2.14.
    arda shm -i mapped.airr.tsv -o rescoped.airr.tsv              # framework (default)
    arda shm -i mapped.airr.tsv -o both.airr.tsv --mode both      # + the old values as *_full
 
-⛔ On a file older than 2.14.0 — no ``v_anchor_nt`` column — this **raises**. It does not copy the
+Never: On a file older than 2.14.0 — no ``v_anchor_nt`` column — this **raises**. It does not copy the
 input through with a success message; a command that reports success over an unchanged file is a
 failure mode arda has already shipped once.
 
@@ -168,7 +168,7 @@ emitted **before** 2.16.0; the one beside it is what it emits now:
      - 78
      - 5
 
-⛔ The first two rows are **TR** loci, where somatic hypermutation does not occur — so
+Never: The first two rows are **TR** loci, where somatic hypermutation does not occur — so
 the old ``v_identity`` of 0.8723 for ``TRBV28*02`` was measuring junction diversity outright. The
 bias was worst when the aligned span is mostly junction: that record covers 47 nt of germline, only
 30 of it framework. The IG rows move much less, because their alignments are mostly framework.

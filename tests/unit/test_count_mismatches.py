@@ -4,7 +4,7 @@
 compared an integer mismatch count against a FLOAT budget (`max_mm * ov`) one base at a time in
 Python, over a measured 3.55 M candidate diagonals per 20,000 reads.
 
-⛔ Unlike the assembler's overlap test, this caller NEEDS the count and not a verdict: a read joins
+Never: Unlike the assembler's overlap test, this caller NEEDS the count and not a verdict: a read joins
 the root with the longest overlap and, **on a tie, the fewer mismatches**. That tie-break is
 load-bearing — when a phantom clonotype competed with the true Jurkat clone, ~47 % of the 5,758
 reads it stole were exact 48-vs-48 overlap ties on which the losing TRUE root matched with 0
@@ -50,7 +50,7 @@ def test_it_accepts_exactly_what_the_python_scan_accepted(a, b, n, max_mm_frac):
 
 
 def test_the_float_budget_collapses_to_floor():
-    """⛔ The equivalence the speedup rests on. `max_mm * ov` is a float; the count is an integer,
+    """Never: The equivalence the speedup rests on. `max_mm * ov` is a float; the count is an integer,
     so `mm > budget` is exactly `mm > floor(budget)`. This is the real operating point:
     `max_mm=0.12` over a 48 nt junction is 5.76, i.e. 5 mismatches pass and 6 do not."""
     ov, budget = 48, 0.12 * 48                      # 5.76

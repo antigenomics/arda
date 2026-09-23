@@ -6,7 +6,7 @@ from arda.refbuild.translate import translate
 
 
 def _locus(name):
-    return next(l for l in LOCI if l.name == name)
+    return next(x for x in LOCI if x.name == name)
 
 
 def test_vj_padding_preserves_frame():

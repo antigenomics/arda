@@ -18,12 +18,12 @@ the germline gene list.
 ``allele_candidate``
     keyed by ``allele:mutation`` -- a recurrent, high-quality V mutation
 
-⛔ Long, not wide, and deliberately: the metric set differs per scope (a gene has no junction
+Never: Long, not wide, and deliberately: the metric set differs per scope (a gene has no junction
 length, a chain has no allele frequency), so a wide table would be mostly empty cells, and the
 one thing a QC table must support is ``grep`` / ``join`` / a per-metric plot across samples. One
 value per cell, one row per fact -- no ``134/62`` hybrids, and integers stay integers.
 
-⛔ **The chimera, non-functional and stop-codon counts are FLAGS, not filters.** Nothing here
+**Never: The chimera, non-functional and stop-codon counts are FLAGS, not filters.** Nothing here
 removes a row from any output; ``stats`` only reads. See ``correct --flag-chimeras`` for why the
 chimera signature cannot separate a true PCR artefact from two real clones sharing a prefix and
 a suffix.
@@ -94,7 +94,7 @@ def _read_present(path: Path, wanted: tuple[str, ...]) -> pl.DataFrame:
 def _phred(s: str) -> list[int]:
     """Parse a ``v_mutation_quality`` cell: comma-separated Phred INTEGERS, not a Phred+33 string.
 
-    ⛔ The two quality columns arda writes are different encodings -- ``junction_quality`` is the
+    Never: The two quality columns arda writes are different encodings -- ``junction_quality`` is the
     raw Phred+33 characters (so it lines up byte-for-byte with ``junction``) and
     ``v_mutation_quality`` is comma-joined integers (there is no string to line up with). Reading
     one as the other yields plausible numbers off by 33 and a length that is silently wrong.
@@ -119,7 +119,7 @@ def _flatten_report(rep: dict, out: list[tuple], section: str = "") -> None:
     """
     for k, v in sorted(rep.items()):
         if isinstance(v, dict):
-            # ⛔ Only the three STAGE names become a `key`; every other nested dict (`per_locus`,
+            # Never: Only the three STAGE names become a `key`; every other nested dict (`per_locus`,
             # `segment_search`, `prefilter_stats`, `reference`) folds into the metric name. A bare
             # `map --report` JSON has no stage wrapper, so recursing on shape instead would put
             # `per_locus` in the key column there and in the metric column for a merged report --

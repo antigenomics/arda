@@ -358,7 +358,7 @@ def test_v_mutations_agree_with_the_alignment_strings_on_real_reads(mapped):
     disagreements). So the end-to-end property is agreement plus SCOPE: re-walking the strings and
     keeping the columns inside the V germline range **up to Cys104** must reproduce the field.
 
-    ⛔ The upper bound is `v_anchor_nt`, NOT `v_germline_end`. Segment scoping excludes the N-pad
+    Never: The upper bound is `v_anchor_nt`, NOT `v_germline_end`. Segment scoping excludes the N-pad
     but not the junction -- the V germline's 3' tail lies *inside* it, so chew-back and N/P bases
     entered the list as substitutions against a germline that does not template them. This fixture
     is a **TRA** amplicon, where TCRs cannot hypermutate, so every entry past the anchor is

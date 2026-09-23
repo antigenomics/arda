@@ -1,4 +1,4 @@
-"""⛔ A coverage ALIAS must never outrank a real root in the k-mer posting cap.
+"""Never: A coverage ALIAS must never outrank a real root in the k-mer posting cap.
 
 `_assign_coverage` bounds each k-mer's postings at `cap` and fills them in descending abundance.
 An ALIAS -- a junction the quality gate vacated, kept in the index only so partial reads that

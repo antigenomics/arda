@@ -5,7 +5,6 @@ unreachable from a plain ``pip install``, and a test that skips without a refere
 would have skipped on exactly the installation where the bug lives.
 """
 
-from pathlib import Path
 
 import pytest
 

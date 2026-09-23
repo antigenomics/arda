@@ -1,6 +1,6 @@
 """The quality-aware denoising framework: `arda.rnaseq.denoise` + `--clonotype-key`.
 
-⛔ The invariant these tests exist to defend: **denoising MOVES reads, it never discards them.** A
+Never: The invariant these tests exist to defend: **denoising MOVES reads, it never discards them.** A
 read that reached a complete junction came off a real rearrangement of that locus, so deciding its
 junction carries a miscall is a statement about bases, not about whether the molecule existed.
 Every regime is checked for read conservation, not just for clonotype counts -- a clonotype count
@@ -38,7 +38,7 @@ def test_read_quality_matches_the_python_reference():
 
 
 def test_missing_or_mismatched_quality_is_absent_evidence_not_bad_evidence():
-    """⛔ -1.0, never 0.0. A quality string of the wrong length is the one corruption nothing
+    """Never: -1.0, never 0.0. A quality string of the wrong length is the one corruption nothing
     downstream can detect (right length, wrong strand or offset), so it is refused, not averaged."""
     assert read_quality(["ACGT"], [""])[0] == -1.0
     assert read_quality(["ACGT"], ["II"])[0] == -1.0
@@ -94,7 +94,7 @@ def test_rescue_is_off_unless_both_knobs_are_set():
 
 
 def test_a_low_quality_clonotype_with_no_parent_keeps_its_reads():
-    """⛔ The orphan case, and the reason the framework is a rescue radius and not a filter. On a
+    """Never: The orphan case, and the reason the framework is a rescue radius and not a filter. On a
     polyclonal repertoire a mean-Q floor at 30 would strand 3.70 % of all reads this way."""
     # 16 subs apart -- outside `amplicon`'s 12-substitution rescue radius, so there is no parent
     # to route to even though the read quality says the clonotype is junk.
@@ -155,7 +155,7 @@ def _totals(path):
 @pytest.mark.parametrize("mode", sorted(EC_MODES))
 @pytest.mark.parametrize("key", CLONOTYPE_KEYS)
 def test_no_regime_or_key_ever_loses_a_read(tmp_path, mode, key):
-    """⛔ THE invariant. Clonotypes may fall -- that is the job. Reads may not."""
+    """Never: THE invariant. Clonotypes may fall -- that is the job. Reads may not."""
     src = _fixture(tmp_path)
     out = tmp_path / f"{mode}_{key}.tsv"
     correct_airr(src, out, map_d=False, ec_mode=mode, clonotype_key=key, error_rate=1e-6)
@@ -198,7 +198,7 @@ def test_an_unknown_clonotype_key_raises(tmp_path):
 
 
 def test_a_q1_base_in_the_quality_string_does_not_break_the_parse(tmp_path):
-    """⛔ Phred+33 chr 34 is `"`, i.e. Q1 — a legitimate score any low-quality base produces.
+    """Never: Phred+33 chr 34 is `"`, i.e. Q1 — a legitimate score any low-quality base produces.
 
     polars' CSV reader treats it as a quote character, so ONE such base collapsed the parse of the
     whole file (`CSV malformed: expected 1 rows, actual 155 rows`). Measured on a real Raji run:
@@ -218,7 +218,7 @@ def test_a_q1_base_in_the_quality_string_does_not_break_the_parse(tmp_path):
 
 
 def test_the_rescue_never_merges_across_loci(tmp_path):
-    """⛔ A rearrangement of a DIFFERENT locus is not a sequencing error of this one.
+    """Never: A rearrangement of a DIFFERENT locus is not a sequencing error of this one.
 
     `quality_rescue` groups candidate parents by junction LENGTH and nothing else -- there is no
     locus guard in `_nearest_py` or in the C++ `nearest_more_abundant` -- while ``--ec-mode
@@ -257,7 +257,7 @@ def test_the_rescue_never_merges_across_loci(tmp_path):
 
 
 def test_the_rescue_raises_when_junction_quality_is_absent(tmp_path):
-    """⛔ Raise, never degrade -- the rule `_quality_gate` already enforces, for the same reason.
+    """Never: Raise, never degrade -- the rule `_quality_gate` already enforces, for the same reason.
 
     Silently skipping the rescue produces a report indistinguishable from a rescue that ran and
     found nothing (every rescued/orphan counter 0) and a clonotype table byte-identical to
@@ -318,7 +318,7 @@ def test_gene_level_calls_collapse_an_allele_split_and_carry_its_reads(tmp_path)
     n_a, r_a = _totals(allele)
     n_g, r_g = _totals(gene)
     assert n_a == 2 and n_g == 1, "the two alleles are one clonotype at gene level"
-    assert r_g == r_a == 204, "⛔ and no read may be lost doing it"
+    assert r_g == r_a == 204, "Never: and no read may be lost doing it"
     assert pl.read_csv(gene, separator="\t")["v_call"][0] == "TRBV20-1"
 
 

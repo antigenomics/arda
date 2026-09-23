@@ -1,13 +1,13 @@
 """PCR/template-switch chimera flagging, and the germline trap that makes it hard.
 
-⛔ THE TRAP, measured. A junction is `V 3' tail` + `N/P/D` + `J 5' head`, and both tails are
+Never: THE TRAP, measured. A junction is `V 3' tail` + `N/P/D` + `J 5' head`, and both tails are
 GERMLINE — every clonotype on a V starts with the same bases, every one on a J ends with them. On a
 TRA amplicon the median V-templated prefix is 10 nt and the median J-templated suffix 25 nt against
 a median clone-specific core of **5 nt**. So a prefix/suffix agreement test run on the raw junction
 rediscovers the germline and calls **52.20 % of clonotypes chimeric** (35.50 % of reads). Excluding
 the templated tails and requiring 6 non-templated nt each side takes that to **0.02 %**.
 
-⛔ Cell Ranger's published rule (contigs sharing a V prefix ≥ 25 nt with different CDR3s) does not
+Never: Cell Ranger's published rule (contigs sharing a V prefix ≥ 25 nt with different CDR3s) does not
 port to bulk, and not because of the constant: it relies on the BARCODE PARTITION, where ~1 clone
 per chain means a second V-sharing contig is an artifact. A polyclonal bulk repertoire has thousands
 of real clones per V gene. What ports is UCHIME's shape — a query explained by two MORE ABUNDANT
@@ -53,7 +53,7 @@ V, J1, J2 = "TRAV1-2*01", "TRAJ33*01", "TRAJ12*01"
 
 
 def test_two_real_clones_sharing_ONLY_germline_are_not_chimeras():
-    """⛔ THE 52 % TRAP, as a test that actually discriminates.
+    """Never: THE 52 % TRAP, as a test that actually discriminates.
 
     ⚠ A first version of this test used three clones on one V and one J and **passed with the
     germline exclusion deleted** — the cores differed, so no suffix parent existed and the trap
@@ -127,7 +127,7 @@ def test_parents_must_be_STRICTLY_more_abundant(q_count, why):
 
 
 def test_a_point_mutant_is_not_a_chimera():
-    """⛔ The SHM confound. On IG, hypermutation manufactures near-variants continuously; a query
+    """Never: The SHM confound. On IG, hypermutation manufactures near-variants continuously; a query
     within 2 substitutions of a parent is already explained by the error model and must not be
     flagged, however the prefix/suffix search happens to land.
 
@@ -150,7 +150,7 @@ def test_a_point_mutant_is_not_a_chimera():
 
 
 def test_without_a_reference_it_flags_NOTHING():
-    """⛔ Fail safe, not fail useful. Without anchors the germline cannot be excluded and the test
+    """Never: Fail safe, not fail useful. Without anchors the germline cannot be excluded and the test
     would report ~52 %. `resolve_airr` already shipped the other behaviour once — degrading
     silently to an empty germline set and returning output that looked fine."""
     a = _anchors()
@@ -167,7 +167,7 @@ def test_the_column_is_optional_and_named():
 
 
 def test_a_call_split_is_not_a_chimera_of_itself():
-    """⛔ Two clonotypes can share a junction BYTE-IDENTICALLY under different V/J calls — that is
+    """Never: Two clonotypes can share a junction BYTE-IDENTICALLY under different V/J calls — that is
     the call-split class (Jurkat: 130 of 14,531 reads, including an allele-level TRG split), and it
     is why `clonotype_key` exists. Such a twin claims every prefix AND every suffix of the query,
     so without the identical-parent guard the query is "explained" as a chimera of itself.

@@ -53,7 +53,7 @@ def test_it_finishes_the_junction_at_the_anchor():
 
 
 def test_it_refuses_when_the_read_carries_UNALIGNED_sequence_past_the_alignment():
-    """⛔ The one that matters. A read whose alignment stops well short of its own 3' end stopped
+    """Never: The one that matters. A read whose alignment stops well short of its own 3' end stopped
     for a reason, and on real data that reason is usually that there is no J: 236 of 266 candidates
     on a TRA amplicon run straight from the V into TRAC, so the bases after the alignment are
     CONSTANT REGION. Grafting J germline over them invents a junction for a V-to-C chimera.

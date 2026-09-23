@@ -1,9 +1,8 @@
-import pytest
 from arda.refbuild import imgt
 
 
 def test_orphons_are_excluded_from_the_reference(tmp_path, monkeypatch):
-    """⛔ An orphon sits OUTSIDE its locus and cannot rearrange, so a call naming one on a
+    """Never: An orphon sits OUTSIDE its locus and cannot rearrange, so a call naming one on a
     rearranged read is wrong by construction. Measured: `TRBV20-1` -> `TRBV20/OR9-2` was 98.51 %
     of all V disagreements on a MIGEC IGH library, taking v_gene from .9963 down to .7500, and it
     was the ONLY call emitted on those reads -- unfixable downstream."""

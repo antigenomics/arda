@@ -37,7 +37,7 @@ the wrong reason**: the abundance test it applies has probability 0 to every pri
 This module reaches that class on the evidence that actually distinguishes it -- read quality --
 and never on abundance alone.
 
-⛔ The invariant
+Never: The invariant
 ---------------
 **Nothing here discards a read.** A read that reached a complete junction came off a real
 rearrangement of that locus; deciding its junction carries a miscall is a statement about the
@@ -45,7 +45,7 @@ bases, not about whether the molecule existed. Every function returns *parent as
 clonotype with no parent is KEPT, never emptied. The caller asserts that the sum of
 ``duplicate_count`` does not fall.
 
-⛔ And the reason the cliff class cannot simply be deleted: measured on a polyclonal, hypermutated
+Never: And the reason the cliff class cannot simply be deleted: measured on a polyclonal, hypermutated
 repertoire (IGH_repertoire, 31,943 clonotypes), a whole-junction mean-Q floor at 30 would strand
 **3.70 %** of all junction-bearing reads with no parent to inherit them (47 % of everything it
 removes), against 0.148 % at a floor of 20. That is why the floor here is a *rescue radius* rather
@@ -92,7 +92,7 @@ class DenoiseParams:
 #: Shipped regimes. ``fast`` and ``accurate`` are the historical ``--ec-mode`` values and keep
 #: their exact behaviour; ``amplicon`` and ``rnaseq`` add the quality-directed rescue.
 #:
-#: ⛔ **The two regimes differ because their clonotype-size distributions differ, not by taste.**
+#: **Never: The two regimes differ because their clonotype-size distributions differ, not by taste.**
 #: An amplicon library is deep -- a real clonotype has many reads, so a 1-read neighbour of an
 #: abundant clone is almost always error, and the rescue can be wide. Bulk RNA-seq is sparse:
 #: singletons are the norm and most of them are real, the receptor fraction being 0.02-3 %. So
@@ -127,7 +127,7 @@ class DenoiseReport:
 def read_quality(junctions: list[str], quals: list[str]) -> list[float]:
     """Per-read mean Phred over the junction; ``-1.0`` where there is no usable quality.
 
-    ⛔ ``-1.0`` means ABSENT evidence and must never be read as bad evidence. A quality string of
+    Never: ``-1.0`` means ABSENT evidence and must never be read as bad evidence. A quality string of
     the right length taken from the wrong strand or offset is the one corruption nothing downstream
     can detect, so a length disagreement is refused here rather than averaged.
     """
@@ -176,7 +176,7 @@ def quality_rescue(seqs: list[str], counts: list[int], clono_q: list[float],
     ``clono_q`` is parallel to ``seqs``; use ``-1.0`` for a clonotype with no usable quality, which
     excludes it (absent evidence, not bad evidence).
 
-    ⛔ **V and J are deliberately IGNORED here, and that is a decision, not an omission.** The
+    **Never: V and J are deliberately IGNORED here, and that is a decision, not an omission.** The
     abundance model in ``correct._parents`` defaults to ``require_vj=True`` on the principle that a
     true sequencing error keeps the germline V/J call -- correct there, because it collapses
     1-3 substitution neighbours, which rarely move an alignment onto a different gene. This
@@ -190,7 +190,7 @@ def quality_rescue(seqs: list[str], counts: list[int], clono_q: list[float],
     trustworthy: its reads must be measurably bad (``lowq_mean_q``) and the parent must be
     ``lowq_min_ratio`` times more abundant.
 
-    ⛔ The LOCUS is a different matter and is NOT ignored -- ``correct_airr`` partitions the search
+    Never: The LOCUS is a different matter and is NOT ignored -- ``correct_airr`` partitions the search
     by it. A locus is fixed by the whole read (V, J and C genes together), not by junction bases, so
     a locus flip is not a plausible consequence of junction miscalls, and a rearrangement of another
     locus is not a sequencing error of this one. Measured before the partition: 3 of those 9,025

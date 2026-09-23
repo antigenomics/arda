@@ -215,12 +215,11 @@ def test_conflicting_anchor_rows_are_resolved_deterministically_not_by_file_orde
     last-wins, which silently decided which junction germline the Cys104 gate scores against --
     on 3 mouse alleles, depending on nothing but row order.
 
-    ⛔ The comparison must be on the fields that DECIDE the junction, not on the whole record: a
+    Never: The comparison must be on the fields that DECIDE the junction, not on the whole record: a
     TRAV/DV allele legitimately appears twice (once from the TRA pass, once from TRD's `v_shared`)
     differing only in `locus`, and treating those as conflicts is 15 lines of noise per human load
     that trains the reader to ignore the 3 that matter.
     """
-    import logging
 
     from arda.cdr3fix import load_anchors
 

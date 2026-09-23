@@ -5,9 +5,9 @@ per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a sin
 `arda <mode>` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
 any DSL2 pipeline the same way STAR/Salmon/fastp do.
 
-Pinned to **arda 2.20.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
+Pinned to **arda 2.21.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
 
-> ⛔ **2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
+> **Never: 2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
 > earlier version of this module invoked — was removed there. The regime is now the **command
 > name** (`arda rnaseq` / `arda amplicon`), and each mode owns its own speed configuration, so this
 > module and the CLI move together: an older arda fails with *"Got unexpected extra argument
@@ -28,7 +28,7 @@ Pinned to **arda 2.20.0** (`environment.yml`, the `container` tag, and the `Dock
 | `<id>.assembled.airr.tsv` | Stage-3 long-CDR3 reads rescued by contig assembly |
 | `<id>.arda.json` | run report (reads mapped, per-locus counts, isotype/constant, timing, peak RSS, `fast_fraction`) |
 
-## ⛔ Pick the regime — it is one parameter and it is easy to get backwards
+## Never: Pick the regime — it is one parameter and it is easy to get backwards
 
 arda has two tuning paths and **they do not compose**. Choosing the wrong one is not an error; it
 is a silent 2–4× slowdown. The module therefore selects the combination by name:
@@ -39,7 +39,7 @@ is a silent 2–4× slowdown. The module therefore selects the combination by na
 | `bulk` | `arda rnaseq` | `--prefilter` | whole-transcriptome RNA-seq (the default) |
 | `default` | `arda rnaseq --exact` | *(none)* | the shipped one-pass path, for reproducing older runs |
 
-⛔ **`--two-pass` on its own is a LOSS** — 0.762× on bulk and 0.87× on an IGH amplicon — and it is
+**Never: `--two-pass` on its own is a LOSS** — 0.762× on bulk and 0.87× on an IGH amplicon — and it is
 no longer reachable by accident: arda owns the combination behind the mode name. Do not
 hand-assemble these flags in `ext.args`.
 
@@ -131,7 +131,7 @@ more. MiXCR emits `*00` and so makes no allele call at all — across 25 cluster
 median `v_allele` is **.9763** resolved (**.8328** by exact string, the difference being ambiguous
 allele tie-lists, which are a scoring convention, not a call).
 
-⛔ **A V/J boundary disagreement *inside* a junction is not an error.** V(D)J recombination is
+**Never: A V/J boundary disagreement *inside* a junction is not an error.** V(D)J recombination is
 probabilistic — exonuclease chew-back plus N/P-nucleotide addition mean the V-end / NDN / J-start
 partition of a junction is frequently not identifiable from sequence alone, and the ground truth is
 unknown. Overlapping V/J/NDN assignments are acceptable. What is checkable, and what the table
@@ -143,12 +143,12 @@ and whether a tool **invents a junction it has no anchor for**.
 arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.
 
 - **`-profile conda`** works out of the box (Nextflow builds the env from `environment.yml`) — once
-  arda 2.20.0 is on PyPI; see the note at the top.
+  arda 2.21.0 is on PyPI; see the note at the top.
 - **`-profile docker`/`singularity`**: build the image from the `Dockerfile` here, push it to your
   registry, and point the module's `container` at it (see the Dockerfile header). A pinned image is
   the reproducible choice for a shared pipeline.
 
-⛔ **The aligner is pinned, deliberately.** An mmseqs index is only reusable by the release that
+**Never: The aligner is pinned, deliberately.** An mmseqs index is only reusable by the release that
 built it, and a cluster's cached index marker can differ from the shipped one. Left alone, arda
 would reject the precompiled reference index and rebuild a private cache per task — or auto-fetch a
 third build — with no error, and with results that are not comparable to anyone else's. The module
@@ -230,7 +230,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (boolean), `arda_organism` (string), `arda_mmseqs` (string), `arda_args` (string).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.20.0' }` to your deployment
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.21.0' }` to your deployment
    config (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:

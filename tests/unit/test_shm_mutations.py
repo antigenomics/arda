@@ -6,7 +6,7 @@ every column, and on a real bulk IG library the germline they report matches the
 summarised: the COORDINATE FRAME (each segment's own germline, not the scaffold and not the read),
 and the SCOPE.
 
-⛔ The scope is the domain constraint. V(D)J recombination chews the segment ends back and adds
+Never: The scope is the domain constraint. V(D)J recombination chews the segment ends back and adds
 non-templated N/P bases, so a mismatch inside the V..J interior is not attributable to any germline
 -- the V-end / NDN / J-start partition of a junction is frequently not identifiable from the
 sequence at all. So an NDN position must be excluded BY CONSTRUCTION, not by a downstream filter
@@ -66,7 +66,7 @@ def test_j_positions_are_in_the_j_allele_frame(impl):
 
 @IMPLS
 def test_a_mutation_in_the_ndn_is_not_recorded(impl):
-    """⛔ The domain rule. Every one of the four pad columns differs from the scaffold's N, and the
+    """Never: The domain rule. Every one of the four pad columns differs from the scaffold's N, and the
     read is otherwise pure germline: nothing may be reported, for either segment."""
     germ = "ACGTACGT" + "NNNN" + "TTCGGATT"
     read = "ACGTACGT" + "GACA" + "TTCGGATT"

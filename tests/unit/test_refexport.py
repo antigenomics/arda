@@ -28,7 +28,7 @@ def _tsv(tmp_path, **kw):
     out = tmp_path / "ref.tsv"
     n = export_reference("human", out=out, **kw)
     with open(out) as fh:
-        rows = list(csv.DictReader((l for l in fh if not l.startswith("#")), delimiter="\t"))
+        rows = list(csv.DictReader((r for r in fh if not r.startswith("#")), delimiter="\t"))
     return n, rows
 
 
@@ -95,8 +95,8 @@ def test_every_format_writes_something_well_formed(tmp_path, fmt):
     elif fmt == "gff3":
         assert text.startswith("##gff-version 3")
         # GFF3 is 1-based closed like arda, so a feature must never start at 0.
-        starts = [int(l.split("\t")[3]) for l in text.splitlines()
-                  if l and not l.startswith("#") and len(l.split("\t")) > 4]
+        starts = [int(r.split("\t")[3]) for r in text.splitlines()
+                  if r and not r.startswith("#") and len(r.split("\t")) > 4]
         assert starts and min(starts) >= 1
     elif fmt == "airr":
         rows = list(csv.DictReader(io.StringIO(text), delimiter="\t"))

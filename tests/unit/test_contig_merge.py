@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from arda import _markup, paths
+from arda import _markup
 from arda.annotate.cigar import check_cigar
 from arda.annotate.contig import Contig, ReadPlacement, merge_contig
 from arda.annotate.mapper import annotate_records

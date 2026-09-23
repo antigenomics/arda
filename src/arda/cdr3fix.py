@@ -300,7 +300,7 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
         # `locus`, and warning about those would be 15 lines of noise per human load that trains
         # the reader to ignore the 3 mouse cases that matter.
         if prev is not None and _decisive(prev) != _decisive(anchor):
-            # ⛔ IMGT ships two accessions under one allele name (mouse `IGKV10-96*01` is both
+            # Never: IMGT ships two accessions under one allele name (mouse `IGKV10-96*01` is both
             # AF441451/287 nt and M15520/286 nt; `IGLV2*01` is J00599 and M17529), so the anchor
             # table can carry two rows for one key with DIFFERENT templated_aa and germline_nt.
             # This loader used to be last-wins, which silently decided which junction germline the

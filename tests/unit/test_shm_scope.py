@@ -1,6 +1,6 @@
 """The SHM scope: the mutation lists and `v_identity` must stop at Cys104, not at the segment end.
 
-⛔ This is the retraction of a guarantee 2.14.0 printed in `docs/shm.rst`. Segment scoping keeps
+Never: This is the retraction of a guarantee 2.14.0 printed in `docs/shm.rst`. Segment scoping keeps
 the scaffold's N-pad out of the lists, and that is NOT the same as keeping the junction out: a
 rearranged junction is *V 3' tail + N/P + J 5' head*, so both germlines' templated tails are inside
 it and chew-back reads as a substitution against a germline that does not template it.
@@ -48,7 +48,7 @@ def test_framework_drops_everything_up_to_and_including_the_j_anchor_codon():
 
 
 def test_a_missing_anchor_leaves_the_list_ALONE_rather_than_emptying_it():
-    """⛔ No anchor means arda does not know where this germline's junction starts. Emptying the
+    """Never: No anchor means arda does not know where this germline's junction starts. Emptying the
     list would be a claim; leaving it is the honest failure, and the raw anchors ship so a consumer
     can tell the two apart."""
     r = scope_record(_rec(v_anchor_nt="", j_anchor_nt=""))
@@ -57,7 +57,7 @@ def test_a_missing_anchor_leaves_the_list_ALONE_rather_than_emptying_it():
 
 
 def test_both_keeps_the_scoped_values_in_the_shipped_columns_and_adds_the_old_ones():
-    """⛔ `v_identity`/`v_mutations` mean the SAME thing in every mode. `both` ADDS the legacy
+    """Never: `v_identity`/`v_mutations` mean the SAME thing in every mode. `both` ADDS the legacy
     numbers under new names — a column whose meaning depends on a flag is unreadable downstream."""
     r = scope_record(_rec(), "both")
     assert r["v_mutations"] == "G45A,C100T"
@@ -115,7 +115,7 @@ def _airr(tmp_path, cols):
 
 
 def test_recount_rescopes_an_existing_tsv_without_a_reference(tmp_path):
-    """⛔ The whole point: `v_anchor_nt`/`j_anchor_nt` and the alignment strings are already in the
+    """Never: The whole point: `v_anchor_nt`/`j_anchor_nt` and the alignment strings are already in the
     file, so a table written before this existed can be fixed without re-mapping it."""
     import polars as pl
 
@@ -132,7 +132,7 @@ def test_recount_rescopes_an_existing_tsv_without_a_reference(tmp_path):
 
 
 def test_recount_RAISES_on_a_file_that_predates_the_anchor_columns(tmp_path):
-    """⛔ Not a pass-through with a success message. `resolve_airr` shipped exactly that failure —
+    """Never: Not a pass-through with a success message. `resolve_airr` shipped exactly that failure —
     it caught the error per locus, continued with an empty germline set, and returned output
     byte-identical to its input while reporting success."""
     from arda.shm import recount_airr

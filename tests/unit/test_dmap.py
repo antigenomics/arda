@@ -174,7 +174,7 @@ def test_posterior_never_calls_trbd2_on_a_j1(j_call):
 # applied to the second D; before it, 10 of 15 tandem calls on a real TRB amplicon were the
 # impossible TRBD2 -> TRBD1.
 #
-# ⛔ Every assertion here is about a CALL (which gene, is there a second one) or about the
+# Never: Every assertion here is about a CALL (which gene, is there a second one) or about the
 # partition CLOSING (parts concatenate back to the junction), never about where a boundary
 # inside the NDN falls. The plants are untrimmed germlines, so `np1`/`np2`/`np3` come back
 # verbatim -- that is a property of the fixture, not a claim that arda can recover chew-back.
@@ -260,7 +260,7 @@ def test_markup_closes_for_a_single_d_and_for_no_d_at_all():
 
 
 def test_igh_tandem_is_accepted_in_BOTH_directions_and_still_partitions():
-    """⛔ IGH carries no orientation constraint, on purpose -- assert that, don't assume it.
+    """Never: IGH carries no orientation constraint, on purpose -- assert that, don't assume it.
 
     `IGHD<family>-<position>` encodes genomic position in HUMAN IMGT and a family-member index
     in MOUSE, and the two vocabularies collide on real gene names, while `_map_d` is handed

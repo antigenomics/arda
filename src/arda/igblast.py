@@ -58,7 +58,7 @@ class IgBlastError(RuntimeError):
 def auxiliary_data(organism: str) -> Path:
     """``optional_file/<organism>_gl.aux`` — IgBLAST's J-gene coding frames.
 
-    ⛔ **Without this file IgBLAST silently emits no CDR3 and no junction.** It is what tells
+    **Never: Without this file IgBLAST silently emits no CDR3 and no junction.** It is what tells
     igblastn each J allele's reading frame, and with no frame there is nothing to place the
     Phe/Trp 118 anchor against. Everything else still works: V and J are called, `v_score` is
     normal, the process exits 0 — only `cdr3*`, `junction` and `junction_aa` come back empty, on

@@ -16,7 +16,7 @@ step                         wall       agreement with `mmseqs search`
 are almost entirely allele-level inside one gene (``TRAV36/DV7*01`` vs ``*04``) — the degeneracy
 :data:`arda.annotate.mapper._MAX_TIED_V` exists for.
 
-⛔ **This nominates candidates; it does not decide anything.** The winner is still aligned against
+**Never: This nominates candidates; it does not decide anything.** The winner is still aligned against
 the full V+pad+J scaffold by MMseqs2 and scored there, so the contract is that arda's AIRR output
 must not move — not that these scores match mmseqs' bit scores. They are on a different scale by
 design (see ``MATCH``/``MISMATCH`` in ``src/_segmap/segmap.cpp``).
@@ -59,7 +59,7 @@ MIN_SCORE = 40
 #: Target prefix -> group index handed to the native mapper, which returns the best hit per
 #: (read, group).
 #:
-#: ⛔ These are the same three sides as ``mapper._SEGMENT_SIDE`` and must stay that way: `C` is its
+#: Never: These are the same three sides as ``mapper._SEGMENT_SIDE`` and must stay that way: `C` is its
 #: OWN group because a constant-region hit says what the isotype is and nothing about which J the
 #: read carries, and `JC` (the pre-2.8.0 kind) stays J-side. ``test_segmap_wiring`` asserts the two
 #: mappings agree rather than trusting this comment.

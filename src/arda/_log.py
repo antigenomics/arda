@@ -5,7 +5,7 @@ One ``arda`` logger, configured once from the CLI callback, that every module al
 so they are children of ``arda`` and inherit whatever ``setup`` installs. Nothing else has to
 know about verbosity.
 
-⛔ **Progress goes to stderr, results go to stdout.** The stage lines used to be ``typer.echo``
+**Never: Progress goes to stderr, results go to stdout.** The stage lines used to be ``typer.echo``
 on stdout, which means ``arda export-ref`` piped into a file interleaved a progress line with the
 data. Everything informational is a log record now; only paths and the export payload stay on
 stdout.
@@ -37,7 +37,7 @@ def peak_rss_mb() -> float:
     dominates the footprint. Reporting only the Python process understated peak RSS by roughly an
     order of magnitude. ``ru_maxrss`` is bytes on macOS, KB on Linux.
 
-    ⛔ Lives HERE, in the module with no arda imports, and is re-exported by
+    Never: Lives HERE, in the module with no arda imports, and is re-exported by
     :mod:`arda.rnaseq._res`. The other direction is an import cycle: ``arda.rnaseq.__init__``
     imports ``map``, which needs :class:`Throttle`.
     """

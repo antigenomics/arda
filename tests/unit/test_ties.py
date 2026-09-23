@@ -1,6 +1,6 @@
 """Tie lists: the germlines a read's alignment cannot rule out, and their library-wide ranking.
 
-⛔ The premise, measured: on a Ramos library arda emitted **0 multi-gene tie lists in 504 calls**
+Never: The premise, measured: on a Ramos library arda emitted **0 multi-gene tie lists in 504 calls**
 against IgBLAST's **11.68 %**, and on the 104 reads where the two disagreed (`IGLV2-23` vs
 `IGLV2-14`), aligning each read to BOTH germlines showed **59 of 60 fit identically** — typically
 at identity 1.0000 over 63–70 nt. Neither tool was right; both were overconfident.
@@ -52,7 +52,7 @@ def test_a_span_that_discriminates_stays_a_single_call():
 
 
 def test_a_short_span_gets_no_tie_list():
-    """⛔ Below MIN_SPAN nearly every allele of a family contains its neighbours' stretch, so the
+    """Never: Below MIN_SPAN nearly every allele of a family contains its neighbours' stretch, so the
     'tie list' would be the whole family and say less than the single call it replaced."""
     r = _res()
     assert r.expand("GENEA*01", 1, 20) == "GENEA*01"
@@ -85,7 +85,7 @@ def test_the_library_consensus_leads_the_tie_list():
 
 
 def test_only_unambiguous_reads_vote():
-    """⛔ A read whose own call is `A,B` cannot be evidence for A over B — counting it would let a
+    """Never: A read whose own call is `A,B` cannot be evidence for A over B — counting it would let a
     common tie bootstrap itself, so the more confusable a pair is the more confidently it would
     elect one of them."""
     # A appears in 100 ties and never alone; B is named alone once. B must still win.
@@ -137,7 +137,7 @@ def _has_human_germlines() -> bool:
 
 
 def test_resolve_airr_raises_when_the_germlines_are_absent(tmp_path, monkeypatch):
-    """⛔ Raise, never degrade.
+    """Never: Raise, never degrade.
 
     Without germlines every call is left exactly as it was, so the output is byte-identical to the
     input and the report reads ``expanded: 0`` -- indistinguishable from a library that genuinely

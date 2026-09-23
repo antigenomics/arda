@@ -157,7 +157,7 @@ def load_functional_alleles(
 ) -> dict[str, str]:
     """Return ``{allele: ungapped_sequence}`` for functional/ORF alleles only.
 
-    ⛔ **ORPHONS ARE EXCLUDED.** IMGT ships ``/OR`` genes -- ``TRBV20/OR9-2`` is on chromosome 9
+    **Never: ORPHONS ARE EXCLUDED.** IMGT ships ``/OR`` genes -- ``TRBV20/OR9-2`` is on chromosome 9
     while the TRB locus is on 7, ``IGHV1/OR15-1`` is on 15 while IGH is on 14. V(D)J recombination
     is INTRA-LOCUS, so an orphon cannot take part in a rearrangement and a call naming one on a
     rearranged read is wrong by construction, not merely disagreed-with. They are near-identical to

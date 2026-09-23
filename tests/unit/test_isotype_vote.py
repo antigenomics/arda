@@ -1,6 +1,6 @@
 """A clonotype's isotype is decided by ONE VOTE PER FRAGMENT — per molecule, not per row.
 
-⛔ Report the isotype CLASS (IGHG/IGHM/IGHA), never the subclass: IGHG1-4 are ~95 % identical, so
+Never: Report the isotype CLASS (IGHG/IGHM/IGHA), never the subclass: IGHG1-4 are ~95 % identical, so
 the top *gene* ties 26.7 % of the time while the top *class* never does.
 
 The vote is a two-level dedup and both levels are load-bearing:
@@ -76,7 +76,7 @@ def test_a_resolved_class_beats_the_generic_one(tmp_path):
 
 
 def test_the_vote_does_not_depend_on_row_order(tmp_path):
-    """⛔ A tie must break lexicographically, never on encounter order -- row order here comes from
+    """Never: A tie must break lexicographically, never on encounter order -- row order here comes from
     a threaded mmseqs search, so an order-dependent tie is not reproducible."""
     rows = [_row("f1/1", c_class="IGHG"), _row("f2/1", c_class="IGHM")]
     a = _isotype(tmp_path, rows, "ord_a")

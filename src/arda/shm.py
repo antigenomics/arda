@@ -47,7 +47,7 @@ SHM_MODES = ("framework", "both", "off")
 #: after every shipped column (the ``junction_quality`` rule), so a consumer reading the shipped
 #: set by position is unaffected.
 #:
-#: ⛔ ``v_identity`` / ``v_mutations`` / ``j_mutations`` mean the SAME thing in every mode —
+#: Never: ``v_identity`` / ``v_mutations`` / ``j_mutations`` mean the SAME thing in every mode —
 #: framework-scoped. ``both`` ADDS the old numbers under new names rather than swapping the
 #: meaning of a column based on a flag, which would be unreadable downstream.
 FULL_COLUMNS = ("v_identity_full", "v_mutations_full", "j_mutations_full")

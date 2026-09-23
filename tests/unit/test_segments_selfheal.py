@@ -5,7 +5,7 @@ The auto-fetched reference tarball does not carry it, so before this every `--tw
 The flagship configuration was unreachable out of the box, and the failure was invisible: correct
 output, exit 0, none of the speed.
 
-⛔ The two questions "is this file STALE" and "does this file EXIST" need DIFFERENT done-predicates,
+Never: The two questions "is this file STALE" and "does this file EXIST" need DIFFERENT done-predicates,
 which is why there are two functions. `_has_jc_targets` is false for a missing file, so reusing the
 stale-format predicate would make a missing file read as *already regenerated* and the lock would
 skip the build — silently, in the same direction as the bug being fixed.
@@ -13,7 +13,6 @@ skip the build — silently, in the same direction as the bug being fixed.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from arda.annotate.mapper import _has_jc_targets
 

@@ -88,10 +88,14 @@ def test_rnaseq_run_is_gone(monkeypatch, tmp_path):
     assert res.exit_code != 0
 
 
-def test_singlecell_is_reserved_and_refuses():
+def test_singlecell_is_reserved_and_points_at_the_command_that_exists():
+    # The MODE name stays reserved -- its only sensible preset is what `--exact` already gives.
+    # The single-cell WORK is `arda cells`, so refusing without naming it is the useless half.
     res = runner.invoke(app, ["singlecell"])
     assert res.exit_code == 2
-    assert "not implemented" in (res.stdout + str(res.stderr))
+    out = res.stdout + str(res.stderr)
+    assert "reserved" in out
+    assert "arda cells" in out
 
 
 @pytest.mark.parametrize("mode,expected", [
@@ -101,7 +105,7 @@ def test_singlecell_is_reserved_and_refuses():
                 "prefilter": True}),
 ])
 def test_mode_presets_are_the_measured_configurations(mode, expected):
-    """⛔ The two configurations do NOT compose, and `--two-pass` alone is a loss on both regimes.
+    """Never: The two configurations do NOT compose, and `--two-pass` alone is a loss on both regimes.
 
     Pinning the table is the point: if `rnaseq` ever gains `two_pass` without `fast_segments`, it
     silently ships the dominated config (0.762x on bulk) under a name that promises the opposite.
@@ -134,7 +138,7 @@ def test_mode_passes_its_preset_through(monkeypatch, tmp_path):
 
 
 def test_indel_rescue_without_fast_segments_raises(monkeypatch, tmp_path):
-    """⛔ A flag that is accepted and silently does nothing is the failure this project keeps
+    """Never: A flag that is accepted and silently does nothing is the failure this project keeps
     hitting. `--indel-rescue` needs the fast segment pass, so `--exact` must reject it.
 
     Asserted on BEHAVIOUR — non-zero exit, and the pipeline never started — not on the message.
@@ -151,7 +155,7 @@ def test_indel_rescue_without_fast_segments_raises(monkeypatch, tmp_path):
 
 
 def test_the_two_version_literals_agree():
-    """⛔ `arda.__version__` and `pyproject.toml`'s `version` are TWO literals with no link.
+    """Never: `arda.__version__` and `pyproject.toml`'s `version` are TWO literals with no link.
 
     `publish.yml` asserts pyproject == the release tag, and nothing asserted this one — so a
     release could ship with `arda --version` reporting the PREVIOUS release, and every

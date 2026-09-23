@@ -135,7 +135,7 @@ def _greedy_contigs(
     needs enough germline to anchor it); that region is shared germline, so any V-read of the
     gene extends it correctly -- no chimera risk, and ``scan_cap`` bounds the germline-k-mer cost.
     """
-    # ⛔ Cap the postings AT INSERT, not only when reading them. Both consumers already take
+    # Never: Cap the postings AT INSERT, not only when reading them. Both consumers already take
     # `[:scan_cap]` of the posting list, so keeping only the first `scan_cap` entries yields the
     # IDENTICAL candidate set -- this is a pure memory fix, not a behaviour change. Unbounded, the
     # index held every k-mer position of every mapped read of the locus (~90 postings per 100 nt
@@ -179,7 +179,7 @@ def _greedy_contigs(
                 ov = len(contig) - start        # overlap length
                 if ov < min_overlap:
                     continue
-                # ⛔ Bounded, and EXACTLY equivalent. The old test summed every mismatch over the
+                # Never: Bounded, and EXACTLY equivalent. The old test summed every mismatch over the
                 # overlap and compared the total against the float budget; `mm > budget` for
                 # integer `mm` is `mm > floor(budget)`, so an int cap decides the same candidates
                 # no matter how the float lands. What changes is the work: nearly every candidate
@@ -189,7 +189,7 @@ def _greedy_contigs(
                 if not _markup.within_mismatches(contig[start:], s[:ov], int((1 - min_id) * ov)):
                     continue
                 ext = s[ov:]
-                # ⛔ TOTAL ORDER. `len(ext) > len(best_ext)` alone leaves equal-length candidates
+                # Never: TOTAL ORDER. `len(ext) > len(best_ext)` alone leaves equal-length candidates
                 # to be resolved by the order the posting list happens to be in, which is AIRR row
                 # order, which comes from a threaded mmseqs search -- so the contig sequence, and
                 # every junction derived from it, could differ between runs on the same input. This
@@ -235,7 +235,7 @@ def _greedy_contigs(
         if len(members) >= 2:
             contigs.append((contig, members, spans))
         else:
-            # ⛔ RELEASE a rejected contig's reads. `used` is set as reads are recruited, but a
+            # Never: RELEASE a rejected contig's reads. `used` is set as reads are recruited, but a
             # contig dropped here never gave them back, so a seed that failed to extend was
             # permanently consumed -- it could no longer join a LATER seed's contig even as an
             # ordinary extension member. Seeds are tried longest-CDR3-tail first, so the reads this
@@ -375,7 +375,7 @@ def assemble_contigs(
         # junction; d_sequence_start/end are CONTIG coordinates and would be meaningless here,
         # so they are not propagated.
         d = {c: a.get(c) or "" for c in _D_COLUMNS}
-        # ⛔ ATTRIBUTION NEEDS EVIDENCE. Membership is granted on a >= `min_overlap` match, and after
+        # Never: ATTRIBUTION NEEDS EVIDENCE. Membership is granted on a >= `min_overlap` match, and after
         # the extension passes have accumulated germline at the contig ends that overlap can be pure
         # germline -- the 5' pass says so in its own docstring ("that region is shared germline, so
         # any V-read of the gene extends it correctly"). Stamping the contig's junction onto such a

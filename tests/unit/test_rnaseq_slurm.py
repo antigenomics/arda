@@ -17,7 +17,6 @@ The pieces:
 from __future__ import annotations
 
 import json
-import random
 
 import polars as pl
 import pytest

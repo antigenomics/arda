@@ -7,34 +7,67 @@ D germlines), MMseqs2 runtime mapping, C++ markup transfer, spec-valid AIRR outp
 orientation via `rev_comp`), reverse-complement handling, all-loci single-DB
 querying, streaming/bounded-memory FASTQ I/O (optional quality retention),
 out-of-frame junction translation, extended V/J-position markup, D-segment mapping
-(incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures.
+(incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures,
+run QC (`arda stats`), and single-cell support (`arda cells`: reference-free per-cell
+contig assembly, chain pairing, doublet flagging, and the QC surface).
 
 ## TODO
 
-- [ ] **Single-cell (`arda singlecell`).** The command exists in 2.16.0 and **exits non-zero with a
-      not-implemented message**; the name is reserved so the three-mode surface is stable and a
-      future release adds behaviour rather than a new command. Two stages, in this order:
+- [ ] **Single-cell.** Staged plan in **`project/design-singlecell.md`**; that document is
+      authoritative and this entry is the index.
 
-  - [ ] **10x contig mode** (the small one). Input a Cell Ranger `all_contig.fasta` /
-        `filtered_contig.fasta`, or any contig FASTA whose ids carry the barcode
-        (`AAACCTGAGAAACCAT-1_contig_2` → `AAACCTGAGAAACCAT-1`; `--barcode-regex` to override).
-        Annotate with the existing `annotate` path, pair chains per cell
-        (TRA+TRB / TRG+TRD / IGH+(IGK|IGL)), and emit `<prefix>.cells.tsv` (barcode, chain, calls,
-        junction, reads, umis, pairing status) plus `<prefix>.clones.tsv`. An optional
-        `--contig-annotations <csv>` carries Cell Ranger's `reads`/`umis` through; ⛔ absent, those
-        columns are **null, never fabricated**. `--isotype` and `--shm` apply — IG contigs are the
-        case they were built for. Everything it needs already exists; this is composition, not new
-        machinery, which is why it is first.
-  - [ ] **Raw-FASTQ 10x mode** (the real gap). Barcode whitelist, UMI consensus, per-cell assembly.
-        ⛔ **arda has no barcode or UMI concept at all** — that, and not the assembler, is the
-        single-cell gap. It is a subsystem, so it wants its own round.
+  - [x] **S0 — the identifier parser** (`src/arda/cell.py`, 2026-08-14). Lifts a cell barcode out of
+        `sequence_id`, which is where every upstream tool already puts it. Dialects `cellranger`,
+        `migec`, `prefix`, plus `--cell-regex` and an `auto` sniff. Never: `auto` never considers
+        `prefix` and never believes a barcode under 10 nt: a bulk sample named `TCGA` otherwise
+        parses as a one-cell library and nothing flags it.
+  - [x] **S1 — `cell_id` as an AIRR column** (2026-08-14). `--cell-from` / `--cell-regex` on `map`,
+        `amplicon` and `rnaseq`. Never: The hook is in `map.py`'s `flush()`, not `mapper.py:1430` —
+        that line is in the unmapped branch, which `mapped_only=True` skips, so it is dead code on
+        the only path `map` uses. `CELL_ID` is appended to `extra_cols` **last**.
+  - [x] **S2 — `locus` and `clone_row` in `--read-map`** (2026-08-14). Never: `junction` alone is not
+        the clonotype key — `correct` keys on `(locus, v_call, j_call, junction)` — so the two-column
+        form did not close the per-cell join it existed for.
+  - [x] **S3 — per-cell assembly, chain pairing and the QC surface** (`arda cells`, 2026-08-15).
+        It went further than planned and the plan was wrong about where the junction comes from.
+        Not the `--read-map` join and not the per-read junction: `arda cells` **assembles each
+        cell's contigs first**, reference-free, from one UMI consensus per molecule, and
+        annotates the contig. Reads of one (CB, UMI) are co-terminal so a molecule covers one
+        window of the transcript, but different molecules start at different positions, so a
+        cell's molecules TILE it -- 99.90% of the k-mers of Cell Ranger's 943 contigs are already
+        in their own cell's molecules before any assembly runs. Measured against Cell Ranger on
+        `sc5p_v2_hs_PBMC_1k`: **933/943 CDR3s recovered verbatim (0.9894), TRB 479/479**, chain
+        recall 0.9777, contig N50 536 nt, 23 s for 479 cells.
+        **Never: Phase a component before consensing it or a doublet is invisible by construction** --
+        two chains of one locus share their constant region, so the layout puts them in one
+        component and the column consensus averages their junctions into a third sequence. Worth
+        0.9714 -> 0.9777 on real data, and on a synthetic doublet the difference between one
+        918 nt contig with no callable junction and both true junctions.
+        **Never: The extra-chain gate is PRODUCTIVITY first, count second.** Of the extra chains Cell
+        Ranger agrees with 60/60 are productive; of those it does not, 20/128 are.
+        Never: `doublet_candidate` on the heavy slot only; a second light chain is allelic inclusion.
+        Diagnostics: knee, doublet scatter, chain support, contig lengths, filter sweep
+        (`--reference`), and clustering agreement via `arda.partition`. `docs/singlecell.rst`,
+        `notebooks/singlecell_qc.py`.
+        **Never: The knee is Kneedle at its GLOBAL maximum, and it is guarded.** Kneedle's published
+        local-maxima walk is degenerate without the paper's smoothing spline -- 287 local maxima
+        on a real curve, stopping at rank 15 of 136,032. And a global maximum always exists, so
+        an ambient-only library returns a rank too; `find_knee` refuses one below 10x the mean
+        molecules per barcode. Agrees with migec's C++ exactly (rank 376, 308 molecules).
+  - [ ] **S4 — `umi_count`.** Never redefine `duplicate_count` or `consensus_count`; they are
+        AIRR-spec fields. Never: It cannot be reconstructed from a migec molecule name: `.<m>` is a flat
+        index over (component × split) and both suffixes are emitted conditionally, so the FASTQ
+        name and `<sample>.mig.tsv` disagree. Blocked on a migec format decision, not on arda.
+  - [ ] **`arda singlecell` stays reserved as a MODE name** — the work lives in `arda cells`. Never: Its only sensible preset is the all-False vector,
+        which is byte-for-byte what `--exact` already gives on either existing mode — a no-op mode.
+        It ships when a measured speed row differs from both presets.
 
 - [ ] **TRUST4 head-to-head on AMPLICON at full depth, plus an IgBLAST-truth accuracy leg.**
       Scheduled. What exists today is wall clock only, at 100 k / 500 k reads, same job and same
       staged input (round 20): IGH_repertoire **201.05 s** vs TRUST4 615.04, IGH_naive **136.51** vs
       359.66, migec_exp1_TCR **316.25** vs 423.96, migec_exp1_IGH 223.77 vs **225.10**. Missing: an
       hours-scale full-depth run, and **any** amplicon accuracy figure for TRUST4 — arda's and
-      MiXCR's amplicon accuracy is measured against IgBLAST, TRUST4's is not. ⛔ Do not project the
+      MiXCR's amplicon accuracy is measured against IgBLAST, TRUST4's is not. Never: Do not project the
       hours from the per-100 k walls: a projected ratio quoted as measured is the single mistake
       this project has made most often. The arm is `cluster/ampacc7.sbatch` in arda-benchmark
       (IgBLAST on 10,000 pairs at stride 100, one merged single-end FASTQ so every tool sees the ids

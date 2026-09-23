@@ -8,7 +8,7 @@ it is a silent 2-4x slowdown:
 * ``arda amplicon``   — targeted RepSeq / 5'RACE  (``--two-pass --fast-segments --v-only-on-segment``)
 * ``arda singlecell`` — reserved; not implemented yet
 
-⛔ Until 2.16.0 the only entry point was ``arda rnaseq run``, which was used for amplicon too and
+Never: Until 2.16.0 the only entry point was ``arda rnaseq run``, which was used for amplicon too and
 exposed the regime as four loose flags. ``--two-pass`` ALONE is a LOSS on both regimes (0.762x on
 bulk, 0.87x on an IGH amplicon), so the one combination that was easy to reach was the dominated
 one. Naming the mode is the fix; ``--exact`` opts out of every speedup.
@@ -36,7 +36,7 @@ app = typer.Typer(add_completion=False, help="Antigen Receptor Domain Annotation
 # matches at least this good given the interior length and the D-database size (see
 # `annotate.transfer._map_d`). 0.2 is the shipped operating point and stays the default -- this
 # option only lets a caller ASK for the strict band, which is where D is worth trusting.
-# ⛔ The default is None, NOT 0.2. The shipped operating point is alphabet-dependent -- 0.2 for
+# Never: The default is None, NOT 0.2. The shipped operating point is alphabet-dependent -- 0.2 for
 # nt, 0.05 for aa -- so a literal 0.2 here would silently LOOSEN `--seqtype aa` by 4x while
 # looking like a no-op. None means "whatever this alphabet's calibrated value is".
 _D_EVALUE_HELP = (
@@ -52,7 +52,7 @@ _EXACT_HELP = (
 
 _SHM_HELP = (
     "SHM scoping. `framework` (default) keeps v_identity / v_mutations / j_mutations to positions "
-    "OUTSIDE the junction, using the germline anchors arda emits per read. ⛔ Segment scoping "
+    "OUTSIDE the junction, using the germline anchors arda emits per read. Never: Segment scoping "
     "alone is not junction exclusion -- the V germline's 3' tail and the J germline's 5' head are "
     "inside the junction, so chew-back and N/P bases used to enter both lists: measured on a TRA "
     "amplicon, where TCRs cannot hypermutate so every entry is spurious, 1.046 V and 1.658 J "
@@ -66,19 +66,35 @@ _COMPLETE_JUNCTION_HELP = (
     "from the called J's germline. 0 (default) emits observed junctions only. The J's 5' chew-back "
     "and the N/P additions are all UPSTREAM of the read's last aligned J base, so what is missing "
     "is germline-TEMPLATED -- unlike the V side, where a short read is missing bases nothing "
-    "templates. ⛔ The added bases are IMPUTED, not observed: every completed row carries the count "
+    "templates. Never: The added bases are IMPUTED, not observed: every completed row carries the count "
     "in `junction_completed_nt`, so filter or weight on that column rather than trusting the "
     "junction. ⚠ On IG the imputed span can hide the SHM the read would have shown, biasing a "
     "completed junction's 3' end toward germline; TR does not hypermutate and has no such cost.")
 
+_CELL_FROM_HELP = (
+    "Emit a `cell_id` column by lifting the cell barcode out of `sequence_id`. arda does NO "
+    "barcode demultiplexing and NO barcode correction -- the upstream tool did both and put the "
+    "answer in the record NAME, which is what survives dnaio dropping the FASTQ comment. "
+    "Dialects: `migec` (`<sample>.<cell>.<umi>`, parsed right to left because a migec sample id "
+    "may itself contain a dot), `cellranger` (`<barcode>-1_contig_2`), `prefix` "
+    "(`<barcode>_<rest>`), or `auto` to sniff them over a reservoir sample of the input. "
+    "Never: `auto` refuses rather than guessing, and a dialect is only accepted when every parsed "
+    "barcode has the SAME LENGTH -- otherwise a bulk sample named `TCGA` parses as a one-cell "
+    "library and nothing flags it.")
+
+_CELL_REGEX_HELP = (
+    "Lift the cell barcode with this regex instead of a named dialect; it must define a "
+    "`(?P<cell>...)` group and is matched against the start of `sequence_id`. For a platform "
+    "whose identifier none of the shipped dialects covers.")
+
 _CHIMERA_HELP = (
     "Also emit `chimera_parents`: for each clonotype, two MORE ABUNDANT clonotypes of the same "
     "locus that explain it as prefix+suffix across one breakpoint -- the PCR template-switch "
-    "signature. ⛔ FLAG ONLY, never a filter: measured 0.40 % of clonotypes / 0.18 % of reads on "
+    "signature. Never: FLAG ONLY, never a filter: measured 0.40 % of clonotypes / 0.18 % of reads on "
     "bulk RNA-seq (IG) against 0.01 % on a TRA amplicon, a 20x enrichment in the direction "
     "template-switch chemistry predicts but far too small to justify deleting clonotypes -- and the "
     "signature cannot separate a true chimera from two real clones sharing a prefix and a suffix. "
-    "⛔ The breakpoint must sit in the NON-TEMPLATED core: a junction is V 3' tail + N/P/D + J 5' "
+    "Never: The breakpoint must sit in the NON-TEMPLATED core: a junction is V 3' tail + N/P/D + J 5' "
     "head, both tails germline, so the same test run on the raw junction calls 52 % of clonotypes "
     "chimeric. Requires the reference (no anchors -> no flags, never a germline-driven guess).")
 
@@ -560,6 +576,8 @@ def rnaseq_map(
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
     complete_junction_nt: int = typer.Option(
         0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
+    cell_from: str = typer.Option("", "--cell-from", help=_CELL_FROM_HELP),
+    cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
@@ -580,6 +598,7 @@ def rnaseq_map(
                     adaptive=adaptive, with_junction_quality=junction_quality,
                     with_mutation_quality=mutation_quality, shm=shm,
                     complete_junction_nt=complete_junction_nt,
+                    cell_from=cell_from, cell_regex=cell_regex,
                     emit_reads=emit_reads, report_path=report)
     # `map_rnaseq` already logged the summary line; only the output path belongs on stdout.
     typer.echo(str(output))
@@ -607,7 +626,7 @@ def rnaseq_correct(
     error_method: Optional[str] = typer.Option(
         None, help="simple = spanning-read counts; binom|betabinom = per-position read-depth "
                    "pileup for very low coverage. Default: whatever --ec-mode selects (simple). "
-                   "⛔ binom/betabinom are ~270x slower AND more aggressive on a deep library "
+                   "Never: binom/betabinom are ~270x slower AND more aggressive on a deep library "
                    "(MIGEC 302k reads: 0.73s/143 clonotypes vs 197s/79 and 254s/78) and "
                    "byte-identical on a monoclonal one -- neither is in a mode for that reason."),
     ec_mode: str = typer.Option(
@@ -804,7 +823,7 @@ def shm_cmd(
     there reads as a substitution against a germline that does not template it. arda 2.14.0
     documented a guarantee that this could not happen; it was wrong, and this is the retraction.
 
-    ⛔ **Needs no reference and no re-map.** ``v_anchor_nt`` / ``j_anchor_nt`` and the alignment
+    **Never: Needs no reference and no re-map.** ``v_anchor_nt`` / ``j_anchor_nt`` and the alignment
     strings are already in the file, so a table written by arda 2.14.0 or later can be recounted in
     place. A file older than that has no anchor columns and this RAISES rather than copying the
     input through with a success message.
@@ -822,7 +841,7 @@ def shm_cmd(
 
 
 # ── MODES ─────────────────────────────────────────────────────────────────────────────────────
-# ⛔ The regime is the COMMAND NAME, not a flag combination. `arda rnaseq run` used to be the only
+# Never: The regime is the COMMAND NAME, not a flag combination. `arda rnaseq run` used to be the only
 # entry point and was used for amplicon too, with the regime spelled out as four loose flags that
 # do NOT compose: `--two-pass --fast-segments --v-only-on-segment` is amplicon, `--prefilter` is
 # bulk, and `--two-pass` alone -- the single flag `run` exposed for four releases -- is a LOSS on
@@ -849,7 +868,7 @@ _MODE_SPEED = {
 def _mode_run(mode: str, *, exact: bool, indel_rescue: bool, **kw) -> None:
     """Body shared by `arda rnaseq` and `arda amplicon`: resolve the preset, then run the pipeline.
 
-    ⛔ ONE body, not one per mode. The mode commands and `arda cluster reduce` already share
+    Never: ONE body, not one per mode. The mode commands and `arda cluster reduce` already share
     `pipeline.finish` for the same reason: two copies drift in a parameter, and then "the modes
     only differ in their preset" is a hope rather than a property.
     """
@@ -893,6 +912,8 @@ def rnaseq_mode(
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
     complete_junction_nt: int = typer.Option(
         0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
+    cell_from: str = typer.Option("", "--cell-from", help=_CELL_FROM_HELP),
+    cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
     isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
     call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
     map_d: bool = typer.Option(
@@ -905,7 +926,7 @@ def rnaseq_mode(
         help="Denoising preset; `rnaseq` is this mode's default. `fast` = the abundance model "
              "only (arda's historical behaviour). `accurate` adds --min-junction-q 20. `rnaseq` "
              "adds the quality-directed rescue kept NARROW (6 subs, 200x ratio) because bulk "
-             "RNA-seq singletons are mostly real. ⛔ Nothing in any mode discards a read: an "
+             "RNA-seq singletons are mostly real. Never: Nothing in any mode discards a read: an "
              "orphan with no qualifying parent keeps its reads. The Stage-1 quality column the "
              "gates need is turned on automatically here."),
     min_junction_q: Optional[int] = typer.Option(
@@ -955,7 +976,8 @@ def rnaseq_mode(
               limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
               clonotype_key=clonotype_key, call_level=call_level,
               shm=shm, isotype=isotype,
-              complete_junction_nt=complete_junction_nt)
+              complete_junction_nt=complete_junction_nt,
+              cell_from=cell_from, cell_regex=cell_regex)
 
 
 @app.command("amplicon")
@@ -975,6 +997,8 @@ def amplicon_mode(
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
     complete_junction_nt: int = typer.Option(
         0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
+    cell_from: str = typer.Option("", "--cell-from", help=_CELL_FROM_HELP),
+    cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
     isotype: bool = typer.Option(True, "--isotype/--no-isotype", help=_ISOTYPE_HELP),
     call_level: str = typer.Option("allele", "--call-level", help=_CALL_LEVEL_HELP),
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Map D segments in all stages."),
@@ -985,7 +1009,7 @@ def amplicon_mode(
              "rescue searching WIDE (12 subs, 50x abundance ratio), because a real clonotype in a "
              "targeted library is deep, so a 1-read neighbour of an abundant clone is almost "
              "always error. `fast` = the abundance model only; `accurate` = + --min-junction-q 20. "
-             "⛔ Nothing in any mode discards a read."),
+             "Never: Nothing in any mode discards a read."),
     min_junction_q: Optional[int] = typer.Option(
         None, "--min-junction-q",
         help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset."),
@@ -1031,23 +1055,138 @@ def amplicon_mode(
               limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
               clonotype_key=clonotype_key, call_level=call_level,
               shm=shm, isotype=isotype,
-              complete_junction_nt=complete_junction_nt)
+              complete_junction_nt=complete_junction_nt,
+              cell_from=cell_from, cell_regex=cell_regex)
+
+
+@app.command("cells")
+def cells_cmd(
+    reads: Path = typer.Argument(
+        ..., help="Per-MOLECULE UMI consensus FASTQ/FASTA whose record names carry the cell "
+                  "barcode -- what `migec assemble` writes. Not raw reads: the UMI collapse "
+                  "belongs upstream and arda does not do it."),
+    prefix: Path = typer.Option(..., "--prefix", "-p", help="Output prefix for every table."),
+    organism: str = typer.Option("human", help="Reference organism for the annotation pass."),
+    cell_from: str = typer.Option("auto", "--cell-from", help=_CELL_FROM_HELP),
+    cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
+    k: int = typer.Option(25, "--seed", help="Seed k-mer length for the overlap layout."),
+    min_overlap: int = typer.Option(
+        30, "--min-overlap", help="Bases two molecules must share before they are joined."),
+    min_identity: float = typer.Option(
+        0.95, "--min-identity", help="Identity the implied overlap must reach. Never set this "
+                                     "to 0: an adapter suffix is a 100%-identical overlap and "
+                                     "verification is the only thing that refuses a chimera."),
+    min_molecules: int = typer.Option(
+        2, "--min-molecules", help="Molecules a contig needs before it is emitted. 1 emits the "
+                                   "ambient cloud: an extra chain carried by exactly one "
+                                   "molecule is contamination 96% of the time."),
+    min_length: int = typer.Option(100, "--min-length", help="Shortest contig kept (nt)."),
+    split: bool = typer.Option(
+        True, "--split/--no-split",
+        help="Phase a component into haplotypes before consensing it. Two chains of the same "
+             "locus in one cell share their constant region, so the layout puts them in one "
+             "component and the consensus averages their junctions into neither. Without this "
+             "a doublet is invisible by construction."),
+    min_minor_fraction: float = typer.Option(
+        0.2, "--min-minor-fraction",
+        help="Weight share a second base needs before its column can phase a component."),
+    min_minor_molecules: int = typer.Option(
+        2, "--min-minor-molecules",
+        help="And how many distinct molecules must carry it. Share alone promotes one deep "
+             "molecule's error to an allele."),
+    min_informative_columns: int = typer.Option(
+        2, "--min-informative-columns",
+        help="How many such columns must co-segregate before a component is split."),
+    trim_adapter: bool = typer.Option(
+        True, "--trim-adapter/--no-trim-adapter",
+        help="Cut read-through adapter before assembly. Worth 9 points of junction recovery."),
+    min_extra_molecules: int = typer.Option(
+        3, "--min-extra-molecules",
+        help="Molecules a cell's SECOND chain at a locus needs before it is believed. Two "
+             "believed heavy chains is the doublet call. Sweep it with --reference."),
+    min_extra_fraction: float = typer.Option(
+        0.2, "--min-extra-fraction",
+        help="And the same chain as a fraction of the cell's top chain at that locus. A real "
+             "second chain runs at 0.63 of the top; the ambient ones at 0.22."),
+    require_productive: bool = typer.Option(
+        True, "--require-productive/--no-require-productive",
+        help="A believed second chain must be productive. This is the discriminator: of the "
+             "extra chains Cell Ranger agrees with, 60/60 are productive; of those it does "
+             "not, 20/128 are."),
+    cells: Optional[Path] = typer.Option(
+        None, "--cells",
+        help="Restrict to these called barcodes: a one-per-line list, or migec's "
+             "`<sample>.cells.tsv` (its `called` column is respected). Cell CALLING is the "
+             "upstream tool's job; without this, every empty droplet is assembled too."),
+    reference: Optional[Path] = typer.Option(
+        None, "--reference",
+        help="A comparator's own call table to score against -- Cell Ranger's "
+             "filtered_contig_annotations.csv, or any TSV with cell_id/locus/junction_aa. "
+             "Scoring only; the assembly never reads a reference."),
+    plot: Optional[str] = typer.Option(
+        None, "--plot", help="Draw the QC panels: svg, png or pdf. The .gp scripts and their "
+                             "tables are written either way; gnuplot is not a dependency."),
+    threads: int = typer.Option(0, help="mmseqs threads for the annotation pass (0 = all). The "
+                                        "per-cell assembly is single-threaded; see the note in "
+                                        "`arda.singlecell.assemble_cells`."),
+    map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Call D on each contig."),
+) -> None:
+    """Single cell — assemble each cell's contigs with no reference, then pair and diagnose.
+
+    The input is one UMI consensus per molecule with the cell barcode in the name. Reads of one
+    molecule are co-terminal, so a molecule covers one window of the transcript however deep it
+    is -- but the cell's molecules tile the whole transcript, and assembling them recovers the
+    full-length contig. Measured against Cell Ranger on `sc5p_v2_hs_PBMC_1k` VDJ-T: 98.2% of its
+    943 CDR3s appear verbatim inside one of our contigs, with no germline reference in the
+    assembly at all. See docs/singlecell.rst.
+    """
+    from .singlecell import run as run_cells
+
+    summary = run_cells(
+        reads, prefix, organism=organism, cell_from=cell_from, cell_regex=cell_regex,
+        k=k, min_overlap=min_overlap, min_identity=min_identity,
+        min_molecules=min_molecules, min_length=min_length, trim_adapter=trim_adapter,
+        split=split, min_minor_fraction=min_minor_fraction,
+        min_minor_molecules=min_minor_molecules,
+        min_informative_columns=min_informative_columns,
+        min_extra_molecules=min_extra_molecules, min_extra_fraction=min_extra_fraction,
+        require_productive=require_productive, cells_file=cells, reference=reference,
+        threads=threads, map_d=map_d, plot=plot,
+    )
+    log.info("cells: %d cells, %d contigs (N50 %d nt) from %d molecules; %d chains",
+             summary["cells"], summary["contigs"], summary["contig_n50"],
+             summary["molecules_in"], summary["chains"])
+    log.info("cells: %d paired, %d heavy only, %d light only, %d doublet candidates",
+             summary["cells_paired"], summary["cells_heavy_only"],
+             summary["cells_light_only"], summary["cells_doublet_candidate"])
+    if summary["knee_rank"]:
+        log.info("cells: the molecule curve breaks at rank %d (%d molecules) -- the knee",
+                 summary["knee_rank"], summary["knee_molecules"])
+    else:
+        log.info("cells: the molecule curve has no knee an order of magnitude above its mean; "
+                 "if these barcodes were not filtered upstream, most of them are ambient")
+    typer.echo(str(prefix) + ".cells.tsv")
 
 
 @app.command("singlecell")
 def singlecell_mode() -> None:
-    """RESERVED — single-cell (10x) mode is not implemented yet.
+    """RESERVED as a rnaseq/amplicon-style MODE — the single-cell work lives in `arda cells`.
 
-    The name is taken now so the three-mode surface is stable and a future release adds behaviour
-    rather than a new command. arda has **no barcode or UMI concept at all**, which is the real
-    single-cell gap -- not the assembler. See ROADMAP.md.
+    Never: It stays reserved rather than becoming a third preset: the only sensible preset for
+    fragment-shaped single-cell input is the all-False vector, which is byte-for-byte what
+    `--exact` already produces on either existing mode, so the mode would differ from
+    `arda rnaseq --exact` in nothing but its name. It ships when a measured speed row differs
+    from both existing presets. See project/design-singlecell.md.
     """
     typer.echo(
-        "arda singlecell is not implemented yet (scheduled -- see ROADMAP.md, single-cell).\n"
-        "Today, for 10x contigs:\n"
-        "  arda annotate -i all_contig.fasta -o contigs.airr.tsv\n"
-        "  arda correct  -i contigs.airr.tsv -o contigs.clones.tsv\n"
-        "Barcode demultiplexing and UMI consensus are not in arda.", err=True)
+        "arda singlecell is reserved as a MODE name. The single-cell pipeline is `arda cells`:\n"
+        "  arda cells consensus.fq.gz -p out/PBMC --plot svg\n"
+        "arda does no barcode demultiplexing and no UMI consensus; the upstream tool does both\n"
+        "and leaves the barcode in the record name. Other entry points that read it:\n"
+        "  arda rnaseq --exact --cell-from migec --r1 consensus.fq.gz -p out\n"
+        "  arda annotate -i all_contig.fasta -o contigs.airr.tsv   # 10x's own contigs\n"
+        "See docs/singlecell.rst.",
+        err=True)
     raise typer.Exit(code=2)
 
 
@@ -1169,12 +1308,12 @@ def resolve_ties_cmd(
     each read to both germlines showed **59 of 60 fit identically** (identity 1.0000 over 63-70 nt).
     Neither was right; both were overconfident.
 
-    ⛔ This ADDS no alignment. The tie is a string comparison against the reference over the span
+    Never: This ADDS no alignment. The tie is a string comparison against the reference over the span
     already aligned, so it costs neither the memory nor the time that keeping `top_hit` before
     `convertalis` was protecting (that collapse made the alignment TSV 2.88x smaller AND took
     allele agreement .9735 -> .9956; this does not undo it).
 
-    ⛔ It is a SEPARATE COMMAND, not a flag on `map`, because the ranking needs every read before it
+    Never: It is a SEPARATE COMMAND, not a flag on `map`, because the ranking needs every read before it
     can order any of them -- two passes over one file. And it changes `v_call`/`j_call` on every
     library: a consumer that splits on `,` and takes `[0]` sees the better answer, one that treats
     the field as a single gene sees a new shape.

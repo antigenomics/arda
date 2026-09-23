@@ -74,7 +74,7 @@ class DCall:
         AIRR columns alone give it as a set of coordinates and three np strings that it
         must re-derive the D-observed sequence from.
 
-        ⛔ The V-end / np / D-start boundaries INSIDE the junction are not identifiable
+        Never: The V-end / np / D-start boundaries INSIDE the junction are not identifiable
         from sequence -- exonuclease chew-back and N/P addition make the partition
         probabilistic. This is one consistent reading of the junction, not ground truth.
         Empty when the V/J split could not be located at all.
@@ -110,7 +110,7 @@ def _common_suffix(a: str, b: str) -> int:
     return n
 
 
-# ⛔ CACHED, and it has to be. `_load_d_germlines` opens and re-parses `d_germlines.fasta` on every
+# Never: CACHED, and it has to be. `_load_d_germlines` opens and re-parses `d_germlines.fasta` on every
 # call, and `correct._clonotype_d` calls `map_d_junction` ONCE PER CLONOTYPE -- so a run spent the
 # whole load per clonotype. Measured at 54.4 us/call: 2.0 s on a 36,741-clonotype TRA amplicon and
 # 21.6 s on a 397,305-clonotype bulk sample, on the DEFAULT path (`--map-d` is on unless disabled).

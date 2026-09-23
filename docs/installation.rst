@@ -28,7 +28,7 @@ ships its own ``environment.yml``.
 What it does, and what it verifies
 -----------------------------------
 
-* Wipes any stale ``build/``. ⛔ Not cosmetic: scikit-build-core caches CMake's configuration
+* Wipes any stale ``build/``. Never: Not cosmetic: scikit-build-core caches CMake's configuration
   including the **absolute path** of the interpreter it configured against, so a ``build/`` left
   by a venv that no longer exists makes every later on-import rebuild fail with
   *"Could NOT find Python"* — and arda then falls back to its pure-Python markup path.

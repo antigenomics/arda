@@ -15,6 +15,7 @@ in a small C++ hot path — producing AIRR-formatted output that matches IgBLAST
    d_segments
    shm
    error_correction
+   singlecell
    qc
    pipeline_integration
    cluster

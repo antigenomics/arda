@@ -17,7 +17,7 @@ dependencies:
   - pip:
       # seqtree (needed by `arda rnaseq correct`) is a core dependency -- there is no extra to add.
       #
-      # ⛔ 2.16.0 IS THE MINIMUM, and it is a hard requirement, not a nicety: `arda rnaseq run`
+      # Never: 2.16.0 IS THE MINIMUM, and it is a hard requirement, not a nicety: `arda rnaseq run`
       # -- the command every earlier version of this module invoked -- WAS REMOVED in 2.16.0. The
       # regime is now the command name (`arda rnaseq` / `arda amplicon`), so this module and the
       # CLI must move together. An older arda fails with "Got unexpected extra argument (run)";
@@ -25,4 +25,4 @@ dependencies:
       #
       # It is also the first release where `--shm` exists, and where each mode's `--ec-mode`
       # default matches its regime rather than being `fast`.
-      - arda-mapper==2.20.0
+      - arda-mapper==2.21.0
