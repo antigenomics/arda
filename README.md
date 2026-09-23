@@ -34,24 +34,6 @@ It also annotates records that have **no read behind them** — a CDR3 amino aci
 call and a J call, as in a VDJdb row — marking up which residues each germline
 templates, repairing the junction, and inferring the D gene from the junction's length.
 
-## Why
-
-IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embed.
-`arda` keeps IgBLAST-quality region calls while being:
-
-- **Fast & scalable** — MMseqs2 search + a C++ projection step; on a TRA amplicon it
-  matches MiXCR's wall clock at **3.6× less CPU and 4.8× less RSS**
-  ([below](#performance)); multiprocessing and SLURM-friendly from small FASTA to large FASTQ.
-- **Embeddable** — `import arda; arda.annotate_sequences(...)`.
-- **Honest** — a D call is gated on an E-value that ships with it (`d_support`), a
-  germline allele with no derivable anchor is flagged rather than guessed, a junction
-  whose Cys104 anchor is not actually in the read is **not emitted**, and a `j_call`
-  requires J evidence rather than being inherited from the scaffold.
-- **Easy to install** — `pip install arda-mapper` (binary wheels ship the C++
-  extension); the `mmseqs` binary is fetched as a static build at runtime — no
-  conda. IgBLAST is fetched on first use the same way, and is only needed to
-  (re)build the reference DB or to run `arda igblast`, never for annotation.
-
 ## Install
 
 ```bash
@@ -81,20 +63,110 @@ first use and builds the MMseqs2 index there — no `$ARDA_HOME`, no build step
 Supported organisms: **human, mouse** (full IG + TR), **rat, rabbit, rhesus_monkey**
 (IG only — IgBLAST ships no TR internal annotation for these).
 
-## CLI
+## The three modes
 
-**Three modes, named after the library** — each owns the speed configuration that regime needs:
+The speed configurations are **regime-specific and do not compose**, and picking the wrong one is
+slower than picking none. So the regime is the **command name**, and arda owns what it implies:
+
+| command | the library it is for | configuration it carries | denoising default |
+|---|---|---|---|
+| `arda rnaseq` | whole-transcriptome bulk RNA-seq (0.02–3 % receptor) | `--prefilter` | `--ec-mode rnaseq` |
+| `arda amplicon` | targeted RepSeq / 5′RACE (reads span V into J) | `--two-pass --fast-segments --v-only-on-segment` | `--ec-mode amplicon` |
+| `arda cells` | single cell — **UMI consensus per molecule**, barcode in the record name | reference-free per-cell assembly, then chain pairing | — (clonotypes are per cell) |
 
 ```bash
 arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # bulk / whole-transcriptome
 arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # targeted RepSeq / 5'RACE
-arda singlecell                                               # reserved — not implemented yet
+arda cells    asm/PBMC.consensus.fq.gz -p out/PBMC            # single cell (see below)
+arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --exact   # no speedups at all
 ```
 
-Each runs `map` → `assemble` → `correct` and writes `<prefix>.airr.tsv`, `<prefix>.clones.tsv`,
-`<prefix>.assembled.airr.tsv`, `<prefix>.arda.json` and `<prefix>.stats.tsv` (the QC table below).
-`--exact` turns every speedup off. Progress goes to **stderr**; the output paths, one per line, to
-**stdout**.
+`rnaseq` and `amplicon` run `map` → `assemble` → `correct` over raw paired FASTQ and write
+`<prefix>.airr.tsv` (one AIRR row per mapped read), `<prefix>.clones.tsv` (the clonotype table),
+`<prefix>.assembled.airr.tsv`, `<prefix>.arda.json` (run report) and `<prefix>.stats.tsv` (run
+QC). Progress goes to **stderr**; the output paths, one per line, to **stdout**.
+
+`arda cells` is the single-cell entry point and starts one step later: its input is **one UMI
+consensus per molecule** with the cell barcode in the record name — what `migec assemble` writes.
+arda does no demultiplexing, no barcode correction, no UMI collapse and no cell calling; the
+upstream tool does all four. From there it assembles each cell's contigs **with no germline
+reference**, annotates them, pairs the chains and flags multiplets. Against Cell Ranger on
+`sc5p_v2_hs_PBMC_1k` VDJ-T, **98.2 %** of its 943 CDR3s appear verbatim inside one of arda's
+contigs. Guide: [single cell](https://docs.isalgo.dev/arda/singlecell.html).
+
+Never: Until 2.16.0 the only entry point was `arda rnaseq run`, used for amplicon as well, with the
+regime spelled out as four loose flags. **`--two-pass` alone is a LOSS** — 0.762× on bulk, 0.87× on
+an IGH amplicon — and it was the one flag that entry point exposed for four releases. Naming the
+mode makes the dominated combination unreachable by accident. `arda rnaseq run` no longer exists.
+
+The predictor is not the library's name but whether a read hits **both** a V and a J segment —
+`fast_fraction` in the run report. Primer-anchored amplicon reads do; bulk reads land anywhere in a
+transcript and mostly do not, which is why the segment path is overhead there and the 16-mer
+prefilter (a scan-term optimisation) is the bulk lever instead.
+
+⚠ `arda rnaseq` enables `--prefilter`, which costs **~0.15 % of mapped reads** (122 bulk datasets;
+up to 2.46 % on one library), concentrated in J→C and hypermutated IGH. Use `--exact` where that
+matters. `--indel-rescue` (amplicon only) reroutes indel-bearing reads to the gapped path; its
+value tracks SHM load, so it stays a per-library call and never rides the preset — and arda now
+**refuses** it outside the amplicon mode rather than ignoring it. Per-flag measurements:
+`arda amplicon --help`, `arda map --help` and the
+[usage guide](https://docs.isalgo.dev/arda/usage.html).
+
+### Flags that add or scope a column
+
+`map` → `assemble` → `correct` are separate commands as well as stages inside a mode
+([detail below](#the-three-stages-in-detail)); these are the flags that change what they emit:
+
+| stage / flag | what it does |
+|---|---|
+| `--assemble` *(default on)* | contig assembly for long CDR3s no single 100–150 bp read spans; recovers ~95 % of the abundant long clones a filter-only pass misses |
+| `--shm framework` *(default)* | SHM (`v_identity`, `v_mutations`, `j_mutations`) scoped **outside the junction** — IGH/IGK/IGL is where it is real |
+| `--shm both` | also emit the pre-2.16.0 junction-inclusive values as `*_full` columns |
+| `--isotype` *(default on)* | IGH isotype: `c_call`/`c_class`, voted per fragment then per clonotype, reported as **class** never subclass |
+| `--call-level gene` | drop the allele suffix before the clonotype key, collapsing allele-level call splits |
+| `--map-d` *(default on)* | D and tandem D-D alignment into the junction |
+| `map --junction-quality` | Phred+33 string over exactly the bases of `junction`; needed by `correct --min-junction-q` and by `stats`' junction-quality metrics |
+| `map --mutation-quality` | Phred behind each `v_mutations` / `j_mutations` entry, comma-joined and one-for-one; what `stats` scores `allele_candidate` on |
+
+`arda shm -i in.airr.tsv -o out.airr.tsv` does the SHM recount standalone, needing **no reference
+and no re-map** — the germline anchors are already in the file.
+
+### Accuracy regimes: which knob for which question
+
+Separate from the speed flags, and set from **what you are going to do with the answer**. All are
+off by default; the shipped output does not move unless you ask.
+
+| question | flags | what it buys |
+|---|---|---|
+| Repertoire-level D usage | *(default, `E ≤ 0.2`)* | highest D recall |
+| A D call you will act on, or a tandem D-D you will report | `--d-max-evalue 0.01` | gene agreement vs IgBLAST **.9765 → .9985** (TRB amplicon), at ~⅓ the call rate |
+| Low-frequency variant recovery (spike-in, MRD, monoclonal control) | `map --junction-quality` + `correct --error-rate 1e-5 --ec-mode accurate` | keeps both published MIGEC spike-ins **and** monoclonal purity **.96034 → .99530** |
+| SHM / lineage trees | *(default)* | `v_mutations`/`j_mutations` in germline coordinates, `+36 ms` per 100 k reads |
+| Monoclonal QC / cell-line purity | `--ec-mode amplicon --clonotype-key junction` | Jurkat **90 → 10** clonotypes, TRB purity **.98963 → .99990**, **reads unchanged at 14,531**, and **98.50 %** of them on the two published clones |
+| A targeted library that is deep | `--ec-mode amplicon` | quality-directed rescue at 12 subs / 50× — reaches the class the abundance model structurally cannot |
+| Bulk RNA-seq, where singletons are mostly real | `--ec-mode rnaseq` | the same rescue kept narrow (6 subs / 200×) |
+
+`--d-max-evalue` is a **recall/precision dial**, not a bug fix: the shipped 0.2 is deliberately the
+loosest band, because dropping two thirds of the D calls is the wrong default for a repertoire
+tool. `--ec-mode accurate` is `--min-junction-q 20` — it judges the one base that discriminates a
+clonotype from its parent on its **Phred score** rather than on abundance, which is a measurement
+the abundance model does not have.
+
+**Never: Every denoising mode MOVES reads onto a parent and never discards them** — the sum of
+`duplicate_count` is invariant across modes, and a clonotype with no qualifying parent keeps its
+reads and is reported as an orphan. That is not caution: on a polyclonal hypermutated repertoire a
+plain quality *filter* at the same threshold would strand **3.70 %** of all junction-bearing reads
+with no parent to inherit them. If the read total moves when you change `--ec-mode`, that is a
+defect — please report it.
+
+⚠ The modes are **off by default** (`fast` = arda's historical behaviour), because whether the far
+class they collapse is badly-sequenced SHM or error is not settled: on a hypermutated IGH
+repertoire `amplicon` removes 178 clonotypes carrying 179 reads, 177 of them singletons, and on the
+matched naive library it removes **zero**. Depth: [D segments](https://docs.isalgo.dev/arda/d_segments.html),
+[SHM](https://docs.isalgo.dev/arda/shm.html),
+[error correction](https://docs.isalgo.dev/arda/error_correction.html).
+
+## CLI reference
 
 The **stages** are separate commands, so any one can be run, inspected or replaced:
 
@@ -210,142 +282,23 @@ Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on *
 by default (reverse-complement reads are re-oriented and flagged `rev_comp=T`); a single search
 annotates a mixed bulk RNA-seq file across all loci.
 
-## Modes: pick the command, not the flags
+## Why
 
-The speed configurations are **regime-specific and do not compose**, and picking the wrong one is
-slower than picking none. So the regime is the **command name**, and arda owns what it implies:
+IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embed.
+`arda` keeps IgBLAST-quality region calls while being:
 
-| command | for | speed configuration | denoising default |
-|---|---|---|---|
-| `arda rnaseq` | whole-transcriptome bulk RNA-seq (0.02–3 % receptor) | `--prefilter` | `--ec-mode rnaseq` |
-| `arda amplicon` | targeted RepSeq / 5′RACE (reads span V into J) | `--two-pass --fast-segments --v-only-on-segment` | `--ec-mode amplicon` |
-| `arda singlecell` | *reserved — not implemented* | — | — |
-
-```bash
-arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/
-arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/
-arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --exact   # no speedups at all
-```
-
-Never: Until 2.16.0 the only entry point was `arda rnaseq run`, used for amplicon as well, with the
-regime spelled out as four loose flags. **`--two-pass` alone is a LOSS** — 0.762× on bulk, 0.87× on
-an IGH amplicon — and it was the one flag that entry point exposed for four releases. Naming the
-mode makes the dominated combination unreachable by accident. `arda rnaseq run` no longer exists.
-
-The predictor is not the library's name but whether a read hits **both** a V and a J segment —
-`fast_fraction` in the run report. Primer-anchored amplicon reads do; bulk reads land anywhere in a
-transcript and mostly do not, which is why the segment path is overhead there and the 16-mer
-prefilter (a scan-term optimisation) is the bulk lever instead.
-
-⚠ `arda rnaseq` enables `--prefilter`, which costs **~0.15 % of mapped reads** (122 bulk datasets;
-up to 2.46 % on one library), concentrated in J→C and hypermutated IGH. Use `--exact` where that
-matters. `--indel-rescue` (amplicon only) reroutes indel-bearing reads to the gapped path; its
-value tracks SHM load, so it stays a per-library call and never rides the preset — and arda now
-**refuses** it outside the amplicon mode rather than ignoring it. Per-flag measurements:
-`arda amplicon --help`, `arda map --help` and the
-[usage guide](https://docs.isalgo.dev/arda/usage.html).
-
-### Samples split across files
-
-Illumina writes one FASTQ per lane (`PT01_S1_L001_R1_001.fastq.gz`, `..._L002_...`), and in-house
-pipelines chunk a run their own way. Those are **one repertoire** and get **one** clonotype table.
-Don't `cat` them: arda maps each *read group* and concatenates after Stage 1, which is
-byte-identical to the same reads in one file and skips a full copy of the data.
-
-`--r1`, `--r2` and `--id` are repeatable and matched **by position**; repeat an id to merge:
-
-```bash
-# five pairs, three samples — the first three read groups are one repertoire
-arda rnaseq -d out/ \
-    --r1 s1_1.fq.gz --r2 s1_2.fq.gz --id A \
-    --r1 s2_1.fq.gz --r2 s2_2.fq.gz --id A \
-    --r1 s3_1.fq.gz --r2 s3_2.fq.gz --id A \
-    --r1 s4_1.fq.gz --r2 s4_2.fq.gz --id B \
-    --r1 s5_1.fq.gz --r2 s5_2.fq.gz --id C
-```
-
-Or `--samples sheet.tsv|csv`, whose columns are nf-core's (`sample, fastq_1, fastq_2`) so an
-existing nf-core samplesheet works unmodified — repeated `sample` values merge in row order:
-
-```bash
-arda rnaseq --samples sheet.tsv -d out/
-```
-
-The grouping is **declared, never guessed**: given `RNA-SAMPLE_ID:12:00XX919:3_1.fastq.gz` no rule
-can say which field is the sample, so more than one `--r1` without `--id` is refused rather than
-split into four repertoires silently. A sample id becomes the output basename, so `--out-prefix` is
-for the one-pair case only.
-
-Verified byte-for-byte: `tests/data/rnaseq_real` cut into four read groups gives identical
-`.airr.tsv`, `.assembled.airr.tsv` and `.clones.tsv` to the one-file run.
-
-**The unit of parallel work is the read group, not the sample.** Several samples in one CLI call
-run one at a time, each with every core — MMseqs2 threads internally, so *N* samples at `cores/N`
-is slower than *N* in a row. Scale out instead:
-
-```bash
-arda cluster plan --samples sheet.tsv --work-dir work/ -d out/   # work units for any scheduler
-arda cluster submit-samples --samples sheet.tsv -d out/ --submit # the same DAG as SLURM arrays
-```
-
-`plan` writes `readgroups.tsv` (one row per read group) and `samples.tsv` (one per sample) and
-prints both commands filled in — a sheet of 5 samples × 4 lanes is 20 independent jobs, not 5. The
-Snakemake (`integrations/snakemake/arda/`) and Nextflow (`integrations/nextflow/arda/`) workflows
-schedule the same way. Full guide: [samples split across
-files](https://docs.isalgo.dev/arda/samples.html).
-
-### Stages, and the flags that select them
-
-`map` → `assemble` → `correct` are separate commands as well as stages inside a mode:
-
-| stage / flag | what it does |
-|---|---|
-| `--assemble` *(default on)* | contig assembly for long CDR3s no single 100–150 bp read spans; recovers ~95 % of the abundant long clones a filter-only pass misses |
-| `--shm framework` *(default)* | SHM (`v_identity`, `v_mutations`, `j_mutations`) scoped **outside the junction** — IGH/IGK/IGL is where it is real |
-| `--shm both` | also emit the pre-2.16.0 junction-inclusive values as `*_full` columns |
-| `--isotype` *(default on)* | IGH isotype: `c_call`/`c_class`, voted per fragment then per clonotype, reported as **class** never subclass |
-| `--call-level gene` | drop the allele suffix before the clonotype key, collapsing allele-level call splits |
-| `--map-d` *(default on)* | D and tandem D-D alignment into the junction |
-| `map --junction-quality` | Phred+33 string over exactly the bases of `junction`; needed by `correct --min-junction-q` and by `stats`' junction-quality metrics |
-| `map --mutation-quality` | Phred behind each `v_mutations` / `j_mutations` entry, comma-joined and one-for-one; what `stats` scores `allele_candidate` on |
-
-`arda shm -i in.airr.tsv -o out.airr.tsv` does the SHM recount standalone, needing **no reference
-and no re-map** — the germline anchors are already in the file.
-
-### Accuracy regimes: which knob for which question
-
-Separate from the speed flags, and set from **what you are going to do with the answer**. All are
-off by default; the shipped output does not move unless you ask.
-
-| question | flags | what it buys |
-|---|---|---|
-| Repertoire-level D usage | *(default, `E ≤ 0.2`)* | highest D recall |
-| A D call you will act on, or a tandem D-D you will report | `--d-max-evalue 0.01` | gene agreement vs IgBLAST **.9765 → .9985** (TRB amplicon), at ~⅓ the call rate |
-| Low-frequency variant recovery (spike-in, MRD, monoclonal control) | `map --junction-quality` + `correct --error-rate 1e-5 --ec-mode accurate` | keeps both published MIGEC spike-ins **and** monoclonal purity **.96034 → .99530** |
-| SHM / lineage trees | *(default)* | `v_mutations`/`j_mutations` in germline coordinates, `+36 ms` per 100 k reads |
-| Monoclonal QC / cell-line purity | `--ec-mode amplicon --clonotype-key junction` | Jurkat **90 → 10** clonotypes, TRB purity **.98963 → .99990**, **reads unchanged at 14,531**, and **98.50 %** of them on the two published clones |
-| A targeted library that is deep | `--ec-mode amplicon` | quality-directed rescue at 12 subs / 50× — reaches the class the abundance model structurally cannot |
-| Bulk RNA-seq, where singletons are mostly real | `--ec-mode rnaseq` | the same rescue kept narrow (6 subs / 200×) |
-
-`--d-max-evalue` is a **recall/precision dial**, not a bug fix: the shipped 0.2 is deliberately the
-loosest band, because dropping two thirds of the D calls is the wrong default for a repertoire
-tool. `--ec-mode accurate` is `--min-junction-q 20` — it judges the one base that discriminates a
-clonotype from its parent on its **Phred score** rather than on abundance, which is a measurement
-the abundance model does not have.
-
-**Never: Every denoising mode MOVES reads onto a parent and never discards them** — the sum of
-`duplicate_count` is invariant across modes, and a clonotype with no qualifying parent keeps its
-reads and is reported as an orphan. That is not caution: on a polyclonal hypermutated repertoire a
-plain quality *filter* at the same threshold would strand **3.70 %** of all junction-bearing reads
-with no parent to inherit them. If the read total moves when you change `--ec-mode`, that is a
-defect — please report it.
-
-⚠ The modes are **off by default** (`fast` = arda's historical behaviour), because whether the far
-class they collapse is badly-sequenced SHM or error is not settled: on a hypermutated IGH
-repertoire `amplicon` removes 178 clonotypes carrying 179 reads, 177 of them singletons, and on the
-matched naive library it removes **zero**. Depth: [D segments](https://docs.isalgo.dev/arda/d_segments.html),
-[SHM](https://docs.isalgo.dev/arda/shm.html),
-[error correction](https://docs.isalgo.dev/arda/error_correction.html).
+- **Fast & scalable** — MMseqs2 search + a C++ projection step; on a TRA amplicon it
+  matches MiXCR's wall clock at **3.6× less CPU and 4.8× less RSS**
+  ([below](#performance)); multiprocessing and SLURM-friendly from small FASTA to large FASTQ.
+- **Embeddable** — `import arda; arda.annotate_sequences(...)`.
+- **Honest** — a D call is gated on an E-value that ships with it (`d_support`), a
+  germline allele with no derivable anchor is flagged rather than guessed, a junction
+  whose Cys104 anchor is not actually in the read is **not emitted**, and a `j_call`
+  requires J evidence rather than being inherited from the scaffold.
+- **Easy to install** — `pip install arda-mapper` (binary wheels ship the C++
+  extension); the `mmseqs` binary is fetched as a static build at runtime — no
+  conda. IgBLAST is fetched on first use the same way, and is only needed to
+  (re)build the reference DB or to run `arda igblast`, never for annotation.
 
 ## Performance
 
@@ -505,10 +458,11 @@ organism, and `junction_aa`/`cdr3_aa` match IgBLAST ~99% while satisfying the AI
 exactly. (GenBank also contains genomic/partial/non-productive entries that confuse both tools;
 those are excluded.)
 
-## Bulk RNA-seq mode
+## The three stages, in detail
 
-`arda rnaseq` is a recall-first pipeline for extracting the repertoire from bulk RNA-seq, where
-1–5% of reads are receptor-derived:
+The modes run these for you; run them separately when you want to inspect, replace, or shard one
+of them. `arda rnaseq` is a recall-first pipeline for extracting the repertoire from bulk RNA-seq,
+where 1–5% of reads are receptor-derived:
 
 ```bash
 arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv --report run.json
@@ -737,6 +691,20 @@ Never: Shard Stage 1 only: error correction compares a clonotype against its nei
 so running it per shard asks the question against a fraction of the evidence. See the
 [cluster guide](https://docs.isalgo.dev/arda/cluster.html).
 
+### A sample split across several FASTQs
+
+Lanes or chunks are **read groups** of one sample, not separate samples. `--r1`, `--r2` and `--id`
+are repeatable and matched by position (repeat an id to merge), or pass an nf-core-shaped
+`--samples sheet.tsv`. The result is byte-identical to the same reads concatenated, and the unit
+of parallel work becomes the read group — `arda cluster submit-samples` and `arda cluster plan`
+schedule one task each.
+
+```bash
+arda rnaseq --samples sheet.tsv -d out/                          # sample,fastq_1,fastq_2
+arda cluster submit-samples --samples sheet.tsv -d out/ --submit # SLURM, one task per read group
+```
+
+Full guide: [samples split across files](https://docs.isalgo.dev/arda/samples.html).
 ## Roadmap / TODO
 
 See [`ROADMAP.md`](ROADMAP.md) for the full list. Done: the V·J reference build across

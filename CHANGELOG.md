@@ -3,6 +3,34 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Docs: the modes first, multi-file samples demoted
+
+The navbar and the landing page led with "Samples split across files", a minor convenience, while
+the three things a reader actually picks between — `arda rnaseq`, `arda amplicon`, `arda cells` —
+were spread across a 540-line Usage page in the order they were written rather than the order they
+matter. Reordered throughout:
+
+- **`docs/usage.rst`** now opens with a three-row table of the modes and their one-liners, then
+  takes each in turn with its own benchmark numbers; the AIRR column list, the four optional
+  column flags, `arda annotate`/`arda markup` and the run-report fields follow. The cluster and QC
+  sections became pointers to the pages that own them instead of second copies.
+- **`README.md`**: `## The three modes` moved up to sit directly under `## Install`, ahead of the
+  CLI listing and the `## Why` pitch.
+- **Multi-file samples** are one short block under `## Pipeline integration` in the README and one
+  section under "At scale" in the docs nav — still searchable, no longer the fourth thing on the
+  landing page. `docs/samples.rst` is 120 lines, down from 201.
+- **`arda cells` was documented wrong.** The README's mode table still said
+  `arda singlecell — reserved, not implemented`, and the new mode rows in `docs/usage.rst` and
+  `docs/examples.rst` gave it a `--r1`/`--r2` signature it does not have. Its input is **one UMI
+  consensus per molecule** with the cell barcode in the record name — what `migec assemble` writes
+  — and arda does no demultiplexing, no barcode correction, no UMI collapse and no cell calling.
+  Fixed in all three, with the measured Cell Ranger comparison (98.2 % of 943 `sc5p_v2_hs_PBMC_1k`
+  VDJ-T CDR3s appear verbatim inside an arda contig) where the claim belongs.
+
+No behaviour change; every measured figure is unmoved.
+
 ## 2.23.0
 
 ### The first run against a fresh reference is no longer the odd one out

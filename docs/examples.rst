@@ -26,8 +26,6 @@ levers do not compose, and each is a loss in the other's regime, so do not hand-
    # targeted RepSeq / 5'RACE amplicon: nearly every read is a receptor
    arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz --out-prefix PT01 -d results/ --threads 16
 
-   # 10x-style single cell: per-cell contigs, chain pairing, doublets
-   arda cells    --r1 R1.fq.gz --r2 R2.fq.gz --out-prefix PT01 -d results/ --threads 16
 
 Four files come out, and the paths are echoed on **stdout** (one per line) while progress goes to
 stderr — so ``$(arda rnaseq ... | head -1)`` is a usable idiom in a shell script:
@@ -41,41 +39,15 @@ stderr — so ``$(arda rnaseq ... | head -1)`` is a usable idiom in a shell scri
 
 On the 1,320-read test fixture that is ``453/1,320 reads mapped (34.32 %)`` and 49 clonotypes.
 
-A sample delivered as several FASTQ pairs
------------------------------------------
-
-Lanes and in-house chunks are **read groups** of one sample, and one sample gives one clonotype
-table. Repeat ``--r1``/``--r2`` and name the sample with ``--id`` — the grouping is declared,
-never guessed from filenames:
+Single cell is a different entry point, because it starts from **UMI consensus per molecule**
+rather than raw reads — demultiplexing, barcode correction and UMI collapse belong upstream:
 
 .. code-block:: bash
 
-   arda rnaseq -d results/ --threads 16 \
-       --r1 PT01_S1_L001_R1_001.fastq.gz --r2 PT01_S1_L001_R2_001.fastq.gz --id PT01 \
-       --r1 PT01_S1_L002_R1_001.fastq.gz --r2 PT01_S1_L002_R2_001.fastq.gz --id PT01
+   arda cells asm/PBMC.consensus.fq.gz -p results/PBMC --cells ref/PBMC.cells.tsv --plot svg
 
-Do **not** ``cat`` them first: arda maps each read group and concatenates after Stage 1, which is
-byte-identical to the same reads in one file and skips a full copy of the data. :doc:`samples` has
-the sheet form, the ordering rule and the one-worker-per-read-group recipe.
-
-A cohort from one sheet
------------------------
-
-.. code-block:: bash
-
-   cat > sheet.tsv <<'SHEET'
-   sample	fastq_1	fastq_2
-   PT01	PT01_S1_L001_R1_001.fastq.gz	PT01_S1_L001_R2_001.fastq.gz
-   PT01	PT01_S1_L002_R1_001.fastq.gz	PT01_S1_L002_R2_001.fastq.gz
-   PT02	PT02_S2_L001_R1_001.fastq.gz	PT02_S2_L001_R2_001.fastq.gz
-   SHEET
-
-   arda rnaseq --samples sheet.tsv -d results/ --threads 16      # one box, samples in turn
-   arda cluster submit-samples --samples sheet.tsv --work-dir work/ -d results/ \
-       --regime rnaseq --threads 16 --partition medium --submit  # SLURM, one task per read group
-
-The columns are nf-core's, so an existing nf-core samplesheet works unmodified. Repeated
-``sample`` values merge in row order.
+The upstream ``migec`` commands, what each output table holds and how to read the QC plots:
+:doc:`singlecell`.
 
 Annotate sequences you already have
 -----------------------------------
@@ -125,6 +97,31 @@ The library entry point takes sequences and returns AIRR record dicts — no fil
 :func:`arda.rnaseq.pipeline.run` — ``annotate_sequences`` holds its batch in memory.
 
 .. _examples-analysis:
+
+A cohort from one sheet, and samples split across lanes
+-------------------------------------------------------
+
+Lanes and in-house chunks are **read groups** of one sample: one sample still gives one clonotype
+table. Repeat ``--r1``/``--r2`` and name the sample with ``--id``, or list them in a sheet whose
+columns are nf-core's, so an existing nf-core samplesheet works unmodified:
+
+.. code-block:: bash
+
+   cat > sheet.tsv <<'SHEET'
+   sample	fastq_1	fastq_2
+   PT01	PT01_S1_L001_R1_001.fastq.gz	PT01_S1_L001_R2_001.fastq.gz
+   PT01	PT01_S1_L002_R1_001.fastq.gz	PT01_S1_L002_R2_001.fastq.gz
+   PT02	PT02_S2_L001_R1_001.fastq.gz	PT02_S2_L001_R2_001.fastq.gz
+   SHEET
+
+   arda rnaseq --samples sheet.tsv -d results/ --threads 16      # one box, samples in turn
+   arda cluster submit-samples --samples sheet.tsv --work-dir work/ -d results/ \
+       --regime rnaseq --threads 16 --partition medium --submit  # SLURM, one task per read group
+
+Repeated ``sample`` values merge in row order. Do **not** ``cat`` the lanes first: arda maps each
+read group and concatenates after Stage 1, which is byte-identical to the same reads in one file
+and skips a full copy of the data. :doc:`samples` has the command-line form, the ordering rule and
+the one-worker-per-read-group recipe.
 
 Analysing the clonotype table
 -----------------------------

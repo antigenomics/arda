@@ -1,5 +1,7 @@
-Single cell: per-cell contigs, chain pairing and doublets
-=========================================================
+Single cell
+===========
+
+Per-cell contigs with no germline reference, chain pairing, and the doublets called.
 
 ``arda cells`` takes one UMI consensus per molecule with the cell barcode in the record name,
 assembles each cell's contigs **with no germline reference**, annotates them, pairs the chains and
