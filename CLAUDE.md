@@ -238,6 +238,16 @@ still exposes them individually for A/B work.
      so **bump it as part of the release checklist** or it silently rots again.
   7. The README showed `arda slurm` for a paired RNA-seq workflow, which the code itself warns is
      "Not for paired RNA-seq". It is `arda cluster submit`.
+  8. **The docs nav is four captioned toctrees, not one flat list**, rendered whole in the
+     sidebar by `docs/_templates/site-nav.html` (pydata's stock `sidebar-nav-bs` shows only the
+     CHILDREN of the current top-level page, and every page here is a top-level sibling, so it
+     drew an empty "Section Navigation"). `conf.py` parses `release` out of
+     `src/arda/__init__.py` — the literal that used to sit there said 2.10.0 for twelve releases.
+     Same layout as seqtree and mhcmatch; copy from them rather than inventing a third.
+  9. **`docs/examples.rst` is RUN before it is written.** Every command and every polars snippet
+     on that page was executed against `tests/data/rnaseq_real`, and the outputs shown are that
+     fixture's. A recipe page that was never run is how `peak_rss_mb_max` vs `peak_rss_mb` and a
+     dropped `input` row went unnoticed — both were found by running it.
   ✅ **Verified good, do not "fix":** docs build with **zero** warnings (`make -C docs html`);
   IgBLAST auto-fetch works and ships all five `*_gl.aux` J-frame tables; the `[rnaseq]`-extra trap
   is gone (seqtree is core).
