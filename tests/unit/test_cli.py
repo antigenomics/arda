@@ -182,3 +182,73 @@ def test_the_two_version_literals_agree():
     assert m, "no version in pyproject.toml"
     assert m.group(1) == __version__, (
         f"pyproject.toml says {m.group(1)}, arda.__version__ says {__version__}")
+
+
+# ------------------------------------------------- read-group scheduling surface
+#
+# `cluster plan` and `cluster submit-samples` are how a foreign scheduler drives arda at READ
+# GROUP granularity. `cluster.plan` and the script renderer are unit-tested; the CLI wiring
+# around them -- the regime check, sheet loading, and the recipe it prints -- was not, and that
+# wiring is where a typo reaches a stakeholder's job array.
+
+
+@pytest.fixture
+def two_sample_sheet(tmp_path):
+    (tmp_path / "a_1.fq").write_text("@r\nACGT\n+\nIIII\n")
+    (tmp_path / "a_2.fq").write_text("@r\nACGT\n+\nIIII\n")
+    (tmp_path / "b_1.fq").write_text("@r\nACGT\n+\nIIII\n")
+    (tmp_path / "b_2.fq").write_text("@r\nACGT\n+\nIIII\n")
+    sheet = tmp_path / "sheet.tsv"
+    sheet.write_text("sample\tfastq_1\tfastq_2\n"
+                     "A\ta_1.fq\ta_2.fq\n"
+                     "A\tb_1.fq\tb_2.fq\n"
+                     "B\tb_1.fq\tb_2.fq\n")
+    return sheet
+
+
+def test_cluster_plan_writes_both_manifests_and_prints_the_flags_filled_in(two_sample_sheet,
+                                                                          tmp_path):
+    """Never: the printed recipe carries REAL flags, not `<flags>`.
+
+    `arda rnaseq` wires Stage 1 to Stage 2 itself -- `--ec-mode rnaseq` reads a column Stage 1
+    writes only under `--junction-quality`. A scheduler running the two as separate jobs cannot
+    know that, so `plan` prints both halves resolved from the regime.
+    """
+    work = tmp_path / "work"
+    res = runner.invoke(app, ["cluster", "plan", "--samples", str(two_sample_sheet),
+                              "--work-dir", str(work), "-d", str(tmp_path / "res"),
+                              "--regime", "rnaseq", "--threads", "16"])
+    assert res.exit_code == 0, res.output
+    rg = (work / "readgroups.tsv").read_text().splitlines()
+    assert rg[0].split("\t") == ["sample", "read_group", "r1", "r2", "part_airr", "part_report"]
+    assert len(rg) == 4                                   # header + 3 read groups
+    assert [ln.split("\t")[0] for ln in rg[1:]] == ["A", "A", "B"]
+    assert [ln.split("\t")[1] for ln in rg[1:]] == ["0", "1", "0"]   # per-sample, from zero
+    assert (work / "samples.tsv").read_text().splitlines()[1].startswith("A\t")
+    assert "2 sample(s), 3 read group(s)" in res.output
+    assert "--junction-quality" in res.output and "--ec-mode rnaseq" in res.output
+    assert "<flags>" not in res.output
+
+
+def test_cluster_plan_refuses_a_regime_it_has_no_preset_for(two_sample_sheet, tmp_path):
+    res = runner.invoke(app, ["cluster", "plan", "--samples", str(two_sample_sheet),
+                              "--work-dir", str(tmp_path / "w"), "--regime", "bulk"])
+    assert res.exit_code != 0
+    assert "rnaseq" in res.output and "amplicon" in res.output
+
+
+def test_cluster_submit_samples_renders_two_arrays_without_submitting(two_sample_sheet, tmp_path):
+    """No `--submit`, no sbatch: the script is written and the sizes come from the sheet."""
+    work = tmp_path / "work"
+    res = runner.invoke(app, ["cluster", "submit-samples", "--samples", str(two_sample_sheet),
+                              "--work-dir", str(work), "-d", str(tmp_path / "res"),
+                              "--regime", "amplicon", "--threads", "8",
+                              "--partition", "medium"])
+    assert res.exit_code == 0, res.output
+    script = (work / "submit.sh").read_text()
+    assert "--array=0-2" in script                        # 3 read groups
+    assert "--array=0-1" in script                        # 2 samples
+    assert "--dependency=afterok:$MAP_JID" in script      # not aftercorr: one sample, many tasks
+    assert "--partition=medium" in script
+    assert "arda map" in script and "arda cluster reduce" in script
+    assert "IFS=" not in script and "cut -f3" in script   # see render_samples_submit_script
