@@ -135,7 +135,12 @@ Releases go out as `release/<version>` → PR → CI green → merge → GitHub 
   `--two-pass`/`--fast-segments` to one-pass on every plain `pip install` (correct output, exit 0,
   none of the speed). `_cached_segment_db` now self-heals under the build lock. When adding another
   derived artifact, decide up front whether it is packed by `scripts/pack_reference.sh` or
-  regenerated, and make the missing case **loud**.
+  regenerated, and make the missing case **loud**. ⚠ And a self-heal that writes a file the
+  in-memory reference was loaded from is only half a fix: 2.23.0 found `segments.markup.tsv` being
+  generated *after* `load_reference` had read `entries`, so the run that generated it resolved
+  every segment target to `None` — 268 of 453 AIRR rows different from run #2, `fast_fraction`
+  0.08 vs 0.1736, the `v_only_on_segment` counter absent, exit 0. `_cached_segment_db` now
+  re-reads it into the live `Reference` before returning.
 - **Never: Existence is not a readiness gate.** This class has bitten four times: `mmseqs createdb`
   creates `db` on its first byte (a concurrent run then reads an empty index and reports
   `0/N reads mapped`, exit 0); `fetch_database`'s `shutil.move` across a filesystem boundary
@@ -162,6 +167,12 @@ Releases go out as `release/<version>` → PR → CI green → merge → GitHub 
   naming a package PyPI does not have is a hard resolution failure).
 - **Nextflow.** `conda` must be inside `withName:`, not process scope, or NF silently builds a
   different arda *and* a different aligner. Pin `ARDA_MMSEQS`.
+- **Never: A generated script names the arda that generated it, not `arda`.** Every renderer in
+  `cluster.py` exports `ARDA` (absolute, NOT symlink-resolved — a module system points a stable
+  name at the current build on purpose) and calls `"$ARDA"`; `cluster plan` prints the same
+  resolved path. Left to `PATH`, a real cluster ran the whole map array against one version and
+  then failed the reduce array with `No such option: --ec-mode` against 2.19.0 — the map flags
+  happened to exist there, the reduce flag did not.
 
 ## The regime rule — name the config, always
 

@@ -3,6 +3,44 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.23.0
+
+### The first run against a fresh reference is no longer the odd one out
+
+`segments.fasta` + `segments.markup.tsv` are generated on first use, not shipped — and they were
+generated on the map path, *after* `load_reference` had already read the reference into memory. So
+the run that generated them carried a reference that knew nothing about them: `segment_j_call`
+handed raw target names to the combination lookup, `_cannot_reach_cys104` found no CDR3 markup on
+any V segment, and `--v-only-on-segment` routed nothing. Every later run was fine.
+
+Measured on `tests/data/rnaseq_real` (453 Stage-1 AIRR rows, `arda amplicon`, both segment
+artifacts removed first): the generating run differed from the next run on **268 of 453** rows,
+reported `fast_fraction` **0.08** against **0.1736**, and omitted the `v_only_on_segment` counter
+(**283** reads) from its report entirely. Exit 0 throughout, output still correct — the only
+symptom was that run #1 and run #2 disagreed, which is why it survived twelve releases. It hit
+every fresh `pip install`, every new container, and every CI checkout, since neither artifact is
+committed.
+
+`mapper._cached_segment_db` now re-reads the markup into the live reference before it returns, so
+whatever is on disk when it returns is what the run uses, however it got there — including the
+case where the fasta survived and its markup sibling did not. `Reference.load_segment_markup` is
+the public entry point.
+
+### Generated cluster scripts pin the arda binary, not just mmseqs
+
+`arda cluster submit`, `cluster submit-samples`, `slurm` and `cluster plan` all emitted bare `arda`
+and left resolution to the worker's PATH. On a real cluster the map array ran to completion and the
+reduce array then died with `No such option: --ec-mode`, because the workers resolved `arda` to
+2.19.0 — the map flags happened to exist in that version, the reduce flag did not. A sheet's worth
+of Stage-1 AIRR, no clonotypes, and an error naming a flag rather than a version.
+
+Every generated script now `export`s `ARDA` to the absolute path of the arda that rendered it and
+calls `"$ARDA"`, exactly as it already did for `ARDA_MMSEQS`; `arda cluster plan` prints the same
+resolved path in its command templates, which is where it matters most because a foreign scheduler
+shares even less of this shell's environment. The path is absolute but deliberately **not**
+symlink-resolved: an HPC module system points a stable name at the current build on purpose. Pass
+`arda_bin=` to any renderer, or `arda.cluster.arda_binary()` to ask what it would choose.
+
 ## 2.22.1
 
 ### Documentation: a site you can navigate, and recipes you can paste
