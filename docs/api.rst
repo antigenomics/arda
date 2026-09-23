@@ -101,6 +101,29 @@ Bulk RNA-seq
    :undoc-members:
    :show-inheritance:
 
+Single cell
+-----------
+
+.. automodule:: arda.cell
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.singlecell
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.partition
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: arda.scplot
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Run QC and logging
 ------------------
 

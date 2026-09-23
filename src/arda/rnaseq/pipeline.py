@@ -133,11 +133,11 @@ def write_stats_for(out_dir: str | Path, out_prefix: str, *, organism: str = "hu
                     say=None) -> int:
     """Write ``<prefix>.stats.tsv`` from the run's own artifacts. Returns the row count.
 
-    ⛔ Written unconditionally, not behind a flag. It reads only files that already exist and
+    Never: Written unconditionally, not behind a flag. It reads only files that already exist and
     costs one pass over each; the alternative is that the numbers an operator needs to decide
     whether a sample is usable exist only if they knew to ask for them BEFORE the run.
 
-    ⛔ Called AFTER the report JSON is final. :func:`run` rewrites it with the whole-run wall time
+    Never: Called AFTER the report JSON is final. :func:`run` rewrites it with the whole-run wall time
     once Stages 2-3 return, so collecting inside :func:`finish` would put the Stage-2/3 time in
     the ``run`` scope under the name ``wall_seconds`` -- a wrong number that looks like a right one.
     """
@@ -165,6 +165,8 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
         clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
         shm: str = "framework",
         complete_junction_nt: int = 0,
+        cell_from: str = "",
+        cell_regex: str | None = None,
         echo=None) -> dict:
     """Single-node map -> assemble -> correct."""
     from .map import map_rnaseq
@@ -181,12 +183,13 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
                       kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
                       fast_segments=fast_segments, prefilter=prefilter,
                       segment_only_v=segment_only_v, indel_rescue=indel_rescue,
-                      # ⛔ The quality gate reads a column Stage 1 only writes when asked. In `run`
+                      # Never: The quality gate reads a column Stage 1 only writes when asked. In `run`
                       # both stages happen in one call, so the user cannot wire that up by hand --
                       # asking for the gate has to imply producing its input, or `--ec-mode
                       # accurate` would silently do nothing here.
                       with_junction_quality=(ec_mode != "fast" or min_junction_q is not None),
-                      shm=shm, complete_junction_nt=complete_junction_nt)
+                      shm=shm, complete_junction_nt=complete_junction_nt,
+                      cell_from=cell_from, cell_regex=cell_regex)
 
     report = finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,

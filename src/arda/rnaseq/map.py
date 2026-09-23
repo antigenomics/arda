@@ -57,11 +57,17 @@ JUNCTION_QUALITY = "junction_quality"
 #: evidence of a germline the reference does not carry. ``arda stats`` reads them.
 MUTATION_QUALITY = ("v_mutation_quality", "j_mutation_quality")
 
+#: AIRR Rearrangement column written by ``--cell-from`` / ``--cell-regex``: the cell barcode lifted
+#: out of ``sequence_id`` by :mod:`arda.cell`. arda does no barcode demultiplexing and no barcode
+#: correction -- the upstream tool did both, and put the answer in the record NAME because that is
+#: what survives ``dnaio`` dropping the FASTQ comment. Empty when the identifier does not parse.
+CELL_ID = "cell_id"
+
 
 def mutation_quality(rec: dict, qual: str) -> dict[str, str]:
     """Per-mutation Phred scores for ``rec["v_mutations"]`` / ``rec["j_mutations"]``.
 
-    ⛔ **Driven by the mutation list that was EMITTED, not by re-deriving one.** Walking the
+    **Never: Driven by the mutation list that was EMITTED, not by re-deriving one.** Walking the
     alignment and scoring every mismatch reproduces what ``_markup.segment_cigars`` found -- which
     since 2.16.0 is a SUPERSET of what the columns carry, because ``arda.shm`` then drops the
     junction-internal entries (measured on this repo's own fixture: 25 of 242 V rows had more
@@ -70,7 +76,7 @@ def mutation_quality(rec: dict, qual: str) -> dict[str, str]:
     each emitted entry looks its own position up; an entry whose position the alignment does not
     cover yields ``""`` for the whole segment rather than a short, misaligned list.
 
-    ⛔ Quality is oriented like the READ AS SUBMITTED; the alignment and every coordinate here are
+    Never: Quality is oriented like the READ AS SUBMITTED; the alignment and every coordinate here are
     on the coding strand. Same reversal rule as :func:`junction_quality`.
 
     ``ponytail:`` a Python pass over the alignment, not a second output from the C++ walk that
@@ -131,7 +137,7 @@ def mutation_quality(rec: dict, qual: str) -> dict[str, str]:
 def junction_quality(rec: dict, qual: str) -> str:
     """The read's Phred+33 substring covering ``rec["junction"]``, or ``""``.
 
-    ⛔ The quality string belongs to the read AS SUBMITTED, while the junction and every coordinate
+    Never: The quality string belongs to the read AS SUBMITTED, while the junction and every coordinate
     in the record are on the CODING strand. For ``rev_comp == "T"`` the two run in opposite
     directions, so the quality is reversed (not complemented -- a Phred char has no complement)
     before slicing. Getting that backwards yields a string of the right LENGTH holding the wrong
@@ -178,6 +184,40 @@ def _constant_only(rec: dict) -> bool:
 
 def _fragment_id(sequence_id: str) -> str:
     return sequence_id[:-2] if sequence_id.endswith(("/1", "/2")) else sequence_id
+
+
+def _cell_sample(r1: str | Path, limit: int | None, n: int = 4096) -> list[str]:
+    """Identifiers for ``--cell-from auto`` to sniff, RESERVOIR-sampled over the whole file.
+
+    Never the first `n`. migec writes its output in barcode order, so the head of a file shares
+    its leading bases -- the same trap that reported a 6.45 nt effective UMI length on a 9 nt
+    barcode when the first 4,000 consensuses were taken as a sample.
+
+    Never: The format is detected, never sniffed per line. A FASTQ QUALITY line can begin with `>`
+    (Phred 29) or `@` (Phred 31), so "starts with > or @" misreads quality strings as headers and
+    feeds `sniff` garbage -- which shows up as a refusal to auto-detect, not as an error.
+    """
+    import random
+
+    fastq = seqio.detect_format(r1) == "fastq"
+    rng = random.Random(0)
+    keep: list[str] = []
+    seen = 0
+    with seqio.open_text(r1) as fh:
+        for i, line in enumerate(fh):
+            if i % 4 if fastq else line[:1] != ">":
+                continue
+            if limit is not None and seen >= limit:
+                break
+            sid = _fragment_id(line[1:].split(None, 1)[0].strip())
+            if len(keep) < n:
+                keep.append(sid)
+            else:
+                j = rng.randrange(seen + 1)
+                if j < n:
+                    keep[j] = sid
+            seen += 1
+    return keep
 
 
 def _apply_constant_rule(records: list[dict]) -> tuple[list[dict], int, int]:
@@ -472,7 +512,7 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool,
         if "does not match" in msg:
             raise ValueError(f"R1/R2 mate mismatch: {msg}. "
                              f"The FASTQs are not in the same order.") from exc
-        # ⛔ Only claim a truncation when dnaio actually reported one. It raises the same exception
+        # Never: Only claim a truncation when dnaio actually reported one. It raises the same exception
         # type for a malformed RECORD, and a real example from this project's own data is a `+`
         # line that kept the original SRA description after the `@` line was renamed to carry a
         # mate suffix (`@SRR5233635.1/2` against `+SRR5233635.1 1 length=151`). Calling that "one
@@ -562,6 +602,8 @@ def map_rnaseq(
     with_mutation_quality: bool = False,
     shm: str = "framework",
     complete_junction_nt: int = 0,
+    cell_from: str = "",
+    cell_regex: str | None = None,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -612,7 +654,7 @@ def map_rnaseq(
             :mod:`arda.annotate.shortlist`. Requires ``segments.fasta`` (written by
             ``arda build-index``); silently falls back to the one-pass search when it is absent.
 
-            ⛔ **The win is set by whether reads SPAN V INTO J, not by the library type**, and the
+            **Never: The win is set by whether reads SPAN V INTO J, not by the library type**, and the
             predictor is ``fast_fraction`` in the report. Measured: 3.51× on a TCR amplicon (fast
             path 85 %), 2.96× on a 100 %-receptor human TRB set (95.6 %), 2.64× on mouse TRA
             (89 %) — but **1.03× slower** on the human IGH leg of that *same* 100 %-receptor
@@ -684,10 +726,17 @@ def map_rnaseq(
     _len_sum = 0
     # Every extra goes at the END, in a fixed order, so a consumer reading the shipped set by
     # position is unaffected whichever combination is on.
+    # Never: `cell_id` goes LAST, after `FULL_COLUMNS`, for the same reason: prepending it would move
+    # `junction_quality`'s position whenever both are on.
+    cell_of = None
+    if cell_from or cell_regex:
+        from ..cell import make_parser
+        cell_of = make_parser(cell_from or "auto", cell_regex, sample=_cell_sample(r1, limit))
     extra_cols: tuple[str, ...] = (
         ((JUNCTION_QUALITY,) if with_junction_quality else ())
         + (MUTATION_QUALITY if with_mutation_quality else ())
-        + (FULL_COLUMNS if shm == "both" else ()))
+        + (FULL_COLUMNS if shm == "both" else ())
+        + ((CELL_ID,) if cell_of is not None else ()))
     logger.info("map: %s%s -> %s | %d threads, chunk %d, min_score %g",
                 r1, f" + {r2}" if r2 else "", output, threads, chunk_size, min_score)
     try:
@@ -729,6 +778,11 @@ def map_rnaseq(
                 if with_mutation_quality:
                     for r in keep:
                         r.update(mutation_quality(r, quals.get(r["sequence_id"], "")))
+                if cell_of is not None:
+                    for r in keep:
+                        # `_fragment_id` first: a paired read carries arda's own /1 or /2 suffix,
+                        # which is not part of the upstream tool's identifier.
+                        r[CELL_ID] = cell_of(_fragment_id(r["sequence_id"])) or ""
                 fh.write(format_rows(keep, extra_cols))
                 report.mapped_reads += len(keep)
                 for r in keep:

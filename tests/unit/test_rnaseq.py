@@ -278,6 +278,16 @@ def test_correct_parent_child_collapse(tmp_path):
     rm = pl.read_csv(tmp_path / "map.tsv", separator="\t", infer_schema_length=0)
     assert rm.height == 507 and set(rm["junction"].unique().to_list()) == {P, U}
 
+    # Never: `junction` alone is not the clonotype key -- `correct` keys on
+    # `(locus, v_call, j_call, junction)` -- so `--read-map` carries `clone_row`, the row index
+    # into clones.tsv, which is what actually closes a read-to-clonotype join.
+    assert rm.columns == ["sequence_id", "locus", "junction", "clone_row"]
+    assert set(rm["locus"].unique().to_list()) == {"TRB"}
+    from collections import Counter
+    per_row = Counter(int(v) for v in rm["clone_row"].to_list())
+    for i, row in enumerate(out.iter_rows(named=True)):
+        assert per_row[i] == int(row["duplicate_count"]), f"clone_row {i} does not index clones.tsv"
+
 
 def test_correct_drops_incomplete_junctions(tmp_path):
     """A read that stops short of [FW]118 yields a *prefix* of a junction, not a clonotype.
@@ -575,7 +585,7 @@ def test_greedy_contigs_reconstructs_a_split_cdr3():
                               max_ext_past_cdr3=130, scan_cap=400, min_v=70)
     assert contigs, "the tiling reads must assemble into at least one contig"
     assert any(true in seq for seq, _, _ in contigs), "the full V(D)J sequence was not reconstructed"
-    # ⛔ Every member's span must be its own read, at the offset the contig actually places it --
+    # Never: Every member's span must be its own read, at the offset the contig actually places it --
     # attribution is gated on those spans, so a wrong one silently credits the wrong read.
     for seq, members, spans in contigs:
         assert len(members) == len(spans)

@@ -3,6 +3,117 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### `arda cells` — reference-free per-cell contigs, chain pairing, doublets and QC
+
+One command over a per-molecule UMI consensus whose names carry the cell barcode: assemble each
+cell's contigs with **no germline reference**, annotate them, rank the chains within each cell,
+and write the diagnostics a droplet run is read through. `docs/singlecell.rst`,
+`notebooks/singlecell_qc.py`.
+
+**The premise was measured before the method was written.** Reads of one `(cell, UMI)` are
+co-terminal in 5' droplet chemistry, so a molecule's consensus covers one window of the transcript
+however deep it is — at `migec assemble --min-reads 30` the mean is 204 nt against a ~508 nt
+amplicon, and only 16.5% of molecules carry a junction at all. But *different molecules start at
+different positions*, so a cell's molecules tile it: **99.90% of the 25-mers of Cell Ranger's 943
+filtered contigs are already in their own cell's raw molecules**, and 942 of 943 CDR3 nucleotide
+sequences appear verbatim. The contig was in the data.
+
+Measured against Cell Ranger on `sc5p_v2_hs_PBMC_1k` VDJ-T, 479 cells and 249,635 molecules in
+23 s: **933/943 CDR3s recovered verbatim (0.9894), TRA 454/464, TRB 479/479**, k-mer coverage
+0.9759, chain recall 0.9777, contig N50 536 nt.
+
+**Never: Phase a component before consensing it or a doublet is invisible by construction.** Two
+chains of one locus share their constant region, so the overlap layout puts them in one component
+and the column consensus averages their junctions into a third sequence — on a synthetic cell
+built from two TRB receptors, one 918 nt contig with no callable junction. Worth 0.9820 → 0.9894
+on real data.
+
+**Never: First-fit greedy phasing is not good enough.** It let a molecule covering two informative
+columns fix a profile the deep molecules then disagreed with, and one component splintered into
+four contigs, none with a callable junction. Two seeds refined against the whole assignment
+converge instead.
+
+**Never: The extra-chain gate is PRODUCTIVITY first, count second.** Of the extra chains Cell Ranger
+agrees with, 60/60 are productive; of those it does not, 20/128 are. An extra chain on exactly one
+molecule is contamination 96-97% of the time — bimodal, not a tail. `--reference` emits the
+precision/recall sweep the defaults were chosen from rather than baking them in.
+
+**Never: `doublet_candidate` on the heavy slot only.** One TRA and one TRB is a paired T cell; a
+second light chain is allelic inclusion and is real.
+
+**Never: Adapter trim and depth weighting are load-bearing and were each measured by removal**:
+CDR3-exact 0.9618 untrimmed, 0.967 unweighted, against 0.9894.
+
+### `arda.partition` — external clustering validation
+
+The homogeneity-parsimony trade-off ([arXiv:2607.20799](https://arxiv.org/abs/2607.20799),
+reference implementation [qimmuno/clustereval](https://github.com/qimmuno/clustereval)): three
+families of two scores each, one punishing merging and one punishing splitting. Implemented
+directly rather than depended on — sixty lines of counting, no numpy or scikit-learn.
+
+**Never: Report both scores of a family or neither.** Either alone is trivially maximised — homogeneity
+by one cluster per item, parsimony by one cluster. **Never: Parsimony is not completeness**: it
+normalises by `log N - H(C)`, which depends only on the reference, so two methods scored against
+one reference share the denominator. Never: Read `classes_singleton` first: an unexpanded repertoire is
+476 clonotypes over 479 cells and has almost no clustering to agree about.
+
+### `find_knee` — Kneedle at its global maximum, and a floor under it
+
+**Never: Kneedle's published selection rule is degenerate without the smoothing spline the paper
+specifies.** On a 136,032-barcode 10x library the unsmoothed difference curve has **287 local
+maxima and the walk stops at rank 15 (1,057 molecules)** — fifteen cells. Smoothed over a 0.01
+log-rank window it gives rank 358, the global maximum's 376 to within 5%; over-smoothing drifts it
+off again. The global maximum needs no smoothing parameter.
+
+**Never: A global maximum always exists, so it is guarded.** The knee is refused below ten times the
+mean molecules per barcode — one order of magnitude, the unit a log-log curve is read in. The mean
+alone was tried: an ambient-only 1-3 molecule library is a step curve whose corner is 3 against a
+mean of 2.0 (1.5x, passes), where the real library is 308 against 3.38 (91x). migec's `refine`
+computes the same rule in C++ and the two agree exactly: rank 376, 308 molecules.
+
+### Three guards on the migec handoff, and a figure that no longer kills the run
+
+All three guards cover failure modes that **succeed** rather than fail, which is why they are
+refusals and not warnings.
+
+**Never: an unfiltered droplet library is refused.** Without `--cells`, `assemble_cells` checks
+the molecules-per-barcode curve and refuses when it has a knee well below the barcode count. On
+`sc5p_v2_hs_PBMC_1k` the knee is at rank 376 of 136,032 observed barcodes: 99.7% of what would be
+assembled is ambient RNA, and every ambient droplet that happened to carry two molecules ends up
+in `.cells.tsv` and the chain table looking exactly like a cell. A plate or combinatorial library
+has no ambient tail, reports no knee, and is never refused.
+
+**Never: two samples in one consensus file are refused.** `read_molecules` groups on the cell
+barcode alone, and droplet barcodes come from a fixed 737,280-entry whitelist — so two samples
+share barcodes by design and a concatenated pair of consensus FASTQs merges two cells into one,
+which reads downstream as an ordinary doublet. `arda.cell.make_parser` gained `with_sample=True`
+so the sample id can be checked; only the `migec` dialect carries one.
+
+**Never: a bulk consensus is refused rather than assembling nothing.** `--cell-from auto` already
+refuses when no dialect fits, but a *named* dialect that parses the names and finds no cell in
+them did not: a bulk migec consensus is `<sample>.<umi>`, which `parse_migec` reads happily with
+`cell=None`, and `arda cells --cell-from migec` then succeeded having found zero cells. The
+message names `arda rnaseq`.
+
+**Never: a figure never kills the run.** `scplot.draw` ran gnuplot with `check=True`, so one
+refused panel discarded the other four panels, the report and the exit code. It met its first
+real case immediately: `doublet_scatter` filters every cell without a second heavy chain to
+`1/0`, an empty log-scale plot is "x range is invalid", and a library with **no** doublets in it
+therefore crashed where a dirty one drew. Each panel is now attempted independently and a failure
+is a warning naming the panel and gnuplot's own last line. gnuplot opens its output before it
+evaluates the plot, so the zero-byte file it leaves is unlinked -- an empty `.svg` in the output
+directory reads as a figure that exists.
+
+**Note: a process pool over cells was tried and reverted.** The per-cell assembly is single-
+threaded Python at ~54 ms per cell and cells are independent, so a pool is the obvious upgrade —
+but on macOS the default `spawn` start method re-imports the caller's `__main__` in every worker,
+so a library function that opens a pool crashes any script, notebook or test module without an
+`if __name__ == "__main__":` guard, and `forkserver`, which does not touch `__main__`, fails to
+start here at all. Minutes saved on a 10k-cell library against a crash for every library caller.
+The upgrade path is the assembler in C++.
+
 ## 2.20.0
 
 ### `arda stats` — run QC as one long-format TSV, written by every mode run
@@ -21,14 +132,14 @@ Four columns, `scope` / `key` / `metric` / `value`, one value per cell:
 | `v_gene` / `j_gene` | `TRBV19` | reads and clonotypes per germline gene |
 | `allele_candidate` | `TRBV19*01:G45A` | a recurrent, high-quality V mutation, with frequency and mean Phred |
 
-⛔ **Long, not wide.** The metric set differs per scope — a gene has no junction length, a chain
+**Never: Long, not wide.** The metric set differs per scope — a gene has no junction length, a chain
 has no allele frequency — so a wide table is mostly empty cells. Long format is what `grep`, `join`
 and a per-metric plot across samples want.
 
-⛔ **A metric with no input is omitted, never emitted as 0.** A run without `--junction-quality`
+**Never: A metric with no input is omitted, never emitted as 0.** A run without `--junction-quality`
 has no `junction_quality_mean` row rather than a zero that reads like a terrible library.
 
-⛔ **Truncation, a stop codon and an out-of-frame junction are counted separately.** `_COMPLETE`
+**Never: Truncation, a stop codon and an out-of-frame junction are counted separately.** `_COMPLETE`
 folds all three together because Stage 2 only needs the conjunction; a QC table that did the same
 would attribute a short read to biology.
 
@@ -48,7 +159,7 @@ actually maps to, rather than a hand-kept list that drifts from it.
 `v_mutations` / `j_mutations`, comma-joined, one-for-one and in the same order. Off by default
 (non-schema columns) and refused with `--reconstruct`, exactly like `--junction-quality`.
 
-⛔ **Driven by the mutation list that was emitted, not by re-deriving one.** Walking the alignment
+**Never: Driven by the mutation list that was emitted, not by re-deriving one.** Walking the alignment
 and scoring every mismatch reproduces what `_markup.segment_cigars` found, which since 2.16.0 is a
 **superset** of what the columns carry — `arda.shm` then drops the junction-internal entries. On
 this repo's own real-read fixture that is 25 of 242 V rows, and the result would line up in length
@@ -56,7 +167,7 @@ only by accident while pairing entry *i* with a different base's score. So the w
 *germline position → query position* and each emitted entry looks its own position up; an entry the
 alignment does not cover yields `""` for the whole segment rather than a short, misaligned list.
 
-⛔ **The two quality columns use different encodings.** `junction_quality` is raw Phred+33
+**Never: The two quality columns use different encodings.** `junction_quality` is raw Phred+33
 characters (it lines up byte-for-byte with `junction`); `v_mutation_quality` is comma-joined
 integers (there is no string to line up with). Reading one as the other gives plausible numbers off
 by 33.
@@ -95,7 +206,7 @@ A template-switch chimera is a query junction explained by two **more abundant**
 prefix + suffix across one breakpoint. `chimera_parents` names them and the breakpoint. Off by
 default; **it never drops a row**.
 
-⛔ **The germline trap, measured, because it is the whole filter.** A junction is
+**Never: The germline trap, measured, because it is the whole filter.** A junction is
 `V 3' tail` + `N/P/D` + `J 5' head`, and both tails are germline — every clonotype on a V starts
 with the same bases and every one on a J ends with them. On a TRA amplicon the median V-templated
 prefix is **10 nt** and the median J-templated suffix **25 nt** against a median clone-specific core
@@ -103,7 +214,7 @@ of **5 nt**. So the same prefix/suffix test run on the raw junction rediscovers 
 calls **52.20 % of clonotypes chimeric** (35.50 % of reads). With the templated tails excluded and
 6 non-templated nt required each side: **0.02 %**.
 
-⛔ **Cell Ranger's published rule does not port to bulk, and not because of the constant.** Contigs
+**Never: Cell Ranger's published rule does not port to bulk, and not because of the constant.** Contigs
 sharing a V prefix ≥ 25 nt with differing CDR3s is a chimera signature *within a barcode*, where
 there is ~1 clone per chain. A polyclonal bulk repertoire has thousands of real clones per V gene,
 where that rule describes almost every pair. What ports is UCHIME's shape — two more abundant
@@ -134,7 +245,7 @@ Default output is byte-identical; the column appears only with `--flag-chimeras`
 compared an integer mismatch count against a FLOAT budget one base at a time in Python, over a
 measured 3.55 M candidate diagonals per 20,000 reads.
 
-⛔ Unlike the assembler's overlap test in 2.18.0, this caller needs the **count**, not a verdict: a
+Never: Unlike the assembler's overlap test in 2.18.0, this caller needs the **count**, not a verdict: a
 read joins the root with the longest overlap and, on a tie, the fewer mismatches — the tie-break
 ~47 % of the reads the Jurkat phantom clonotype stole were decided by. `_markup.count_mismatches`
 returns the true count whenever the row is accepted and collapses to `max_mm + 1` only when the row
@@ -166,7 +277,7 @@ integer count that is exactly `count > floor(budget)` however the float lands.
 | TRA amplicon, 100 k reads | 15.77 s → **3.52 s** (4.49×) | 27.00 s → **12.86 s** (2.10×) |
 | bulk RNA-seq, 660 k pairs | 5.05 s → **3.53 s** (1.43×) | 23.14 s → **20.32 s** (1.14×) |
 
-⛔ **`clones.tsv` and `airr.tsv` are byte-identical on both regimes** — the requirement, not a
+**Never: `clones.tsv` and `airr.tsv` are byte-identical on both regimes** — the requirement, not a
 hope: the contig sequence feeds every junction derived from it. Same 12 contigs and 19,841
 clonotypes on the amplicon, same 1,931 contigs and 2,213 clonotypes on bulk.
 
@@ -187,7 +298,7 @@ germline-**templated**, and `cdr3_anchors.tsv` already stores exactly that span 
 `germline_nt` runs the allele's 5' end through the [FW]118 codon). The missing tail is
 `germline_nt[j_germline_end:]` — nothing has to be aligned to find it.
 
-⛔ There is no V-side counterpart and there will not be one. A read short at the *5'* end is
+Never: There is no V-side counterpart and there will not be one. A read short at the *5'* end is
 missing bases the V germline does not template either, which is what `v_anchor_prefix` refuses.
 
 | library | junctions | completed | median nt imputed |
@@ -206,7 +317,7 @@ are IGH). 246 of 247 close on [FW]118; the exception is `TRBJ2-7*02`, whose anch
 not [FW] — the same allele biology as `TRAJ35*01`'s Cys anchor, read from `anchor_nt` and not from
 a motif.
 
-⛔ **A read whose alignment stops more than a partial codon short of its own 3' end is REFUSED**,
+**Never: A read whose alignment stops more than a partial codon short of its own 3' end is REFUSED**,
 and that guard is most of the feature. On the TRA amplicon **236 of 266 candidates run from the V
 straight into `TRAC` with no J at all** — the aligner still names a J off a few coincidental bases —
 so completing them would have manufactured one junction per chimera. Of the 30 that survive, 30/30
@@ -246,7 +357,7 @@ IG numbers rest on one library.
 
 ## 2.16.0
 
-### ⛔ BREAKING — `arda rnaseq run` is removed; the regime is the command name
+### Never: BREAKING — `arda rnaseq run` is removed; the regime is the command name
 
 `arda rnaseq run` was the only pipeline entry point, and it was used for **amplicon** libraries as
 well as bulk. The regime was spelled out as four loose flags that do **not** compose —
@@ -276,7 +387,7 @@ J→C and hypermutated IGH; and each mode's `--ec-mode` now defaults to its own 
 default output exactly. `--indel-rescue` outside `arda amplicon` now **raises** instead of being
 silently ignored.
 
-### ⛔ BREAKING — `v_identity` / `v_mutations` / `j_mutations` are scoped to the FRAMEWORK
+### Never: BREAKING — `v_identity` / `v_mutations` / `j_mutations` are scoped to the FRAMEWORK
 
 **This retracts a guarantee `docs/shm.rst` printed until 2.14.0** and changes every SHM number arda
 has published. The lists were scoped by *segment* (`t <= t_vend`, `[t_jstart, t_vjend]`), and that
@@ -291,7 +402,7 @@ entries at J germline position ≤ 10. On the committed example, `TRBV28*02`'s `
 
 * `--shm framework` (default) — scoped in place, in every mode and in `arda annotate`.
 * `--shm both` — also emits the old junction-inclusive values as `v_identity_full` /
-  `v_mutations_full` / `j_mutations_full`, appended after every shipped column. ⛔ The shipped
+  `v_mutations_full` / `j_mutations_full`, appended after every shipped column. Never: The shipped
   column names mean the *same thing* in every mode; `both` adds, it does not swap.
 * `--shm off` — no SHM fields.
 * **`arda shm -i in.airr.tsv -o out.airr.tsv`** rescopes an existing table with **no reference and
@@ -343,17 +454,17 @@ reporting one read's opinion as the clonotype's class. Read totals are unaffecte
 
 `params.regime` now selects the arda **command** rather than a flag string, so the preset-building
 logic is gone. New `arda_shm` and `arda_call_level` params; `arda_ec_mode` defaults to `null`
-(= let the mode choose). ⛔ Pinned to **arda 2.16.0** and this is a hard minimum in both
+(= let the mode choose). Never: Pinned to **arda 2.16.0** and this is a hard minimum in both
 directions: an older arda fails with *"Got unexpected extra argument (run)"*.
 
 ## 2.15.0
 
-### Fixed — contig assembly (⛔ read counts and contig sequences change)
+### Fixed — contig assembly (Never: read counts and contig sequences change)
 
 A second audit went over SHM calling and contig assembly. Eight defects, each with a regression test
 verified to fail without it.
 
-**⛔ Contigs were READ-ORDER DEPENDENT.** The extension tie-break was `len(ext) > len(best_ext)` with
+**Never: Contigs were READ-ORDER DEPENDENT.** The extension tie-break was `len(ext) > len(best_ext)` with
 a strict `>`, so equal-length candidates were resolved by the order the posting list happened to be
 in — which is AIRR row order, which comes from a threaded MMseqs2 search. The contig *sequence*, and
 every junction derived from it, could differ between runs on the same input. Now ordered on
@@ -392,7 +503,7 @@ for every k-mer, postings 1,600,000 → 784,000, ~112 MB → ~82 MB.
 **Isotype is one vote per FRAGMENT, at last.** `_dominant_ccall` deduplicated its read list down to
 fragments and then re-expanded to one entry *per row*, so a fragment whose two mates both carried a
 `c_class` voted twice, and an assembly-rescued fragment voted again. A one-fragment minority could
-outvote a two-fragment majority. ⛔ The tally was also order-dependent — `Counter.most_common(1)`
+outvote a two-fragment majority. Never: The tally was also order-dependent — `Counter.most_common(1)`
 breaks ties by insertion order — so a two-way isotype tie could report a different class run to run.
 Now lexicographic.
 
@@ -450,7 +561,7 @@ the anchor does. Fixing it inside arda changes every published SHM number, so it
 
 ## 2.14.0
 
-### Fixed — a full-depth read leak in coverage assignment (⛔ read counts change)
+### Fixed — a full-depth read leak in coverage assignment (Never: read counts change)
 
 **`--ec-mode accurate|amplicon|rnaseq` lost reads out of the clonotype table**, and the amount
 scaled with library depth, so no local test saw it. Measured across the 16-sample golden set at full
@@ -536,7 +647,7 @@ does not support. Membership is decided per read from the span it already aligne
 comparison against the reference, not a new alignment — then ranked library-wide so the allele the
 whole library supports leads, with only unambiguous reads voting.
 
-### ⛔ Known defect, newly measured — `v_mutations` / `j_mutations` include junction positions
+### Never: Known defect, newly measured — `v_mutations` / `j_mutations` include junction positions
 
 `docs/shm.rst` claimed the mutation lists were scoped to V and J **structurally**, so "a junction
 position has no germline coordinate to be filed under and cannot enter the list by any code path."
@@ -591,7 +702,7 @@ cap:
 
 It saturates at 512: the whole prize is +29,654 reads and 1024 adds 37 more. Peak RSS is flat, so it
 is CPU in the alignment inner loop. The default stays at 64 — 3.6× on this stage for 1.6 % of
-coverage-based abundance is a per-workload judgement. ⛔ Guaranteeing every root a posting does
+coverage-based abundance is a per-workload judgement. Never: Guaranteeing every root a posting does
 **not** help: built, measured, byte-identical on an amplicon and a bulk sample at two caps. No root
 is ever fully unreachable; the reads are lost because a root's surviving postings sit at k-mer
 positions the partial read does not cover.
@@ -692,7 +803,7 @@ always been. **k ≥ 4 is a cliff**: zero intermediates, and 13 observed where t
 falls monotonically 31.4 → 16.5; the k ≥ 5 class is 100 % sub-Q30 against the dominant clone's
 5.9 %).
 
-⛔ Widening `--max-subs` to 10 *does* clean that library up (53 → 11 clonotypes) **for the wrong
+Never: Widening `--max-subs` to 10 *does* clean that library up (53 → 11 clonotypes) **for the wrong
 reason** — the abundance test it applies there has probability 0 to every printed digit, and
 `--error-rate` is inert from 1e-3 to 1e-1 on that class for the same reason. So the new modes reach
 it on the evidence that actually distinguishes it:
@@ -702,7 +813,7 @@ it on the evidence that actually distinguishes it:
 * `--ec-mode rnaseq` — rescue at mean-Q < 20, radius 6 subs, ratio 200×. Bulk RNA-seq is sparse
   (0.02–3 % receptor), singletons are the norm and mostly real, so the rescue stays narrow.
 
-⛔ **Nothing in the framework discards a read.** A candidate with no qualifying parent keeps its
+**Never: Nothing in the framework discards a read.** A candidate with no qualifying parent keeps its
 reads and is reported as an orphan. That is not caution, it is the measured requirement: on a
 polyclonal hypermutated repertoire a whole-junction mean-Q floor at Q30 strands **3.70 %** of all
 junction-bearing reads with no parent to inherit them. Read conservation is pinned over every
@@ -771,7 +882,7 @@ and purity TRA .99055 → .99528, TRB .98963 → .99096. MIGEC spike-ins at `--e
 assigned **310,559 at every gate**, all three published clonotypes kept, error clonotypes
 1,630 → 79: error reads fall 8,398 → 2,026 and the parent gains **+6,545**.
 
-⛔ Scoped to gate-vacated junctions, **not** to every collapsed child. Aliasing all of them was
+Never: Scoped to gate-vacated junctions, **not** to every collapsed child. Aliasing all of them was
 built and measured: it moves *default* output (Ramos 9,208 → 9,234 with the gate off) and still
 loses 14 reads at Q20. Rejected.
 
@@ -795,7 +906,7 @@ default for a repertoire tool and the wrong one for a call you will act on:
 (TRB: SRR5233641, 45,604 reads with a projected V..J interior against 31,608 IgBLAST D calls at
 `v_score >= 70`. IGH: SRR5233639 at full depth, 1,795 reads with an interior, 1,056 truth calls.)
 
-⛔ The CLI default is `None`, **not** `0.2`. The shipped operating point is alphabet-dependent —
+Never: The CLI default is `None`, **not** `0.2`. The shipped operating point is alphabet-dependent —
 0.2 for nt, 0.05 for aa — so a literal `0.2` would have silently loosened `--seqtype aa` by 4×
 while looking like a no-op. Pinned by `test_the_d_evalue_cli_default_does_not_loosen_the_aa_gate`.
 
@@ -817,13 +928,13 @@ TRBD2→TRBD1 7→0, TRBD2→TRBD2 3→0, TRBD1→TRBD2 **5→5** — with the s
 way (18,362). The shipped `examples/dd.airr.tsv` record (TRD, `TRDD2*01 → TRDD3*01`) is genomic
 order and survives untouched.
 
-⛔ **This does not make TRB tandem D-D real.** Under a flank-only shuffle (100 permutations,
+**Never: This does not make TRB tandem D-D real.** Under a flank-only shuffle (100 permutations,
 conditioned on a real first D, D1's span fixed): 5 observed against 2.71 expected, Poisson
 `p = .139`. The pre-fix `p = .0031` was not evidence either — its "excess" *was* the 10 impossible
 calls, which such a shuffle cannot generate and therefore under-counts. What the gate buys is that
 the residual signal is composed only of producible pairs.
 
-⛔ **IGH is deliberately absent from the table.** In *human* IMGT the second number of
+**Never: IGH is deliberately absent from the table.** In *human* IMGT the second number of
 `IGHD<family>-<position>` is the genomic position; in *mouse* it is a family-member index with no
 locus meaning, and the two vocabularies collide on real gene names (`IGHD1-1`, `IGHD2-15`,
 `IGHD5-5`, `IGHD5-12`, `IGHD6-6` exist in both). `_map_d` is handed sequences, not an organism.
@@ -838,7 +949,7 @@ and `v_sequence_end`, `d_sequence_start`/`d_sequence_end`, `d2_sequence_start`/`
 
 The partition closes: `np1 + D1 + np2 + D2 + np3 == junction[v_sequence_end : j_sequence_start-1]`
 on **every** record carrying a `d2_call` — 5/5 read-level and 4/4 clonotype-level on the TRB
-amplicon, 0 broken. ⛔ The boundaries *inside* the junction are one consistent reading, not ground
+amplicon, 0 broken. Never: The boundaries *inside* the junction are one consistent reading, not ground
 truth: chew-back and N/P addition make the V-end / np / D / J-start partition non-identifiable from
 sequence, hardest for D, which is trimmed at both ends. The tests assert on **calls** and on the
 partition **closing**, never on an NDN-internal boundary.
@@ -862,7 +973,7 @@ Three pieces, all **off by default**; the shipped output does not move.
 * `arda rnaseq map --junction-quality` adds a `junction_quality` column — the read's Phred+33
   string over exactly the bases of `junction`, same orientation. Stage 1 is the only place the
   FASTQ quality is still in hand (it was read solely for `merge_pair`'s tie-break and discarded).
-  +2.2 % wall and +4.4 % bytes on 100 k amplicon reads. ⛔ For a `rev_comp` hit the quality belongs
+  +2.2 % wall and +4.4 % bytes on 100 k amplicon reads. Never: For a `rev_comp` hit the quality belongs
   to the read as submitted while every coordinate is on the coding strand, so it is reversed and
   then **verified against the junction it claims to describe** — a same-length slice off the wrong
   strand is a corruption nothing downstream can detect. Verified on 4,370 junction-bearing reads
@@ -883,7 +994,7 @@ Three pieces, all **off by default**; the shipped output does not move.
 What it buys: keeping both published MIGEC variants used to cost Jurkat TRB purity .99540 → .96034.
 With the gate on it costs nothing — 2/2 variants at TRB purity **.99530 (Q20) to .99600 (Q35)**,
 at or above the shipped default's purity, which keeps neither variant. Jurkat's spurious load falls
-from 297 to 62 distinct junctions with the true clone untouched. ⛔ It cannot rescue the 0.0072 %
+from 297 to 62 distinct junctions with the true clone untouched. Never: It cannot rescue the 0.0072 %
 variant: that one sits below the RT template-error floor, whose competitors are high-Q by
 construction.
 
@@ -901,7 +1012,7 @@ recovering it needs arda's scaffold geometry — a consumer that does the obviou
 two alignment strings gets 100,091 mismatches on that library, of which **20,140 (20.1 %) are N-pad
 or constant-region columns**: it attributes junction positions to a germline.
 
-⛔ Which is why the scoping is structural rather than a filter. A mutation inside the V..J interior
+Never: Which is why the scoping is structural rather than a filter. A mutation inside the V..J interior
 is not attributable to any germline — recombination chews the segment ends back and adds
 non-templated N/P bases, so the V-end / NDN / J-start partition of a junction often is not
 identifiable from the sequence at all. The lists are built only for the V and J segments; the pad is
@@ -925,7 +1036,7 @@ alleles**, invisibly. `IGLV3*01` could resolve to a `truncated` row over an `ok`
 
 Resolution is now explicit and logged: prefer `status == "ok"`, then the longer templated germline.
 
-⛔ The conflict test compares only the fields that **decide the junction** (`anchor_nt`,
+Never: The conflict test compares only the fields that **decide the junction** (`anchor_nt`,
 `germline_nt`, `templated_aa`, `status`). A TRAV/DV allele legitimately appears twice — once from
 the TRA pass, once from TRD's `v_shared` — differing only in `locus`; treating those as conflicts
 would emit 15 warnings per human load and train the reader to ignore the 3 that matter.
@@ -941,7 +1052,7 @@ speed — the configuration that makes arda faster than MiXCR, silently unavaila
 returning `None`. Verified: with `segments.fasta` deleted, a `--two-pass --fast-segments` run
 rebuilds it **byte-identically** and produces **byte-identical** output.
 
-⛔ Generation and stale-format *re*generation are separate functions on purpose, because they ask
+Never: Generation and stale-format *re*generation are separate functions on purpose, because they ask
 different questions and need different done-predicates. `_has_jc_targets` is false for a missing
 file, so reusing the stale-format predicate would make a missing file read as *already regenerated*
 and the lock would skip the build — silently, in the same direction as the bug. `_has_jc_targets`
@@ -1079,7 +1190,7 @@ That single class is **83 % of arda's entire remaining `v_gene` gap** on that li
 Which side is right is a domain judgement, so it is now a flag rather than a silent default.
 `--allow-chimeras` gives TRA `v_shared=("TRDV", "")`; everything else is untouched.
 
-⛔ **Measured, and the flag does not deliver the whole class.** Of 22 TRDV alleles, 15 are
+**Never: Measured, and the flag does not deliver the whole class.** Of 22 TRDV alleles, 15 are
 `TRAV/DV` genes already present under TRAV, so exactly **7 dedicated TRDV alleles** are new
 (V 102 -> 109). They imply 483 scaffolds, of which **476 are dropped for incomplete IgBLAST region
 markup** and 7 survive -- all `TRDV1*01`, against TRAJ13/16/24/39. Human scaffolds go
@@ -1109,7 +1220,7 @@ exactly the nucleotides a whole-scaffold alignment of a J-less read would have c
 `--min-score` keeps its meaning; anything that fails falls through to the full-reference rescue, so
 no read is lost.
 
-⛔ The class is gated by **geometry**, not by the shortlist reason. `v_only` means "no J segment
+Never: The class is gated by **geometry**, not by the shortlist reason. `v_only` means "no J segment
 hit", which on a 100 nt bulk read carrying SHM is not "no J in the read": the segment pass misses
 short hypermutated IGHJ and the full reference then finds it. Only reads whose V alignment stops
 before their own Cys104 are routed. The separation is total — of the reads whose rescue *did*
@@ -1233,7 +1344,7 @@ junction that is wrong is the worst output this codebase can produce — the ref
 shipped junctions that started `C`, ended `[FW]`, passed `--complete-only` and were short by exactly
 the allele's truncation.
 
-⛔ **TRD is declined, because it has ZERO coverage.** The per-locus bar was ">= .99 at n >= 2,000, or
+**Never: TRD is declined, because it has ZERO coverage.** The per-locus bar was ">= .99 at n >= 2,000, or
 the locus goes on the refusal list". Across two TR amplicons the segment pass never handed a single
 TRD read both anchors, so all 767 TRD junctions in the truths fell through to the aligner and TRD
 never appears at all. *Absent* is not *validated*, and the only TRD number that exists is 43/51 =
@@ -1304,7 +1415,7 @@ IgBLAST at gene level on exactly the reads whose call moved:
 real indels are common the flag fixes calls truncated at the indel; where they are rare its false
 positives — repeats read as two diagonals — dominate. `locus` never moves.
 
-⛔ **Off by default, and it is `--fast-segments`-only.** On 13 bulk RNA-seq datasets it demotes
+**Never: Off by default, and it is `--fast-segments`-only.** On 13 bulk RNA-seq datasets it demotes
 **zero** reads and the AIRR output is byte-identical, which is correct: bulk TR carries ~0 indels.
 Turn it on for hypermutated IG work; it does nothing elsewhere.
 
@@ -1313,7 +1424,7 @@ Turn it on for hypermutated IG work; it does nothing elsewhere.
 **1.87x at 41 % less memory** (100,000 pairs, ~90 % receptor: 319.74 s → 170.77 s, RSS 4,016 →
 2,382 MB), because it raises `fast_fraction` from **0.052 to 0.5018** on the same reads.
 
-⛔ **Every `fast path` figure in the `--two-pass` documentation is MMseqs2-specific.**
+**Never: Every `fast path` figure in the `--two-pass` documentation is MMseqs2-specific.**
 `fast_fraction` is a property of *(reads x segment mapper)*, not of the reads: MMseqs2 misses the
 short IGHJ on 95 % of these 5'RACE reads and `_segmap`'s ungapped extension finds it on half.
 `v_only` rescues fall 169,004 → 85,933. Read the old table as-is and you leave the fast path off on
@@ -1340,7 +1451,7 @@ amplicon reads against the shipped reference, 8 threads:
 End to end on 50,000 pairs, `--two-pass` with and without the flag: **9.10 s → 6.12 s (1.49×)**,
 `locus` identical on every read, `v_call` .999794, `junction_aa` .999938, 6 reads lost of 48,620.
 
-⛔ **Off by default, and the residual delta is why.** Six reads and ten V calls of ~48,600 is small
+**Never: Off by default, and the residual delta is why.** Six reads and ten V calls of ~48,600 is small
 but is not zero, and the shipped path does not move them at all. It only *nominates*: every
 candidate is still aligned against the full V+pad+J scaffold and scored by MMseqs2.
 
@@ -1456,12 +1567,12 @@ target a read lying wholly inside the constant region can hit, and without it su
 nothing, never enters `seen`, and is never rescued — **14 of 453 reads vanish** on the real-read
 fixture, every one a V-less J→C read.
 
-⛔ The J+C contest is nominated **from the J, not from a C hit**. Requiring C evidence is not
+Never: The J+C contest is nominated **from the J, not from a C hit**. Requiring C evidence is not
 equivalent, and it let the exact bug the contest exists to prevent back in: on
 `SRR5233639.12648/1` it invented `TRBV12-3*02`, destroyed `c_call` TRBC2*01, and fabricated
 `junction_aa` CASSFAGLVNIDEQFF on a read the one-pass calls V-less.
 
-⛔ `_segment_rows`' polars filter and `_segment_best_hits`' own kind guard are two statements of
+Never: `_segment_rows`' polars filter and `_segment_best_hits`' own kind guard are two statements of
 one rule in two languages. Adding `C|` to the loop alone made the reduction discard every C row, so
 `best_c` was always empty and 15 J→C reads vanished with **`no_segment_hit` not even moving** — the
 rows were dropped before anything counted them.

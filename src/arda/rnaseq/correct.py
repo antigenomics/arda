@@ -115,7 +115,7 @@ _COMPLETE = (
 #: ``--ec-mode`` presets. Each names an ``error_method`` and a ``min_junction_q``; an explicitly
 #: passed knob always wins (:func:`correct_airr` resolves ``None`` against the mode).
 #:
-#: ⛔ ``accurate`` is NOT ``binom``/``betabinom``. Those pile up partial reads per discriminating
+#: Never: ``accurate`` is NOT ``binom``/``betabinom``. Those pile up partial reads per discriminating
 #: position for extra depth at very low coverage, which sounds like the accurate answer and is not
 #: one here: measured on a 302,172-read MIGEC library with one 293 k-read clone, `simple` takes
 #: 0.73 s and 143 clonotypes, `binom` 197 s / 79 and `betabinom` 254 s / 78 — ~270x slower AND
@@ -147,7 +147,7 @@ EC_MODES: dict[str, dict] = {
 class CorrectReport:
     clonotypes_in: int = 0
     clonotypes_out: int = 0
-    #: ⛔ SPANNING reads entering Stage 2, counted BEFORE any correction runs. It is therefore
+    #: Never: SPANNING reads entering Stage 2, counted BEFORE any correction runs. It is therefore
     #: invariant to everything ``correct`` does, and it is **NOT** the read-conservation quantity.
     #: Comparing it across ``--ec-mode`` shows 0 on every sample and reads exactly like the
     #: invariant holding -- which is how a 1.39 % leak on a full-depth TRA amplicon was missed.
@@ -246,7 +246,7 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bo
                   error_rate: float = 1e-3) -> tuple[pl.DataFrame, int, int]:
     """Move reads whose junction differs from its putative parent ONLY at low-quality bases.
 
-    ⛔ **The read is REASSIGNED to the parent, never discarded.** A read that reached a complete
+    **Never: The read is REASSIGNED to the parent, never discarded.** A read that reached a complete
     junction came off a real rearrangement of that locus; the evidence says its differing base is a
     miscall, which is a statement about one base, not about whether the molecule existed. So the
     read's clonotype key is rewritten to the parent's and it is counted there. Dropping it would
@@ -269,7 +269,7 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bo
     exact interior seed and so could only see mismatches near the junction's ends, which is its
     low-Q half. The separation is a 14-point median gap, not 19.
 
-    ⛔ Only the MISMATCHING bases are evidence. A junction agreeing with its parent everywhere
+    Never: Only the MISMATCHING bases are evidence. A junction agreeing with its parent everywhere
     else says nothing about whether the one differing base is real, so gating on the junction's
     minimum or mean quality asks the wrong question and mostly measures read length.
 
@@ -350,7 +350,7 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bo
             continue
         if not any(ord(q[p]) < cut for p in d):
             continue
-        # ⛔ AND the parent must be able to have PRODUCED this read. "More abundant" is far too
+        # Never: AND the parent must be able to have PRODUCED this read. "More abundant" is far too
         # weak: one extra read made anything within `max_subs` a parent, and at 3 substitutions
         # that is a hypothesis nothing supports -- which is why the TRA amplicons, whose short
         # junctions (median 42 nt) have many 3-sub neighbours, lost 0.44 % and 1.39 % of their
@@ -378,7 +378,7 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bo
         moved[ci] += 1
         moved_rows.append((r, par[ci]))
 
-    # ⛔ Rewriting the row is not enough on its own. Coverage assignment re-derives every read's
+    # Never: Rewriting the row is not enough on its own. Coverage assignment re-derives every read's
     # clonotype from the UNFILTERED Stage-1 frame by its original ``(locus, v, j, junction)`` key,
     # so a moved read whose old clonotype still exists (because its other reads passed the gate)
     # would be routed straight back to it and the move silently undone. Name the moved reads by
@@ -408,7 +408,7 @@ def _root(i: int, parent: list[int | None]) -> int:
 def _binom_sf(k: int, n: int, p: float) -> float:
     """P(X >= k) for X ~ Binomial(n, p), summed as 1 - CDF(k-1).
 
-    ⛔ Computed in LOG space, and it has to be. The obvious form -- ``comb(n, i) * p**i *
+    Never: Computed in LOG space, and it has to be. The obvious form -- ``comb(n, i) * p**i *
     (1-p)**(n-i)`` -- raises ``OverflowError: int too large to convert to float`` the moment a
     clonotype is big: ``comb(293327, i)`` is an exact Python int with tens of thousands of digits,
     and multiplying it by a float converts it first. Measured on a real 302,172-read MIGEC library
@@ -664,14 +664,14 @@ def _assign_coverage(
     tgt_jn = list(root_jn) + [a[0] for a in (aliases or ())]
     tgt_loc = list(root_loc) + [a[1] for a in (aliases or ())]
     tgt_root = list(range(len(root_jn))) + [a[2] for a in (aliases or ())]
-    # ⛔ `cap` bounds how many roots one germline-shared k-mer may name, and WHICH ones it keeps is
+    # Never: `cap` bounds how many roots one germline-shared k-mer may name, and WHICH ones it keeps is
     # therefore load-bearing. Keeping the first `cap` in target order made the survivors depend on
     # the root list's order, so any change to the root set silently re-shuffled them: merging call
     # splits under `--clonotype-key junction` cost 3 reads of 43,475 that had been placed by this
     # pass, none of which had a junction of its own to fall back on. Insert in DESCENDING ABUNDANCE
     # (then sequence, for a total order): the roots a partial read is most likely to belong to are
     # the ones that survive the cap, and the choice no longer depends on upstream grouping.
-    # ⛔⛔ AND A ROOT OUTRANKS AN ALIAS, unconditionally. An alias is a FALLBACK -- a junction that
+    # Never: AND A ROOT OUTRANKS AN ALIAS, unconditionally. An alias is a FALLBACK -- a junction that
     # is no longer a clonotype, kept only so partial reads that covered it still reach the parent --
     # but it is ordered by its PARENT's abundance, which is high by construction. So aliases sorted
     # to the FRONT and evicted genuine low-abundance roots from the cap, and every partial read whose
@@ -701,7 +701,7 @@ def _assign_coverage(
     # whereas a TRB amplicon of comparable depth (SRR5233642, 72,339 roots, D+N-bearing junctions
     # that are far more specific) gains only +236 at cap 128 and +404 at cap 256 -- 0.013 %. So the
     # default costs almost nothing on a diverse library and ~1.6 % on a germline-like one.
-    # ⛔ Do NOT "fix" this by guaranteeing every root a posting -- that was built and measured and
+    # Never: Do NOT "fix" this by guaranteeing every root a posting -- that was built and measured and
     # is a NO-OP: 1,838,213 at cap 64 and 1,850,917 at cap 256 on this sample, and 3,132,742 on a
     # bulk one (SRR5233642), byte-identical to the sweep in every case. No root is ever fully
     # unreachable; the reads are lost because a root's surviving postings sit at k-mer positions the
@@ -739,7 +739,7 @@ def _assign_coverage(
                 jr = tgt_jn[ri]
                 lo, hi = (-d if d < 0 else 0), min(L, len(jr) - d)
                 ov = hi - lo
-                # ⛔ `ov < best_ov`, NOT `ov <= best_ov`. Equal overlap is COMMON and was being
+                # Never: `ov < best_ov`, NOT `ov <= best_ov`. Equal overlap is COMMON and was being
                 # resolved by encounter order: the first root to reach a read kept it, and the
                 # mismatch count computed right below was thrown away.
                 #
@@ -752,7 +752,7 @@ def _assign_coverage(
                 # Overlap first, then FEWER MISMATCHES. Both were already computed.
                 if ov < best_ov or ov < min_ov:
                     continue
-                # ⛔ Bounded in C++, and EXACTLY equivalent -- see `_markup.count_mismatches`.
+                # Never: Bounded in C++, and EXACTLY equivalent -- see `_markup.count_mismatches`.
                 # The old inline scan compared an integer count against a FLOAT budget, and for an
                 # integer `mm`, `mm > budget` is `mm > floor(budget)`; the true count is still
                 # returned whenever the row is accepted, so the fewer-mismatches tie-break below
@@ -770,7 +770,7 @@ def _assign_coverage(
 
 #: Non-templated nt required on EACH side of a chimeric breakpoint.
 #:
-#: ⛔ THIS CONSTANT IS THE WHOLE FILTER. A junction is `V 3' tail` + `N/P/D` + `J 5' head`, and the
+#: Never: THIS CONSTANT IS THE WHOLE FILTER. A junction is `V 3' tail` + `N/P/D` + `J 5' head`, and the
 #: two tails are GERMLINE -- every clonotype on a given V starts with the same bases and every one
 #: on a given J ends with them. Measured on a TRA amplicon: median 10 nt of V-templated prefix and
 #: 25 nt of J-templated suffix against a median clone-specific core of 5 nt. So a prefix/suffix
@@ -778,7 +778,7 @@ def _assign_coverage(
 #: clonotypes chimeric** (35.50 % of reads). With the templated tails excluded and 6 non-templated
 #: nt required each side it is 0.02 %.
 #:
-#: ⛔ Cell Ranger's published rule -- contigs sharing a V prefix >= 25 nt with different CDR3s --
+#: Never: Cell Ranger's published rule -- contigs sharing a V prefix >= 25 nt with different CDR3s --
 #: is NOT portable to bulk, and not because of the constant. It relies on the BARCODE PARTITION:
 #: within one cell there is ~1 clone per chain, so a second V-sharing contig is an artifact. A
 #: polyclonal bulk repertoire has thousands of real clones per V gene, where that rule describes
@@ -827,7 +827,7 @@ def _flag_chimeras(out: pl.DataFrame, organism: str,
     n = out.height
     flags = [""] * n
     if not anchors or n < 3:
-        # ⛔ Without anchors the germline cannot be excluded, and the test then reports ~52 %.
+        # Never: Without anchors the germline cannot be excluded, and the test then reports ~52 %.
         # Returning empty is the only safe answer -- a silently germline-driven flag is worse than
         # no flag, and this is the same "degraded silently without a reference" failure `resolve_airr`
         # already shipped once.
@@ -863,7 +863,7 @@ def _flag_chimeras(out: pl.DataFrame, organism: str,
                     continue
                 if cnt[a] <= cnt[qi] or cnt[b] <= cnt[qi]:
                     continue
-                # ⛔ A point mutant of a parent is NOT a chimera, and on IG that class is large:
+                # Never: A point mutant of a parent is NOT a chimera, and on IG that class is large:
                 # SHM manufactures near-variants continuously, and without this the flag fires on
                 # hypermutation. Equal length + <= 2 substitutions from either parent means the
                 # error model already explains it.
@@ -895,7 +895,7 @@ def _gene3(x: str | None) -> str:
 
 #: Clonotype D columns. The four calls/supports, then everything a D-D MARKUP consumer needs to
 #: cut the junction up: where the V stops templating it, where the J starts, the D span(s), and
-#: the non-templated stretches between them. ⛔ All coordinates are 1-based closed in JUNCTION
+#: the non-templated stretches between them. Never: All coordinates are 1-based closed in JUNCTION
 #: space -- the clonotype table has no read -- with -1 meaning "not located". Without them the
 #: table named a second D and gave no way to find it; `d2_call` alone is not markup.
 _D_STR_COLS = ("d_call", "d2_call", "d_support", "d2_support", "np1", "np2", "np3")
@@ -1057,7 +1057,7 @@ def correct_airr(
     if extra_airr is not None:
         extra = _read_airr(extra_airr)
         if extra.height:
-            # ⛔ Remember how many rows came from ASSEMBLY. A rescued read appears TWICE in the
+            # Never: Remember how many rows came from ASSEMBLY. A rescued read appears TWICE in the
             # concatenated frame -- once as its incomplete Stage-1 row and once as the assembled
             # row that carries the contig's junction -- so counting junction-bearing rows on `raw`
             # inflates `reads_with_junction` (documented as "Stage-1 reads carrying any junction")
@@ -1067,7 +1067,7 @@ def correct_airr(
             asm_from = raw.height          # the assembled rows are everything from here on
             raw = pl.concat([raw, extra], how="diagonal")
     if call_level == "gene":
-        # ⛔ On `raw`, before `df` is filtered off it and before any key is formed — coverage
+        # Never: On `raw`, before `df` is filtered off it and before any key is formed — coverage
         # assignment re-derives a read's clonotype from the UNFILTERED frame by its own
         # (locus, v, j, junction) key, so relabelling only one of the two frames strands reads.
         # Same rule the `--clonotype-key junction` relabel below is written to.
@@ -1093,7 +1093,7 @@ def correct_airr(
     if complete_only:
         df = df.filter(_COMPLETE)
     n_incomplete = max(0, n_with_junction - (df.height - n_assembled))
-    # ⛔ The KEY is decided BEFORE any correction. The quality gate names a read's parent by its
+    # Never: The KEY is decided BEFORE any correction. The quality gate names a read's parent by its
     # clonotype key, so canonicalising afterwards leaves those names pointing at keys that no
     # longer exist -- 2 of Jurkat's 14,531 reads went missing that way, which is small enough to
     # have shipped unnoticed and is still a violation of the invariant.
@@ -1102,14 +1102,14 @@ def correct_airr(
         # (v_call, j_call) before grouping. Rewriting the labels rather than shortening the group
         # key keeps everything downstream -- coverage's exact-key pass, the read map, the emitted
         # columns -- working on a 4-tuple, so this is a relabel, not a second code path.
-        # ⛔ Ties break on count then lexicographically, never on row order: `correct`'s
+        # Never: Ties break on count then lexicographically, never on row order: `correct`'s
         # reproducibility rests on exactly this kind of decision being total.
         votes: dict[tuple[str, str], Counter] = defaultdict(Counter)
         for loc, vv, jj, jn in zip(df["locus"].to_list(), df["v_call"].to_list(),
                                    df["j_call"].to_list(), df["junction"].to_list()):
             votes[(loc or "", jn or "")][(vv or "", jj or "")] += 1
         best = {k: min(sorted(c), key=lambda pair: (-c[pair], pair)) for k, c in votes.items()}
-        # ⛔ `raw` must be relabelled TOO, not just `df`. Coverage assignment re-derives every
+        # Never: `raw` must be relabelled TOO, not just `df`. Coverage assignment re-derives every
         # read's clonotype from the UNFILTERED frame by its own (locus, v, j, junction) key, so a
         # read whose label the canonicalisation changed would miss the exact-key pass and fall to
         # the aligner or go unassigned. Measured when this was missing: 128 of Jurkat's 14,531
@@ -1195,7 +1195,7 @@ def correct_airr(
     # onto a much more abundant parent, and a candidate with no parent KEEPS ITS READS.
     rescue_report = None
     if regime and REGIMES[regime].enabled() and "junction_quality" not in df.columns:
-        # ⛔ Raise, never degrade -- the same rule `_quality_gate` enforces above, for the same
+        # Never: Raise, never degrade -- the same rule `_quality_gate` enforces above, for the same
         # reason. Skipping the rescue silently produces a report indistinguishable from a rescue
         # that ran and found nothing (rescued/orphan counters all 0) and a table byte-identical to
         # `--ec-mode fast`. `rnaseq run` wires the column up itself, but the standalone `correct`
@@ -1218,7 +1218,7 @@ def correct_airr(
         # and re-deciding a parent the ladder already justified would be strictly worse evidence.
         free = set(i for i in range(len(junctions)) if parent[i] is None)
         gated_q = [clono_q[i] if i in free else -1.0 for i in range(len(junctions))]
-        # ⛔ PER LOCUS. `quality_rescue` groups candidate parents by junction LENGTH and nothing
+        # Never: PER LOCUS. `quality_rescue` groups candidate parents by junction LENGTH and nothing
         # else -- no locus guard in either `_nearest_py` or the C++ `nearest_more_abundant` -- while
         # `amplicon` opens the radius to 12 substitutions. A rearrangement of a DIFFERENT locus is
         # not a sequencing error of this one, so those merges are wrong by construction. Measured on
@@ -1299,7 +1299,7 @@ def correct_airr(
                 exact.setdefault(old_k, exact[par_k])
         # A quality-gated read is routed by its NEW clonotype, not by the key still sitting on it
         # in `raw` -- otherwise coverage hands it back to the error clonotype it was moved off.
-        # ⛔ An ASSEMBLED row outranks the read's own truncated Stage-1 row. Pass 1 walks `raw` in
+        # Never: An ASSEMBLED row outranks the read's own truncated Stage-1 row. Pass 1 walks `raw` in
         # concatenation order -- mapped rows first -- and stops at the first key it finds in
         # `exact`. Under `--all-junctions` the read's own TRUNCATED junction is itself a clonotype,
         # so it won that race, `done` then blocked the assembled row, and the contig's clonotype was
@@ -1331,7 +1331,7 @@ def correct_airr(
         read_sets = [agg_reads[i] for i in roots]
     dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads
     cons = [len({_strip_mate(x) for x in rs}) for rs in read_sets]      # AIRR consensus_count: fragments
-    # ⛔ THE read-conservation invariant, reported so it is checkable on a real run. `reads` above
+    # Never: THE read-conservation invariant, reported so it is checkable on a real run. `reads` above
     # cannot move (it is counted before correction), so a benchmark comparing it across --ec-mode
     # sees 0 everywhere and reads that as conservation. Measured full-depth on the golden set with
     # only `reads` available: SRR5233636 fast 1,838,213 -> accurate 1,812,745 (-25,468) went unseen.
@@ -1356,7 +1356,7 @@ def correct_airr(
         # fragment with one assigned mate contributed once -- weighting the vote by assigned
         # mates rather than by molecules, exactly as the first line of this comment says it must
         # not. A 1-fragment minority could then outvote a 2-fragment majority.
-        # ⛔ ...and the fragment's OWN calls must collapse to ONE vote too. Deduplicating
+        # Never: ...and the fragment's OWN calls must collapse to ONE vote too. Deduplicating
         # `read_list` is not enough: `frag_iso` holds one entry per ROW carrying a `c_class`, so a
         # fragment whose two mates both carry one voted twice, and an assembly-rescued fragment
         # voted a third time because `assemble` copies the member read's `c_class` onto the rescued
@@ -1383,7 +1383,7 @@ def correct_airr(
                    key=lambda r: (-dup[r], -cons[r], junctions[roots[r]],
                                   v[roots[r]], j[roots[r]]))
     if coverage:
-        # ⛔ A clonotype with NO reads is not a clonotype. Under `--all-junctions` a rescued read's
+        # Never: A clonotype with NO reads is not a clonotype. Under `--all-junctions` a rescued read's
         # own TRUNCATED Stage-1 junction is itself a clonotype key, and once the assembled row
         # (which carries the contig's complete junction, the better evidence) takes the read, that
         # truncated row is left with nothing -- so the table carried a `duplicate_count` 0 row that
@@ -1409,15 +1409,24 @@ def correct_airr(
     if map_d:
         out = out.with_columns(_clonotype_d(out, organism, d_max_evalue))
     if flag_chimeras:
-        # ⛔ Appended LAST and never used to drop a row -- see `_flag_chimeras` for the measured
+        # Never: Appended LAST and never used to drop a row -- see `_flag_chimeras` for the measured
         # rate (0.40 % of bulk IG clonotypes) and why that does not justify deletion.
         out = out.with_columns(_flag_chimeras(out, organism))
     out.write_csv(output, separator="\t", quote_style="never")
 
     if read_map is not None:
-        rows = [(rid, junctions[roots[r]]) for r in range(len(roots)) for rid in read_sets[r]]
-        pl.DataFrame(rows, schema=["sequence_id", "junction"], orient="row").write_csv(
-            read_map, separator="\t", quote_style="never")
+        # Never: `junction` alone is NOT the clonotype key -- this function keys on
+        # `(locus, v_call, j_call, junction)`, so a join on the junction alone merges two
+        # clonotypes that share one and differ in their calls. `clone_row` is the 0-based row index
+        # into the clones table written just above, which is the key that closes the join; `order`
+        # is what maps a root to its row, and a root dropped by the empty-clonotype rule has no row
+        # and contributes no reads, so it is skipped rather than pointed at the wrong one.
+        row_of = {r: i for i, r in enumerate(order)}
+        rows = [(rid, locus[roots[r]], junctions[roots[r]], row_of[r])
+                for r in range(len(roots)) if r in row_of
+                for rid in read_sets[r]]
+        pl.DataFrame(rows, schema=["sequence_id", "locus", "junction", "clone_row"],
+                     orient="row").write_csv(read_map, separator="\t", quote_style="never")
     stage.finish(report)
     if report_path is not None:
         Path(report_path).write_text(json.dumps(report.as_dict(), indent=2) + "\n")
