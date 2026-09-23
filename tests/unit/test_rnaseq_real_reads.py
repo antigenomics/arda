@@ -105,7 +105,7 @@ def test_repeated_runs_are_byte_identical(tmp_path):
     outs = []
     for i in range(2):
         d = tmp_path / f"run{i}"
-        pipeline.run(READS_1, d, "R", r2=READS_2, threads=2)
+        pipeline.run([(READS_1, READS_2)], d, "R", threads=2)
         outs.append({name: (d / f"R.{name}").read_bytes()
                      for name in ("airr.tsv", "assembled.airr.tsv", "clones.tsv")})
     for name in outs[0]:
@@ -119,7 +119,7 @@ def test_sharded_run_matches_single_node_on_real_reads(tmp_path):
     from arda.rnaseq.map import map_rnaseq
 
     single = tmp_path / "single"
-    pipeline.run(READS_1, single, "R", r2=READS_2, threads=2)
+    pipeline.run([(READS_1, READS_2)], single, "R", threads=2)
 
     shards = split_pairs(READS_1, tmp_path / "sh", shards=4, r2=READS_2)
     mapdir = tmp_path / "map"
@@ -139,7 +139,7 @@ def test_report_carries_resources_and_provenance(tmp_path):
     """What an operator needs to size a job and to diagnose a cross-mode difference."""
     from arda.rnaseq import pipeline
 
-    rep = pipeline.run(READS_1, tmp_path, "R", r2=READS_2, threads=2)
+    rep = pipeline.run([(READS_1, READS_2)], tmp_path, "R", threads=2)
     for stage in ("map", "assemble", "correct"):
         s = rep[stage]
         assert s["wall_seconds"] > 0, f"{stage} has no wall time"

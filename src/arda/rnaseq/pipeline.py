@@ -15,11 +15,19 @@ steps" -- the same function, so the two cannot drift apart in a parameter.
 
 That plus contiguous shards (:func:`arda.cluster.split_pairs`) is what makes a sharded run
 **byte-identical** to a single-node one, rather than merely similar.
+
+A sample delivered as SEVERAL FASTQ pairs -- one per Illumina lane, or per in-house chunk -- is
+the same shape arriving ready-made: whoever wrote the files already sharded it. So :func:`run`
+takes read groups rather than a pair, maps each one, concatenates in declared order, and calls
+:func:`finish` once. Nothing below Stage 1 knows read groups exist, which is deliberate: the
+clonotype key and the contig layout are where this project's determinism guarantees live, and
+neither has to change for a sample to arrive in four files.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 from .. import __version__
@@ -153,8 +161,62 @@ def write_stats_for(out_dir: str | Path, out_prefix: str, *, organism: str = "hu
     return len(rows)
 
 
-def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
-        r2: str | Path | None = None, organism: str = "human", threads: int = 0,
+def _resolve_auto_dialect(pairs: list, limit: int | None) -> str:
+    """Sniff ``--cell-from auto`` ONCE, on the first read group, and return the concrete dialect.
+
+    Never: sniffing per read group lets one sample resolve two dialects. The sniff reads one file
+    (:func:`arda.rnaseq.map._cell_sample` reservoir-samples ``r1``), and a barcode that is
+    ambiguous in lane 1 and clear in lane 2 would then parse two different ways inside one cell
+    namespace -- silently merging or splitting cells with no error anywhere.
+    """
+    from ..cell import sniff
+    from .map import _cell_sample
+
+    found = sniff(_cell_sample(pairs[0][0], limit))
+    if found is None:
+        raise ValueError(
+            "--cell-from auto: no dialect parses a consistent cell barcode out of the first read "
+            f"group ({pairs[0][0]}). Name the dialect, or pass --cell-regex")
+    return found
+
+
+def _map_read_groups(pairs: list, airr: Path, parts_dir: Path, *, say, **map_kw) -> dict:
+    """Stage 1 once per read group, concatenated in DECLARED order. Returns the merged report.
+
+    A sample delivered as several FASTQs has already been sharded by whoever wrote it, so this is
+    :func:`arda.cluster.split_pairs`' output arriving ready-made -- and the same two properties
+    make it byte-identical to the same reads in one file. The blocks are contiguous (each file is
+    a contiguous run of the library), and `map` output does not depend on where chunk boundaries
+    fall, because :func:`arda.rnaseq.map.chunked_fragments` never splits a fragment across one.
+
+    Never: DECLARED order, not sorted-by-filename. `A_L010` sorts before `A_L002` and the
+    clonotype fold is not permutation-invariant -- `correct` collapses an error child onto the
+    parent it meets first. The 5-digit part names exist so that ``sorted()`` over them is numeric
+    for `arda cluster reduce`, which merges the same way.
+
+    Never: SEQUENTIAL, not a pool. mmseqs threads internally and is given every core; N read
+    groups at cores/N each is slower than N in a row, and the dispatch is pure loss. Parallelism
+    over read groups belongs to the scheduler -- see `arda cluster plan`.
+    """
+    from ..cluster import merge
+    from .map import map_rnaseq
+
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    reports, shards = [], []
+    for i, (a, b) in enumerate(pairs):
+        shard = parts_dir / f"shard_{i:05d}.airr.tsv"
+        say(f"map: read group {i + 1}/{len(pairs)} -> {Path(a).name}")
+        reports.append(map_rnaseq(a, shard, r2=b, **map_kw).as_dict())
+        shards.append(shard)
+    merge(shards, airr)
+    say(f"merged {len(shards)} read-group AIRRs -> {airr}")
+    # Only once the merge succeeded: a crash must leave Stage 1 on disk, not force a re-run of it.
+    shutil.rmtree(parts_dir, ignore_errors=True)
+    return _merge_map_reports(reports)
+
+
+def run(pairs, out_dir: str | Path, out_prefix: str, *,
+        organism: str = "human", threads: int = 0,
         reconstruct: bool = False, min_score: float = 75.0, kmer: int | None = 12,
         assemble: bool = True, complete_only: bool = True, map_d: bool = True,
         d_max_evalue: float | None = None,
@@ -168,35 +230,57 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
         cell_from: str = "",
         cell_regex: str | None = None,
         echo=None) -> dict:
-    """Single-node map -> assemble -> correct."""
+    """Single-node map -> assemble -> correct, over ONE sample's read groups.
+
+    Args:
+        pairs: ``[(r1, r2 | None), ...]`` for this sample, **in the order they were declared**.
+            One pair is the ordinary case; several are the lanes or chunks one sample was
+            delivered in, and they are concatenated after Stage 1, never before.
+
+    Stages 2-3 stay global over the sample, exactly as they are for a single file. Nothing below
+    Stage 1 knows read groups exist.
+    """
     from .map import map_rnaseq
 
+    pairs = [(a, b) for a, b in pairs]
+    if not pairs:
+        raise ValueError("no read groups to map")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     airr = out_dir / OUTPUTS["airr"].format(prefix=out_prefix)
     say = echo or logger.info
 
+    if cell_from == "auto" and len(pairs) > 1:
+        cell_from = _resolve_auto_dialect(pairs, limit)
+        say(f"cell barcodes: --cell-from auto resolved to {cell_from!r} for every read group")
+
+    map_kw = dict(organism=organism, threads=threads,
+                  reconstruct=reconstruct, min_score=min_score, map_d=map_d,
+                  d_max_evalue=d_max_evalue,
+                  kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
+                  fast_segments=fast_segments, prefilter=prefilter,
+                  segment_only_v=segment_only_v, indel_rescue=indel_rescue,
+                  # Never: The quality gate reads a column Stage 1 only writes when asked. In `run`
+                  # both stages happen in one call, so the user cannot wire that up by hand --
+                  # asking for the gate has to imply producing its input, or `--ec-mode
+                  # accurate` would silently do nothing here.
+                  with_junction_quality=(ec_mode != "fast" or min_junction_q is not None),
+                  shm=shm, complete_junction_nt=complete_junction_nt,
+                  cell_from=cell_from, cell_regex=cell_regex)
+
     whole = Stage()
-    mrep = map_rnaseq(r1, airr, r2=r2, organism=organism, threads=threads,
-                      reconstruct=reconstruct, min_score=min_score, map_d=map_d,
-                      d_max_evalue=d_max_evalue,
-                      kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
-                      fast_segments=fast_segments, prefilter=prefilter,
-                      segment_only_v=segment_only_v, indel_rescue=indel_rescue,
-                      # Never: The quality gate reads a column Stage 1 only writes when asked. In `run`
-                      # both stages happen in one call, so the user cannot wire that up by hand --
-                      # asking for the gate has to imply producing its input, or `--ec-mode
-                      # accurate` would silently do nothing here.
-                      with_junction_quality=(ec_mode != "fast" or min_junction_q is not None),
-                      shm=shm, complete_junction_nt=complete_junction_nt,
-                      cell_from=cell_from, cell_regex=cell_regex)
+    if len(pairs) == 1:
+        mrep = map_rnaseq(pairs[0][0], airr, r2=pairs[0][1], **map_kw).as_dict()
+    else:
+        mrep = _map_read_groups(pairs, airr, out_dir / f"{out_prefix}.parts",
+                                say=say, **map_kw)
 
     report = finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
                     ec_mode=ec_mode, min_junction_q=min_junction_q,
                     clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                     d_max_evalue=d_max_evalue,
-                    map_report=mrep.as_dict(), write_qc=False, echo=echo)
+                    map_report=mrep, write_qc=False, echo=echo)
     report["wall_seconds"] = round(whole.wall_seconds, 3)
     (out_dir / OUTPUTS["report"].format(prefix=out_prefix)).write_text(
         json.dumps(report, indent=2) + "\n")
@@ -204,15 +288,20 @@ def run(r1: str | Path, out_dir: str | Path, out_prefix: str, *,
     return report
 
 
-def _merge_map_reports(paths: list[Path]) -> dict:
-    """Combine per-shard Stage-1 reports into one.
+def _merge_map_reports(shards: list[dict]) -> dict:
+    """Combine per-shard (or per-read-group) Stage-1 reports into one.
 
     Counts sum. Wall time and RSS deliberately do **not** collapse to a single
     ``wall_seconds`` / ``peak_rss_mb``: adding up 40 array tasks' wall time and calling it
     "wall seconds" would be a lie, and the max is what actually sized the job. Both are
     reported under explicit names so neither can be mistaken for a single-node number.
+
+    Never: the LIBRARY SHAPE has to survive the merge. ``paired``, ``input_bytes`` and the read
+    lengths are recorded by Stage 1 precisely because nothing downstream can recover them -- the
+    AIRR holds only the reads that mapped, so its row count and its sequence lengths describe the
+    receptor subset. Dropping them here is why a sharded run used to write no ``sample`` scope in
+    ``<prefix>.stats.tsv`` at all, while a single-node run over the same reads did.
     """
-    shards = [json.loads(Path(p).read_text()) for p in paths]
     if not shards:
         return {}
     per_locus: dict[str, int] = {}
@@ -221,9 +310,23 @@ def _merge_map_reports(paths: list[Path]) -> dict:
             per_locus[locus] = per_locus.get(locus, 0) + int(n)
     total = sum(int(s.get("total_reads", 0)) for s in shards)
     mapped = sum(int(s.get("mapped_reads", 0)) for s in shards)
+    # A shard that mapped no reads still has a wall time, but its read-length fields are 0 and
+    # would drag a min to zero and a mean off its true value. Weight by what each actually read.
+    sized = [s for s in shards if int(s.get("total_reads", 0)) > 0
+             and float(s.get("read_length_max", 0)) > 0]
+    weights = [int(s["total_reads"]) for s in sized]
     return {
         "shards": len(shards),
+        "read_groups": len(shards),
         "organism": shards[0].get("organism"),
+        "input": [s.get("input") for s in shards],
+        "paired": bool(shards[0].get("paired")),
+        "input_bytes": sum(int(s.get("input_bytes", 0)) for s in shards),
+        "read_length_min": min((int(s["read_length_min"]) for s in sized), default=0),
+        "read_length_max": max((int(s["read_length_max"]) for s in sized), default=0),
+        "read_length_mean": (
+            round(sum(float(s["read_length_mean"]) * w for s, w in zip(sized, weights))
+                  / sum(weights), 3) if weights else 0.0),
         "total_reads": total,
         "mapped_reads": mapped,
         "mapped_fraction": (mapped / total) if total else 0.0,
@@ -235,7 +338,22 @@ def _merge_map_reports(paths: list[Path]) -> dict:
         "wall_seconds_max": max(float(s.get("wall_seconds", 0.0)) for s in shards),
         "wall_seconds_sum": round(sum(float(s.get("wall_seconds", 0.0)) for s in shards), 3),
         "peak_rss_mb_max": max(float(s.get("peak_rss_mb", 0.0)) for s in shards),
+        # Both are empty dicts when their feature is off, and both are pure counters when it is
+        # on, so summing is the whole merge. Dropping them is not neutral: `prefilter_passed /
+        # prefilter_seen` is the only number that says whether the prefilter earned its keep on
+        # this library, and a sharded run used to report nothing at all.
+        "prefilter_stats": _sum_counters(shards, "prefilter_stats"),
+        "segment_search": _sum_counters(shards, "segment_search"),
     }
+
+
+def _sum_counters(shards: list[dict], key: str) -> dict:
+    """Add up one report sub-dict of integer counters across shards, keeping key order."""
+    out: dict[str, int] = {}
+    for s in shards:
+        for k, v in (s.get(key) or {}).items():
+            out[k] = out.get(k, 0) + int(v)
+    return out
 
 
 def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
@@ -263,7 +381,8 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
     merge(shards, airr)
     say(f"merged {len(shards)} shard AIRRs -> {airr}")
 
-    mrep = _merge_map_reports(sorted(shard_dir.glob("shard_*.map.json")))
+    mrep = _merge_map_reports([json.loads(p.read_text())
+                               for p in sorted(shard_dir.glob("shard_*.map.json"))])
     if mrep:
         say(f"map (summed over {mrep['shards']} shards): "
             f"{mrep['mapped_reads']}/{mrep['total_reads']} reads mapped; loci={mrep['per_locus']}")

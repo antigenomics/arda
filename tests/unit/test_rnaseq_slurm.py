@@ -113,18 +113,21 @@ def test_finish_report_records_provenance(tmp_path):
     assert on_disk["arda_version"] == report["arda_version"]
 
 
-def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time(tmp_path):
-    shards = []
-    for i, (total, mapped, wall, rss) in enumerate([(100, 10, 5.0, 300.0), (100, 20, 9.0, 280.0)]):
-        p = tmp_path / f"shard_{i:05d}.map.json"
-        p.write_text(json.dumps({
-            "organism": "human", "total_reads": total, "mapped_reads": mapped,
+def _shard_report(total, mapped, wall, rss, *, length=100, nbytes=1000):
+    return {"organism": "human", "total_reads": total, "mapped_reads": mapped,
             "per_locus": {"IGH": mapped}, "constant_only_fragments": 1, "isotype_from_mate": 2,
-            "min_score": 75.0, "threads": 8, "wall_seconds": wall, "peak_rss_mb": rss}))
-        shards.append(p)
+            "min_score": 75.0, "threads": 8, "wall_seconds": wall, "peak_rss_mb": rss,
+            "paired": True, "input": "r1.fq", "input_bytes": nbytes,
+            "read_length_min": length, "read_length_max": length,
+            "read_length_mean": float(length),
+            "prefilter_stats": {"seen": total, "passed": mapped}, "segment_search": {}}
+
+
+def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time():
+    shards = [_shard_report(100, 10, 5.0, 300.0), _shard_report(100, 20, 9.0, 280.0)]
 
     m = pipeline._merge_map_reports(shards)
-    assert m["shards"] == 2
+    assert m["shards"] == 2 and m["read_groups"] == 2
     assert m["total_reads"] == 200 and m["mapped_reads"] == 30
     assert m["per_locus"] == {"IGH": 30}
     assert m["constant_only_fragments"] == 2 and m["isotype_from_mate"] == 4
@@ -132,6 +135,35 @@ def test_merge_map_reports_sums_counts_and_never_fakes_a_single_wall_time(tmp_pa
     assert m["peak_rss_mb_max"] == 300.0
     # Summing 40 array tasks' wall time and calling it "wall_seconds" would be a lie.
     assert "wall_seconds" not in m and "peak_rss_mb" not in m
+
+
+def test_merge_map_reports_keeps_the_library_shape_and_the_prefilter_accounting():
+    """Never: these survive the merge or a sharded run silently describes a different library.
+
+    `paired`, `input_bytes` and the read lengths are recorded by Stage 1 because nothing
+    downstream can recover them -- the AIRR holds only the reads that mapped, so its row count and
+    its sequence lengths describe the receptor subset. And `passed / seen` is the only number that
+    says whether the prefilter earned its keep; dropping it reported nothing at all.
+    """
+    shards = [_shard_report(100, 10, 5.0, 300.0, length=100, nbytes=1000),
+              _shard_report(300, 20, 9.0, 280.0, length=150, nbytes=4000)]
+    m = pipeline._merge_map_reports(shards)
+    assert m["paired"] is True
+    assert m["input"] == ["r1.fq", "r1.fq"]
+    assert m["input_bytes"] == 5000
+    assert m["read_length_min"] == 100 and m["read_length_max"] == 150
+    # Weighted by reads, not by shard: 100 reads at 100 nt and 300 at 150 nt is 137.5, not 125.
+    assert m["read_length_mean"] == 137.5
+    assert m["prefilter_stats"] == {"seen": 400, "passed": 30}
+    assert m["segment_search"] == {}
+
+
+def test_a_shard_that_mapped_nothing_does_not_drag_the_read_length_to_zero():
+    """An empty shard has a wall time but no reads; its zeroed length fields are not a measurement."""
+    shards = [_shard_report(100, 10, 5.0, 300.0, length=100),
+              _shard_report(0, 0, 0.5, 60.0, length=0, nbytes=0)]
+    m = pipeline._merge_map_reports(shards)
+    assert m["read_length_min"] == 100 and m["read_length_mean"] == 100.0
 
 
 def test_submit_script_runs_stage23_once_and_never_in_the_array(tmp_path):

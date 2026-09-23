@@ -83,10 +83,18 @@ def test_rnaseq_run_is_gone(monkeypatch, tmp_path):
     rather than a subcommand — and a command with no arguments must reject it instead of
     quietly ignoring it and running the pipeline anyway.
     """
-    monkeypatch.setattr("arda.rnaseq.pipeline.run", lambda **kw: None)
+    monkeypatch.setattr("arda.rnaseq.pipeline.run", lambda pairs, **kw: None)
     res = runner.invoke(app, ["rnaseq", "run", "--r1", "r1.fq", "-p", "S", "-d", str(tmp_path)])
     assert res.exit_code != 0
 
+
+
+@pytest.fixture
+def r1(tmp_path):
+    """A real FASTQ: the mode commands check their inputs exist before the pipeline starts."""
+    p = tmp_path / "r1.fq"
+    p.write_text("@r\nACGT\n+\nIIII\n")
+    return str(p)
 
 def test_singlecell_is_reserved_and_points_at_the_command_that_exists():
     # The MODE name stays reserved -- its only sensible preset is what `--exact` already gives.
@@ -113,23 +121,25 @@ def test_mode_presets_are_the_measured_configurations(mode, expected):
     assert _MODE_SPEED[mode] == expected
 
 
-def test_exact_clears_every_speedup(monkeypatch, tmp_path):
+def test_exact_clears_every_speedup(monkeypatch, tmp_path, r1):
     seen = {}
 
-    def fake_run(**kw):
-        seen.update(kw)
+    def fake_run(pairs, **kw):
+        seen.update(kw, pairs=pairs)
 
     monkeypatch.setattr("arda.rnaseq.pipeline.run", fake_run)
-    res = runner.invoke(app, ["amplicon", "--r1", "r1.fq", "-p", "S", "-d", str(tmp_path),
+    res = runner.invoke(app, ["amplicon", "--r1", r1, "-p", "S", "-d", str(tmp_path),
                               "--exact"])
     assert res.exit_code == 0, res.output
     assert not any(seen[k] for k in _MODE_SPEED["amplicon"])
+    assert seen["pairs"] == [(Path(r1), None)]
 
 
-def test_mode_passes_its_preset_through(monkeypatch, tmp_path):
+def test_mode_passes_its_preset_through(monkeypatch, tmp_path, r1):
     seen = {}
-    monkeypatch.setattr("arda.rnaseq.pipeline.run", lambda **kw: seen.update(kw))
-    res = runner.invoke(app, ["rnaseq", "--r1", "r1.fq", "-p", "S", "-d", str(tmp_path)])
+    monkeypatch.setattr("arda.rnaseq.pipeline.run",
+                        lambda pairs, **kw: seen.update(kw, pairs=pairs))
+    res = runner.invoke(app, ["rnaseq", "--r1", r1, "-p", "S", "-d", str(tmp_path)])
     assert res.exit_code == 0, res.output
     assert seen["prefilter"] is True and seen["fast_segments"] is False
     # The mode's own denoising default, not the historical `fast`.
@@ -137,7 +147,7 @@ def test_mode_passes_its_preset_through(monkeypatch, tmp_path):
     assert seen["shm"] == "framework"
 
 
-def test_indel_rescue_without_fast_segments_raises(monkeypatch, tmp_path):
+def test_indel_rescue_without_fast_segments_raises(monkeypatch, tmp_path, r1):
     """Never: A flag that is accepted and silently does nothing is the failure this project keeps
     hitting. `--indel-rescue` needs the fast segment pass, so `--exact` must reject it.
 
@@ -147,8 +157,9 @@ def test_indel_rescue_without_fast_segments_raises(monkeypatch, tmp_path):
     `--indel-rescue` across the line break. It did exactly that.
     """
     called = []
-    monkeypatch.setattr("arda.rnaseq.pipeline.run", lambda **kw: called.append(kw))
-    res = runner.invoke(app, ["amplicon", "--r1", "r1.fq", "-p", "S", "-d", str(tmp_path),
+    monkeypatch.setattr("arda.rnaseq.pipeline.run",
+                        lambda pairs, **kw: called.append(kw))
+    res = runner.invoke(app, ["amplicon", "--r1", r1, "-p", "S", "-d", str(tmp_path),
                               "--indel-rescue", "--exact"])
     assert res.exit_code != 0
     assert not called, "the pipeline ran despite an unsatisfiable flag combination"
