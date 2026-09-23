@@ -200,6 +200,44 @@ sample,fastq_1,fastq_2
 bulk_rnaseq,/data/SRR5233637_1.fq,/data/SRR5233637_2.fq
 ```
 
+## A sample split across lanes
+
+One FASTQ per Illumina lane (`S_S1_L001_R1_001.fastq.gz`, `..._L002_...`), or per in-house chunk,
+is still **one repertoire** and must give **one** clonotype table. Do not `cat` them: arda maps
+each read group and concatenates before Stages 2-3, which is byte-identical to the same reads in
+one file and skips a full copy of the data.
+
+The module takes them straight off a `groupTuple`. `reads` is the usual nf-core flat list, kept
+**pair-adjacent** — `[r1, r2, r1, r2, ...]` — which is exactly what grouping per-lane
+`[meta, [r1, r2]]` tuples produces:
+
+```nextflow
+Channel
+    .fromPath(params.input)                          // sample,fastq_1,fastq_2 — repeat `sample`
+    .splitCsv(header: true)                          // for each lane, as nf-core does
+    .map { row ->
+        def single = !row.fastq_2
+        [ [id: row.sample, single_end: single],
+          single ? [file(row.fastq_1)] : [file(row.fastq_1), file(row.fastq_2)] ]
+    }
+    .groupTuple()                                    // one entry per SAMPLE
+    .map { meta, lanes -> [meta, lanes.flatten()] }  // [r1, r2, r1, r2, ...], lane order kept
+    .set { reads }
+ARDA(reads)
+```
+
+A one-lane sample is unchanged by this — a 2-element list is one pair — so the snippet is safe to
+use everywhere.
+
+> **Never sort the lanes.** `A_L010` sorts before `A_L002`, and the clonotype fold is not
+> permutation-invariant: `correct` collapses an error child onto the parent it meets first. Let the
+> channel's order stand, and it will match what `arda rnaseq --samples sheet.tsv` produces from
+> the same sheet.
+
+For a cluster without Nextflow, `arda cluster plan --samples sheet.tsv` emits the same DAG as two
+TSV manifests (one row per read group, one per sample), and `arda cluster submit-samples` renders
+it as SLURM arrays. There is also a Snakemake workflow in `integrations/snakemake/arda/`.
+
 ## Drop into an nf-core/rnaseq (v3.x) pipeline
 
 The module consumes the same per-sample FASTQ channel the aligners do, so it needs no sample-sheet

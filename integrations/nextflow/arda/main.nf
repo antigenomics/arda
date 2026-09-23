@@ -53,7 +53,27 @@ process ARDA {
     script:
     def args   = task.ext.args ?: ''
     def prefix = task.ext.prefix ?: "${meta.id}"
-    def r2     = meta.single_end ? '' : "--r2 ${reads[1]}"
+
+    // ── A SAMPLE MAY ARRIVE IN SEVERAL FILES ───────────────────────────────────────────────────
+    // One FASTQ per Illumina lane, or per in-house chunk, is still ONE repertoire and must give
+    // ONE clonotype table. arda maps each read group and concatenates before Stages 2-3, which is
+    // byte-identical to the same reads in one file -- so pass them all rather than `cat`-ing.
+    //
+    // `reads` is the usual nf-core flat list, PAIR-ADJACENT: [r1, r2, r1, r2, ...] for paired
+    // input, [r1, r1, ...] for single-end. That is what `groupTuple` gives you after collecting
+    // per-lane `[meta, [r1, r2]]` tuples -- see this module's README. `collate` then recovers the
+    // pairs, and a plain 2-element list collates to exactly one pair, so an ordinary one-lane
+    // sample is unchanged.
+    //
+    // Never: declared order, never sorted by filename. `A_L010` sorts before `A_L002`, and the
+    // clonotype fold is not permutation-invariant -- `correct` collapses an error child onto the
+    // parent it meets first. Let the channel's order stand.
+    def groups = meta.single_end ? reads.collect { [it] } : reads.collate(2)
+    def inputs = groups.collect { g ->
+        meta.single_end ? "--r1 ${g[0]}" : "--r1 ${g[0]} --r2 ${g[1]}"
+    }.join(' \\\n        ')
+    def id_args = groups.size() > 1 ? groups.collect { "--id ${prefix}" }.join(' ') : ''
+    def name_arg = groups.size() > 1 ? id_args : "--out-prefix ${prefix}"
 
     // ── REGIME = COMMAND NAME ──────────────────────────────────────────────────────────────────
     // arda has two tuning paths and they do NOT compose. Getting the choice backwards is not an
@@ -167,8 +187,8 @@ process ARDA {
     ${mmseqs_pin}
 
     arda ${mode} \\
-        --r1 ${reads[0]} ${r2} \\
-        --out-prefix ${prefix} \\
+        ${inputs} \\
+        ${name_arg} \\
         --out-dir . \\
         --threads ${task.cpus} \\
         ${tuning} \\
