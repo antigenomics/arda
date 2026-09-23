@@ -86,7 +86,7 @@ def test_readme_table_for_dd_airr():
 
     igh = row["PX612894.1"]
     assert igh["d_call"] == "IGHD3-9*01"
-    # ⛔ This used to assert a SECOND D of `IGHD2/OR15-2a*01,IGHD2/OR15-2b*01`, and that assertion
+    # Never: This used to assert a SECOND D of `IGHD2/OR15-2a*01,IGHD2/OR15-2b*01`, and that assertion
     # was pinning an artifact. Those are `/OR` ORPHONS -- on chromosome 15, outside the IGH locus,
     # not producible by any rearrangement. On a real bulk IGH library 11 of 11 tandem D-D calls
     # named that same pair, i.e. the entire tandem-D signal was this one vocabulary error. Orphons

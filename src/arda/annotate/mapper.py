@@ -79,7 +79,7 @@ _MAX_TIED_V = 8
 # carries no information that could separate them.
 _MAX_TIED_J = 4
 
-#: side -> how many exactly-tied rows may be kept for it. ⛔ ONE mapping, read by both
+#: side -> how many exactly-tied rows may be kept for it. Never: ONE mapping, read by both
 #: `_segment_rows` (polars) and `_segment_best_hits` (Python) -- see `_SEGMENT_SIDE` for what
 #: happens when a rule about segment rows is spelled out twice. `C` is absent: a constant-region
 #: hit nominates nothing that could be tied.
@@ -334,7 +334,7 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     """
     fasta = ref.target_fasta.parent / "segments.fasta"
     if not fasta.exists():
-        # ⛔ Generate it rather than silently falling back. `segments.fasta` is GENERATED, not
+        # Never: Generate it rather than silently falling back. `segments.fasta` is GENERATED, not
         # shipped, and the auto-fetched reference tarball does not contain it -- so on a plain
         # `pip install` every `--two-pass`/`--fast-segments` run degraded to the one-pass search
         # with only a log line, and the flagship configuration was unreachable out of the box.
@@ -500,7 +500,7 @@ _SEGMENT_FORMAT = "query,target,bits,qstart,qend,tstart,tend"
 #: Segment target prefix -> which side of a scaffold that row is evidence for. Anything not listed
 #: is dropped and is NEVER silently treated as a J.
 #:
-#: ⛔ ONE mapping, used by both `_segment_rows` (which reduces the alignment TSV in polars) and the
+#: Never: ONE mapping, used by both `_segment_rows` (which reduces the alignment TSV in polars) and the
 #: loop in `_segment_best_hits` (which consumes it). They are the same rule, and when they were
 #: written out separately, adding `C|` targets to the reference and updating only the loop made the
 #: reduction discard every C row: `best_c` stayed empty, no constant-only read was ever rescued,
@@ -544,7 +544,7 @@ def _segment_rows(tsv: Path) -> list[dict]:
     schema = {c: (pl.Utf8 if c in _STR_COLS else pl.Float64) for c in cols}
     df = pl.read_csv(tsv, separator="\t", has_header=False, new_columns=cols,
                      schema_overrides=schema)
-    # ⛔ The SAME unusable-row filter `_best_hits` applies, for a sharper reason: polars sorts
+    # Never: The SAME unusable-row filter `_best_hits` applies, for a sharper reason: polars sorts
     # nulls FIRST under `descending=True`, so a row with an empty `bits` field becomes `_rank == 0`
     # for its `(query, side)` and **evicts the read's real best hit**. Reproduced: with rows
     # `V|A*01 <empty bits>` and `V|B*01 120` for one read, the reduction returns `V|A*01` and
@@ -554,7 +554,7 @@ def _segment_rows(tsv: Path) -> list[dict]:
     # dict on `None`. Both route the read to the full-reference rescue instead, which is the
     # guarantee `--two-pass` is built on.
     #
-    # ⛔ The TARGET-INVERTED row (`tstart > tend`) is the third shape, and it is filtered HERE for
+    # Never: The TARGET-INVERTED row (`tstart > tend`) is the third shape, and it is filtered HERE for
     # the same reason `_best_hits` filters it -- not because this path can ship the Jurkat phantom
     # (the implied alignments it nominates are themselves reduced by `_best_hits`, which refuses
     # them), but because a segment row's `tstart` is read as a FORWARD target offset by both of its
@@ -589,7 +589,7 @@ def _segment_rows(tsv: Path) -> list[dict]:
     df = df.filter(kind.is_in(list(_SEGMENT_SIDE))).with_columns(
         _side=kind.replace_strict(_SEGMENT_SIDE))
 
-    # ⛔ `over`, NOT `group_by`. A window function maps its result back to the ORIGINAL row
+    # Never: `over`, NOT `group_by`. A window function maps its result back to the ORIGINAL row
     # positions, so on an already-sorted frame it is deterministic; `group_by` is a multithreaded
     # hash aggregation, and using it unordered is precisely what made `correct` nondeterministic
     # across runs while the row count stayed stable.
@@ -1056,7 +1056,7 @@ def _segment_best_hits(
     # names its V×J scaffold through `combinations.tsv`. `setdefault` so a pre-split `JC|` hit,
     # which already knows its scaffold, is never overwritten.
     #
-    # ⛔ Both calls are expanded to individual ALLELES before the lookup. A `j_call` is a group of
+    # Never: Both calls are expanded to individual ALLELES before the lookup. A `j_call` is a group of
     # alleles arda cannot separate, and the two sides group them by different rules -- see
     # `Reference.jc_combinations`. Matching the comma-joined strings leaves 24 human J+C scaffolds
     # unreachable, including every IGLJ2/IGLJ3 read, which turns the contest off for exactly the
@@ -1130,7 +1130,7 @@ def _segment_best_hits(
     # reads: 4 of 453 mapped reads, 3 of them gaining an invented junction_aa.
     # Two targets per read is still ~138x fewer alignments than the full reference.
     #
-    # ⛔ **Nominate from the J, not from a C hit.** Before the constant region became its own
+    # **Never: Nominate from the J, not from a C hit.** Before the constant region became its own
     # target, a J->C read's best J-side hit WAS a `JC|` scaffold, so it named its own contestant.
     # It no longer does, and requiring a `C|` hit instead is not equivalent: such a read spans the
     # J/C boundary, so its constant overlap is often too short to clear the search threshold on its
@@ -1192,7 +1192,7 @@ def _segment_best_hits(
     # answer. It is 77 % of the amplicon rescue set and ~44 % of the amplicon wall, at 338 µs/read
     # against 31 µs for a named-target alignment (results/round18).
     #
-    # ⛔ This is NOT round 5's refuted narrowing, which kept the read on SCAFFOLDS and narrowed
+    # Never: This is NOT round 5's refuted narrowing, which kept the read on SCAFFOLDS and narrowed
     # which ones (so a read whose true home scored higher elsewhere was trapped, and the narrowed
     # best then fell under `--min-score 75`). Here the read is aligned against its own V SEGMENT,
     # by MMseqs2, producing a real bit score over exactly the nucleotides a whole-scaffold
@@ -1201,12 +1201,12 @@ def _segment_best_hits(
     #
     # Anything that fails here stays in `rescue`: the "no read lost" invariant is unchanged.
     #
-    # ⛔ The class is gated by GEOMETRY, not by the shortlist reason alone. `v_only` means "no J
+    # Never: The class is gated by GEOMETRY, not by the shortlist reason alone. `v_only` means "no J
     # segment hit", which on a read carrying SHM is not the same statement as "no J in the read":
     # the segment pass misses short hypermutated IGHJ and the full reference then finds it.
     # Routing on the reason code alone cost 77 of 213 bulk junctions.
     #
-    # ⛔ And the gate must be measured from the READ's full extent, not from where the ALIGNMENT
+    # Never: And the gate must be measured from the READ's full extent, not from where the ALIGNMENT
     # stopped. An ungapped extension breaks early under mismatch load, so on a hypermutated
     # library the alignment end systematically understates how far the read reaches: gating on it
     # passed every local test (100 k TRA amplicon, 100 k bulk, both zero-loss) and then lost
@@ -1250,7 +1250,7 @@ def _segment_best_hits(
     best.update(v_seg_hits)
 
     seen = set(best_v) | set(best_j) | set(best_c)
-    # ⛔ Assert what actually matters: every read the segment pass SAW either came back with a hit
+    # Never: Assert what actually matters: every read the segment pass SAW either came back with a hit
     # or was handed to the full-reference rescue. The obvious form of this check --
     # `implied | rescue | c_only == seen` -- is a TAUTOLOGY: `shortlist` already asserts
     # `implied | rescue == set(best_v) | set(best_j)` internally, and `c_only` is defined three
@@ -1324,7 +1324,7 @@ def _merge_segment_report(acc: dict, chunk: dict) -> None:
     ``fast_fraction`` is recomputed from the totals rather than averaged -- averaging per-chunk
     fractions weights a 12-read tail chunk the same as a 400 k one.
     """
-    # ⛔ Every counter `_segment_best_hits` emits must be listed here. One that is not gets silently
+    # Never: Every counter `_segment_best_hits` emits must be listed here. One that is not gets silently
     # dropped from the run report, which is indistinguishable from the feature never having run --
     # the exact shape of failure this pipeline keeps shipping. `v_only_on_segment` was lost this
     # way: `rescued` and `fast_fraction` moved, so the flag was demonstrably working, while its own

@@ -1,6 +1,6 @@
 """The junction boundary in GERMLINE coordinates must be in the AIRR, not only in the reference.
 
-⛔ Why this exists. `v_mutations` positions are 1-based in the called V allele and `j_mutations`
+Never: Why this exists. `v_mutations` positions are 1-based in the called V allele and `j_mutations`
 positions are 1-based in the called J allele, and **both lists span the junction**: the V germline's
 3' tail and the J germline's 5' head lie inside it, so exonuclease chew-back and non-templated N/P
 bases are emitted as substitutions against a germline that does not template them.
@@ -27,7 +27,7 @@ from arda.annotate.transfer import AIRR_COLUMNS
 
 
 def test_the_anchor_columns_are_appended_last():
-    """⛔ New columns go LAST, and each new one goes after the last one. Adding one mid-list
+    """Never: New columns go LAST, and each new one goes after the last one. Adding one mid-list
     silently shifts every later column for a consumer that reads the shipped set by position --
     which has happened here before. So this pins the ORDER of the non-schema tail, not just that
     the anchors are somewhere in it: 2.17.0 appended `junction_completed_nt` after them, and the
@@ -42,7 +42,7 @@ def test_the_anchors_classify_the_measured_recurrent_variants():
     These are the real recurrent variants from that library, with the real anchor offsets: they are
     junction-internal, which is why frequency alone read them as 'alleles' and position is needed.
 
-    ⛔ Deliberately NOT marked `requires_human_db`. In this project that skip is how a reference
+    Never: Deliberately NOT marked `requires_human_db`. In this project that skip is how a reference
     defect regressed unnoticed; the guard below skips only when the reference genuinely is not
     built, which is visible in the report.
     """
@@ -81,7 +81,7 @@ def test_framework_only_identity_is_what_arda_now_emits():
     it from ``v_anchor_nt`` + ``v_germline_start/end`` + ``v_mutations`` must reproduce the emitted
     number.
 
-    ⛔ The two TR records are the check that matters: T-cell receptors do not hypermutate, so a
+    Never: The two TR records are the check that matters: T-cell receptors do not hypermutate, so a
     framework-only identity below 1.0 there would mean the scope is wrong.
     """
     import re

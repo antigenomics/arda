@@ -91,7 +91,7 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
   (query 5′ offset) then `N` (germline 5′ offset), an `M`/`I`/`D` body, a trailing `S`.
 - `v_mutations`/`j_mutations` are the read's SHM against the called germline — `G45A,C112T`:
   germline base, 1-based position **in that segment's own allele**, read base. That frame is what
-  makes two reads of one clone comparable and the germline the tree root. ⛔ V and J germline-aligned
+  makes two reads of one clone comparable and the germline the tree root. Never: V and J germline-aligned
   regions ONLY, **by construction**: a mismatch inside the junction is not attributable to any
   germline (chew-back + non-templated N/P), and the scaffold's N-pad is not a segment, so an NDN
   position has no germline coordinate to be recorded under. Do NOT re-derive this by diffing

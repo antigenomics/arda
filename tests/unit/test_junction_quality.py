@@ -11,7 +11,7 @@ Two halves, tested here:
 
 * Stage 1 is the only place the FASTQ quality is still in hand, so ``map --junction-quality``
   carries it forward as a ``junction_quality`` column aligned base-for-base with ``junction``.
-  ⛔ The failure mode that no downstream check can catch is a quality string of the RIGHT LENGTH
+  Never: The failure mode that no downstream check can catch is a quality string of the RIGHT LENGTH
   taken from the wrong strand or offset, so the tests below assert the *content*, on both strands.
 * Stage 2 gates each read on the Phred of the bases that differ from its putative parent.
   Matching bases are not evidence and are never looked at.
@@ -53,7 +53,7 @@ def test_forward_read_quality_is_the_junction_slice():
 
 
 def test_reverse_complement_read_reverses_the_quality_it_does_not_complement_it():
-    """⛔ The one bug a length check cannot catch.
+    """Never: The one bug a length check cannot catch.
 
     For ``rev_comp == "T"`` the stored ``sequence`` is the read as submitted and everything else
     in the record is on the coding strand, so the quality runs the other way. Reversing it is
@@ -182,7 +182,7 @@ def _clonotypes(path, out, **kw):
 
 
 def test_gate_raises_when_the_column_is_absent(tmp_path):
-    """⛔ Raise, never degrade: a silently unapplied gate looks exactly like a gate that passed."""
+    """Never: Raise, never degrade: a silently unapplied gate looks exactly like a gate that passed."""
     rows = _reads(_PARENT, 5, "I" * len(_PARENT), prefix="p")
     for r in rows:
         del r["junction_quality"]
@@ -302,7 +302,7 @@ def test_unknown_mode_raises(tmp_path):
 
 
 def test_ec_mode_on_rnaseq_run_implies_the_stage1_column_it_needs():
-    """⛔ `run` does Stage 1 and Stage 2 in ONE call, so a user cannot turn on
+    """Never: `run` does Stage 1 and Stage 2 in ONE call, so a user cannot turn on
     `map --junction-quality` by hand. If asking for the gate did not imply producing its input,
     `--ec-mode accurate` would silently do nothing there -- the exact class of failure this
     codebase keeps hitting (a flag that is accepted, changes nothing, and reports success).
@@ -402,7 +402,7 @@ def test_a_vacated_junction_stays_an_alignment_target(tmp_path):
 
 
 def test_an_implausible_parent_does_not_gate_however_much_bigger_it_is(tmp_path):
-    """⛔ "More abundant" is not evidence. The parent must be able to have PRODUCED this read.
+    """Never: "More abundant" is not evidence. The parent must be able to have PRODUCED this read.
 
     At Q20 the discriminating base is wrong with probability 1e-2, so a parent of 400 reads is
     expected to yield 4 misreads — observing 20 is five times that, and calling them all error is a
@@ -436,7 +436,7 @@ def test_the_plausibility_test_uses_phred_not_the_global_error_rate(tmp_path):
 
 
 def test_reads_assigned_is_the_conservation_invariant_and_matches_the_table(tmp_path):
-    """⛔ The report must carry the quantity the invariant is DEFINED on.
+    """Never: The report must carry the quantity the invariant is DEFINED on.
 
     ``CorrectReport.reads`` is the spanning-read count taken before any correction runs, so it is
     invariant to everything ``correct`` does. A benchmark comparing it across ``--ec-mode`` sees 0
@@ -458,6 +458,6 @@ def test_reads_assigned_is_the_conservation_invariant_and_matches_the_table(tmp_
         assert rep.reads_assigned == table, f"report disagrees with the table for {mode_kw}"
         if base is None:
             base = rep.reads_assigned
-        # ⛔ Error correction MOVES reads onto a parent; it never discards them.
+        # Never: Error correction MOVES reads onto a parent; it never discards them.
         assert rep.reads_assigned >= base, (
             f"read conservation VIOLATED by {mode_kw}: {rep.reads_assigned} < {base}")

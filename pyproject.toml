@@ -1,5 +1,5 @@
 [build-system]
-# ⛔ pybind11 is UPPER-BOUNDED. `PYBIND11_MODULE` changed to multi-phase init in 3.0.0, so an
+# Never: pybind11 is UPPER-BOUNDED. `PYBIND11_MODULE` changed to multi-phase init in 3.0.0, so an
 # unbounded requirement builds wheels against whatever PyPI serves that day. Measured: 3.0.4
 # and 2.13.6 differ by ~13 % on a 6-arg noop binding call and are otherwise equivalent, so
 # the pin is for REPRODUCIBILITY, not speed.

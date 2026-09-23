@@ -13,7 +13,7 @@ fit identically, typically at identity **1.0000 over 63–70 nt**. One read favo
 none favoured arda's. Neither tool was right; both were overconfident, and they disagreed by
 accident.
 
-⛔ Why arda lost the ties in the first place, and why this does not undo that
+Never: Why arda lost the ties in the first place, and why this does not undo that
 ----------------------------------------------------------------------------
 ``top_hit`` runs before ``convertalis`` deliberately: aligning every exactly-tied allele made the
 alignment TSV **2.88× larger** — the same shape as the 194 MB → 877 MB regression ``top_hit``
@@ -31,7 +31,7 @@ The search is in C++ (:func:`arda._denoise.containing`) and the result is memois
 ``(allele, gstart, gend)``. On a primer-anchored amplicon that collapses hundreds of thousands of
 reads onto a few thousand distinct spans, so the search runs once per span, not once per read.
 
-⛔ Off by default. This changes ``v_call``/``j_call`` on every library, and a downstream consumer
+Never: Off by default. This changes ``v_call``/``j_call`` on every library, and a downstream consumer
 that splits on ``,`` and takes ``[0]`` sees no change while one that treats the field as a single
 gene sees a new shape. Turn it on with ``--tie-lists``.
 """
@@ -89,7 +89,7 @@ class TieResolver:
         hits = (_cpp.containing(segment, self._seqs) if _cpp is not None
                 else _containing_py(segment, self._seqs))
         names = tuple(self._names[j] for j in hits)
-        # ⛔ A runaway tie list is worse than no tie list: it turns one wrong-but-usable call into
+        # Never: A runaway tie list is worse than no tie list: it turns one wrong-but-usable call into
         # an unusable one, and it inflates every downstream string. Above the cap the call is left
         # exactly as it was.
         return () if len(names) > self._max_ties else names
@@ -132,7 +132,7 @@ def rank_ties(calls: list[str], scores: list[float] | None = None,
     have. So rank the members by that evidence and put the winner first, leaving the rest as the
     honest statement of what this read alone could not rule out.
 
-    ⛔ **Only UNAMBIGUOUS reads vote.** A read whose own call is ``A,B`` cannot be evidence for A
+    **Never: Only UNAMBIGUOUS reads vote.** A read whose own call is ``A,B`` cannot be evidence for A
     over B — counting it would let a common tie bootstrap itself, and the more often two alleles
     are confusable the more confidently the pair would elect one of them. Ties are ranked, never
     ranking. If no member was ever seen unambiguously, the summed score over all reads naming it
@@ -146,7 +146,7 @@ def rank_ties(calls: list[str], scores: list[float] | None = None,
     """
     if scores is not None and len(scores) != len(calls):
         raise ValueError("scores must be the same length as calls")
-    # ⛔ The votes come from `evidence`, which must be the calls BEFORE tie expansion. Ranking on
+    # Never: The votes come from `evidence`, which must be the calls BEFORE tie expansion. Ranking on
     # the expanded calls is self-defeating: expansion makes every read ambiguous, so the
     # unambiguous-reads-only rule has nothing left to count and the whole thing degenerates to
     # lexicographic order. Caught on the real IGLV2-14/IGLV2-23 pair, where the expanded ranking
@@ -192,7 +192,7 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
     Two passes over one file, which is why this is a separate step rather than something ``map``
     does inline: the ranking needs every read before it can order any of them.
 
-    ⛔ Membership is decided per read, from the span that read aligned; only the ORDER is decided
+    Never: Membership is decided per read, from the span that read aligned; only the ORDER is decided
     library-wide. Nothing is added or removed by the second pass, so a consumer taking the first
     element gets a better answer and one reading the whole field still sees every germline the read
     could not rule out.
@@ -221,7 +221,7 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
             except OSError:                        # a locus whose germline files are absent
                 continue
         if not germ:
-            # ⛔ Raise, never degrade. Without germlines every call is left exactly as it was, so
+            # Never: Raise, never degrade. Without germlines every call is left exactly as it was, so
             # the output is byte-identical to the input and the report says `expanded: 0` -- which
             # is indistinguishable from a library that genuinely had no ties. This is the same
             # failure mode `--min-junction-q` and the quality rescue already refuse, and it hid a

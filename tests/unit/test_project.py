@@ -129,7 +129,7 @@ def test_the_composite_allele_names_a_segment_target_can_carry_resolve(scene):
 def test_the_anchor_offsets_decode_to_real_anchor_codons_in_the_shipped_reference():
     """The arithmetic is only meaningful if `anchor_nt` indexes the segment targets it is used with.
 
-    ⛔ This is the assertion that catches a reference rebuild silently moving the coordinate system
+    Never: This is the assertion that catches a reference rebuild silently moving the coordinate system
     out from under the projection -- the class of failure this repo has shipped as "a reference swap
     can silently be a no-op". It reads the REAL segments.fasta, not a fixture.
     """

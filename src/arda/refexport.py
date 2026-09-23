@@ -15,7 +15,7 @@ This module does the join once, correctly, and emits it in the formats people ac
 * ``airr``  — the same rows shaped as an AIRR Rearrangement TSV, so a reference scaffold can be fed
   straight into a tool that expects arda's own output
 
-⛔ Coordinates are **1-based closed** everywhere in arda, which is the AIRR convention. GFF3 is also
+Never: Coordinates are **1-based closed** everywhere in arda, which is the AIRR convention. GFF3 is also
 1-based closed, so those pass through unchanged; anything consuming 0-based half-open (BED, most
 Python slicing) must convert, and the ``tsv`` output states the convention in a comment line.
 """

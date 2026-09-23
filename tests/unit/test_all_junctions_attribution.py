@@ -1,6 +1,6 @@
 """Under ``--all-junctions``, an ASSEMBLED row outranks the read's own truncated Stage-1 row.
 
-⛔ ``_assign_coverage``'s pass 1 walks the concatenated frame in order -- mapped rows first -- and
+Never: ``_assign_coverage``'s pass 1 walks the concatenated frame in order -- mapped rows first -- and
 stops at the first key it finds. With ``complete_only=False`` the read's own TRUNCATED junction is
 itself a clonotype key, so it won that race, ``done`` then blocked the assembled row, and the
 contig's clonotype was emitted with ``duplicate_count`` 0 while its reads were credited to a
@@ -55,7 +55,7 @@ def test_complete_only_is_unaffected(tmp_path):
 
 
 def test_no_read_is_lost_either_way(tmp_path):
-    """⛔ The reads MOVE between clonotypes; they are never discarded."""
+    """Never: The reads MOVE between clonotypes; they are never discarded."""
     for co in (True, False):
         rep, got = _run(tmp_path, complete_only=co)
         assert rep.reads_assigned == sum(got.values()) == 2, (co, got)

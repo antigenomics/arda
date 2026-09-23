@@ -209,7 +209,7 @@ arda cluster submit-fasta -i big.fastq -o big.airr.tsv --shards 50   # multi-nod
 arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8   # multi-node RNA-SEQ
 ```
 
-⛔ **`-v` / `-q` / `--log-file` are GLOBAL and go BEFORE the subcommand**
+**Never: `-v` / `-q` / `--log-file` are GLOBAL and go BEFORE the subcommand**
 (`arda -v --log-file run.log amplicon --r1 ...`). Progress goes to **stderr**, results to
 **stdout** — a mode run prints its output paths one per line and nothing else, so
 `$(arda map ...)` and `arda export-ref ... > out.tsv` are safe. `--log-file` is always DEBUG
@@ -264,15 +264,15 @@ verbatim — reads, FASTQ bytes, read length, paired, threads, wall time, peak R
 truncated junctions, junction length min/max/mean, junction quality, SHM rate, chimeras),
 `v_gene`/`j_gene`, and `allele_candidate`.
 
-⛔ Long, not wide — the metric set differs per scope, so a wide table is mostly empty cells.
-⛔ A metric with **no input is omitted, never emitted as 0**: a run without `--junction-quality`
+Never: Long, not wide — the metric set differs per scope, so a wide table is mostly empty cells.
+Never: A metric with **no input is omitted, never emitted as 0**: a run without `--junction-quality`
 has no `junction_quality_mean` row rather than a zero that reads like a terrible library.
-⛔ Truncation, a stop codon and an out-of-frame junction are counted **separately**; `_COMPLETE`
+Never: Truncation, a stop codon and an out-of-frame junction are counted **separately**; `_COMPLETE`
 folds them together and a QC table must not.
 ⚠ `allele_candidate` is a **shortlist, not a genotype call** — arda does not genotype. A novel
 allele, SHM and a miscall are the same string in the mutation list; recurrence within the allele
 (`--allele-min-frac`) and Phred are what separate them, and both are reported per variant.
-⛔ Chimera / non-functional / stop-codon counts are **flags, never filters**.
+Never: Chimera / non-functional / stop-codon counts are **flags, never filters**.
 
 The two quality columns feeding it are opt-in on `map` and use **different encodings**:
 `--junction-quality` writes raw Phred+33 *characters* over `junction`; `--mutation-quality` writes
@@ -435,14 +435,14 @@ both a V and a J segment, and the predictor is **`fast_fraction` in the report**
 | IGH RepSeq amplicon | 90 % | **5.2 %** | **0.89× slower** |
 | bulk RNA-seq | 2.74 % | 5 % | **0.762×, 31 % slower** |
 
-⛔ This was documented as "an amplicon optimisation, do not reach for it on bulk" and that framing
+Never: This was documented as "an amplicon optimisation, do not reach for it on bulk" and that framing
 is **wrong in both directions**. The two 100 %-receptor rows are the *same dataset, same tool*: IGH
 reads there cover V and stop short of the short IGHJ target, so they hit a V and no J and the fast
 path collapses, while TRB reads span the junction. Read as amplicon-only, the flag gets left off
 exactly where it is worth 3×. Bulk is separately a *scan-term* problem, which is `--prefilter`'s
 job; this lever only touches the align term.
 
-⛔ **Every `fast path` number above is MMseqs2-specific.** `fast_fraction` is a property of
+**Never: Every `fast path` number above is MMseqs2-specific.** `fast_fraction` is a property of
 **(reads × segment mapper)**, not of the reads. On the same 100,000 IGH RepSeq pairs it is **0.052**
 with the mmseqs segment search and **0.5018** with `--fast-segments` — 9.7×, from changing nothing
 but the mapper, with `v_only` rescues falling 169,004 → 85,933. MMseqs2 misses the short IGHJ on
@@ -492,7 +492,7 @@ refutation — **do not "fix" it by lowering k.** Still off by default for that 
 Requires the extension — check `arda.segmap.available()`. Without it the flag is a silent no-op, so
 assert it in any job that claims to measure it.
 
-⛔ **`_segmap` CANNOT rank `V×J` scaffolds — only segments.** Pointed at the 15,414-scaffold
+**Never: `_segmap` CANNOT rank `V×J` scaffolds — only segments.** Pointed at the 15,414-scaffold
 reference it indexes and maps fine and calls garbage (`v_gene` agreement **.3430**): a
 junction-spanning read sits on a scaffold at **two** diagonals, V at one offset and J shifted by the
 N-pad plus the non-templated junction, so one ungapped extension scores `max(V, J)` and never their
@@ -607,7 +607,7 @@ pos    = qstart + offset                    # forward
 pos    = (qlen - qstart + 1) + offset       # reverse complement
 ```
 
-⛔ **Three coordinate systems disagree about their origin here.** `tstart` is **1-based** on the
+**Never: Three coordinate systems disagree about their origin here.** `tstart` is **1-based** on the
 forward target (`segmap.cpp`), `anchor_nt` is **0-based** in the germline (`cdr3fix.Anchor`), and a
 minus-strand `qstart` is in **forward** coordinates while the sequence it indexes is the reverse
 complement. Each is an off-by-one that still yields a plausible-looking junction — right length,
@@ -622,13 +622,13 @@ V identity), TRA .99947, TRB .99949, IGK and IGL exact. >= .993 in every V-ident
 than no junction: the reference-geometry bug shipped junctions that started `C`, ended `[FW]`,
 passed `--complete-only`, and were short by exactly the allele's truncation.
 
-⛔ **`UNVALIDATED_LOCI = {"TRD"}`.** Not because TRD is known bad — because it has **zero** coverage.
+**Never: `UNVALIDATED_LOCI = {"TRD"}`.** Not because TRD is known bad — because it has **zero** coverage.
 Across two TR amplicons the segment pass never handed a TRD read both anchors, so all 767 TRD
 truth junctions went to the aligner and TRD never appeared. Absent reads like fine in every
 aggregate. The locus is taken from the **J** anchor, never the V: TRAV/DV rearranges to either TRAJ
 or TRDJ and the J decides.
 
-⛔ **A `[FW]GXG` motif check is NOT equivalent to reading `anchor_nt`.** `TRAJ35*01`'s anchor codon
+**Never: A `[FW]GXG` motif check is NOT equivalent to reading `anchor_nt`.** `TRAJ35*01`'s anchor codon
 decodes **Cys (TGC)** — it is `status = ok` and a functional IMGT `F` gene, with a real Cys six
 codons past the FGXG. A motif check deletes the gene silently (33/33 amplicon reads lost).
 

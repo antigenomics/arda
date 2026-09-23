@@ -4,7 +4,7 @@ A novel allele, somatic hypermutation and a base miscall are the same string in 
 list. What separates them is how often the mutation recurs across an allele's reads and how good
 the base is; the second needs this column.
 
-⛔ The failure this file exists to catch is a quality list of the RIGHT LENGTH holding the wrong
+Never: The failure this file exists to catch is a quality list of the RIGHT LENGTH holding the wrong
 bases' scores. Two ways to get there, and both are asserted against:
 
 * **Re-deriving the mutation list instead of reading it.** Walking the alignment and scoring every

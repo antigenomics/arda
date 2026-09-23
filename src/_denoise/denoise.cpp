@@ -158,7 +158,7 @@ std::vector<int64_t> nearest_more_abundant(const std::vector<std::string>& seqs,
 // ~60-200 nt, the haystacks a few hundred, and the caller memoises on (allele, gstart, gend), which
 // on an amplicon collapses hundreds of thousands of reads onto a few thousand distinct spans.
 //
-// ⛔ Returns candidates in the order given, so the caller's ordering (and therefore the emitted
+// Never: Returns candidates in the order given, so the caller's ordering (and therefore the emitted
 // call string) is deterministic.
 std::vector<int64_t> containing(const std::string& segment,
                                 const std::vector<std::string>& candidates) {

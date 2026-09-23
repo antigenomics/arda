@@ -150,7 +150,7 @@ def test_clonotype_d_is_called_on_the_corrected_junction():
 
 
 def test_the_d_evalue_cli_default_does_not_loosen_the_aa_gate():
-    """⛔ `--d-max-evalue` must default to None, never to the literal nt value.
+    """Never: `--d-max-evalue` must default to None, never to the literal nt value.
 
     The calibrated operating point is alphabet-dependent -- 0.2 for nt, 0.05 for aa (the aa D
     database is 22-38 residues per TR locus and under-calibrated, so it gates tighter). A CLI

@@ -30,7 +30,7 @@ scaffold rather than to a germline. A consumer that does the obvious thing inste
 AIRR alignment strings — gets 100,091 mismatches on that library of which **20,140 (20.1 %) are
 N-pad or constant-region columns**, i.e. it attributes junction positions to a germline.
 
-⛔ Which is the reason the scoping here is STRUCTURAL and not a filter. A mutation inside the
+Never: Which is the reason the scoping here is STRUCTURAL and not a filter. A mutation inside the
 V..J interior is not attributable to any germline: V(D)J recombination chews the segment ends back
 and adds non-templated N/P bases, so the V-end / NDN / J-start partition of a junction is often not
 identifiable from the sequence at all. The mutation lists are built only for ``seg_key`` V and J —

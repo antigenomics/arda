@@ -70,7 +70,7 @@ AIRR_COLUMNS = (
      # recovering it needs arda's scaffold geometry -- a consumer that just diffs the two alignment
      # strings attributes 20.1 % of the mismatches it finds to a germline that is not there, because
      # the scaffold's N-pad and C region are in the same strings.
-     # ⛔ Segment scoping alone is NOT junction exclusion, and 2.14.0 wrongly promised it was: the
+     # Never: Segment scoping alone is NOT junction exclusion, and 2.14.0 wrongly promised it was: the
      # V germline's 3' tail and the J germline's 5' head lie INSIDE the junction, so chew-back and
      # N/P bases enter both lists as substitutions against a germline that does not template them.
      # Since 2.16.0 the lists (and `v_identity`) are scoped to the FRAMEWORK using `v_anchor_nt` /
@@ -91,13 +91,13 @@ AIRR_COLUMNS = (
      "d_support", "d2_support",
      "j_sequence_start", "np1", "np2", "np3", "junction", "junction_aa"]
     + [c for r in REGIONS for c in (f"{r}_start", f"{r}_end", r, f"{r}_aa")]
-    # ⛔ APPENDED AT THE END, deliberately. These are NON-AIRR-schema extras, and adding them
+    # Never: APPENDED AT THE END, deliberately. These are NON-AIRR-schema extras, and adding them
     # mid-list (where they first landed, after `c_cigar`) shifted every column from
     # `v_germline_start` onward -- silently breaking any consumer that reads the shipped set BY
     # POSITION. It is the same rule `airr_header(extra_columns)` already states for
     # `junction_quality`: new columns go last, so the shipped prefix never moves.
     + ["v_mutations", "j_mutations"]
-    # ⛔ The JUNCTION BOUNDARY in GERMLINE coordinates, emitted so a downstream consumer can do
+    # Never: The JUNCTION BOUNDARY in GERMLINE coordinates, emitted so a downstream consumer can do
     # allele re-assignment and SHM calling WITHOUT arda's reference. `v_mutations` positions are
     # 1-based in the called V allele and `j_mutations` positions are 1-based in the called J allele,
     # but both lists span the junction: the V germline's 3' tail and the J germline's 5' head are
@@ -122,7 +122,7 @@ AIRR_COLUMNS = (
     # its anchor at 270; TRAJ8*01 position 1 at 0.67 against its anchor at 26) -- i.e. an allele
     # difference in the templated V/J tail, not somatic mutation and not N/P diversity.
     + ["v_anchor_nt", "j_anchor_nt"]
-    # ⛔ How many of this junction's 3' bases arda IMPUTED from the called J's germline rather than
+    # Never: How many of this junction's 3' bases arda IMPUTED from the called J's germline rather than
     # reading them off the query (`--complete-junctions`, off by default). Empty means the junction
     # is entirely observed, which is what every junction was before 2.17.0 and what every junction
     # still is unless the flag is passed. It is a COLUMN and not a silent behaviour because
@@ -240,7 +240,7 @@ def _allowed_d(d_germlines, j_call: str):
     sitting in the same band as chance hits, versus 0.014 for the genuinely producible
     TRBJ2 x TRBD2. An ambiguous J spanning both clusters excludes nothing.
     """
-    # ⛔ ORPHONS FIRST, and unconditionally. IMGT ships `/OR` D genes -- `IGHD.../OR15-...` sit on
+    # Never: ORPHONS FIRST, and unconditionally. IMGT ships `/OR` D genes -- `IGHD.../OR15-...` sit on
     # CHROMOSOME 15, outside the IGH locus, and cannot rearrange at all. They are not a usage
     # preference to down-weight; they are not producible. Measured on a real bulk IGH library:
     # **11 of 11 tandem D-D calls named `IGHD2/OR15-2a*01,IGHD2/OR15-2b*01` as their second D**, so
@@ -258,7 +258,7 @@ def _allowed_d(d_germlines, j_call: str):
 #: species. TRB runs TRBD1 - J1 cluster - TRBD2 - J2 cluster; TRD runs TRDD1 - TRDD2 - TRDD3.
 #: Both hold in human, mouse, rat and rhesus -- the same architecture argument `_allowed_d` makes.
 #:
-#: ⛔ IGH IS DELIBERATELY ABSENT. In *human* IMGT the second number of `IGHD<family>-<position>`
+#: Never: IGH IS DELIBERATELY ABSENT. In *human* IMGT the second number of `IGHD<family>-<position>`
 #: is the genomic position (IGHD1-1 .. IGHD7-27), but in *mouse* it is a family-member index with
 #: no locus meaning -- and the two vocabularies collide on real gene names (`IGHD1-1`, `IGHD2-15`,
 #: `IGHD5-5`, `IGHD5-12`, `IGHD6-6` exist in both). `_map_d` is handed sequences, not an organism,
@@ -442,7 +442,7 @@ def _germline_completed_junction(query_seq, cs, coding_start, v_end_q, *, j_call
     find it. The V side has no counterpart: a read short at the 5' end is missing bases the V
     germline does not template either (that is what ``v_anchor_prefix`` refuses).
 
-    ⛔ **These bases are IMPUTED, not observed**, which is why the whole path is off unless asked
+    **Never: These bases are IMPUTED, not observed**, which is why the whole path is off unless asked
     for and why the caller records the count in ``junction_completed_nt`` rather than leaving a
     consumer to infer it. On IG the imputed span can carry the SHM the read would have shown, so a
     completed junction's 3' end is biased toward germline; on TR, which does not hypermutate, it is
@@ -678,7 +678,7 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
     if d2 is not None:
         segs.append(d2)
     segs.sort(key=lambda c: c[3])                 # order 5'->3' by interior start
-    # ⛔ ORIENTATION, after sorting and never before: the rule is about the order the two D
+    # Never: ORIENTATION, after sorting and never before: the rule is about the order the two D
     # segments occupy ON THE READ, not about which of them scored higher. A pair running against
     # genomic order is not a weaker tandem, it is not a tandem -- so drop the second call
     # entirely and report the higher-scoring segment alone (`d1`), rather than manufacturing a
@@ -750,7 +750,7 @@ def transfer_hit(
     ``junction_completed_nt``. 0 (the default) emits observed junctions only. See
     :func:`_germline_completed_junction`.
     """
-    # ⛔ ONE walk of the alignment, not four. Besides the seven regions, this function needs three
+    # Never: ONE walk of the alignment, not four. Besides the seven regions, this function needs three
     # single scaffold positions projected onto the query: the V germline end, the J germline start,
     # and the V coding-frame anchor. Each used to go through `_project_point`, i.e. its own
     # `transfer_regions` crossing -- a fresh 6-argument binding call, two fresh `std::string` copies

@@ -23,13 +23,13 @@ Measured against IgBLAST on a TRA amplicon, a TRB amplicon and a bulk library:
 **54,740 / 54,756 = .99971 byte-exact junctions**, at no cost beyond the segment pass that already
 runs. See ``arda-benchmark/results/round14/README.md`` §2.
 
-⛔ **This is a fast path, not a replacement.** It yields ``junction`` and its coordinates. It does
+**Never: This is a fast path, not a replacement.** It yields ``junction`` and its coordinates. It does
 *not* yield ``v_identity``, ``sequence_alignment``, ``germline_alignment``, the per-segment CIGARs
 and mutation lists, or the ``mmseqs2_*`` block, all of which ``annotate.transfer`` derives from the
 alignment's
 ``qaln``/``taln``. Anything needing those still needs the scaffold alignment.
 
-⛔ **And it refuses rather than degrades.** A junction that is well-formed but wrong is the worst
+**Never: And it refuses rather than degrades.** A junction that is well-formed but wrong is the worst
 output this codebase can produce -- the reference-geometry bug shipped junctions that started ``C``,
 ended ``[FW]``, passed ``--complete-only`` and were short by exactly the allele's truncation. Every
 condition this projection cannot verify sends the read back to the aligner instead of guessing. Same
@@ -50,7 +50,7 @@ REFUSALS = ("no_anchor", "unvalidated_locus", "indel_unchecked", "indel_split",
 
 #: Loci the projection declines regardless of how well the arithmetic works on them.
 #:
-#: ⛔ TRD is here because it is UNVALIDATED, not because it is known bad. The pre-registered bar for
+#: Never: TRD is here because it is UNVALIDATED, not because it is known bad. The pre-registered bar for
 #: shipping a locus was "byte-exact >= 0.99 at n >= 2,000, or the locus goes on the refusal list",
 #: and TRD came back at **n = 0**: across two TR amplicons the segment pass never handed a single
 #: TRD read both anchors, so all 767 TRD junctions in the IgBLAST truth fell through to the aligner
@@ -128,7 +128,7 @@ def project_junction(strand_seq: str, qlen: int, *, v_row: dict, j_row: dict,
     # assumes a constant offset is wrong by exactly the indel length. `segmap`'s two-diagonal
     # signature is what detects that, and it is the load-bearing refusal here.
     #
-    # ⛔ `split` IS ONLY POPULATED WHEN INDEL DETECTION RAN. `segment_rows` passes `max_indel = 0`
+    # Never: `split` IS ONLY POPULATED WHEN INDEL DETECTION RAN. `segment_rows` passes `max_indel = 0`
     # unless `--indel-rescue` is on, and then every `split` is 0 -- indistinguishable from "checked
     # and clean". A caller that forgets would get the projection with its indel protection SILENTLY
     # INERT, which is this codebase's most repeated failure shape (mmseqs `createdb` on its first

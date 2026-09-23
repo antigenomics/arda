@@ -48,7 +48,7 @@ _CLONE_ROWS = [
 
 @pytest.fixture
 def run_dir(tmp_path):
-    # ⛔ `quote_style="never"`, as every arda writer does. The default quotes an empty cell as
+    # Never: `quote_style="never"`, as every arda writer does. The default quotes an empty cell as
     # `""`, and `stats` reads with `quote_char=None` (so does `correct`) -- so a defaulted fixture
     # turns every blank `chimera_parents` into a 2-character value and every read chimeric.
     pl.DataFrame(_AIRR_ROWS, schema=_AIRR_COLS, orient="row").write_csv(

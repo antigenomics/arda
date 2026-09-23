@@ -110,7 +110,7 @@ def load_combinations(path: str | Path) -> dict[tuple[str, str], str]:
 def _lookup(combos: dict[tuple[str, str], str], v: str, j: str) -> str | None:
     """``combos[(v, j)]``, tolerating a call that names SEVERAL alleles.
 
-    ⛔ A segment target inherits its scaffold's `v_call`/`j_call` verbatim, and those are sometimes
+    Never: A segment target inherits its scaffold's `v_call`/`j_call` verbatim, and those are sometimes
     ambiguity lists -- alleles arda could not tell apart, comma-joined. `load_combinations` splits
     such a cell and registers only the individual members, so a composite name never matches and
     the read is reported as a chimera the reference does not contain.

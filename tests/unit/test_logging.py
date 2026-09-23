@@ -1,6 +1,6 @@
 """Verbosity, the log file, and the stdout/stderr split.
 
-⛔ **Progress on stderr, results on stdout.** The stage lines were ``typer.echo`` on stdout until
+**Never: Progress on stderr, results on stdout.** The stage lines were ``typer.echo`` on stdout until
 2.20.0, which means ``arda export-ref ... > out.tsv`` interleaved a progress line into the data
 and ``$(arda map ...)`` captured prose. That split is what the tests here pin; the rest is that
 ``-q`` must not be able to silence ``--log-file``, because a quiet cluster job that leaves no
@@ -79,7 +79,7 @@ def test_the_global_options_come_before_the_subcommand():
     """The three options live on the TOP-LEVEL parser, so ``arda -v map ...`` works and
     ``arda map -v ...`` does not.
 
-    ⛔ Asserted against click's parameter list, NOT against the rendered ``--help``. Typer renders
+    Never: Asserted against click's parameter list, NOT against the rendered ``--help``. Typer renders
     help through rich, whose output depends on the terminal width and its own styling: on CI,
     where stdout is not a tty, ``--verbose`` did not appear in the help text as a contiguous
     string at all. That is a property of the renderer, not of arda.

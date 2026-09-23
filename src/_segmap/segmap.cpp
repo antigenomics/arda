@@ -27,7 +27,7 @@
 //     the junction is whatever lies between them -- there is no N-pad to gap through;
 //   * the reference is tiny (~236 kb) and fixed, so the index is ~2 MB and cache-resident.
 //
-// ⛔ This does NOT replace the second pass. The final call is still made by mmseqs against the
+// Never: This does NOT replace the second pass. The final call is still made by mmseqs against the
 //    full scaffold, so this only has to NOMINATE the right candidates. That is the regression
 //    contract: the AIRR output must not move, not that the scores match mmseqs'.
 //
@@ -123,7 +123,7 @@ constexpr uint32_t MIN_DIAG_SEEDS = 3;   // seeds a diagonal needs before it cou
 // Summing the two best compatible diagonals takes v_gene .3600 -> 1.0000 and j_gene .3267 -> .9800
 // on the same candidates, with ZERO added alignment work -- every extension already ran.
 //
-// ⛔ The score floor MUST be applied per TARGET, not per diagonal, when this is on: the shorter half
+// Never: The score floor MUST be applied per TARGET, not per diagonal, when this is on: the shorter half
 // of a junction-spanning read routinely scores under MIN_SCORE alone, and filtering it before the
 // pairing is exactly the defect being fixed.
 constexpr int32_t CHAIN_OFF = 0;         // `chain_offset` value that keeps the shipped max-rule
@@ -309,7 +309,7 @@ private:
         return a1 < b0 || b1 < a0;
     }
 
-    // ⛔ `min_score` is a PARAMETER, not a member. `map` is const and every worker thread shares
+    // Never: `min_score` is a PARAMETER, not a member. `map` is const and every worker thread shares
     // one SegmentMapper, so stashing per-call state on the object would be a data race that only
     // shows up under threads -- the class of bug this project has spent a lot of time removing.
     // `chain_offset` is a parameter for the same reason.
@@ -404,7 +404,7 @@ private:
                     && disjoint_in_query(best, second)) {
                     score += second.score;
                 }
-                // ⛔ Gate on the CHAINED score, per target. Applying `min_score` per diagonal above
+                // Never: Gate on the CHAINED score, per target. Applying `min_score` per diagonal above
                 // would drop the shorter half before it could be paired -- the original defect.
                 if (score >= min_score) {
                     // Coordinates stay those of the BEST SINGLE diagonal, deliberately. `qstart`

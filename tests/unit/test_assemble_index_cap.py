@@ -1,6 +1,6 @@
 """The assembly k-mer index must be bounded AT INSERT, and bounding it must change nothing.
 
-⛔ `--assemble` is ON by default, so every run built this index. It held every k-mer position of
+Never: `--assemble` is ON by default, so every run built this index. It held every k-mer position of
 every mapped read of a locus in a Python dict of int lists with no cap — `scan_cap` bounded only how
 many postings were *read* (`index.get(tail, ())[:scan_cap]`), never how many were stored.
 `_assign_coverage` bounds its equivalent index at insert time for exactly this reason.
@@ -63,7 +63,7 @@ def test_no_posting_list_exceeds_scan_cap():
 
 
 def test_a_rejected_contig_releases_its_reads():
-    """⛔ A contig dropped for having <2 members must give its reads back.
+    """Never: A contig dropped for having <2 members must give its reads back.
 
     `used` is set as reads are recruited, but a rejected contig never released them, so a seed that
     failed to extend was permanently consumed — it could not join a LATER seed's contig even as an
@@ -96,7 +96,7 @@ def test_a_rejected_contig_releases_its_reads():
 
 
 def test_the_extension_choice_does_not_depend_on_read_order():
-    """⛔ Equal-length extension candidates must be resolved by a TOTAL order.
+    """Never: Equal-length extension candidates must be resolved by a TOTAL order.
 
     `len(ext) > len(best_ext)` alone leaves the winner to the posting list's order, which is AIRR
     row order, which comes from a threaded mmseqs search — so the contig sequence, and every

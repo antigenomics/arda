@@ -227,7 +227,7 @@ arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/
 arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --exact   # no speedups at all
 ```
 
-⛔ Until 2.16.0 the only entry point was `arda rnaseq run`, used for amplicon as well, with the
+Never: Until 2.16.0 the only entry point was `arda rnaseq run`, used for amplicon as well, with the
 regime spelled out as four loose flags. **`--two-pass` alone is a LOSS** — 0.762× on bulk, 0.87× on
 an IGH amplicon — and it was the one flag that entry point exposed for four releases. Naming the
 mode makes the dominated combination unreachable by accident. `arda rnaseq run` no longer exists.
@@ -284,7 +284,7 @@ tool. `--ec-mode accurate` is `--min-junction-q 20` — it judges the one base t
 clonotype from its parent on its **Phred score** rather than on abundance, which is a measurement
 the abundance model does not have.
 
-⛔ **Every denoising mode MOVES reads onto a parent and never discards them** — the sum of
+**Never: Every denoising mode MOVES reads onto a parent and never discards them** — the sum of
 `duplicate_count` is invariant across modes, and a clonotype with no qualifying parent keeps its
 reads and is reported as an orphan. That is not caution: on a polyclonal hypermutated repertoire a
 plain quality *filter* at the same threshold would strand **3.70 %** of all junction-bearing reads
@@ -404,7 +404,7 @@ gives 0.193 recall; the two free options above take it to 0.964. Quoting the def
 mistake this project made and had to retract.
 
 ⚠ Precision here is a **lower bound** — the grey band `30 ≤ v_score < 70` is scored under neither
-metric. ⛔ And TRUST4's recall and FP are scored on its **candidate extraction**, a different (and
+metric. Never: And TRUST4's recall and FP are scored on its **candidate extraction**, a different (and
 much less filtered) stage than arda's post-`--min-score` output; the two are not like-for-like on
 FP, which is why the FP column carries a per-1M normalisation rather than a bare ratio.
 
@@ -665,7 +665,7 @@ clonotype-size distributions and picking the wrong one is a real cost rather tha
 
 **On a cluster**, `arda slurm` writes a `submit.sh` chaining split → `sbatch --array` →
 merge with an `afterok` dependency, and a sharded run is **byte-identical** to a single-node one.
-⛔ Shard Stage 1 only: error correction compares a clonotype against its neighbours by abundance,
+Never: Shard Stage 1 only: error correction compares a clonotype against its neighbours by abundance,
 so running it per shard asks the question against a fraction of the evidence. See the
 [cluster guide](https://docs.isalgo.dev/arda/cluster.html).
 

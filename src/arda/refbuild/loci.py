@@ -58,7 +58,7 @@ class Locus:
             Without this, a δ rearrangement on such a V gene has no TRD scaffold to match and is
             miscalled TRA (the locus is set by J/D/C, never the V).
 
-            ⛔ The sharing runs **both ways**, and only one direction was wired. TRDV1/2/3 are
+            Never: The sharing runs **both ways**, and only one direction was wired. TRDV1/2/3 are
             dedicated δ V genes but lie *inside* the TRA locus, between the TRAV genes and the TRAJ
             cluster, so an α rearrangement can join one to a TRAJ. Without a ``TRDV × TRAJ``
             scaffold such a read gets its J called and **no V at all**, hence no junction.
@@ -84,7 +84,7 @@ class Locus:
 
 LOCI: tuple[Locus, ...] = (
     # VJ loci
-    # ⛔ TRA does NOT pull the TRDV stem, and a previous attempt to make it do so was biologically
+    # Never: TRA does NOT pull the TRDV stem, and a previous attempt to make it do so was biologically
     # wrong. The sharing is not symmetric:
     #
     #   * **TRDV1/2/3 are dedicated delta V genes.** They rearrange to TRDJ. A `TRDV1 + TRAJ`
@@ -132,7 +132,7 @@ def loci_for(*, allow_chimeras: bool = False) -> tuple[Locus, ...]:
     This flag exists because that is a domain judgement, not a code decision, and the default must
     not quietly encode either answer as if it were settled. ``False`` keeps the shipped biology.
 
-    ⛔ It is **not** free to turn on. An earlier attempt at the same scaffolds measured **+7**
+    Never: It is **not** free to turn on. An earlier attempt at the same scaffolds measured **+7**
     scaffolds, not the ~483 the cross-product predicts, because 62 of 69 dropped for incomplete
     markup — so a reference built with this on may not contain what you expect. Assert the
     scaffold count, never the flag (CLAUDE.md: a reference swap can silently be a no-op).

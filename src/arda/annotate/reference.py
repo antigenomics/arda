@@ -69,7 +69,7 @@ class Reference:
         Derived from the loaded markup rather than from a file: the J+C scaffolds are already
         there, and a second generated artifact is one more thing that can go stale against it.
 
-        ⛔ **Keyed per ALLELE, never by the comma-joined group string.** A `j_call` is a group of
+        **Never: Keyed per ALLELE, never by the comma-joined group string.** A `j_call` is a group of
         alleles arda could not tell apart, and the two sides of this lookup group them by different
         rules: a J+C scaffold's `j_call` collapses alleles with an identical **J sequence**
         (`refbuild.constant`), while a `J|` segment target inherits the V×J scaffold's `j_call`,
@@ -82,7 +82,7 @@ class Reference:
         the contest exists to prevent. Splitting both sides removes the need for the two collapses
         to agree at all.
 
-        ⛔ **Segment targets are excluded by their `|` prefix.** `load_reference` loads
+        **Never: Segment targets are excluded by their `|` prefix.** `load_reference` loads
         `segments.markup.tsv` into this same key space *after* `markup.tsv`, so a pre-2.8.0 file --
         whose 345 rows are J+C scaffolds copied verbatim as ``JC|<sid>`` with the same `j_call` and
         `c_call` -- would collide with each base scaffold and, being later, win. Every value would

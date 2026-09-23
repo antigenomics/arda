@@ -1,6 +1,6 @@
 """A contig's junction may only be attributed to members that actually COVERED it.
 
-⛔ Contig membership is granted on a ``min_overlap`` match, and after the extension passes have
+Never: Contig membership is granted on a ``min_overlap`` match, and after the extension passes have
 accumulated germline at the contig ends that match can be **pure germline** -- the 5' pass says so
 itself: "that region is shared germline, so any V-read of the gene extends it correctly". Stamping
 the contig's junction onto such a member credits a read carrying zero clone-specific evidence to

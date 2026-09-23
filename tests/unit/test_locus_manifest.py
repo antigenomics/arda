@@ -19,7 +19,7 @@ def _row(locus, c_call=""):
 
 def test_manifest_has_one_row_per_defined_locus():
     m = _locus_manifest([], [])
-    assert {r["locus"] for r in m} == {l.name for l in LOCI}
+    assert {r["locus"] for r in m} == {x.name for x in LOCI}
     assert all(r["status"] == "EMPTY" for r in m)      # nothing built -> every locus empty
 
 

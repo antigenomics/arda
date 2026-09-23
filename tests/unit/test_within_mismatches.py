@@ -6,7 +6,7 @@ Nearly every candidate it tests is a read that merely shares one k-mer and does 
 so the answer is settled in the first few bases and the rest of the count is dead work. Profiled on
 a 100k-read TRA amplicon: **153 million generator iterations, 19.5 s of the stage's 25.6 s**.
 
-⛔ The contig sequence feeds every junction derived from it, so "faster" is only acceptable if the
+Never: The contig sequence feeds every junction derived from it, so "faster" is only acceptable if the
 candidate set is IDENTICAL. It is, and not by luck: the caller never used the count, only
 ``count > budget``, and for an integer count that is exactly ``count > floor(budget)`` however the
 float lands. That is what the parametrised test below pins.
@@ -62,7 +62,7 @@ def test_it_stops_early_instead_of_counting_the_whole_overlap():
 
 
 def test_the_float_budget_collapses_to_floor():
-    """⛔ The equivalence the speedup rests on. The old code compared an integer count against a
+    """Never: The equivalence the speedup rests on. The old code compared an integer count against a
     FLOAT budget; the new one takes an int. `int((1 - min_id) * ov)` is floor for a non-negative
     value, and `count > budget` == `count > floor(budget)` for integer count — so a budget that
     lands at 9.999999999999998 instead of 10.0 decides the same candidates either way.

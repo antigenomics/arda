@@ -2,7 +2,7 @@
 // One call to `arda <mode>` (map + assemble + correct) per sample; publishes to ${params.outdir}/arda/.
 // See ./README.md for how to wire this into an nf-core/rnaseq (or similar) pipeline.
 //
-// ⛔ Requires arda >= 2.16.0. `arda rnaseq run` was REMOVED there: the regime is now the command
+// Never: Requires arda >= 2.16.0. `arda rnaseq run` was REMOVED there: the regime is now the command
 // name (`arda rnaseq` / `arda amplicon`), and each mode carries its own speed configuration. This
 // module used to build that flag string itself, which is exactly the workaround the CLI absorbed.
 
@@ -24,7 +24,7 @@ process ARDA {
     //   -profile docker   -> build the image from the Dockerfile beside this module and push it to
     //                        your registry, then point `container` at it (or override in a config).
     //
-    // ⛔ `conda` is declared HERE, as a directive inside the process body -- never as
+    // Never: `conda` is declared HERE, as a directive inside the process body -- never as
     // `process { conda = ... }` at config scope. At process scope Nextflow applies it to EVERY
     // process in the pipeline, which silently builds a different arda *and* a different aligner
     // than the one this module was validated with. If you must override it from a config, it goes
@@ -64,7 +64,7 @@ process ARDA {
     //   'bulk'      arda rnaseq              whole-transcriptome RNA-seq
     //   'default'   arda rnaseq --exact      the shipped one-pass path, no speedups
     //
-    // ⛔ 'default' is NOT `arda rnaseq`: that mode enables `--prefilter`, which costs ~0.15 % of
+    // Never: 'default' is NOT `arda rnaseq`: that mode enables `--prefilter`, which costs ~0.15 % of
     // mapped reads (122 bulk datasets, up to 2.46 % on one library). `--exact` is what reproduces
     // the pre-2.16.0 default output.
     //
@@ -75,7 +75,7 @@ process ARDA {
         'amplicon': ['cmd': 'amplicon', 'extra': ''],
         'default' : ['cmd': 'rnaseq',   'extra': '--exact'],
     ]
-    // ⛔ `params.getOrDefault(...)` throughout, never a bare `params.x`. This module must stay
+    // Never: `params.getOrDefault(...)` throughout, never a bare `params.x`. This module must stay
     // correct when it is included WITHOUT its nextflow.config, and Nextflow scans the script
     // STATICALLY for `params.<name>` tokens -- so a `containsKey` guard around one still emits
     // "Access to undefined parameter" (a WARN normally, a hard failure under strict mode).
@@ -118,7 +118,7 @@ process ARDA {
             "ARDA: arda_call_level must be 'allele' or 'gene', got '${call_level}'")
     if (call_level != 'allele') tuning += " --call-level ${call_level}"
 
-    // DENOISING. `--ec-mode` picks how Stage 2 decides what is an error. ⛔ Since 2.16.0 EACH MODE
+    // DENOISING. `--ec-mode` picks how Stage 2 decides what is an error. Never: Since 2.16.0 EACH MODE
     // HAS ITS OWN DEFAULT -- `arda rnaseq` defaults to `rnaseq`, `arda amplicon` to `amplicon` --
     // so leaving this unset no longer means `fast`. Set it explicitly to `fast` for arda's
     // historical behaviour. `accurate`/`amplicon`/`rnaseq` all need Stage 1 to carry per-read
@@ -153,7 +153,7 @@ process ARDA {
             "ARDA: arda_clonotype_key must be 'full' or 'junction', got '${clonotype_key}'")
     if (clonotype_key != 'full') tuning += " --clonotype-key ${clonotype_key}"
 
-    // ⛔ Pin the aligner to the one THIS task's environment provides. An mmseqs index is only
+    // Never: Pin the aligner to the one THIS task's environment provides. An mmseqs index is only
     // reusable by the release that built it, and a cluster's cache marker differs from the shipped
     // one -- unpinned, arda may reject the precompiled reference index and rebuild a private cache
     // per task, or auto-fetch a third build, with no error and results that are not comparable.

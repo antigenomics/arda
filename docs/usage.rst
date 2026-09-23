@@ -51,7 +51,7 @@ the coordinate frame a lineage or selection-pressure tool needs, so two reads of
 directly comparable and the germline is the root. A read with none is empty; the counterpart
 ``v_identity`` is the same information as a fraction.
 
-⛔ The V and J germline-aligned regions only, **by construction**. A mismatch inside the junction is
+Never: The V and J germline-aligned regions only, **by construction**. A mismatch inside the junction is
 not attributable to a germline: V(D)J recombination trims the segment ends and inserts non-templated
 N/P bases, so the V-end / NDN / J-start partition frequently is not identifiable from the sequence.
 arda aligns to a ``V + N-pad + J [+ C]`` scaffold, and the pad is not a segment — an NDN position has
@@ -93,7 +93,7 @@ in the same order. A novel allele, somatic hypermutation and a base miscall are 
 the mutation list; the recurrence separates the first from the second and the Phred separates both
 from the third. ``arda stats`` reads it to score its ``allele_candidate`` shortlist.
 
-⛔ The two quality columns use **different encodings**: ``junction_quality`` is raw Phred+33
+Never: The two quality columns use **different encodings**: ``junction_quality`` is raw Phred+33
 characters (it lines up byte-for-byte with ``junction``), and ``v_mutation_quality`` is comma-joined
 integers. Off by default and refused with ``--reconstruct``, like ``--junction-quality``. See
 :doc:`qc`.
@@ -120,7 +120,7 @@ germline-**templated**. The V side has no counterpart — a read short at the 5'
 the V germline does not template either, which is why ``v_anchor_prefix`` refuses rather than
 extrapolates.
 
-⛔ **The added bases are imputed, not observed.** Every completed row carries the count in
+**Never: The added bases are imputed, not observed.** Every completed row carries the count in
 ``junction_completed_nt``, so a consumer filters or weights on that column instead of trusting the
 junction; an empty value means the junction is entirely observed, which is what every junction is
 unless the flag is passed. Off by default (``0``).
