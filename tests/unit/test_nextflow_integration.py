@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
+import typer.main
 
 from arda import __version__
 from arda.cli import app
@@ -27,14 +27,22 @@ CONFIG = (MOD / "nextflow.config").read_text()
 DOCKERFILE = (MOD / "Dockerfile").read_text()
 ENVIRONMENT = (MOD / "environment.yml").read_text()
 
-runner = CliRunner()
+_CLI = typer.main.get_command(app)
 
 
-def _help(*argv: str) -> str:
-    """`--help` text at a width typer will not truncate long flag names at."""
-    res = runner.invoke(app, [*argv, "--help"], env={"COLUMNS": "200"})
-    assert res.exit_code == 0, f"arda {' '.join(argv)} --help exited {res.exit_code}"
-    return res.stdout
+def _options(mode: str) -> set[str]:
+    """Every option string `arda <mode>` accepts, read off the command itself.
+
+    Never: introspection, NOT `--help` text. typer truncates long flag names at 80 columns --
+    `--v-only-on-segment` renders as `--v-only-on-...` -- so a text scan silently reports a flag
+    as missing wherever the runner's width differs from the author's. That is not hypothetical:
+    the first version of this file parsed help text, passed locally at any width, and failed in
+    CI. The command object has no width.
+    """
+    cmd = _CLI.commands.get(mode)
+    assert cmd is not None, f"arda has no subcommand {mode!r}"
+    return {o for param in cmd.params for o in getattr(param, "opts", [])
+            } | {o for param in cmd.params for o in getattr(param, "secondary_opts", [])}
 
 
 @pytest.mark.parametrize("name", ["main.nf", "nextflow.config", "environment.yml", "Dockerfile",
@@ -79,7 +87,7 @@ def test_the_protocol_map_covers_airrflows_bulk_enum_and_nothing_invented():
 
 def test_every_mode_the_protocol_map_names_is_a_real_arda_command():
     for method, mode in sorted(_protocol_map().items()):
-        assert _help(mode), f"{method} -> arda {mode}"
+        assert _options(mode), f"{method} -> arda {mode}"
 
 
 def test_single_cell_is_refused_rather_than_mapped_to_a_mode():
@@ -89,9 +97,9 @@ def test_single_cell_is_refused_rather_than_mapped_to_a_mode():
     """
     assert "cells" not in _protocol_map().values()
     assert "single_cell" in MAIN_NF and "IllegalArgumentException" in MAIN_NF
-    cells_help = _help("cells")
+    cells_opts = _options("cells")
     for flag in ("--r1", "--out-dir", "--out-prefix"):
-        assert flag not in cells_help, f"arda cells now has {flag}; revisit the refusal"
+        assert flag not in cells_opts, f"arda cells now has {flag}; revisit the refusal"
 
 
 def test_every_flag_the_script_block_emits_exists_on_every_mode_it_targets():
@@ -105,8 +113,7 @@ def test_every_flag_the_script_block_emits_exists_on_every_mode_it_targets():
     flags = sorted(set(re.findall(r"(--[a-z][a-z-]+)", script)))
     assert flags, "no flags found in the script block; update this test"
     for mode in sorted(set(_protocol_map().values())):
-        text = _help(mode)
-        missing = [f for f in flags if f not in text]
+        missing = [f for f in flags if f not in _options(mode)]
         assert not missing, f"arda {mode} does not offer {missing}"
 
 
@@ -121,18 +128,19 @@ def test_the_dockerfile_acceptance_check_only_names_flags_the_cli_has():
     m = re.search(r"COLUMNS=200 arda ([a-z-]+(?: [a-z-]+)*) --help > /tmp/h\.txt", DOCKERFILE)
     assert m, "the Dockerfile no longer greps a --help; update this test with it"
     argv = m.group(1).split()
-    text = _help(*argv)
+    assert len(argv) == 1, f"expected one subcommand, got {argv}"
+    opts = _options(argv[0])
     flags = re.findall(r"(--[a-z][a-z-]+)", DOCKERFILE[m.end():DOCKERFILE.index("rm /tmp/h.txt")])
     assert flags, "no flags are asserted by the Dockerfile"
-    missing = [f for f in flags if f not in text]
-    assert not missing, f"arda {' '.join(argv)} --help does not offer {missing}"
+    missing = [f for f in flags if f not in opts]
+    assert not missing, f"arda {argv[0]} does not offer {missing}"
 
 
 def test_every_mode_the_dockerfile_asserts_exists():
     m = re.search(r"for m in ([a-z ]+); do", DOCKERFILE)
     assert m, "the Dockerfile no longer asserts the mode names"
     for mode in m.group(1).split():
-        assert _help(mode), mode
+        assert _options(mode), mode
 
 
 def test_the_module_names_no_registry_and_no_institution():

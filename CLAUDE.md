@@ -220,6 +220,12 @@ which column names the repertoire, and picking one silently splits or merges a s
   exists on EVERY mode the protocol map targets. It caught `--productive-only`, invented during
   this very rewrite, and the Dockerfile's four-flag grep against `arda rnaseq`, which had been
   failing every `docker build` since 2.16.0.
+- ⛔ **Check a flag by INTROSPECTING the command, never by scanning `--help` text.**
+  `typer.main.get_command(app).commands[mode].params` has no width; help text does, and typer
+  truncates long flag names at 80 columns (`--v-only-on-...`). The first version of that test
+  parsed help text with `CliRunner(env={"COLUMNS": "200"})`, passed locally at **every** width
+  tried, and failed in CI -- reporting `--organism`, `--out-dir` and `--threads` as missing from
+  `arda amplicon`. `COLUMNS` is for a human reading `--help` in a shell, not for a test.
 
 ## The regime rule — name the config, always
 
