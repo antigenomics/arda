@@ -339,5 +339,5 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
           what would produce one.
   - [ ] **C k-mer prefilter (contingency).** If the MMseqs2 prefilter is
         the throughput bottleneck vs assembly-based extractors, add a parallel spaced-seed germline
-        index (new `src/_vjprefilter/` pybind11 ext) that rejects non-receptor reads and
+        index (new `src/_vjprefilter/` nanobind ext) that rejects non-receptor reads and
         emits V/J allele hints to prune alignment. Gated on measured need.

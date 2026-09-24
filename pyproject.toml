@@ -1,9 +1,8 @@
 [build-system]
-# Never: pybind11 is UPPER-BOUNDED. `PYBIND11_MODULE` changed to multi-phase init in 3.0.0, so an
-# unbounded requirement builds wheels against whatever PyPI serves that day. Measured: 3.0.4
-# and 2.13.6 differ by ~13 % on a 6-arg noop binding call and are otherwise equivalent, so
-# the pin is for REPRODUCIBILITY, not speed.
-requires = ["scikit-build-core>=0.10", "pybind11>=3.0.2,<4"]
+# Never: the binding library is UPPER-BOUNDED, and that is not caution for its own sake --
+# pybind11 changed `PYBIND11_MODULE` to multi-phase init in a minor-looking 3.0.0, so an unbounded
+# requirement built wheels against whatever PyPI served that day. nanobind has the same exposure.
+requires = ["scikit-build-core>=0.10", "nanobind>=2.5,<3"]
 build-backend = "scikit_build_core.build"
 
 [project]
@@ -52,7 +51,7 @@ dependencies = [
 [project.optional-dependencies]
 docs = ["sphinx", "pydata-sphinx-theme", "nbsphinx"]
 test = ["pytest", "pytest-cov", "airr>=1.4"]  # airr: validate the AIRR Rearrangement schema
-dev = ["ruff", "pytest", "pybind11"]
+dev = ["ruff", "pytest", "nanobind>=2.5,<3"]
 # Kept as an empty alias so existing `arda-mapper[rnaseq]` pins (the Nextflow module, collaborator
 # instructions, older docs) keep resolving without a warning. seqtree is a core dependency now.
 rnaseq = []

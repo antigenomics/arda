@@ -33,8 +33,9 @@ What it does, and what it verifies
   by a venv that no longer exists makes every later on-import rebuild fail with
   *"Could NOT find Python"* — and arda then falls back to its pure-Python markup path.
 * Creates ``.venv`` with ``uv`` and installs ``-e .[test,dev]`` with ``--no-build-isolation``, so
-  the editable on-import rebuild can find ``pybind11`` (pinned ``>=3.0.2,<4``, matching
-  ``pyproject.toml``'s build-system: ``PYBIND11_MODULE`` changed to multi-phase init in 3.0.0).
+  the editable on-import rebuild can find ``nanobind`` (pinned ``>=2.5,<3``, matching
+  ``pyproject.toml``'s build-system; the cap exists because a binding library's module macro has
+  changed semantics in a minor-looking major release before).
 * Downloads the latest IgBLAST release into ``bin/`` (gitignored) — needed only to rebuild
   references and to run ``arda igblast``, never for annotation.
 * Fetches a static MMseqs2 binary into ``bin/`` unless one is already on ``PATH``.

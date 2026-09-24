@@ -34,8 +34,14 @@
 // Nothing here deletes anything. Both functions return indices; routing reads to a parent is the
 // caller's job, and the caller's invariant is that the sum of duplicate_count does not fall.
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/optional.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -45,7 +51,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace {
 
@@ -189,22 +195,22 @@ std::vector<int> subs_to(const std::vector<std::string>& seqs, const std::string
 
 }  // namespace
 
-PYBIND11_MODULE(_denoise, m) {
+NB_MODULE(_denoise, m) {
     m.doc() = "Hot paths of quality-aware clonotype error correction (see denoise.cpp header).";
     m.attr("__version__") = "0.2.0";
-    m.def("mean_phred", &mean_phred, py::arg("junctions"), py::arg("quals"),
+    m.def("mean_phred", &mean_phred, nb::arg("junctions"), nb::arg("quals"),
           "Per-read mean Phred over the junction; -1.0 when the quality is absent or its length "
           "disagrees with the junction (absent evidence, not bad evidence).");
-    m.def("frac_below", &frac_below, py::arg("junctions"), py::arg("quals"), py::arg("cut"),
+    m.def("frac_below", &frac_below, nb::arg("junctions"), nb::arg("quals"), nb::arg("cut"),
           "Per-read fraction of junction bases below `cut`; -1.0 on absent/mismatched quality.");
     m.def("nearest_more_abundant", &nearest_more_abundant,
-          py::arg("seqs"), py::arg("counts"), py::arg("candidates"),
-          py::arg("max_subs"), py::arg("min_ratio") = 1.0,
+          nb::arg("seqs"), nb::arg("counts"), nb::arg("candidates"),
+          nb::arg("max_subs"), nb::arg("min_ratio") = 1.0,
           "For each flagged clonotype, the most abundant equal-length neighbour within `max_subs` "
           "substitutions and at least `min_ratio` times its count; -1 if none. Deterministic.");
-    m.def("containing", &containing, py::arg("segment"), py::arg("candidates"),
+    m.def("containing", &containing, nb::arg("segment"), nb::arg("candidates"),
           "Indices of candidates containing `segment` verbatim -- the germlines a read aligned "
           "over that stretch cannot distinguish from the one it was called against.");
-    m.def("subs_to", &subs_to, py::arg("seqs"), py::arg("ref"),
+    m.def("subs_to", &subs_to, nb::arg("seqs"), nb::arg("ref"),
           "Substitution distance from each sequence to `ref`; -1 when the lengths differ.");
 }

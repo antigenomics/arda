@@ -33,8 +33,14 @@
 // Sequences containing N: windows covering an N are dropped, never guessed. One substitution
 // destroys k consecutive windows, which is why the read must be scanned at every offset.
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/optional.h>
 
 #include <algorithm>
 #include <array>
@@ -45,7 +51,7 @@
 #include <thread>
 #include <vector>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace {
 
@@ -132,14 +138,14 @@ public:
     // Per-sequence pass/fail. Returns uint8 rather than bool because std::vector<bool> is a
     // bitfield and cannot be written from several threads without a race.
     //
-    // Takes a py::sequence, NOT a std::vector<std::string>. pybind11's automatic conversion would
+    // Takes a nb::sequence, NOT a std::vector<std::string>. pybind11's automatic conversion would
     // allocate and copy every read before a single thread starts -- 4 M allocations under the GIL,
     // measured at 2.34 s on 32 cluster threads against 5.39 M reads/s on ONE laptop core, i.e. the
     // copy was several times the scan it was feeding. `PyUnicode_AsUTF8AndSize` hands back a
     // pointer into the str object's own buffer instead; the list keeps every object alive for the
     // duration of the call, so the views stay valid after the GIL is dropped.
-    std::vector<uint8_t> mask(py::sequence queries, int min_hits, int threads) const {
-        const size_t n = size_t(py::len(queries));
+    std::vector<uint8_t> mask(nb::sequence queries, int min_hits, int threads) const {
+        const size_t n = size_t(nb::len(queries));
         std::vector<uint8_t> out(n, 0);
         if (n == 0) return out;
         if (min_hits < 1) min_hits = 1;
@@ -149,7 +155,7 @@ public:
         for (auto item : queries) {
             Py_ssize_t len = 0;
             const char* p = PyUnicode_AsUTF8AndSize(item.ptr(), &len);
-            if (p == nullptr) throw py::error_already_set();
+            if (p == nullptr) throw nb::python_error();
             views.emplace_back(p, size_t(len));
         }
 
@@ -163,7 +169,7 @@ public:
         // The GIL is dropped only now, once every pointer has been taken -- `PyUnicode_AsUTF8AndSize`
         // is a CPython call and must not run without it. `views` and `out` are then touched through
         // disjoint index ranges, so the threads need no synchronisation.
-        py::gil_scoped_release rel;
+        nb::gil_scoped_release rel;
         if (nthread <= 1) {
             worker(0, n);
             return out;
@@ -187,9 +193,9 @@ public:
     // passes over every read, which is why the 2.66x the scan gained showed up as 1.16x end to
     // end. Here the only Python objects created are the survivors, and on bulk that is 0.5-2 % of
     // the input. The returned tuples are the caller's own, not copies.
-    py::list filter(py::sequence records, int seq_index, int min_hits, int threads) const {
-        const size_t n = size_t(py::len(records));
-        py::list out;
+    nb::list filter(nb::sequence records, int seq_index, int min_hits, int threads) const {
+        const size_t n = size_t(nb::len(records));
+        nb::list out;
         if (n == 0) return out;
         if (min_hits < 1) min_hits = 1;
 
@@ -200,11 +206,11 @@ public:
         for (auto rec : records) {
             PyObject* item = rec.ptr();
             PyObject* s = PySequence_GetItem(item, seq_index);   // new reference
-            if (s == nullptr) throw py::error_already_set();
+            if (s == nullptr) throw nb::python_error();
             Py_ssize_t len = 0;
             const char* p = PyUnicode_AsUTF8AndSize(s, &len);
             Py_DECREF(s);   // `records` still holds the tuple, which holds the str
-            if (p == nullptr) throw py::error_already_set();
+            if (p == nullptr) throw nb::python_error();
             items.push_back(item);
             views.emplace_back(p, size_t(len));
         }
@@ -217,7 +223,7 @@ public:
                 keep[i] = scan(views[i].first, views[i].second, min_hits) >= min_hits ? 1 : 0;
         };
         {
-            py::gil_scoped_release rel;
+            nb::gil_scoped_release rel;
             if (nthread <= 1) {
                 worker(0, n);
             } else {
@@ -233,7 +239,7 @@ public:
             }
         }
         for (size_t i = 0; i < n; ++i)
-            if (keep[i]) out.append(py::reinterpret_borrow<py::object>(items[i]));
+            if (keep[i]) out.append(nb::borrow<nb::object>(items[i]));
         return out;
     }
 
@@ -258,21 +264,21 @@ private:
 
 }  // namespace
 
-PYBIND11_MODULE(_prefilter, m) {
+NB_MODULE(_prefilter, m) {
     m.doc() = "Exact k-mer prefilter: reject reads that cannot align, before MMseqs2 sees them.";
-    py::class_<Prefilter>(m, "Prefilter")
-        .def(py::init<const std::vector<std::string>&, int>(),
-             py::arg("targets"), py::arg("k") = 16,
+    nb::class_<Prefilter>(m, "Prefilter")
+        .def(nb::init<const std::vector<std::string>&, int>(),
+             nb::arg("targets"), nb::arg("k") = 16,
              "Index every k-mer of `targets` and of their reverse complements.")
-        .def("hits", &Prefilter::hits, py::arg("sequence"), py::arg("min_hits") = 1,
+        .def("hits", &Prefilter::hits, nb::arg("sequence"), nb::arg("min_hits") = 1,
              "Indexed k-mers found in `sequence`, counted no further than `min_hits`.")
         .def("mask", &Prefilter::mask,
-             py::arg("sequences"), py::arg("min_hits") = 1, py::arg("threads") = 1,
+             nb::arg("sequences"), nb::arg("min_hits") = 1, nb::arg("threads") = 1,
              "1 for each sequence with >= min_hits indexed k-mers, 0 otherwise.")
         .def("filter", &Prefilter::filter,
-             py::arg("records"), py::arg("seq_index") = 1, py::arg("min_hits") = 1,
-             py::arg("threads") = 1,
+             nb::arg("records"), nb::arg("seq_index") = 1, nb::arg("min_hits") = 1,
+             nb::arg("threads") = 1,
              "The subset of `records` whose element `seq_index` has >= min_hits indexed k-mers.")
-        .def_property_readonly("size", &Prefilter::size, "Distinct indexed k-mers.")
-        .def_property_readonly("k", &Prefilter::k, "k-mer length.");
+        .def_prop_ro("size", &Prefilter::size, "Distinct indexed k-mers.")
+        .def_prop_ro("k", &Prefilter::k, "k-mer length.");
 }

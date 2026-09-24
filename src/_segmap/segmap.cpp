@@ -38,8 +38,14 @@
 // indexed; the read is scanned forwards and as its reverse complement, which keeps the diagonal
 // arithmetic uniform and halves the index against the prefilter's both-strands layout.
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/optional.h>
 
 #include <algorithm>
 #include <array>
@@ -50,7 +56,7 @@
 #include <thread>
 #include <vector>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 namespace {
 
@@ -212,10 +218,10 @@ public:
     // flags:
     //   (query_index, target_index, score, qstart, qend, tstart, rc, split)
     // `max_indel` = 0 disables indel detection and `split` is then always 0.
-    py::list map(py::sequence queries, int max_tied, int min_score, int threads,
+    nb::list map(nb::sequence queries, int max_tied, int min_score, int threads,
                  int max_indel, int chain_offset) const {
-        const size_t n = size_t(py::len(queries));
-        py::list out;
+        const size_t n = size_t(nb::len(queries));
+        nb::list out;
         if (n == 0) return out;
         if (max_tied < 1) max_tied = 1;
 
@@ -227,7 +233,7 @@ public:
         for (auto item : queries) {
             Py_ssize_t len = 0;
             const char* p = PyUnicode_AsUTF8AndSize(item.ptr(), &len);
-            if (p == nullptr) throw py::error_already_set();
+            if (p == nullptr) throw nb::python_error();
             views.emplace_back(p, size_t(len));
         }
 
@@ -242,7 +248,7 @@ public:
                                         max_indel, chain_offset, votes, hits);
         };
         {
-            py::gil_scoped_release rel;
+            nb::gil_scoped_release rel;
             if (nthread <= 1) {
                 worker(0, n);
             } else {
@@ -259,7 +265,7 @@ public:
         }
         for (size_t i = 0; i < n; ++i)
             for (const Hit& h : per_read[i])
-                out.append(py::make_tuple(i, h.target, h.score, h.qstart, h.qend, h.tstart, h.rc,
+                out.append(nb::make_tuple(i, h.target, h.score, h.qstart, h.qend, h.tstart, h.rc,
                                           h.split));
         return out;
     }
@@ -469,17 +475,17 @@ private:
 
 }  // namespace
 
-PYBIND11_MODULE(_segmap, m) {
+NB_MODULE(_segmap, m) {
     m.doc() = "Structure-aware segment mapper: best V and best J per read, without a homology search.";
-    py::class_<SegmentMapper>(m, "SegmentMapper")
-        .def(py::init<const std::vector<std::string>&, const std::vector<int>&, int>(),
-             py::arg("sequences"), py::arg("groups"), py::arg("k") = 16,
+    nb::class_<SegmentMapper>(m, "SegmentMapper")
+        .def(nb::init<const std::vector<std::string>&, const std::vector<int>&, int>(),
+             nb::arg("sequences"), nb::arg("groups"), nb::arg("k") = 16,
              "Index `sequences` (forward strand only). `groups` assigns each target a side, and "
              "the mapper returns the best hit per (read, group).")
         .def("map", &SegmentMapper::map,
-             py::arg("queries"), py::arg("max_tied") = 8, py::arg("min_score") = MIN_SCORE,
-             py::arg("threads") = 1, py::arg("max_indel") = 0,
-             py::arg("chain_offset") = CHAIN_OFF,
+             nb::arg("queries"), nb::arg("max_tied") = 8, nb::arg("min_score") = MIN_SCORE,
+             nb::arg("threads") = 1, nb::arg("max_indel") = 0,
+             nb::arg("chain_offset") = CHAIN_OFF,
              "(query_index, target_index, score, qstart, qend, tstart, rc, split) per best/tied "
              "hit. `max_indel` > 0 flags targets carrying two well-supported diagonals that far "
              "apart -- the signature of an indel, which one ungapped extension cannot score.\n\n"
@@ -491,8 +497,8 @@ PYBIND11_MODULE(_segmap, m) {
              "scaffold); pointless for single-segment targets, where it is a no-op in practice. "
              "Coordinates remain those of the best single diagonal, so `qstart`/`tstart` stay a "
              "matched pair and the arithmetic junction projection is unaffected.")
-        .def_property_readonly("size", &SegmentMapper::size, "Distinct indexed k-mers.")
-        .def_property_readonly("postings", &SegmentMapper::postings, "Total (k-mer, position) entries.")
-        .def_property_readonly("k", &SegmentMapper::k, "k-mer length.")
-        .def_property_readonly("n_groups", &SegmentMapper::n_groups, "Number of target groups.");
+        .def_prop_ro("size", &SegmentMapper::size, "Distinct indexed k-mers.")
+        .def_prop_ro("postings", &SegmentMapper::postings, "Total (k-mer, position) entries.")
+        .def_prop_ro("k", &SegmentMapper::k, "k-mer length.")
+        .def_prop_ro("n_groups", &SegmentMapper::n_groups, "Number of target groups.");
 }
