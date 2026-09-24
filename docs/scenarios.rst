@@ -121,6 +121,43 @@ Limits
 * **The insertion composition is uniform** (0.25/base) rather than a fitted first-order Markov
   chain. The per-base cost is what breaks the degeneracy; composition is a refinement.
 
+Scoring a junction: ``arda.hmm``
+--------------------------------
+
+The same recursion, used the other way round. :func:`arda.scenarios.lattice` **is** the
+forward-backward pass of a semi-Markov model of V → N1 → D → N2 → J; an E-step and a posterior
+differ only in what you do with the same term weights, so there is one implementation.
+
+.. code-block:: python
+
+   from arda.hmm import model_for, log_likelihood, posterior_d, best_scenario
+
+   m = model_for("human")                       # or model_for("human", prior="my_prior.tsv")
+   log_likelihood(junction, "TRBV20-1*01", "TRBJ2-1*01", m)   # -40.03
+   post = posterior_d(junction, "TRBV20-1*01", "TRBJ2-1*01", m)
+   post.probabilities   # {'TRBD1*01': 0.001, 'TRBD2*01': 0.010, 'TRBD2*02': 0.989}
+   best_scenario(junction, "TRBV20-1*01", "TRBJ2-1*01", m)    # the Viterbi path, for reading
+
+**Semi-Markov, not Markov**, because germline deletions and insertion lengths have explicit,
+tabulated, non-geometric durations — a plain HMM would impose geometric ones on quantities that
+are measured not to be. **Conditioned on the V and J call** that mmseqs already made, which is
+what keeps the state space to ``(delV, insVD, D, delDl, delDr, insDJ, delJ)`` and makes it cheap
+per clonotype after ``correct``, never per read.
+
+``log_likelihood`` is the marginal, not the best path: a junction explainable many mediocre ways
+is more probable than one explainable a single slightly-better way, and a Viterbi score cannot
+say so. ``model_for(prior=...)`` reads a table written by ``arda scenarios``, so a model
+estimated on one cohort can score another.
+
+.. warning::
+
+   This does **not** replace :mod:`arda.dpost`, and it does not gate anything. ``dpost`` answers
+   the *amino-acid* question — a record with no nucleotides, where the D is often invisible in
+   the translated junction. Different input, both ship. Nothing in the annotation path calls
+   ``arda.hmm``: two measured negatives (recorded in ``ROADMAP.md``) say that re-ranking
+   nucleotide D candidates by a scenario likelihood changes nothing, and that replacing the
+   E-value gate with a Bayes factor would need a *per-locus* shipped threshold.
+
 Inspecting one junction
 -----------------------
 
