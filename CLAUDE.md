@@ -321,6 +321,17 @@ still exposes them individually for A/B work.
   the flag — 476 of the 483 new scaffolds drop to incomplete IgBLAST region markup. Details and the
   evidence (530 amplicon reads) are in the benchmark repo's open loops; **ask before changing the
   default either way**.
+  ⛔ **2026-09-24, benchmark round 27: the ceiling is now two NAMED causes, and the first is a defect
+  in this repo.** `airr_extract.build_germline_dbs` builds the IgBLAST V database from `locus.v`
+  alone and **ignores `locus.v_shared`**, which `_process_locus` honours -- so IgBLAST never sees a
+  TRDV germline, calls every chimeric scaffold `TRAV24*01`/`TRAV30*06`/`TRAV19*01`, and the region
+  coordinates collapse. Building it from TRAV + TRDV instead (dedupe by seq id: `makeblastdb` dies
+  on `Duplicate seq_ids ... LCL|TRAV14/DV4*01`) takes complete markup **7/483 -> 49/483**.
+  ⚠ **`Locus("TRD", ..., v_shared=("TRAV", "/DV"))` SHIPS and is on by default** -- the live TRD
+  reference marks its five dual-use genes up against a TRDV-only database. Unmeasured; measure it.
+  Cause 2 is open and inside IgBLAST: 434 of 483 still get no `j_call`, and exactly **7 of 69 TRAJ
+  alleles work, with all 7 TRDV alleles**. The class is **51.4 % of arda's junction-recall gap to
+  MiXCR** (590 of 1,147 reads). `ROADMAP.md` items 2-3.
 - ✅ **`v_identity`: neither gated nor deleted, and that is the decision (2026-09-24).** The loop
   asked for "a threshold or delete the column"; both branches are dead. **No threshold**, because
   the defect it would have gated — target-inverted rows, which it separates 0.216–0.288 vs ~0.98 —
@@ -359,6 +370,19 @@ still exposes them individually for A/B work.
   20 of 44 TRA genes called, ONE heterozygous, and a restriction that narrows 281 of 47,743 rows.
   Judging the rule needs full-length, 5'RACE or `arda cells` contigs (N50 536 nt) against a known
   genotype. Nothing about the rule can be settled on a library that cannot separate the alleles.
+- ⛔ **Two performance comments in this repo are STALE -- do not trust or propagate them**
+  (benchmark round 27, 2026-09-24). `rnaseq/map.py:479` says reading is *"65 % of a bulk run"*; it
+  is **0.73 s of map's 16.19 s = 4.5 %** -- dnaio, the port that comment motivated, made its own
+  premise false, and **mmseqs + transfer + format is 95.5 %**. `map.py:333`'s chunk sweep existed so
+  the background reader could overlap the search; with reading at 4.5 % there is nothing to overlap
+  and **1 chunk vs 4 is 16.48 vs 16.34 s** with byte-identical output. Optimising the bulk read path
+  or re-tuning `--chunk-size` is dead work.
+- ⛔ **`--adaptive`'s help text quotes a fixture and understates the cost.** Measured on 660 k real
+  bulk pairs: **1.84x wall, 3.04x CPU, 1.34x RSS**, read set preserved exactly -- but `junction`
+  moves on **93 of 35,795 rows and the movement is ONE-DIRECTIONAL: 89 to EMPTY, 4 the other way**,
+  a net -85 against 3,856 reads carrying one. 91 of the 93 sit at 90-150 bits, above
+  `_ADAPTIVE_TRIGGER = 90`, so the score-only trigger is confirmed uncalibratable at 79x the
+  fixture's scale. The default stays off; replace "3 of 453 reads" with this.
 - ⚠ **Benchmark numbers in README / docs / the NF module are round 26 and full-pipeline.** Three
   tools to a clonotype table, same job, 3 reps (`~/vcs/projects/2026-arda-benchmark/results/round26`).
   Never: re-quoting a stage-vs-stage ratio there is a retraction waiting to happen — the 2.11.1
