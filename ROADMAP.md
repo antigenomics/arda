@@ -103,7 +103,21 @@ what is left of the junction-recall gap. Evidence and method:
    because the dnaio port that comment motivated made its own premise false. `map.py:333`'s chunk
    sweep is stale for the same reason: 1 chunk vs 4 is **16.48 vs 16.34 s**, byte-identical output.
 
-6. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
+6. ⛔ **IGH `v_gene` is the largest named accuracy gap in the project, and it is not the
+   junction.** On human IGH 5'RACE (99,494 truth reads at `v_score >= 70`, benchmark round 29):
+   `v_gene` recall **.9004** and precision **.9179**, against **.9867 / .9996** on the TRA
+   amplicon. ~10 % of reads where arda's V gene disagrees with IgBLAST — **seven times the
+   junction gap** — and not a coverage artifact (.9995 on that library). Somatic hypermutation is
+   the obvious suspect: arda maps to germline V·J scaffolds and a hypermutated V is further from
+   every germline. ⚠ That is a hypothesis, not a measurement — nothing yet separates SHM load from
+   IGHV's 4.33 alleles/gene or from IgBLAST's own uncertainty on a mutated V. ⛔ And the round-29
+   library **cannot settle it**: its reads were selected by arda, so a V-call comparison on it has
+   no clean denominator even though a within-arm A/B does. Done means: measured against an IgBLAST
+   truth on `SRR5233637-40` (bulk melanoma RNA-seq, B-cell-rich, staged locally, and the round-26
+   harness runs on it unchanged), **stratified by `v_identity`** so the SHM hypothesis is answered
+   rather than assumed.
+
+7. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
    output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is
    `@lru_cache`d on the organism and reads one fixed path (`dpost.py:108-110`), so the only way to
    use a fitted table is to overwrite a file inside the installed database. `arda.hmm.model_for`
@@ -111,7 +125,7 @@ what is left of the junction-recall gap. Evidence and method:
    `posterior_d` and expose it as `arda markup --d-prior PATH`. Small, and it separates *using* an
    estimate from *adopting* one — which is the decision the entry below is about.
 
-7. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
+8. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
    regression: OLGA has no model for them, which is the whole reason the table is derived rather
    than measured. Verified coverage —
 
@@ -129,7 +143,7 @@ what is left of the junction-recall gap. Evidence and method:
    (organism, locus)**, not code. Do human and mouse first, where the benchmark repo already has
    the data, and A/B the fitted table against the OLGA-derived one before adopting either.
 
-8. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
+9. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
    `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,
    and `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a
    defect — no abundance method separates signal-to-noise ~1, which is why UMI consensus exists —
@@ -137,13 +151,13 @@ what is left of the junction-recall gap. Evidence and method:
    estimate off the data, not a re-tuned constant. ⚠ Whatever it becomes, it is not a QC threshold
    and must not turn into one.
 
-9. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
+10. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
    HMM cannot be extended to IGH without one (it would explain mutated germline as N-region and do
    *worse* than exact-match anchors, which at least fail safely), and `_map_d`'s amino-acid path
    searches the three translated D frames as independent database entries, tripling `n`, when the
    prior over `insVD` already induces a prior over frame. Biggest item here by some margin.
 
-10. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
+11. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
    `arda resolve-ties --genotype` applies an allele set (`v_call_genotyped`, `v_call` untouched,
    no re-alignment and no reference rebuild) and `arda genotype` infers one. `stats.py`'s
    `allele_candidate` is untouched and stays *"a shortlist to look at, never a call"* — the
@@ -171,7 +185,7 @@ what is left of the junction-recall gap. Evidence and method:
    rule can be judged on a library that cannot separate the alleles in the first place.
 
    Also open, and deliberately not in this cut: **novel-allele discovery** (needs the per-position
-   SHM model of item 9 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
+   SHM model of item 10 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
    does not supply), **J-gene genotyping** (J targets are 38–69 nt and the framework-scoped span
    sits right on `TieResolver.MIN_SPAN`; measure before adding), and any **per-donor reference
    rebuild** — scaffold ids are positional, `build-db` needs IgBLAST, and the mmseqs freshness

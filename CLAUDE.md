@@ -430,6 +430,16 @@ still exposes them individually for A/B work.
   and DEAD**: at the true offset the called V's germline matches 0 bases on 1,040 of 1,369.
   ⚠ To score this gate at all you must disable it -- a refusal emits nothing. See
   `results/round28/run_ungated.py`.
+- ⛔ **The biggest accuracy gap is IGH `v_gene`, and it was found by testing IG at all**
+  (benchmark round 29, 2026-09-25). On human IGH 5'RACE: `v_gene` recall **.9004**, precision
+  **.9179** -- against **.9867 / .9996** on the TRA amplicon. ~10 % of reads where arda's V call
+  disagrees with IgBLAST, **seven times the junction gap** this project spent rounds 26-28 on, and
+  NOT coverage (.9995 there). SHM is the suspect and is unproven. `ROADMAP.md` item 6.
+  ⚠ **The IG failure mode is not the TCR one.** Pure 5' over-extensions are 98.1 % of TRA's wrong
+  junctions and only **33.3 %** of IGH's; the rest are base-level disagreements an anchor gate
+  cannot see. So the Cys104 work has ~0.2 pp left on IGH and something else has 6.7.
+  ✅ The round-28 constant itself HOLDS on IG and is worth far more there: +1,027 correct
+  junctions vs +37 (TRA) and +107 (TRB), and **744 distinct IGH clonotypes recovered**.
 - ⛔ **Two performance comments in this repo are STALE -- do not trust or propagate them**
   (benchmark round 27, 2026-09-24). `rnaseq/map.py:479` says reading is *"65 % of a bulk run"*; it
   is **0.73 s of map's 16.19 s = 4.5 %** -- dnaio, the port that comment motivated, made its own
