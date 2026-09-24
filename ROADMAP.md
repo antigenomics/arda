@@ -261,36 +261,38 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
         says `T`, IgBLAST says `F`, and **both** report `stop_codon = F`. So not one of them
         would be changed by any productivity rule; all 8 are IgBLAST reporting
         `vj_in_frame = F` where arda reports `T`.
-  - [ ] **`vj_in_frame`: 8 fixture rows, and NEITHER tool is uniformly right** (examined
-        2026-09-24, one read at a time). Of 3,601 rows where both tools were evaluable and
-        agreed on `junction_aa`, they disagree on 8 (0.22 %). Translating each read from Cys104
-        in the V frame and looking for the called J's own `templated_aa` splits them 5:3.
+  - [x] **`vj_in_frame`: the 8 disagreeing rows were re-tested against the C gene, and arda is
+        right on all of them** (2026-09-24). The first pass asked the wrong question -- it looked
+        for the called J's `templated_aa` in each frame, which tests whether the junction's 3'
+        residues *resemble germline*, not whether the rearrangement is in frame. The author
+        supplied the correct test: `vj_in_frame` means the constant exon spliced onto that J
+        translates, so **splice C on and count stop codons**.
 
-        **arda right on 5.** The three human `TRAJ31*01` rows translate stop-free through the
-        canonical FR4 `FGDGTQLVVKP` and on into TRAC (`NIQNPDPAVYQLR...`) -- that is V and J in
-        frame by definition. Two mouse rows (`TRAJ24*02`, `TRAJ45*01`) end their junction on the
-        germline's own templated residues (`LGKLQF`, `ADRLTF`).
+        Done, on every disputed read. `JX277388.1` (TRBJ2-5*01) + `TRBC2*01`: 0 stops over 375
+        nt, yielding the real mouse TRBC2 protein (`...FGPGTRLLVL|EDLRNVTPPKVSLFEPSKAEIANK...`).
+        `JX277345.1` (TRBJ1-3*01) + `TRBC2*01`: 0 stops. `MH918759.1` (TRAJ31*01) needed no
+        reconstruction -- the entry carries 66 nt of TRAC and translates clean.
 
-        **arda wrong on 3**, all mouse, all different J genes: `X60894.1` (TRAJ9*01),
-        `JX277388.1` (TRBJ2-5*01), `JX277345.1` (TRBJ1-3*01). The germline's templated J
-        residues appear one or two frames away from the one arda used (`GYKLTF` at +1 where arda
-        reports `GLQTYF`; `QDTQYF` at +1 where arda reports `RHPVLF`; `GNTLYF` at +2 where arda
-        reports `EIRSIF`). These are out-of-frame rearrangements where arda anchored on an F that
-        is in frame with Cys104 but is NOT the germline [FW]118 codon -- exactly the failure
-        `CLAUDE.md` names: *a conserved-motif check is not an anchor*. IgBLAST reads the J frame
-        from `optional_file/<org>_gl.aux` and gets these right.
+        What these reads actually have is an **indel inside the J**, after the anchor codon
+        (`JX277388.1` carries 2 nt `TRBJ2-5*01` does not, `JX277345.1` carries 1). So the J's 5'
+        germline residues and its own FR4 cannot both be in the germline frame. arda lands on
+        the FR4/C side, which is the side that decides function; a J-frame lookup keyed on the
+        J's 5' alignment start lands on the other one. That is the whole disagreement.
 
-        A fix means consulting the J germline's own frame (`partial_nt` in `cdr3_anchors.tsv`)
-        during anchor placement, which changes `junction`, `vj_in_frame` and `productive` on
-        out-of-frame reads. **Ask before doing it** -- out-of-frame is ~30 % of a real
-        repertoire, so the blast radius on live data is nothing like 0.22 %.
+        `X60894.1` (TRAJ9*01) is **unanswerable, not wrong**: the entry is 45 nt and stops 3 nt
+        into FR4, so it carries one FR4 residue. Completing the J from germline and splicing
+        `TRAC*01` gives 0 stops over 261 nt, but one residue is not evidence.
+
+        **No `partial_nt` change is wanted.** `phase = (fwr4_start - v_coding_start) % 3` is
+        already the correct test. The open decision is closed -- do not reopen it on
+        `templated_aa` evidence.
 
     - [ ] **Never: do not measure this by comparing the junction's tail to `templated_aa`.**
           Tried, and it is confounded by SHM, not by anchoring: it fires on 51.8 % of IGL,
           51.4 % of IGK and 39.8 % of IGH (mean `v_identity` .955-.968) against 3.4 % of TRB and
           7.1 % of TRA (mean `v_identity` .992). It measures hypermutation reaching the J, which
-          is biology. The 8 rows above were found by tool disagreement and confirmed one at a
-          time; there is no cheap global detector yet.
+          is biology -- and it is what produced the wrong 5:3 verdict above. The only sound test
+          is translating into the constant exon. Documented for users in `docs/productivity.rst`.
 
 - [ ] **Performance.** Optional per-chunk process-pool for inputs where mmseqs is
       not the bottleneck (mostly-non-receptor bulk RNA-seq); mmseqs index reuse.

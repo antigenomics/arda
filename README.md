@@ -323,6 +323,40 @@ Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on *
 by default (reverse-complement reads are re-oriented and flagged `rev_comp=T`); a single search
 annotates a mixed bulk RNA-seq file across all loci.
 
+## Productivity: `productive`, `stop_codon`, `vj_in_frame`
+
+These three AIRR columns are the most misread ones arda writes, because each is scoped
+differently and none of them means "the junction looks like germline".
+
+| column | what arda puts in it |
+|---|---|
+| `vj_in_frame` | `T` when the V's frame, carried through the junction, arrives at FR4 on a codon boundary — so FR4 **and the constant exon spliced to it** are translated in their own frame. `phase = (fwr4_start - v_coding_start) % 3`, `T` iff `phase == 0`. |
+| `stop_codon` | `T` when any annotated region — FR1–FR3, CDR1–CDR2, the junction, **or FR4** — carries a `*`. Scoped to the annotated span, not the whole read. |
+| `productive` | The conjunction: in frame **and** no annotated region carries a stop. |
+| all three | **Empty** when the read never reached both the junction and FR4 — *unevaluable*, not non-productive. On real bulk RNA-seq that is ~72 % of mapped reads, and writing `F` there would look like a repertoire of broken rearrangements. |
+
+They are **flags, never filters**: no stage drops a non-productive read. One allele of a T cell's
+two is usually out of frame, so a sample with none has been filtered upstream.
+
+`vj_in_frame` says **where the frame lands at FR4**, which is what decides whether C translates.
+It does not say the junction's 3′ residues match the called J's germline residues. Those are
+different tests, and on `JX277388.1` (mouse TRB, `TRBJ2-5*01`) they disagree — the read carries
+two nucleotides `TRBJ2-5*01` does not have, so the J's 5′ germline residues and its own FR4
+cannot both be in the germline frame:
+
+```
+arda:  CTCSAGGPRHPVLF GPGTR          FR4 reproduces germline GPGTR exactly
+       + TRBC2*01  ->  ...FGPGTRLLVL EDLRNVTPPKVSLFEPSKAEIANKQKATLVCLARG...   0 stop codons
+```
+
+The receptor translates, so `vj_in_frame=T` is right. Matching the junction's tail against
+germline instead is not a frame test at all: it fires on **51.8 % of IGL, 51.4 % of IGK and
+39.8 % of IGH** rows (mean `v_identity` .955–.968) against **3.4 % of TRB and 7.1 % of TRA**
+(.992) — it is detecting hypermutation reaching the J, which is biology.
+
+Worked examples, including a J truncated too far for any tool to call:
+[productivity](https://docs.isalgo.dev/arda/productivity.html).
+
 ## Why
 
 IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embed.

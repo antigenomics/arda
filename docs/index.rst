@@ -109,6 +109,7 @@ repository so they can be re-run: see the ``README`` benchmark tables and
    :maxdepth: 2
 
    use_cases
+   productivity
    error_correction
    shm
    d_segments
