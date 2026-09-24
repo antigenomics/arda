@@ -49,6 +49,43 @@ def _dummy_d_db(species_dir: str) -> Path:
     return prefix
 
 
+def _records(path: Path) -> list[tuple[str, str]]:
+    """``[(seq_id, ">header\nseq...")]`` from a FASTA, headers kept verbatim."""
+    text = path.read_text()
+    return [(b.split("\n", 1)[0].split()[0], ">" + b) for b in text.split(">") if b.strip()]
+
+
+def _shared_v_fasta(species_dir: str, locus: Locus) -> tuple[Path, str]:
+    """Ungapped V FASTA covering ``locus.v`` **and** ``locus.v_shared``; ``(path, db_name)``.
+
+    ``build._process_locus`` merges the shared stem's dual-use genes into the allele set the
+    scaffolds are built from, so a V database built from ``locus.v`` alone does not contain the
+    germline half of the scaffolds it is about to mark up. IgBLAST then calls the nearest
+    same-stem gene instead and every region coordinate collapses, which is silent: the scaffold
+    is simply dropped for incomplete markup. Measured on the chimera-enabled TRA locus
+    (benchmark round 27), complete markup went **7/483 -> 49/483** on this one line.
+
+    ⚠ Dedupe by seq id, first wins. IMGT files the dual-use ``TRAV*/DV*`` genes under BOTH the
+    TRAV and TRDV stems and ``makeblastdb`` dies hard on
+    ``Duplicate seq_ids are found: LCL|TRAV14/DV4*01``.
+    """
+    stem, needle = locus.v_shared          # type: ignore[misc]
+    base = ungap_gene(species_dir, locus.group, locus.v)
+    shared = ungap_gene(species_dir, locus.group, stem)
+    seen: set[str] = set()
+    keep: list[str] = []
+    for path, want in ((base, None), (shared, needle)):
+        for sid, rec in _records(path):
+            if (want is not None and want not in sid) or sid in seen:
+                continue
+            seen.add(sid)
+            keep.append(rec)
+    name = f"{locus.v}_{stem}"
+    merged = _blastdb_dir(species_dir) / f"{name}.fasta"
+    merged.write_text("".join(keep))
+    return merged, name
+
+
 def build_germline_dbs(species_dir: str, locus: Locus) -> dict[str, Path]:
     """Ungap each gene file and build a germline BLAST DB; return {role: prefix}."""
     out: dict[str, Path] = {}
@@ -56,8 +93,10 @@ def build_germline_dbs(species_dir: str, locus: Locus) -> dict[str, Path]:
     if locus.has_d:
         roles["D"] = locus.d  # type: ignore[assignment]
     for role, stem in roles.items():
-        ungapped = ungap_gene(species_dir, locus.group, stem)
-        prefix = _blastdb_dir(species_dir) / stem
+        ungapped, name = ungap_gene(species_dir, locus.group, stem), stem
+        if role == "V" and locus.v_shared:
+            ungapped, name = _shared_v_fasta(species_dir, locus)
+        prefix = _blastdb_dir(species_dir) / name
         igblast.makeblastdb(ungapped, prefix, dbtype="nucl")
         out[role] = prefix
     return out

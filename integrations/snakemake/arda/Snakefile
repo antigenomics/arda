@@ -50,10 +50,26 @@ MAP_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=MAP_THREADS)[0]
 REDUCE_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=REDUCE_THREADS)[1]
 
 
+def flags_for(sample, which, threads):
+    """The regime's flags for ONE sample, with that sample's own organism baked in.
+
+    An airrflow sheet carries `species` per row and a cohort may legitimately mix organisms, so
+    the organism cannot be a workflow-level constant. `--config organism=` remains the fallback
+    for a sheet that does not say. arda owns which flags the regime implies; this only chooses
+    whose organism goes into them.
+    """
+    return regime_flags(REGIME, organism=ORGANISM_OF[sample], threads=threads)[which]
+
+
 # ── the sheet ─────────────────────────────────────────────────────────────────────────────────
-# Parsed by arda, not here. A second copy of "repeated `sample` values merge in ROW ORDER,
-# relative paths resolve against the sheet, blank `fastq_2` is single-end, and a sample may not
-# mix paired with single-end" drifts from the one the CLI enforces -- and the drift is silent.
+# Parsed by arda, not here. A second copy of "repeated ids merge in ROW ORDER, relative paths
+# resolve against the sheet, a blank R2 is single-end, and a sample may not mix paired with
+# single-end" drifts from the one the CLI enforces -- and the drift is silent.
+#
+# Both dialects work unchanged: nf-core's `sample` / `fastq_1` / `fastq_2`, and nf-core/airrflow's
+# `sample_id` / `filename_R1` / `filename_R2` + AIRR metadata. An airrflow samplesheet therefore
+# drives this workflow, the Nextflow module and `arda cluster` without a translation step -- see
+# `integrations/nextflow/arda/README.md`. A sheet that carries BOTH id columns is refused.
 from arda.samples import read_sheet
 
 try:
@@ -64,6 +80,19 @@ except ValueError as exc:                    # arda speaks ValueError; Snakemake
 READ_GROUPS = {s.id: [(str(r1), str(r2) if r2 else None) for r1, r2 in s.pairs]
                for s in _samples}
 SAMPLES = list(READ_GROUPS)
+
+# An airrflow sheet carries `species` PER SAMPLE, which is where it belongs -- a cohort may mix
+# organisms. `--config organism=` stays as the override for a sheet that does not say.
+ORGANISM_OF = {s.id: (s.species or ORGANISM) for s in _samples}
+
+# Never: single cell is not this workflow. `arda cells` takes ONE per-molecule UMI consensus FASTQ
+# with the barcode in the record name, not a read pair -- the UMI collapse belongs upstream. Say
+# so here rather than folding a cell library into one bulk repertoire.
+_sc = [s.id for s in _samples if s.single_cell]
+if _sc:
+    raise WorkflowError(
+        f"sheet marks {', '.join(_sc)} single_cell=TRUE; this workflow covers bulk libraries. "
+        f"Run `arda cells` on the UMI consensus instead -- see docs/singlecell.rst.")
 
 
 def part(sample, i):
@@ -87,7 +116,7 @@ rule map_read_group:
         r1 = lambda w: READ_GROUPS[w.sample][int(w.rg)][0],
         r2 = lambda w: (f"--r2 {READ_GROUPS[w.sample][int(w.rg)][1]}"
                         if READ_GROUPS[w.sample][int(w.rg)][1] else ""),
-        flags = MAP_FLAGS,
+        flags = lambda w: flags_for(w.sample, 0, MAP_THREADS),
     threads: MAP_THREADS
     shell:
         "{ARDA} map --r1 {params.r1} {params.r2}"
@@ -105,7 +134,7 @@ rule reduce_sample:
         stats  = f"{OUTDIR}/{{sample}}.stats.tsv",
     params:
         shard_dir = lambda w: f"{WORKDIR}/{w.sample}",
-        flags = REDUCE_FLAGS,
+        flags = lambda w: flags_for(w.sample, 1, REDUCE_THREADS),
     threads: REDUCE_THREADS
     shell:
         "{ARDA} cluster reduce --shard-dir {params.shard_dir}"

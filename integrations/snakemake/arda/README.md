@@ -1,5 +1,16 @@
 # arda — Snakemake workflow
 
+> **The sample sheet is nf-core/airrflow's.** This workflow, the Nextflow module
+> (`integrations/nextflow/arda/`) and `arda cluster` (SLURM) all parse it through
+> `arda.samples.read_sheet`, which speaks both airrflow's `sample_id` / `filename_R1` /
+> `filename_R2` + AIRR metadata and nf-core's generic `sample` / `fastq_1` / `fastq_2`.
+> One sheet, three runners, no translation step. A sheet carrying **both** id columns is refused —
+> it does not say which column names the repertoire.
+>
+> `species` is read per sample (a cohort may mix organisms); `--config organism=` is the fallback
+> for a sheet that does not carry it. `single_cell=TRUE` is refused: `arda cells` takes a
+> per-molecule UMI consensus FASTQ, not a read pair.
+
 Sample-sheet driven, **one job per read group**.
 
 ```sh

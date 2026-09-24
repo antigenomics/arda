@@ -21,7 +21,15 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from arda.annotate.reference import REGIONS, RefEntry
-from arda.annotate.transfer import MIN_V_ANCHOR_PREFIX, transfer_hit, v_anchor_prefix
+from arda.annotate.transfer import (
+    _ANCHOR_MIN_MATCH,
+    _ANCHOR_WINDOW,
+    MIN_V_ANCHOR_PREFIX,
+    transfer_hit,
+    v_anchor_match,
+    v_anchor_ok,
+    v_anchor_prefix,
+)
 
 # TRAV25*01's templated junction germline: Cys104 codon + AGG GGG. Its Cys sits at germline 264,
 # and the read that produced the +9 nt cluster had V trimmed to 258 — six nt short of the anchor.
@@ -54,6 +62,34 @@ def test_an_ambiguous_v_call_is_explained_by_whichever_allele_explains_most():
     anchors = _anchors()
     anchors[("V", "TRAV25*04")] = SimpleNamespace(status="ok", germline_nt="TGTGCTGGG")
     assert v_anchor_prefix("TGTGCTGGGAAAG", "TRAV25*01,TRAV25*04", anchors) == 9
+
+
+def test_the_over_extension_stays_refused_by_the_mismatch_tolerant_rule_too():
+    """Loosening the cut must not readmit what it exists to catch: 0 of 8 bases match here."""
+    over_extended = "ACCATGAACCAGGGAGGAAAGCTTATCTTC"
+    assert v_anchor_match(over_extended, "TRAV25*01", _anchors()) == 0
+    assert not v_anchor_ok(over_extended, "TRAV25*01", _anchors())
+
+
+def test_a_substitution_in_the_first_base_no_longer_throws_the_junction_away():
+    """One mismatch takes a longest common prefix to 0; the window still sees seven of eight.
+
+    That is the whole defect: an exact prefix is one sequencing error from zero, and on the
+    held-out TRB amplicon it was discarding 116 correct junctions to catch 21 wrong ones
+    (benchmark round 28).
+    """
+    mutated = "AGTGCAGGGAAAGCTTATCTTC"               # TRAV25*01's Cys104 with base 1 substituted
+    assert v_anchor_prefix(mutated, "TRAV25*01", _anchors()) < MIN_V_ANCHOR_PREFIX
+    assert v_anchor_match(mutated, "TRAV25*01", _anchors()) == _ANCHOR_WINDOW - 1
+    assert v_anchor_ok(mutated, "TRAV25*01", _anchors())
+
+
+def test_the_window_is_a_rescue_and_never_a_second_chance_to_refuse():
+    """An exact prefix admits regardless of what the rest of the window does."""
+    assert _ANCHOR_MIN_MATCH <= _ANCHOR_WINDOW
+    short = {("V", "TRAV25*01"): SimpleNamespace(status="ok", germline_nt="TGT")}
+    assert v_anchor_match("TGTAAAAAA", "TRAV25*01", short) == 3 < _ANCHOR_MIN_MATCH
+    assert v_anchor_ok("TGTAAAAAA", "TRAV25*01", short)
 
 
 def test_an_unusable_anchor_row_never_licenses_a_junction():

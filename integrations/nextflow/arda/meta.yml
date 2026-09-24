@@ -1,97 +1,87 @@
----
-# yaml-language-server: $schema=https://raw.githubusercontent.com/nf-core/modules/master/modules/meta-schema.json
-name: "arda"
-description: Extract a TCR/BCR repertoire from bulk RNA-seq or RepSeq amplicon reads as AIRR clonotypes
+name: arda_assign
+description: |
+  V(D)J assignment and clonotype assembly with arda, shaped for nf-core/airrflow.
+  A drop-in alternative to CHANGEO_ASSIGNGENES + CHANGEO_MAKEDB: the same [meta, reads]
+  channel in, a spec-valid AIRR Rearrangement TSV out. arda does the IgBLAST work once,
+  offline, when its reference is built, so there is no per-run germline database to stage.
 keywords:
   - airr
+  - immunoglobulin
   - tcr
   - bcr
   - repertoire
-  - immunogenomics
-  - rnaseq
+  - vdj
+  - clonotype
 tools:
-  - "arda":
-      description: |
-        Antigen Receptor Domain Annotation. Filters receptor-derived reads out of bulk RNA-seq
-        with a C++ 16-mer prefilter, annotates FR/CDR regions against IMGT-derived V(+pad+)J and
-        J+C scaffolds, assembles long CDR3s that no single read spans, and collapses sequencing
-        error into a clonotype table.
+  - arda:
+      description: "Antigen Receptor Domain Annotation - reference-precomputed AIRR annotation"
       homepage: "https://github.com/antigenomics/arda"
-      documentation: "https://antigenomics.github.io/arda/"
+      documentation: "https://github.com/antigenomics/arda"
       tool_dev_url: "https://github.com/antigenomics/arda"
       licence: ["GPL-3.0"]
-      identifier: ""
-
+      identifier: "biotools:arda"
 input:
   - - meta:
         type: map
         description: |
-          Groovy Map with sample metadata. Must carry `single_end`, which selects whether R2 is
-          passed through, e.g. [ id:'sample1', single_end:false ]. May optionally carry `regime`
-          ('bulk' | 'amplicon' | 'default'), `ec_mode` or `shm` to override the corresponding
-          `params.*` for this sample only. `regime` selects the arda COMMAND: 'bulk' ->
-          `arda rnaseq`, 'amplicon' -> `arda amplicon`, 'default' -> `arda rnaseq --exact`.
+          Groovy Map describing the sample, in nf-core/airrflow's shape:
+          `[ id:'sample_id', species:'human', locus:'IG', single_cell:false, single_end:false ]`.
+          `species` selects arda's reference organism and comes from the samplesheet's required
+          `species` column. `single_cell:true` is REFUSED - see the note under `output`.
     - reads:
         type: file
         description: |
-          The sample's FASTQs, PAIR-ADJACENT: [R1, R2] for one paired read group, [R1] for one
-          single-end one, and [R1, R2, R1, R2, ...] for a sample split across lanes or chunks --
-          which is what `groupTuple().map { m, l -> [m, l.flatten()] }` gives you. All of them are
-          one repertoire and produce ONE clonotype table: arda maps each read group and
-          concatenates before Stages 2-3, byte-identically to the same reads in one file, so do
-          not `cat` them first. Lane order is preserved and must not be sorted.
+          FASTQ file(s). Pair-adjacent when paired: [r1, r2, r1, r2, ...]. A sample delivered in
+          several read groups (repeated `sample_id` rows) is passed whole - arda maps each group
+          and concatenates before the global stages, which is byte-identical to the same reads in
+          one file. Order is DECLARED order and must not be sorted.
         pattern: "*.{fastq,fq}{,.gz}"
-
 output:
-  - clones:
-      - meta:
+  airr:
+    - - meta:
           type: map
-          description: Groovy Map with sample metadata, passed through from the input channel.
+          description: Groovy Map describing the sample
+      - "*.airr.tsv":
+          type: file
+          description: AIRR Rearrangement TSV, one row per mapped read
+          pattern: "*.airr.tsv"
+  clones:
+    - - meta:
+          type: map
+          description: Groovy Map describing the sample
       - "*.clones.tsv":
           type: file
-          description: |
-            Corrected clonotype table, keyed by (locus, v_call, j_call, junction). Columns:
-            junction, junction_aa, v_call, j_call, c_call, locus, duplicate_count,
-            consensus_count, d_call, d2_call, d_support, d2_support.
+          description: Clonotype table after error correction
           pattern: "*.clones.tsv"
-  - airr:
-      - meta:
+  assembled_airr:
+    - - meta:
           type: map
-          description: Groovy Map with sample metadata, passed through from the input channel.
-      - "${prefix}.airr.tsv":
-          type: file
-          description: |
-            Stage-1 mapped reads, AIRR Rearrangement schema. Matched by exact name, never
-            `*.airr.tsv`: that glob also catches the assembler's `*.assembled.airr.tsv`, and the
-            two would then arrive on this channel as a two-element list.
-          pattern: "${prefix}.airr.tsv"
-  - assembled_airr:
-      - meta:
-          type: map
-          description: Groovy Map with sample metadata, passed through from the input channel.
+          description: Groovy Map describing the sample
       - "*.assembled.airr.tsv":
           type: file
-          description: |
-            Stage-3 assembled long-CDR3 contigs, AIRR Rearrangement schema. Optional: absent when
-            arda is run with `--no-assemble`.
+          description: AIRR rows for reads recovered by contig assembly (optional)
           pattern: "*.assembled.airr.tsv"
-  - report:
-      - meta:
+  report:
+    - - meta:
           type: map
-          description: Groovy Map with sample metadata, passed through from the input channel.
+          description: Groovy Map describing the sample
       - "*.arda.json":
           type: file
-          description: |
-            Merged per-stage run report: read counts, per-locus yield, wall time and peak RSS per
-            stage, the arda/mmseqs versions and the reference fingerprint used, plus
-            `fast_fraction` -- the predictor of whether the amplicon regime pays on this library.
+          description: Per-run report - counts, timings, peak RSS
           pattern: "*.arda.json"
-  - versions:
-      - "versions.yml":
+  stats:
+    - - meta:
+          type: map
+          description: Groovy Map describing the sample
+      - "*.stats.tsv":
           type: file
-          description: File containing software versions, plus the regime and arda mode the task ran in.
-          pattern: "versions.yml"
-
+          description: Per-sample QC metrics for `arda qc batch` (optional)
+          pattern: "*.stats.tsv"
+  versions:
+    - versions.yml:
+        type: file
+        description: File containing software versions
+        pattern: "versions.yml"
 authors:
   - "@mikessh"
 maintainers:

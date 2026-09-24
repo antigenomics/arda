@@ -9,7 +9,25 @@ from __future__ import annotations
 import pytest
 
 from arda import mmseqs
+from arda._log import logger as arda_logger
 from arda.paths import vdj_dir
+
+
+@pytest.fixture(autouse=True)
+def _pristine_arda_logger():
+    """Undo ``_log.setup``'s mutation of the process-global ``arda`` logger after every test.
+
+    ``setup`` sets ``propagate = False`` and binds a StreamHandler to whatever ``sys.stderr``
+    was at the time -- under ``CliRunner``, a buffer the runner closes on exit. Left in place it
+    breaks every LATER test twice over: ``propagate = False`` keeps records away from the root
+    handler ``caplog`` reads, and the dead stream turns each emit into a ``--- Logging error ---``.
+    That is test ORDER, not the code under test: ``tests/unit/test_logging.py`` runs before
+    ``tests/unit/test_samples.py``, whose ``caplog`` assertion then sees an empty ``caplog.text``
+    in a full-suite run and passes when run alone.
+    """
+    saved = list(arda_logger.handlers), arda_logger.propagate
+    yield
+    arda_logger.handlers[:], arda_logger.propagate = saved
 
 
 def mmseqs_available() -> bool:

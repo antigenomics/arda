@@ -6,8 +6,8 @@
 #   2. Download the latest IgBLAST release into ./bin (gitignored; DB build only).
 #   3. Fetch a static MMseqs2 binary into ./bin unless one is already on PATH.
 #
-# Conda is used ONLY by the Nextflow integration (integrations/nextflow/arda, the
-# Gamaleya/ISP pipeline), which ships its own environment.yml + Dockerfile.
+# Conda is used ONLY by the Nextflow integration (integrations/nextflow/arda),
+# which ships its own environment.yml + Dockerfile.
 #
 # Usage:
 #   bash setup.sh [--build-db] [--tests]

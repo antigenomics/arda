@@ -1,11 +1,16 @@
 # Example: `snakemake -s Snakefile --configfile config.yaml -c 32`
 # Every key is also settable with --config key=value. See README.md.
 
-samples: sheet.tsv          # required: sample, fastq_1[, fastq_2]; repeated ids merge in row order
+# Required. Either dialect: nf-core's `sample, fastq_1[, fastq_2]`, or nf-core/airrflow's
+# `sample_id, filename_R1[, filename_R2]` + AIRR metadata. Repeated ids merge in ROW ORDER.
+# The same sheet drives the Nextflow module and `arda cluster` -- one sheet, three runners.
+samples: sheet.tsv
 outdir: results
 # workdir: results/work     # Stage-1 parts, one directory per sample
 
 regime: rnaseq              # rnaseq (bulk) | amplicon (targeted RepSeq). Name the library, not the flags.
+# Fallback only. An airrflow sheet carries `species` per row and that wins, because a cohort may
+# legitimately mix organisms.
 organism: human
 
 # arda is CPU-bound on the MMseqs2 search and threads internally: raise this before raising -c.

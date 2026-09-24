@@ -133,3 +133,62 @@ def test_an_empty_sheet_is_refused(tmp_path):
     p.write_text("sample\tfastq_1\tfastq_2\n")
     with pytest.raises(_WorkflowError, match="no rows"):
         _prelude({"samples": str(p), "outdir": str(tmp_path)})
+
+
+# --- the nf-core/airrflow samplesheet ---------------------------------------------------------
+# One sheet has to drive this workflow, the Nextflow module and `arda cluster` alike. The prelude
+# does not parse it -- `arda.samples.read_sheet` does -- so these assert the WIRING: that the
+# airrflow dialect arrives intact, and that a per-sample `species` reaches the flags.
+
+def _airrflow_sheet(tmp_path, rows):
+    cols = ["sample_id", "subject_id", "species", "pcr_target_locus", "tissue", "sex", "age",
+            "biomaterial_provider", "single_cell", "filename_R1", "filename_R2"]
+    body = []
+    for r in rows:
+        for key in ("filename_R1", "filename_R2"):
+            if r.get(key):
+                (tmp_path / r[key]).write_text("@r\nACGT\n+\nIIII\n")
+        body.append("\t".join(str(r.get(c, "")) for c in cols))
+    p = tmp_path / "airrflow.tsv"
+    p.write_text("\t".join(cols) + "\n" + "\n".join(body) + "\n")
+    return p
+
+
+def _r(**kw):
+    base = dict(sample_id="S1", subject_id="D1", species="human", pcr_target_locus="ig",
+                tissue="blood", sex="F", age="1", biomaterial_provider="lab",
+                single_cell="FALSE", filename_R1="a_1.fq", filename_R2="a_2.fq")
+    base.update(kw)
+    return base
+
+
+def test_an_airrflow_samplesheet_drives_the_workflow_unchanged(tmp_path):
+    s = _airrflow_sheet(tmp_path, [_r(), _r(sample_id="S2", filename_R1="b_1.fq",
+                                       filename_R2="b_2.fq")])
+    ns = _prelude({"samples": str(s), "outdir": str(tmp_path / "out")})
+    assert ns["SAMPLES"] == ["S1", "S2"]
+    assert ns["READ_GROUPS"]["S1"] == [(str(tmp_path / "a_1.fq"), str(tmp_path / "a_2.fq"))]
+
+
+def test_the_organism_comes_from_the_sheet_per_sample_not_from_one_constant(tmp_path):
+    """A cohort may legitimately mix organisms; `--config organism=` is only the fallback."""
+    s = _airrflow_sheet(tmp_path, [_r(species="human"),
+                                   _r(sample_id="M1", species="mouse",
+                                      filename_R1="m_1.fq", filename_R2="m_2.fq")])
+    ns = _prelude({"samples": str(s), "outdir": str(tmp_path / "out")})
+    assert ns["ORGANISM_OF"] == {"S1": "human", "M1": "mouse"}
+    assert "--organism mouse" in ns["flags_for"]("M1", 0, 8)
+    assert "--organism human" in ns["flags_for"]("S1", 0, 8)
+
+
+def test_a_sheet_without_species_falls_back_to_the_config(sheet, tmp_path):
+    ns = _prelude({"samples": str(sheet([("A", "x_1.fq", "")])), "outdir": str(tmp_path),
+                   "organism": "mouse"})
+    assert ns["ORGANISM_OF"] == {"A": "mouse"}
+
+
+def test_a_single_cell_sheet_is_refused_rather_than_folded_into_one_repertoire(tmp_path):
+    """Never: `arda cells` takes a per-molecule UMI consensus, not a read pair."""
+    s = _airrflow_sheet(tmp_path, [_r(single_cell="TRUE")])
+    with pytest.raises(_WorkflowError, match="single_cell=TRUE"):
+        _prelude({"samples": str(s), "outdir": str(tmp_path / "out")})

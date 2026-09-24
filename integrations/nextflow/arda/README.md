@@ -1,332 +1,149 @@
-# ARDA — Nextflow module
+# `ARDA_ASSIGN` — arda as a V(D)J assignment step for nf-core/airrflow
 
-A drop-in, nf-core-style local module that runs arda's RNA-seq mode on each sample and publishes
-per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a single
-`arda <mode>` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
-any DSL2 pipeline the same way STAR/Salmon/fastp do.
+A drop-in alternative to `CHANGEO_ASSIGNGENES` + `CHANGEO_MAKEDB`: the same `[meta, reads]`
+channel in, a spec-valid **AIRR Rearrangement TSV** out, plus a clonotype table.
 
-Pinned to **arda 2.27.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
+arda does the IgBLAST work **once, offline**, when its reference is built — every in-frame V·J
+germline scaffold with FR1–4 / CDR1–3 markup — then maps reads onto it with MMseqs2 and transfers
+the markup through the alignment in C++. So there is no per-run germline database to stage:
+`--reference_igblast`, `--reference_fasta` and `--fetch_germlines` are not consulted.
 
-> **Never: 2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
-> earlier version of this module invoked — was removed there. The regime is now the **command
-> name** (`arda rnaseq` / `arda amplicon`), and each mode owns its own speed configuration, so this
-> module and the CLI move together: an older arda fails with *"Got unexpected extra argument
-> (run)"*, and an older module against 2.16.0 fails the same way.
->
-> It is also the first release with `--shm` (SHM scoped to the framework rather than to the V/J
-> segment) and with per-mode `--ec-mode` defaults.
->
-> The benchmark tables below are labelled with the version they were **measured** on; the *pin* is
-> the release that ships the commands.
+Pinned to **arda 2.27.0** (`environment.yml`, the `container` tag, the `Dockerfile`).
+`tests/unit/test_nextflow_integration.py` asserts all four against `arda.__version__`.
 
-## What it produces (per sample `<id>`)
+---
 
-| file | contents |
+## ⛔ Breaking change from the pre-2.28 module
+
+The old module invented its own vocabulary. This one speaks airrflow's.
+
+| before | now | why |
+|---|---|---|
+| `process ARDA` | `process ARDA_ASSIGN` | names the step it replaces |
+| `--regime bulk\|amplicon\|default` | `--library_generation_method` | airrflow's own field; one name for the protocol, not two |
+| `meta.regime` per sample | the samplesheet's `pcr_target_locus` / protocol | the sheet already carries it |
+| `params.arda_organism` (or `params.genome`) | the samplesheet's **`species`** column | `arda_organism` survives as an override only |
+| `params.arda_shm`, `arda_call_level`, `arda_ec_mode`, `arda_clonotype_key` | one `params.arda_args` passthrough | each is a *decision* about what a clonotype is, not a tuning knob; spelling them out in a pipeline config invited setting them unread |
+| `params.arda_indel_rescue` | `params.arda_args = '--indel-rescue'` | same reason; it is a per-library call whose value tracks SHM load |
+| iGenomes `params.genome` gate | none | arda's reference is IMGT-derived, so only the species matters — GRCh37 and GRCh38 are the same reference to it |
+
+**Migrating.** Delete `--regime`; set `--library_generation_method` to the protocol you actually
+used. Move any `arda_*` tuning params into `arda_args`. Make sure your samplesheet has the
+`species` column airrflow's schema already requires.
+
+| old `--regime` | new `--library_generation_method` |
 |---|---|
-| `<id>.clones.tsv` | corrected clonotype table: `junction, junction_aa, v_call, j_call, c_call, locus, duplicate_count, consensus_count, d_call, d2_call, d_support, d2_support` |
-| `<id>.airr.tsv` | mapped reads, AIRR Rearrangement schema |
-| `<id>.assembled.airr.tsv` | Stage-3 long-CDR3 reads rescued by contig assembly |
-| `<id>.arda.json` | run report (reads mapped, per-locus counts, isotype/constant, timing, peak RSS, `fast_fraction`) |
+| `amplicon` | `specific_pcr`, `specific_pcr_umi`, `dt_5p_race`, `dt_5p_race_umi` |
+| `bulk` | `trust4` |
+| `default` | `trust4` plus `--arda_args '--exact'` |
 
-## Never: Pick the regime — it is one parameter and it is easy to get backwards
+---
 
-arda has two tuning paths and **they do not compose**. Choosing the wrong one is not an error; it
-is a silent 2–4× slowdown. The module therefore selects the combination by name:
+## Protocol → mode
 
-| `--regime` | arda command | speed configuration it implies | use for |
-|---|---|---|---|
-| `amplicon` | `arda amplicon` | `--two-pass --fast-segments --v-only-on-segment` | targeted RepSeq / 5′RACE libraries |
-| `bulk` | `arda rnaseq` | `--prefilter` | whole-transcriptome RNA-seq (the default) |
-| `default` | `arda rnaseq --exact` | *(none)* | the shipped one-pass path, for reproducing older runs |
+The two speed paths in arda do **not** compose, and choosing the wrong one is a silent 2–4×
+slowdown rather than an error. So the choice is *derived* from the protocol, and arda itself owns
+which flags that implies.
 
-**Never: `--two-pass` on its own is a LOSS** — 0.762× on bulk and 0.87× on an IGH amplicon — and it is
-no longer reachable by accident: arda owns the combination behind the mode name. Do not
-hand-assemble these flags in `ext.args`.
+| `library_generation_method` | runs | why |
+|---|---|---|
+| `specific_pcr`, `specific_pcr_umi` | `arda amplicon` | the read already spans V into J |
+| `dt_5p_race`, `dt_5p_race_umi` | `arda amplicon` | same |
+| `trust4` | `arda rnaseq` | whole-transcriptome; 0.02–3 % receptor |
+| `sc_10x_genomics` | **refused** | see below |
 
-⚠ `default` is **not** `arda rnaseq`. That mode turns `--prefilter` on, which costs ~0.15 % of
-mapped reads (122 bulk datasets; up to 2.46 % on one library). `--exact` is what reproduces the
-pre-2.16.0 default output.
+### Single cell is refused, on purpose
 
-A sheet may legitimately mix the two library types: put a `regime` key in the meta map and it wins
-over `params.regime` for that sample.
+`arda cells` exists, but its input is **one per-molecule UMI consensus FASTQ with the cell barcode
+in the record name** — what `migec assemble` or Cell Ranger writes — not a raw 10x read pair. arda
+does no barcode demultiplexing and no UMI collapse; both belong upstream. Mapping
+`sc_10x_genomics` here would hand `arda cells` reads it cannot interpret, and the failure would
+look like a bad repertoire rather than a wiring error. Run that path separately; see
+`docs/singlecell.rst`.
 
-⚠ `regime` is a short name in a shared params namespace. If your pipeline already uses it for
-something else, rename the param in `nextflow.config` and in the one `params.getOrDefault('regime',
-…)` call in `main.nf`; the per-sample `meta.regime` route is unaffected either way.
+---
 
-If you are unsure which regime a library wants, run one sample either way and read `fast_fraction`
-from `<id>.arda.json`: it is the predictor, not the library's name. High (~.85) means the amplicon
-regime pays; low (~.05) means it is overhead.
+## Samplesheet
 
-## Runtime & resources
+airrflow's schema, unchanged. The columns this module reads:
 
-arda is **CPU-bound** — the aligner dominates — so give the process cores. `--threads` follows
-`task.cpus` automatically.
+| column | used for |
+|---|---|
+| `sample_id` | `meta.id`, the output prefix. Repeated rows **merge in row order** |
+| `species` | `arda --organism`. `human` / `mouse` (arda also ships rat, rabbit, rhesus) |
+| `single_cell` | `TRUE` is refused here — see above |
+| `filename_R1`, `filename_R2` | the reads. Blank `filename_R2` is single-end |
+| `subject_id`, `tissue` | carried as `arda qc batch`'s grouping labels |
 
-⛔ **A stage comparison is not a benchmark** — every leg below runs end to end and emits
-clonotypes, each tool at its best-fitting preset. One job, six legs alternating, three reps,
-medians. 8 threads; arda 2.27.0, MiXCR 4.7.0, TRUST4. TRUST4's rows count only its **complete**
-CDR3s so the last two columns mean the same thing in every row.
+⚠ **arda reads this sheet natively** — `arda.samples.read_sheet` speaks both the airrflow dialect
+and nf-core's generic `sample` / `fastq_1` / `fastq_2`. That is what lets **one** samplesheet drive
+this module, the Snakemake workflow in `integrations/snakemake/arda/`, and `arda cluster` (SLURM)
+without a translation step anywhere.
 
-**TRA amplicon, 100,000 reads:**
+**A sample may arrive in several files.** One FASTQ per lane is still one repertoire and must give
+one clonotype table. arda maps each read group and concatenates before the global stages, which is
+byte-identical to the same reads in one file — so pass them all rather than `cat`-ing.
+Never sorted by filename: `A_L010` sorts before `A_L002`, and the clonotype fold is not
+permutation-invariant.
 
-| pipeline | wall (s) | CPU (s) | peak RSS (MB) | clonotypes | reads in clonotypes |
-|---|---:|---:|---:|---:|---:|
-| MiXCR `generic-amplicon` | **7.82** | 42.91 | 3,052 | 19,697 | 42,712 |
-| **arda** `amplicon` | 14.40 | **30.49** | 965 | **19,841** | **43,503** |
-| TRUST4 | 73.77 | 117.96 | **490** | 18,559 | 37,688 |
+---
 
-MiXCR is 1.84× faster on wall in its own regime; arda gets there on 1.41× less CPU and 3.16× less
-RSS, and returns the most clonotypes over the most reads.
-
-**Bulk RNA-seq, 660,000 pairs (SRR5233639):**
-
-| pipeline | wall (s) | CPU (s) | peak RSS (MB) | clonotypes | reads in clonotypes |
-|---|---:|---:|---:|---:|---:|
-| TRUST4 | **13.68** | **54.53** | **460** | 1,941 | 6,247 |
-| **arda** `rnaseq` | 21.95 | 219.68 | 1,033 | **2,213** | **8,484** |
-| MiXCR `rna-seq` | 30.23 | 233.11 | 2,849 | 1,732 | 4,288 |
-
-**+27.8 % clonotypes and +97.9 % reads assigned against MiXCR** (+14.0 % / +35.8 % against
-TRUST4), at 1.38× MiXCR's wall and 2.76× less RSS. ⚠ TRUST4 is genuinely 1.61× faster on wall at
-4.0× less CPU here, reaching 87.7 % of arda's clonotypes and 73.6 % of its assigned reads.
-
-**IGH RepSeq amplicon, 100,000 pairs, 32 threads** — what the regime is worth on a real repertoire:
-
-| dataset | config | wall (s) | peak RSS (MB) |
-|---|---|---|---|
-| IGH_repertoire | `--regime default` | 316.44 | 4,018 |
-| IGH_repertoire | `--regime amplicon` | **76.25** | **1,479** |
-| IGH_naive | `--regime default` | 305.32 | 3,736 |
-| IGH_naive | `--regime amplicon` | **64.86** | **1,363** |
-
-That is **4.15×** and **4.71×**, at roughly a third of the memory.
-
-### Memory budget
-
-**Stage 1 (`map`) is flat: 300–650 MB at any read depth** — it streams. What scales is **Stage 3
-(`correct`), which holds the whole clone set in memory**: it peaked **2,071.7 MB** on a B-cell-rich
-tumour with **28,444 clonotypes** from 105 M reads, while a *colder* **139 M-read** sample — more
-reads, almost no repertoire — peaked **549 MB**.
-
-**Budget ~4 GB per task**, and size it by expected repertoire richness, not by FASTQ size. If you
-must cap tightly, `--no-assemble` (via `--arda_args`) keeps the run on the flat mapping-only
-profile, at the cost of the long CDR3s no single read spans.
-
-The module is labelled `process_high` because that is the nf-core label that hands out cores — but
-that label also reserves 72 GB, roughly 18× what arda needs. arda wants **many cores and little
-RAM**, which no standard label expresses, so set both explicitly:
+## Wiring it in
 
 ```groovy
-withName: 'ARDA' { cpus = 32; memory = 8.GB; time = 4.h }
-```
+include { ARDA_ASSIGN } from '../modules/local/arda/main'
 
-## Accuracy
-
-Against an IgBLAST truth on the same 100,000-read TRA amplicon, arda 2.27.0 and MiXCR 4.7.0 at
-its best amplicon preset, scored per read from one truth file in one job.
-
-⛔ **Coverage before rates.** A per-tool inner join gives each tool its own denominator. Of the
-48,033 truth reads at `v_score >= 70`, **arda emits a row for 48,030 (99.99 %), MiXCR for 46,503
-(96.81 %)** — so both denominators are shown.
-
-| metric | arda, all truth | MiXCR, all truth | arda / MiXCR, common subset |
-|---|---:|---:|---:|
-| `v_gene` recall | **.9867** | .9660 | .9869 / **.9977** |
-| `v_gene` precision | **.9996** | .9977 | **.9997** / .9977 |
-| `j_gene` recall | **.9892** | **.9892** | .9959 / **.9996** |
-| `j_gene` precision | .9953 | **.9996** | .9979 / **.9996** |
-| `junction` recall (nt, exact) | .9473 | **.9708** | .9533 / **.9778** |
-
-**On the reads it emits MiXCR is the more accurate caller; over the whole library arda recalls
-more V genes**, because MiXCR emits nothing for 1,530 truth reads against arda's 3. arda's V calls
-are the more precise under either denominator — it declines rather than guessing. Of 46,787 truth
-junctions arda emits one for 94.81 % at **.99919** precision among emitted, MiXCR for 97.09 % at
-.99989. MiXCR emits `*00` and so makes no allele call at all; arda's `v_allele` is **.9868**
-resolved (.9461 by exact string, the difference being ambiguous-allele tie lists, a scoring
-convention rather than a call).
-
-**Never: A V/J boundary disagreement *inside* a junction is not an error.** V(D)J recombination is
-probabilistic — exonuclease chew-back plus N/P-nucleotide addition mean the V-end / NDN / J-start
-partition of a junction is frequently not identifiable from sequence alone, and the ground truth is
-unknown. Overlapping V/J/NDN assignments are acceptable. What is checkable, and what the table
-above scores, is the junction's **outer bounds** (Cys104 and [FW]118), the **gene/allele calls**,
-and whether a tool **invents a junction it has no anchor for**.
-
-## Requirements
-
-arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.
-
-- **`-profile conda`** works out of the box (Nextflow builds the env from `environment.yml`) — once
-  arda 2.27.0 is on PyPI; see the note at the top.
-- **`-profile docker`/`singularity`**: build the image from the `Dockerfile` here, push it to your
-  registry, and point the module's `container` at it (see the Dockerfile header). A pinned image is
-  the reproducible choice for a shared pipeline.
-
-**Never: The aligner is pinned, deliberately.** An mmseqs index is only reusable by the release that
-built it, and a cluster's cached index marker can differ from the shipped one. Left alone, arda
-would reject the precompiled reference index and rebuild a private cache per task — or auto-fetch a
-third build — with no error, and with results that are not comparable to anyone else's. The module
-therefore exports **`ARDA_MMSEQS`**, pointing at whatever mmseqs the task's own conda env or
-container provides. Set `--arda_mmseqs /abs/path/to/mmseqs` only if mmseqs lives outside that
-environment. `environment.yml` pins `mmseqs2 =18.8cc5c` exactly for the same reason.
-
-## Try it standalone (one process, no full pipeline)
-
-```nextflow
-// test.nf
-include { ARDA } from './main.nf'
-
-workflow {
-    Channel
-        .fromPath(params.input)                          // a CSV: sample,fastq_1,fastq_2
-        .splitCsv(header: true)
-        .map { row ->
-            def single = !row.fastq_2
-            [ [id: row.sample, single_end: single],
-              single ? [file(row.fastq_1)] : [file(row.fastq_1), file(row.fastq_2)] ]
-        }
-        .set { reads }
-    ARDA(reads)
-}
+ARDA_ASSIGN( ch_reads )            // [ meta, reads ] — the same channel CHANGEO_ASSIGNGENES takes
+ch_versions = ch_versions.mix( ARDA_ASSIGN.out.versions.first() )
 ```
 
 ```bash
-# amplicon library (targeted RepSeq / 5'RACE)
-nextflow run test.nf -c nextflow.config -profile conda \
-    --input amplicon.csv --outdir results_amplicon --regime amplicon
-
-# bulk RNA-seq
-nextflow run test.nf -c nextflow.config -profile conda \
-    --input bulk.csv --outdir results_bulk --regime bulk
+nextflow run . \
+    --input samplesheet.tsv \
+    --library_generation_method specific_pcr_umi \
+    --outdir results \
+    -profile conda
 ```
 
-Both write `results_*/arda/<sample>.{clones.tsv,airr.tsv,assembled.airr.tsv,arda.json}`.
+`includeConfig` the `nextflow.config` beside this file for `publishDir` and the `arda_args`
+passthrough.
 
-`amplicon.csv` is single-end here, `bulk.csv` paired:
+### Execution profiles
 
-```
-sample,fastq_1,fastq_2
-tra_amplicon,/data/tra.fastq,
-```
+- **conda** — works from `environment.yml` as shipped.
+- **docker / singularity** — build the image beside this module, push it to your own registry, and
+  point the module at the tag:
 
-```
-sample,fastq_1,fastq_2
-bulk_rnaseq,/data/SRR5233637_1.fq,/data/SRR5233637_2.fq
-```
+  ```bash
+  docker build -t arda-mapper:2.27.0 integrations/nextflow/arda
+  docker tag  arda-mapper:2.27.0 <your-registry>/arda-mapper:2.27.0
+  docker push <your-registry>/arda-mapper:2.27.0
+  ```
 
-## A sample split across lanes
+  then `withName: 'ARDA_ASSIGN' { container = '<your-registry>/arda-mapper:2.27.0' }`.
 
-One FASTQ per Illumina lane (`S_S1_L001_R1_001.fastq.gz`, `..._L002_...`), or per in-house chunk,
-is still **one repertoire** and must give **one** clonotype table. Do not `cat` them: arda maps
-each read group and concatenates before Stages 2-3, which is byte-identical to the same reads in
-one file and skips a full copy of the data.
+---
 
-The module takes them straight off a `groupTuple`. `reads` is the usual nf-core flat list, kept
-**pair-adjacent** — `[r1, r2, r1, r2, ...]` — which is exactly what grouping per-lane
-`[meta, [r1, r2]]` tuples produces:
+## Resources
 
-```nextflow
-Channel
-    .fromPath(params.input)                          // sample,fastq_1,fastq_2 — repeat `sample`
-    .splitCsv(header: true)                          // for each lane, as nf-core does
-    .map { row ->
-        def single = !row.fastq_2
-        [ [id: row.sample, single_end: single],
-          single ? [file(row.fastq_1)] : [file(row.fastq_1), file(row.fastq_2)] ]
-    }
-    .groupTuple()                                    // one entry per SAMPLE
-    .map { meta, lanes -> [meta, lanes.flatten()] }  // [r1, r2, r1, r2, ...], lane order kept
-    .set { reads }
-ARDA(reads)
-```
+arda is CPU-bound — the MMseqs2 search dominates. ~40–50k reads/s on 32 cores; a full-depth
+~100 M-read sample takes ~45 min. The module is `label 'process_high'`.
 
-A one-lane sample is unchanged by this — a 2-element list is one pair — so the snippet is safe to
-use everywhere.
+**Memory scales with repertoire richness, not with FASTQ size.** Stage 1 (`map`) is flat at
+**300–650 MB** at any depth because it streams. Stage 3 (`correct`) holds the whole clone set:
+it peaked **2,071.7 MB** on a B-cell-rich tumour (28,444 clonotypes, 105 M reads), while a colder
+**139 M**-read sample — more reads, almost no repertoire — peaked **549 MB**. Budget ~4 GB.
 
-> **Never sort the lanes.** `A_L010` sorts before `A_L002`, and the clonotype fold is not
-> permutation-invariant: `correct` collapses an error child onto the parent it meets first. Let the
-> channel's order stand, and it will match what `arda rnaseq --samples sheet.tsv` produces from
-> the same sheet.
+---
 
-For a cluster without Nextflow, `arda cluster plan --samples sheet.tsv` emits the same DAG as two
-TSV manifests (one row per read group, one per sample), and `arda cluster submit-samples` renders
-it as SLURM arrays. There is also a Snakemake workflow in `integrations/snakemake/arda/`.
+## What is deliberately not wired
 
-## Drop into an nf-core/rnaseq (v3.x) pipeline
-
-The module consumes the same per-sample FASTQ channel the aligners do, so it needs no sample-sheet
-changes. Five edits, all mirroring how an existing tool is wired:
-
-1. **Copy** this folder to `modules/local/arda/` in your pipeline checkout.
-
-2. **Include and call** it in `workflows/rnaseq/main.nf`. The cleanest input is the trimmed,
-   aligner-independent FASTQ channel `ch_strand_inferred_filtered_fastq` (already `[meta, reads]`):
-   ```nextflow
-   include { ARDA } from '../../modules/local/arda'
-   // ... after the trim/QC subworkflow ...
-   if (params.run_arda) {
-       ARDA(ch_strand_inferred_filtered_fastq)
-       ch_versions = ch_versions.mix(ARDA.out.versions.first())
-   }
-   ```
-
-3. **Aggregate config**: add
-   `includeConfig "../../modules/local/arda/nextflow.config"`
-   to the `includeConfig` block at the top of `workflows/rnaseq/nextflow.config` (where the other
-   module configs are pulled in). This sets the params defaults, `ext.args`, the genome gate and the
-   `${params.outdir}/arda` publishDir.
-
-4. **Register the toggles** so strict schema validation accepts them: add `run_arda = false` to the
-   `params { }` block in `nextflow.config`, and matching properties in `nextflow_schema.json` for
-   `run_arda` (boolean), `regime` (string enum `bulk|amplicon|default`), `arda_indel_rescue`
-   (boolean), `arda_organism` (string), `arda_mmseqs` (string), `arda_args` (string).
-
-5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.27.0' }` to your deployment
-   config (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
-
-Run with `--run_arda`:
-```bash
-nextflow run . -profile <your-profile> --input samplesheet.csv --outdir results \
-    --run_arda --regime bulk
-```
-
-## Organism follows the genome automatically
-
-The shipped `nextflow.config` reads `params.genome` — the iGenomes assembly key nf-core sets from
-`--genome`. arda's reference is IMGT-derived, so only the **species** matters; GRCh37 and GRCh38 are
-the same reference to it.
-
-| `--genome` | ARDA runs? | `--organism` |
-|---|---|---|
-| `GRCh38` | yes | `human` |
-| `GRCh37` | yes | `human` |
-| `GRCm39` | yes | `mouse` |
-| `GRCm38` | yes | `mouse` |
-| unset | yes | `human` |
-| any other | **skipped** (pipeline still completes) | — |
-
-Other assemblies are skipped because arda ships full references only for human and mouse. Setting
-`--arda_organism` explicitly overrides both the gate and the mapping.
-
-## Tuning
-
-The regime is the main knob (above). Everything else goes through `--arda_args`, appended last:
-
-| goal | flag |
+| airrflow param | why |
 |---|---|
-| force an organism | `--arda_organism mouse` |
-| merge overlapping mates first | `--arda_args '--reconstruct'` |
-| keep every mapped read (recall-max) | `--arda_args '--min-score 0'` |
-| cap memory harder / looser | `--arda_args '--kmer 11'` (or `--kmer 0` for the mmseqs default) |
-| skip Stage 3 assembly (flat memory) | `--arda_args '--no-assemble'` |
-| gapped rescue for hypermutated IG | `--arda_indel_rescue` (**requires `--regime amplicon`**) |
+| `productive_only` | arda has **no** productive filter and does not pretend to. It emits the AIRR `productive` column and leaves the decision to the consumer — the same stance as its QC surface, which flags and never filters. airrflow's own filter runs downstream, unchanged. |
+| `reference_igblast`, `reference_fasta`, `fetch_germlines` | arda's reference is built offline, once. Set the species instead. |
+| `clonal_threshold` | arda's Stage 2 is an abundance + quality error model over exact junctions, not a distance threshold over a clone. Different question; airrflow's clonal step runs on arda's AIRR output as usual. |
 
-`--indel-rescue` is deliberately *not* part of the amplicon preset: its value tracks somatic
-hypermutation load (+181 reads on a hypermutated repertoire, **−14 on a naive one**), so it is a
-per-library call. The module raises an error rather than accepting it in a non-amplicon regime,
-where arda would ignore it silently.
-
-`--threads` is wired to `task.cpus` automatically, and the regime flags are owned by the module — do
-not set either in `--arda_args`.
+Each is **named** rather than silently ignored: a parameter that is accepted and does nothing is
+the failure mode this project keeps hitting, and `tests/unit/test_nextflow_integration.py` asserts
+they stay named and stay unread.

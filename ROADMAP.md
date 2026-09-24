@@ -19,12 +19,91 @@ scenario set; `arda.hmm`, the same model read as inference).
 
 ## TODO
 
-### Next up — ranked, 2026-09-24
+### Next up — ranked, 2026-09-25
 
 Everything below this block is the full backlog, ordered by subsystem rather than by priority.
 This is the short list, and each entry says what would make it *done* rather than what it is.
 
-1. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
+Items 1 and 2 shipped on 2026-09-25 and are kept here with what they actually bought; item 3 is
+what is left of the junction-recall gap. Evidence and method:
+`~/vcs/projects/2026-arda-benchmark/results/round27` and `results/round28`.
+
+1. ✅ **The Cys104 gate is loosened, and its cost was 92 reads — not the 512 round 27 claimed.**
+   `transfer.py`'s `v_anchor_ok` now admits a junction whose exact prefix fails if **6 of its
+   first 8 bases** match some called V's own `germline_nt`. ⛔ **Do not requote round 27's "512
+   reads, 44.6 % of the gap."** Those are reads arda refuses *and MiXCR gets right*, but arda's
+   own ungated junction is wrong on 420 of them, so they were never reachable from the gate; the
+   gate refuses 1,452 junctions of which **92 are correct and 1,360 are genuine 5' over-extensions**,
+   exactly as `tests/unit/test_junction_and_j_evidence_gates.py` has said since round 18. Measured
+   on both sides and on a **held-out locus** (the TRB amplicon `SRR5233641`, never looked at while
+   the rule family was written): **+144 correct junctions and ONE extra over-extension across
+   92,466 truth junctions**. Junction recall TRA .9473 → **.9481**, TRB .9898 → **.9922** against
+   MiXCR's .9944 — the held-out gap halved — with every other metric unchanged to four places.
+   ⚠ **On TRB the exact gate was a net loss**: 116 correct junctions discarded to catch 21 wrong
+   ones, for 0.00013 of precision. There is nothing further here: arda's *ungated* ceiling on the
+   TRA amplicon is .9493, still short of MiXCR's .9708 (item 3 and the note below it).
+
+2. ✅ **`build_germline_dbs` honours `locus.v_shared`, and the shipped TRD exposure measured
+   zero.** The IgBLAST V database is now built from the same allele set the scaffolds are, deduped
+   by seq id (`makeblastdb` dies on `Duplicate seq_ids ... LCL|TRAV14/DV4*01` otherwise). On the
+   chimera-enabled TRA locus that is **7 of 483 scaffolds → 49 of 483** with every V call correct.
+   ⚠ **`Locus("TRD", …, v_shared=("TRAV", "/DV"))` was never actually exposed** — the live TRD
+   reference keeps **73/110** complete markup either way, because IMGT files the dual-use
+   `TRAV*/DV*` genes under **both** stems and the TRDV germline file already carried all 15 of
+   them. The fix makes the database match the scaffold allele set by construction rather than by
+   IMGT filing accident; it moves no shipped locus.
+
+3. **TRDV × TRAJ is now the whole remaining named junction gap, and `--allow-chimeras` is the
+   wrong gate for it.**
+   680 truth reads (1.4534 % of this library) carry a TRDV and **all 680 pair it with a TRAJ, not
+   one with a TRDJ**; arda gets .100 of them, MiXCR .968, IgBLAST calls them at `v_score ≥ 70`.
+   Recovering the class is **.9473 → .9604**. The flag exists because the pairing is a domain
+   judgement (`refbuild/loci.py:113-141`) and that has not changed — but the cost of the current
+   default is now priced, and the ceiling that made turning it on nearly a no-op (+7 scaffolds) is
+   item 2 plus one open IgBLAST question: with the V db fixed, **434 of 483 still get no `j_call`**,
+   and the split is purely J-driven — exactly **7 of 69 TRAJ alleles work, with all 7 TRDV alleles**
+   (`TRAJ13*01/02`, `TRAJ16*02`, `TRAJ24*01/02/03`, `TRAJ39*01`). Ruled out: germline length (47 of
+   the 62 failing are at least as long as the shortest working one), scaffold geometry (`n_pad`
+   0/1/2 exactly as for pure TRA), and anchor availability (all 7 TRDV carry a functional
+   `anchor_nt`, all 73 TRAJ anchors present). **Ask before moving the default either way.**
+
+   ⛔ **What is left after item 3 is not addressable from the V side.** The 1,360 over-extensions
+   the gate correctly catches are **461 distinct junctions**, one TRAV25\*02 sequence accounting
+   for 593 reads (42.5 % of every wrong junction on the library) and 648 of them over-extended by
+   exactly 9 nt — the scaffold's `V + 9 nt N-pad + J` bridge. Re-finding the true start by sliding
+   the V germline along the junction is measured and dead: at the **true** offset the called V's
+   `germline_nt` matches **0 bases on 1,040 of 1,369**, because the V really was chewed back past
+   Cys104. Every slide rule tried is a loss on both libraries (TRA +10 right/+289 wrong, TRB
+   +0/+26). Recovering that class needs the CDR3 start located without V-germline evidence, which
+   is a mechanism arda does not have today.
+
+4. **Amplicon Stage-3 assembly costs 29 % of wall to rescue 12 reads.** `arda amplicon` against
+   `--no-assemble` on a 100 k TRA amplicon, 3 reps, medians: **13.46 → 9.38 s wall (1.43×)**,
+   30.05 → 22.93 s CPU, for **5 clonotypes of 19,841 (0.025 %)** and +3 reads. The reason is
+   structural — the mode exists for reads that span V into J, so **89.4 % of its mapped reads
+   already carry a complete junction** and assembly has nothing to build; on bulk that figure is
+   10.8 % and the same stage rescues 2,584 reads from 1,931 complete contigs, so `rnaseq` must keep
+   it on. Round 28 **replicated it on a second library** — the TRB amplicon `SRR5233641`:
+   **14.21 → 11.18 s wall (1.27×)**, 30.14 → 24.49 s CPU, for 3 clonotypes of 22,589 (0.013 %) and
+   **16 contigs built across 100,000 reads**. ⚠ **Still not shippable**: both are TCR amplicons
+   from one patient, so that is evidence the TRA result was not a fluke and no evidence about IGH.
+   IGH RepSeq has long hypermutated CDR3s and is where amplicon assembly would pay, and it is on
+   aldan3. Done means that A/B runs first; until then `--no-assemble` is a documented option, not
+   a preset change.
+
+5. **Re-price `--adaptive` in its own help text, and delete the stale read-path claim.** Two
+   documentation defects of the class `CLAUDE.md` doc-invariant 1 is about — a number that was true
+   and stopped being true. (a) `--adaptive` is **1.84× on bulk map wall and 3.04× on CPU**
+   (16.34 → 8.90 s, 198.20 → 65.13 s, 1,033 → 771 MB on 660 k pairs) with the read set preserved
+   exactly, but it moves `junction` on **93 of 35,795 rows and the movement is one-directional —
+   89 to empty, 4 the other way**, a net −85 against 3,856 reads carrying one. 91 of the 93 sit at
+   90–150 bits, so `_ADAPTIVE_TRIGGER = 90` does not catch them. The default stays off; the help
+   text should quote this rather than "3 of 453 reads" from a fixture. (b) `rnaseq/map.py:479`
+   claims reading is "65 % of a bulk run" — measured now at **0.73 s of map's 16.19 s = 4.5 %**,
+   because the dnaio port that comment motivated made its own premise false. `map.py:333`'s chunk
+   sweep is stale for the same reason: 1 chunk vs 4 is **16.48 vs 16.34 s**, byte-identical output.
+
+6. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
    output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is
    `@lru_cache`d on the organism and reads one fixed path (`dpost.py:108-110`), so the only way to
    use a fitted table is to overwrite a file inside the installed database. `arda.hmm.model_for`
@@ -32,7 +111,7 @@ This is the short list, and each entry says what would make it *done* rather tha
    `posterior_d` and expose it as `arda markup --d-prior PATH`. Small, and it separates *using* an
    estimate from *adopting* one — which is the decision the entry below is about.
 
-2. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
+7. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
    regression: OLGA has no model for them, which is the whole reason the table is derived rather
    than measured. Verified coverage —
 
@@ -50,7 +129,7 @@ This is the short list, and each entry says what would make it *done* rather tha
    (organism, locus)**, not code. Do human and mouse first, where the benchmark repo already has
    the data, and A/B the fitted table against the OLGA-derived one before adopting either.
 
-3. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
+8. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
    `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,
    and `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a
    defect — no abundance method separates signal-to-noise ~1, which is why UMI consensus exists —
@@ -58,13 +137,13 @@ This is the short list, and each entry says what would make it *done* rather tha
    estimate off the data, not a re-tuned constant. ⚠ Whatever it becomes, it is not a QC threshold
    and must not turn into one.
 
-4. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
+9. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
    HMM cannot be extended to IGH without one (it would explain mutated germline as N-region and do
    *worse* than exact-match anchors, which at least fail safely), and `_map_d`'s amino-acid path
    searches the three translated D frames as independent database entries, tripling `n`, when the
    prior over `insVD` already induces a prior over frame. Biggest item here by some margin.
 
-5. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
+10. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
    `arda resolve-ties --genotype` applies an allele set (`v_call_genotyped`, `v_call` untouched,
    no re-alignment and no reference rebuild) and `arda genotype` infers one. `stats.py`'s
    `allele_candidate` is untouched and stays *"a shortlist to look at, never a call"* — the
@@ -92,7 +171,7 @@ This is the short list, and each entry says what would make it *done* rather tha
    rule can be judged on a library that cannot separate the alleles in the first place.
 
    Also open, and deliberately not in this cut: **novel-allele discovery** (needs the per-position
-   SHM model of item 4 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
+   SHM model of item 9 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
    does not supply), **J-gene genotyping** (J targets are 38–69 nt and the framework-scoped span
    sits right on `TieResolver.MIN_SPAN`; measure before adding), and any **per-donor reference
    rebuild** — scaffold ids are positional, `build-db` needs IgBLAST, and the mmseqs freshness
