@@ -560,6 +560,12 @@ class RnaseqReport:
     # k-mer prefilter accounting, empty when it is off. `prefilter_passed / prefilter_seen` is the
     # only number that says whether it earned its keep on this library.
     prefilter_stats: dict = field(default_factory=dict)
+    # Why the reads that produced no row produced none. `mapped_fraction` alone makes "wrong
+    # organism", "this library has almost no receptor content" and "--min-score is too strict"
+    # into one number, and they are the three different things it is usually asked to mean.
+    # ⚠ This is a LEDGER: every read arda was handed is in exactly one bucket here or in
+    # `mapped_reads`, and `unmapped_accounted` says so rather than leaving the reader to add up.
+    unmapped: dict = field(default_factory=dict)
 
     @property
     def mapped_fraction(self) -> float:
@@ -568,6 +574,13 @@ class RnaseqReport:
     def as_dict(self) -> dict:
         d = self.__dict__.copy()
         d["mapped_fraction"] = self.mapped_fraction
+        if self.total_reads:
+            # Never: the ledger states its own completeness rather than implying it. A bucket
+            # added later and not wired into a shard merge would otherwise just make the numbers
+            # quietly stop summing, and nothing reads a sum that is never taken.
+            d["unmapped"] = dict(self.unmapped)
+            d["unmapped"]["accounted"] = (
+                self.mapped_reads + sum(v for k, v in self.unmapped.items() if k != "accounted"))
         return d
 
 
@@ -762,14 +775,28 @@ def map_rnaseq(
                     indel_rescue=indel_rescue,
                     segment_only_v=segment_only_v, shm=shm,
                     complete_junction_nt=complete_junction_nt,
-                    report=report.segment_search if segment_db else None)
+                    report=report.segment_search if segment_db else None,
+                    unmapped=report.unmapped)
                 if drop_constant_only:
+                    n_before = len(keep)
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
                     report.constant_only_fragments += n_drop
                     report.isotype_from_mate += n_iso
+                    # Never: the LENGTH DELTA, not `n_drop`. `n_drop` counts FRAGMENTS dropped
+                    # whole, while `_apply_constant_rule` also drops the constant-only MATE of a
+                    # fragment that survived -- a record it never counts, because donating its
+                    # isotype is the point. The ledger is per read, so using `n_drop` left 45 of
+                    # 1,320 reads on `tests/data/rnaseq_real` in no bucket at all.
+                    # `constant_only_fragments` keeps its fragment semantics; callers read it.
+                    report.unmapped["constant_only"] = (
+                        report.unmapped.get("constant_only", 0) + n_before - len(keep))
                 if min_score > 0:
+                    n_before = len(keep)
                     keep = [r for r in keep
                             if float(r.get("mmseqs2_score") or 0) >= min_score]
+                    # The bucket that says the cutoff is doing the rejecting, not the library.
+                    report.unmapped["below_min_score"] = (
+                        report.unmapped.get("below_min_score", 0) + n_before - len(keep))
                 if not keep:
                     return
                 if with_junction_quality:
@@ -850,6 +877,9 @@ def map_rnaseq(
                         report.prefilter_stats.get("seen", 0) + len(chunk))
                     report.prefilter_stats["passed"] = (
                         report.prefilter_stats.get("passed", 0) + len(survivors))
+                    report.unmapped["prefilter_rejected"] = (
+                        report.unmapped.get("prefilter_rejected", 0)
+                        + len(chunk) - len(survivors))
                 else:
                     survivors = chunk
                 pending.extend(survivors)

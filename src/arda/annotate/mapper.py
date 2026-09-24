@@ -1371,6 +1371,7 @@ def _annotate_chunk(
     segment_only_v: bool = False,
     shm: str = "framework",
     complete_junction_nt: int = 0,
+    unmapped: dict | None = None,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1383,6 +1384,13 @@ def _annotate_chunk(
     default) keeps the one-pass search. ``combos`` is ``combinations.tsv`` preloaded by the
     caller -- it is 550 KB and re-parsing it per chunk is pure waste. Counters are accumulated
     into ``report`` when given.
+
+    ``unmapped`` accumulates WHY a record produced no row, which is only knowable here. A read
+    mmseqs returned nothing for (``no_hit``) and a read whose best target the loaded reference
+    does not carry (``hit_not_in_reference``) are the same missing row to the caller and
+    completely different problems. The second is how 2.23.0's first-run defect presented -- every
+    segment target resolving to ``None`` against a reference loaded before its markup was written
+    -- and all it looked like from outside was a low mapped fraction and exit 0.
     """
     if not records:
         return []
@@ -1433,6 +1441,9 @@ def _annotate_chunk(
         hit = best.get(qid)
         entry = ref.get(hit["target"]) if hit else None
         if hit is None or entry is None:
+            if unmapped is not None:
+                why = "no_hit" if hit is None else "hit_not_in_reference"
+                unmapped[why] = unmapped.get(why, 0) + 1
             if mapped_only:
                 continue
             rec = {c: "" for c in AIRR_COLUMNS}

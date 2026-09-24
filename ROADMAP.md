@@ -147,15 +147,21 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
   - [x] **`arda qc report` -- one self-contained HTML file.** Data inlined, SVG drawn by plain
         JavaScript, **no CDN, no bundle, no new dependency** -- it opens air-gapped and survives
         the results directory. Same stance as `scplot`'s always-written gnuplot script.
-  - [ ] **Why a read did NOT map has no breakdown.** A run reports `mapped_fraction` and
-        nothing about the other side of it, so "wrong organism", "no receptor content in this
-        library" and "reads too short to reach a V" are one number. MiXCR splits its
-        not-aligned count by reason (no hits / no V / no J / no CDR3 parts / low total score /
-        V and J on different mates) and that is the most useful thing arda's report lacks.
-        arda has fragments of it already — `prefilter_stats.{seen,passed}`,
-        `constant_only_fragments`, `segment_search.reasons` — but each only under a particular
-        flag, and none covers a read that mmseqs simply did not hit. Doing it properly means new
-        counters on the Stage-1 hot path, so it is its own change, not a QC one.
+  - [x] **Why a read did NOT map.** `mapped_fraction` alone made "wrong organism", "no
+        receptor content in this library" and "`--min-score` too strict" one number. The
+        `run/map` scope now carries an `unmapped.*` ledger — `prefilter_rejected`, `no_hit`,
+        `hit_not_in_reference`, `constant_only`, `below_min_score` — plus `accounted`, and the
+        `sample` scope carries each as a fraction of `total_reads`. Never: it is a LEDGER, so it
+        states its own completeness instead of leaving the reader to sum, and `accounted` is
+        RECOMPUTED on a shard merge rather than summed — a bucket wired into the single-file
+        path and not the merge would look fine on a laptop and be wrong on every cluster run.
+        Never: `constant_only` counts READS, not the fragments `constant_only_fragments` counts;
+        the rule also drops the constant-only MATE of a fragment it keeps, and using the
+        fragment count left 45 of 1,320 reads on `tests/data/rnaseq_real` in no bucket at all.
+    - [ ] **Splitting `no_hit` further** — no V / no J / V and J on different mates, as MiXCR
+          does — is not done. It needs the reason a hit was rejected to survive out of
+          `_best_hits`, which is inside the per-read hot path; measure the cost before adding
+          it, and only if a real library makes `no_hit` ambiguous.
   - [ ] **Repertoire biology stays out**, deliberately. Diversity, clonality, rarefaction,
         overlap and cross-sample clonotype matching are `vdjtools`', which takes arda as a base
         dependency. arda's QC answers "did this run work, and is this sample like its batch".
