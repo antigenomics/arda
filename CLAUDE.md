@@ -37,7 +37,7 @@ from it, so it loads on demand.
 **Never: `conda run -n arda …` does NOT work on this Mac.** Use the binary directly:
 
 ```sh
-/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.22.0
+/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.26.0
 COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
@@ -57,7 +57,7 @@ binary.
 ## Build, test, lint, docs
 
 ```sh
-python -m pytest tests/unit tests/synthetic tests/realworld -q    # 892 tests, the CI gate
+python -m pytest tests/unit tests/synthetic tests/realworld -q    # 1,120 tests, the CI gate
 ruff check src/                                                    # PINNED to 0.15.9 in CI
 make -C docs html                                                  # -W --keep-going; zero warnings required
 env RUN_BENCHMARK=1 ARDA_MMSEQS=$(which mmseqs) python -m pytest tests/benchmark -q
@@ -74,7 +74,7 @@ env RUN_BENCHMARK=1 ARDA_MMSEQS=$(which mmseqs) python -m pytest tests/benchmark
 - The editable install rebuilds the C++ extension on import (`editable.rebuild = true`), so a
   `.cpp` edit takes effect on the next `import arda` — no manual build step.
 
-## The three C++ extensions
+## The four C++ extensions
 
 All nanobind, all `-O3`, all installed into the `arda` package by `CMakeLists.txt`. Keep them
 **separate modules**; that separation is what lets an experimental one be opt-in while a shipped
@@ -82,9 +82,10 @@ one stays load-bearing.
 
 | module | source | what it is | status |
 |---|---|---|---|
-| `_markup` | `src/_markup/markup.cpp` (611 ln) | the hot path: `transfer_regions` / `project_region` (walk the CIGAR, project reference region coords onto the query), plus `format_rows` (AIRR TSV row formatting), `translate`, `reverse_complement`, `d_local_align` (the D caller — mmseqs is unreliable on 8–31 nt D), `segment_cigars`, `aln_identity`, `merge_alignment`, `common_prefix`/`common_suffix`. Carries its own `__version__` (0.5.0) | shipped, always on |
-| `_prefilter` | `src/_prefilter/prefilter.cpp` (278 ln) | exact k-mer screen: reject reads that cannot align **before** MMseqs2 sees them. `hits` / `mask` / `filter`, threaded | shipped, `--prefilter`, off by default |
-| `_segmap` | `src/_segmap/segmap.cpp` (498 ln) | structure-aware chained seed-and-extend: best V and best J per read with **no homology search**. `SegmentMapper.map` | shipped, `--fast-segments`, off by default |
+| `_markup` | `src/_markup/markup.cpp` (698 ln) | the hot path: `transfer_regions` / `project_region` (walk the CIGAR, project reference region coords onto the query), plus `format_rows` (AIRR TSV row formatting), `translate`, `reverse_complement`, `d_local_align` (the D caller — mmseqs is unreliable on 8–31 nt D), `segment_cigars`, `aln_identity`, `merge_alignment`, `common_prefix`/`common_suffix`. Carries its own `__version__` (0.5.0) | shipped, always on |
+| `_prefilter` | `src/_prefilter/prefilter.cpp` (284 ln) | exact k-mer screen: reject reads that cannot align **before** MMseqs2 sees them. `hits` / `mask` / `filter`, threaded | shipped, `--prefilter`, off by default |
+| `_segmap` | `src/_segmap/segmap.cpp` (504 ln) | structure-aware chained seed-and-extend: best V and best J per read with **no homology search**. `SegmentMapper.map` | shipped, `--fast-segments`, off by default |
+| `_denoise` | `src/_denoise/denoise.cpp` (216 ln) | the two string sweeps that are per-clonotype, not per-read: `mean_phred` / `frac_below` / `subs_to` behind `rnaseq.denoise`'s quality rescue, and `containing` behind `annotate.ties` (a tie is a substring test against the reference, not a second alignment) | shipped; `containing` needs `--tie-lists`, the quality path needs `--junction-quality` |
 
 **nanobind pin.** `pyproject.toml` requires `nanobind>=2.5,<3` (2.26.0 moved off
 `pybind11>=3.0.2,<4`). Keep the upper bound whatever the library: pybind11 changed
@@ -254,7 +255,10 @@ still exposes them individually for A/B work.
   done and shipped: `src/arda/cell.py` (barcode dialects), `cell_id` as an AIRR column,
   `locus`/`clone_row` in `correct --read-map`, and `arda cells` itself
   (`src/arda/{singlecell,partition,scplot}.py`, `docs/singlecell.rst`, `notebooks/singlecell_qc.py`).
-  Open: **S4 `umi_count`**, blocked on a migec format decision, not on arda.
+  ✅ **S4 `umi_count` shipped 2.26.0** as `correct --cell-from` / `--cell-regex`: AIRR asks for
+  DISTINCT UMIs, and migec's conditional `.c<k>`/`.<m>` suffixes subdivide reads that already
+  share one `<umi>`, so no reading of them changes the count — it was never blocked on migec.
+  `duplicate_count` / `consensus_count` untouched. Open: nothing in S0–S4.
 - **Never: QC traps, all live in tests — do not undo them.**
   1. **Mutation quality must be driven by the EMITTED list, not by re-walking for mismatches.**
      `_markup.segment_cigars` finds a SUPERSET of what the columns carry (`arda.shm` drops the
@@ -336,7 +340,11 @@ still exposes them individually for A/B work.
   `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a defect
   (no abundance method separates signal-to-noise ~1 — that is why UMI consensus exists), but it
   wants a per-library calibration rule rather than one constant.
-- **Next feature work** is in `ROADMAP.md`: the nucleotide junction re-mapping path
-  (`(cdr3nt, V, J)` → full recombination scenario → EM-estimated generative model, replacing the
-  borrowed OLGA priors in `arda.dpost`) and `arda.hmm`, the semi-Markov V→N1→D→N2→J model that is
-  the same project's E-step.
+- ✅ **Both 2.26.0 features shipped**: `arda scenarios` (EM over the recombination scenario set,
+  `src/arda/scenarios.py`) and `arda.hmm` (the same model read as inference — `scenarios.lattice`
+  IS the forward-backward pass, so there is one implementation, not two). Open, and it is a
+  **measurement plus a release decision, deliberately not a side effect of the estimator**:
+  adopting a fitted table as the shipped `database/.../d_prior.tsv`, which is what would let
+  `arda.dpost` stop marginalising OLGA's numbers. `arda.hmm` gates nothing; `ROADMAP.md` records
+  the two measured negatives for why, so do not re-run them.
+- **Next feature work** is in `ROADMAP.md`.
