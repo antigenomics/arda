@@ -212,24 +212,20 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
         the resolution — germline boundaries exact rather than codon-quantised — that made the
         nucleotide path worth having. Separable, and nothing in the pipeline is blocked on it.
 
-- [ ] **`arda.hmm` — a hidden semi-Markov model of V→N1→D→N2→J.** The E-step above *is*
-      a forward-backward pass, so this is the same project, not a second one. Semi-Markov
-      because insert lengths and germline deletions have explicit non-geometric durations —
-      exactly the shape of what `d_prior.tsv` already ships. Condition on the mmseqs V/J
-      call so the DP sums only over `(delV, insVD, D, delDl, delDr, insDJ, delJ)`: an
-      O(L²·|D|) recursion on a ~60 nt junction, cheap per clonotype (post-`correct`), not
-      per read. Prior art: **partis** (Ralph & Matsen, arXiv:1503.04224; GPL-3.0, so
-      compatible), which pairs a Smith-Waterman stage with the HMM exactly as arda pairs
-      mmseqs with `_map_d`, and whose central finding is that *per-allele categorical*
-      transitions and *per-allele-per-position* mutation probabilities beat parametric ones.
-
-      Three things arda hand-rolls become HMM primitives, which is the real argument:
-      `_allowed_d` (TRBD2×TRBJ1 = 0) is a transition-probability zero, currently enforced
-      in three separate places; `_D_MAX_EVALUE` stands in for a likelihood ratio; and
-      `dpost`'s `beta` exists *only* because it multiplies a raw aa score rather than a
-      log-likelihood. `_anchored_vj_bounds`' longest-common-prefix is Viterbi with the
-      insert-length prior pinned to a point mass at 0 — which is why it overshoots 1–2 nt
-      when the first N base happens to match germline.
+- [x] **`arda.hmm` — a hidden semi-Markov model of V→N1→D→N2→J.** Shipped 2026-09-24
+      (`src/arda/hmm.py`). As this entry predicted, it was not a second project: the E-step of
+      `arda scenarios` **is** the forward-backward pass, so `scenarios.lattice` is the one
+      implementation and `hmm` is it read as inference — `log_likelihood` (marginal, not Viterbi),
+      `posterior_d`, `best_scenario`. Semi-Markov because deletions and insertion lengths have
+      tabulated non-geometric durations; conditioned on the mmseqs V/J call, which keeps the state
+      space to `(delV, insVD, D, delDl, delDr, insDJ, delJ)` and the cost per clonotype.
+      `model_for(prior=...)` scores against a table `arda scenarios` wrote, so a model fitted on
+      one cohort can score another.
+      Never: it does NOT replace `arda.dpost` — that answers the amino-acid question, where there
+      are no nucleotides to run this on — and it **gates nothing**. Nothing in the annotation path
+      calls it, because of the two measured negatives below.
+      Open: `_allowed_d` (TRBD2×TRBJ1 = 0) is still enforced in three places rather than as one
+      transition zero; folding it in is a refactor with no measured payoff, so it waits for one.
 
       **Two measured negatives, so nobody re-runs them.** (i) Re-ranking nt D candidates by
       `λ·S + log P(insVD) + log P(dlen) + log P(insDJ) + log P(D|J)` changes *nothing*:

@@ -5,6 +5,37 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Added: `arda.hmm` — the same model, read as inference
+
+`arda scenarios` estimates a semi-Markov model of V -> N1 -> D -> N2 -> J by EM.
+`arda.scenarios.lattice` **is** that model's forward-backward pass, so `arda.hmm` is one thin
+layer over it rather than a second implementation: `log_likelihood`, `posterior_d`,
+`best_scenario`. `model_for(prior=...)` scores against a table `arda scenarios` wrote, so a model
+fitted on one cohort can score another.
+
+`log_likelihood` is the **marginal**, not the best path -- a junction explainable many mediocre
+ways is more probable than one explainable a single slightly-better way, and a Viterbi score
+cannot say so.
+
+Never: it does **not** replace `arda.dpost`, which answers the amino-acid question where there are
+no nucleotides to run this on; and it **gates nothing** -- nothing in the annotation path calls
+it. `ROADMAP.md` records two measured negatives for why.
+
+### Faster: the scenario estimator is 4.7x quicker, in Python
+
+Profiled before rewriting, per `CLAUDE.md`'s reach order, and the hot spot was not where it looked.
+On 2,496 real records, one EM iteration went **17.74 s -> 3.79 s** with byte-identical output:
+
+* flank weight is accumulated **per span**, then distributed once, instead of per term. The split
+  distribution depends only on the span and the contribution is linear in the posterior, so this
+  is exactly equivalent -- and it collapsed 73.5 M `SufficientStats.add` calls (45 % of the whole
+  run, and its `dict.get` alone was 6.8 s) to 7.9 M. 3.1x.
+* germline offsets in `_d_placements` are indexed by first base, so three quarters of the
+  (position, offset) pairs are never tested. A further 1.5x.
+
+Stopped at rung 1 (vectorised/algorithmic Python). `_d_placements` is now 21 % of runtime, so even
+a free C++ port of it would buy 1.27x overall -- not a fourth extension.
+
 ### Added: `arda scenarios` — a generative recombination model, estimated from data
 
 `arda.dpost` places a D from an amino-acid junction by marginalising a generative model whose
