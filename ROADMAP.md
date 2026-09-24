@@ -245,9 +245,29 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
       five shipped organisms. `FailedReplace` turned out to be reachable after all (three
       substitutions beside a long J anchor, `max_replace >= 3`), and is now tested.
 
-- [ ] **Full AIRR productivity.** `productive` is currently a heuristic (in-frame
-      + stop-free V..J span); align it with the complete AIRR productivity rules
-      (start codon, stop-codon scan over the whole VDJ, frame of the junction).
+- [x] **Productivity: FR4 is scanned for stops.** `productive` and `stop_codon` covered the
+      V-side regions and the junction, and the junction ends AT [FW]118 -- FR4's first residue --
+      so residues 2..n of the J were looked at by neither. Fixed; `tests/synthetic/
+      test_fr4_stop.py` exercises it. Never: measured before changing. On the committed IgBLAST
+      fixtures every evaluable row carries an FR4 (mean 10.1 aa human, 8.6 mouse) and **none of
+      4,217** contains a stop, so the fix left all 4,843 annotated rows byte-identical -- a real
+      hole, unexercised by real data, which is why it needed a test written on purpose.
+  - [ ] **The rest of "full AIRR productivity" is aimed at the wrong thing, measured 2026-09-24.**
+        The entry used to ask for the start codon and a whole-VDJ stop scan. The stop scan is
+        done (above). A start codon is not assessable on a read fragment and IgBLAST does not
+        require one either. And arda-vs-IgBLAST productivity was measured on the committed
+        fixtures: of 3,601 rows where both tools were evaluable AND called the same
+        `junction_aa`, they disagree on **8** (0.22 %) -- 3 human, 5 mouse. In every one arda
+        says `T`, IgBLAST says `F`, and **both** report `stop_codon = F`. So not one of them
+        would be changed by any productivity rule; all 8 are IgBLAST reporting
+        `vj_in_frame = F` where arda reports `T`.
+  - [ ] **`vj_in_frame` on 8 fixture rows is the real open question**, and it is a domain call,
+        not a defect to patch. All three human cases are `TRAJ31*01`; the mouse ones span
+        TRAJ24/45/9 and TRBJ2-5/1-3. Both tools produce the SAME `junction_aa`, cleanly
+        translated, so arda's frame looks self-consistent -- but IgBLAST has a J-frame table
+        (`optional_file/<org>_gl.aux`) and disagrees. Do not "fix" arda to match without deciding
+        whose J frame is right; **ask before changing either.** Never: an unexplained agreement
+        is not evidence, and this is 0.22 % of rows either way.
 
 - [ ] **Performance.** Optional per-chunk process-pool for inputs where mmseqs is
       not the bottleneck (mostly-non-receptor bulk RNA-seq); mmseqs index reuse.

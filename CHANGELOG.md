@@ -5,6 +5,27 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Fixed: a stop codon in FR4 left a read productive
+
+`productive` and `stop_codon` scanned the V-side regions and the junction. The junction ends **at**
+[FW]118, which is FR4's first residue, so residues 2..n of the J were looked at by neither — a read
+whose J carried a stop came out `productive=T`, `stop_codon=F`. AIRR scopes both to the whole
+rearrangement, so FR4 is scanned now.
+
+Measured before changing it: on the committed IgBLAST fixtures every evaluable row carries an FR4
+(mean 10.1 aa human, 8.6 mouse) and **none of 4,217** contains a stop — so the fix left all 4,843
+annotated rows byte-identical. A real hole that real data does not exercise, which is why
+`tests/synthetic/test_fr4_stop.py` was written to exercise it deliberately, and why it was checked
+to fail without the fix.
+
+The rest of the roadmap's "full AIRR productivity" item turned out to be aimed at the wrong thing,
+and the entry now records the measurement instead. arda-vs-IgBLAST productivity on those fixtures:
+of 3,601 rows where both tools were evaluable **and** called the same `junction_aa`, they disagree
+on **8** (0.22 %). In every one arda says `T`, IgBLAST says `F`, and both report `stop_codon = F` —
+so no productivity rule would change any of them. All 8 are `vj_in_frame` disagreements, which is a
+question about whose J-frame table is right, not about the productivity predicate. Left open and
+flagged to ask rather than patched to match.
+
 ### Why a read did not map
 
 `mapped_fraction` on its own made three different diagnoses into one number: the wrong organism, a
