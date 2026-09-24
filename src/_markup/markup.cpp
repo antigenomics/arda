@@ -10,8 +10,14 @@
 // the query / target (mmseqs qstart/tstart). Regions not covered by the
 // alignment (e.g. a 5'-truncated query) come back as (-1, -1).
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/optional.h>
 
 #include <algorithm>
 #include <array>
@@ -24,7 +30,7 @@
 #include <utility>
 #include <vector>
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
 using Interval = std::pair<int, int>;
 
@@ -570,12 +576,12 @@ static int count_mismatches(const std::string &a, size_t a_off,
 //     NULL for a missing key, landing in the same branch as None, so both hold by construction.
 // A previous attempt at this (an `itemgetter`-based rewrite) was reverted precisely because it
 // broke the missing-key case while producing no measurable gain.
-static std::string format_rows(const py::sequence &records, const py::sequence &columns) {
-    const size_t n_rows = py::len(records);
-    const size_t n_cols = py::len(columns);
+static std::string format_rows(const nb::sequence &records, const nb::sequence &columns) {
+    const size_t n_rows = nb::len(records);
+    const size_t n_cols = nb::len(columns);
     if (n_rows == 0) return std::string();
 
-    std::vector<py::object> keys;                 // keep the key objects alive for the whole call
+    std::vector<nb::object> keys;                 // keep the key objects alive for the whole call
     keys.reserve(n_cols);
     for (size_t c = 0; c < n_cols; ++c) keys.push_back(columns[c]);
 
@@ -583,17 +589,17 @@ static std::string format_rows(const py::sequence &records, const py::sequence &
     out.reserve(n_rows * n_cols * 6);             // ~6 bytes/field; grows if wrong, never truncates
 
     for (size_t r = 0; r < n_rows; ++r) {
-        py::object row = records[r];
+        nb::object row = records[r];
         PyObject *dict = row.ptr();
         const bool is_dict = PyDict_CheckExact(dict);
         for (size_t c = 0; c < n_cols; ++c) {
             if (c) out.push_back('\t');
-            py::object owned;                      // holds a strong ref in the non-dict path
+            nb::object owned;                      // holds a strong ref in the non-dict path
             PyObject *val;
             if (is_dict) {
                 val = PyDict_GetItem(dict, keys[c].ptr());     // borrowed; NULL if absent
                 if (val == nullptr) {
-                    if (PyErr_Occurred()) throw py::error_already_set();
+                    if (PyErr_Occurred()) throw nb::python_error();
                     continue;                                   // missing -> empty field
                 }
             } else {
@@ -601,21 +607,21 @@ static std::string format_rows(const py::sequence &records, const py::sequence &
                 // lookup failure as "absent", exactly as `dict.get` did.
                 PyObject *got = PyObject_GetItem(dict, keys[c].ptr());
                 if (got == nullptr) { PyErr_Clear(); continue; }
-                owned = py::reinterpret_steal<py::object>(got);
+                owned = nb::steal<nb::object>(got);
                 val = owned.ptr();
             }
             if (val == Py_None) continue;                       // None -> empty field
             PyObject *text = val;
-            py::object as_str;
+            nb::object as_str;
             if (!PyUnicode_CheckExact(val)) {
                 PyObject *s = PyObject_Str(val);
-                if (s == nullptr) throw py::error_already_set();
-                as_str = py::reinterpret_steal<py::object>(s);
+                if (s == nullptr) throw nb::python_error();
+                as_str = nb::steal<nb::object>(s);
                 text = as_str.ptr();
             }
             Py_ssize_t len = 0;
             const char *utf8 = PyUnicode_AsUTF8AndSize(text, &len);
-            if (utf8 == nullptr) throw py::error_already_set();
+            if (utf8 == nullptr) throw nb::python_error();
             out.append(utf8, static_cast<size_t>(len));
         }
         out.push_back('\n');
@@ -623,67 +629,67 @@ static std::string format_rows(const py::sequence &records, const py::sequence &
     return out;
 }
 
-PYBIND11_MODULE(_markup, m) {
+NB_MODULE(_markup, m) {
     m.doc() = "arda markup-transfer hot path (C++/pybind11)";
     m.attr("__version__") = "0.6.0";
-    m.def("format_rows", &format_rows, py::arg("records"), py::arg("columns"),
+    m.def("format_rows", &format_rows, nb::arg("records"), nb::arg("columns"),
           "Format AIRR records as TSV rows (one trailing newline per row). A None value and a "
           "missing key both render as an empty field.");
-    m.def("common_prefix", &common_prefix, py::arg("a"), py::arg("b"),
+    m.def("common_prefix", &common_prefix, nb::arg("a"), nb::arg("b"),
           "Length of the common prefix of two strings.");
-    m.def("common_suffix", &common_suffix, py::arg("a"), py::arg("b"),
+    m.def("common_suffix", &common_suffix, nb::arg("a"), nb::arg("b"),
           "Length of the common suffix of two strings.");
     m.def("within_mismatches", &within_mismatches,
-          py::arg("a"), py::arg("b"), py::arg("max_mm"),
+          nb::arg("a"), nb::arg("b"), nb::arg("max_mm"),
           "Do a and b agree over their common length with at most max_mm mismatches? Stops at "
           "max_mm + 1, which is the point: the assembler's overlap test decides nearly every "
           "candidate in the first few bases and used to count all of them.");
     m.def("count_mismatches", &count_mismatches,
-          py::arg("a"), py::arg("a_off"), py::arg("b"), py::arg("b_off"),
-          py::arg("n"), py::arg("max_mm"),
+          nb::arg("a"), nb::arg("a_off"), nb::arg("b"), nb::arg("b_off"),
+          nb::arg("n"), nb::arg("max_mm"),
           "Mismatches between a[a_off, a_off+n) and b[b_off, b_off+n), stopping at max_mm + 1. "
           "Returns the TRUE count when it does not exceed max_mm -- the coverage assignment "
           "breaks equal-overlap ties on it.");
     m.def("project_region", &project_region,
-          py::arg("qaln"), py::arg("taln"), py::arg("ref_aln_offset"),
-          py::arg("qry_aln_offset"), py::arg("ref_start"), py::arg("ref_end"),
+          nb::arg("qaln"), nb::arg("taln"), nb::arg("ref_aln_offset"),
+          nb::arg("qry_aln_offset"), nb::arg("ref_start"), nb::arg("ref_end"),
           "Project a single 0-based inclusive reference interval onto 0-based "
           "inclusive query coordinates. Returns (-1,-1) if no overlap.");
     m.def("transfer_regions", &transfer_regions,
-          py::arg("qaln"), py::arg("taln"), py::arg("q_start"), py::arg("t_start"),
-          py::arg("region_starts"), py::arg("region_ends"),
+          nb::arg("qaln"), nb::arg("taln"), nb::arg("q_start"), nb::arg("t_start"),
+          nb::arg("region_starts"), nb::arg("region_ends"),
           "Project multiple 1-based closed reference (target) intervals onto "
           "1-based closed query coordinates in a single alignment walk. Returns "
           "one (q_start, q_end) per region; (-1,-1) where uncovered.");
 
     // Fast sequence primitives (also consumable by mirpy).
-    m.def("translate", &translate, py::arg("nt"), py::arg("frame") = 0,
+    m.def("translate", &translate, nb::arg("nt"), nb::arg("frame") = 0,
           "Translate a nucleotide string from `frame` (0/1/2). Non-ACGT codons "
           "-> 'X', stops -> '*', trailing partial codon dropped.");
-    m.def("detect_coding_frame", &detect_coding_frame, py::arg("nt"),
+    m.def("detect_coding_frame", &detect_coding_frame, nb::arg("nt"),
           "Return the reading frame (0/1/2) with the fewest stop codons.");
-    m.def("reverse_complement", &reverse_complement, py::arg("nt"),
+    m.def("reverse_complement", &reverse_complement, nb::arg("nt"),
           "Reverse-complement a nucleotide string (non-ACGT -> 'N').");
-    m.def("back_translate", &back_translate, py::arg("aa"), py::arg("unknown") = "NNN",
+    m.def("back_translate", &back_translate, nb::arg("aa"), nb::arg("unknown") = "NNN",
           "Mock back-translation using the most-frequent human (Kazusa) codon per "
           "amino acid; unknown residues -> `unknown` (default 'NNN').");
     m.def("segment_cigars", &segment_cigars,
-          py::arg("qaln"), py::arg("taln"), py::arg("qstart"), py::arg("tstart"),
-          py::arg("qlen"), py::arg("t_vend"), py::arg("t_jstart"), py::arg("t_vjend"),
+          nb::arg("qaln"), nb::arg("taln"), nb::arg("qstart"), nb::arg("tstart"),
+          nb::arg("qlen"), nb::arg("t_vend"), nb::arg("t_jstart"), nb::arg("t_vjend"),
           "Per-segment AIRR CIGARs {v_cigar, j_cigar, c_cigar} for the segments with a body. "
           "Boundaries are 1-based scaffold positions; 0 means the segment is absent.");
     m.def("aln_identity", &aln_identity,
-          py::arg("qaln"), py::arg("taln"), py::arg("tstart"), py::arg("t_lo"), py::arg("t_hi"),
+          nb::arg("qaln"), nb::arg("taln"), nb::arg("tstart"), nb::arg("t_lo"), nb::arg("t_hi"),
           "Fractional identity over germline positions in target range [t_lo, t_hi]; "
           "-1.0 when no germline position is covered.");
-    m.def("d_local_align", &d_local_align, py::arg("interior"), py::arg("d"),
+    m.def("d_local_align", &d_local_align, nb::arg("interior"), nb::arg("d"),
           "Gapless local alignment (match=+1, mismatch=-1) of a short D germline "
           "against a query interior. Returns (score, i_start, i_end, d_start, d_end) "
           "with 0-based inclusive offsets of the best segment in `interior` and in "
           "the D germline; (0,-1,-1,-1,-1) if none.");
     m.def("merge_alignment", &merge_alignment,
-          py::arg("qalns"), py::arg("talns"), py::arg("qstarts"), py::arg("tstarts"),
-          py::arg("offsets"), py::arg("contig"),
+          nb::arg("qalns"), nb::arg("talns"), nb::arg("qstarts"), nb::arg("tstarts"),
+          nb::arg("offsets"), nb::arg("contig"),
           "Stitch a contig's scaffold alignment from its reads' alignments (the "
           "alternative to re-aligning the contig). Per-read qaln/taln, 1-based read "
           "qstart and scaffold tstart, 0-based contig offset, plus the contig string. "

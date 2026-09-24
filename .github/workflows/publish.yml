@@ -41,7 +41,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.3
         env:
-          # arda ships a pybind11/scikit-build-core C++ ext (src/_markup); scikit-build-core
+          # arda ships a nanobind/scikit-build-core C++ ext (src/_markup); scikit-build-core
           # pulls cmake + ninja into the build env automatically.
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-musllinux_* *-manylinux_i686 *-win32"

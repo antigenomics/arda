@@ -3,6 +3,35 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Changed: pybind11 -> nanobind
+
+The four C++ extensions (`_markup`, `_prefilter`, `_segmap`, `_denoise`; 1,678 lines) now build
+against `nanobind>=2.5,<3`. The author's call, not a performance one -- and the measurement that
+says so still stands: nanobind's ceiling on `transfer_regions` is ~0.15 % end-to-end (benchmark
+repo, round 18). Measured on the port itself, the full suite is **1,120 passed / 9 skipped either
+way**, and a wheel built from scratch installs and imports all four in a clean venv.
+
+Keep the upper bound whatever the library is: pybind11 changed `PYBIND11_MODULE` to multi-phase
+init in a *minor-looking* 3.0.0, so an unbounded requirement built wheels against whatever PyPI
+served that day, and nanobind has the same exposure.
+
+Porting notes, recorded in `CLAUDE.md` for the next one. The translation is mechanical except for
+four things, and the whole 1,678-line port produced exactly **two** compile errors:
+
+* `py::error_already_set` -> `nb::python_error`
+* `py::reinterpret_steal` / `_borrow` -> `nb::steal` / `nb::borrow`
+* `.def_property_readonly` -> `.def_prop_ro` (both compile errors were this)
+* **`<pybind11/stl.h>` has no single equivalent.** nanobind wants one header per STL type, and a
+  missing one is a *runtime* conversion failure rather than a compile error -- so all seven
+  (`string`, `vector`, `tuple`, `pair`, `map`, `unordered_map`, `optional`) are included and the
+  suite is what proves they are wired.
+
+CMake is `find_package(Python ... COMPONENTS Interpreter Development.Module)` +
+`find_package(nanobind CONFIG REQUIRED)` + `nanobind_add_module`. ⚠ `Interpreter` is **not**
+optional -- nanobind's own config refuses without it.
+
 ## 2.26.0
 
 ### Added: `arda.hmm` — the same model, read as inference

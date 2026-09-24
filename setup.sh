@@ -35,7 +35,7 @@ command -v uv >/dev/null 2>&1 || {
 
 # --- 1. venv + editable install --------------------------------------------
 # Build deps go in the venv so the scikit-build editable on-import rebuild can
-# find pybind11 (hence --no-build-isolation).
+# find nanobind (hence --no-build-isolation).
 log "creating .venv and installing arda (uv)"
 # Never: A stale build/ dir is not harmless. scikit-build-core caches CMake's configuration, including
 # the ABSOLUTE PATH of the interpreter it configured against; if that venv is gone (a previous
@@ -45,9 +45,10 @@ rm -rf "$ROOT/build"
 uv venv "$ROOT/.venv"
 # shellcheck disable=SC1091
 source "$ROOT/.venv/bin/activate"
-# Pinned to the same range as pyproject.toml's build-system: `PYBIND11_MODULE` changed to
+# Pinned to the same range as pyproject.toml's build-system: a binding library's module macro
+# has changed semantics in a minor-looking major before (pybind11 3.0.0 went multi-phase), so
 # multi-phase init in 3.0.0, so an unbounded install builds against whatever PyPI serves today.
-uv pip install 'pybind11>=3.0.2,<4' scikit-build-core ninja
+uv pip install 'nanobind>=2.5,<3' scikit-build-core ninja
 # `.[test,dev]` -- not a bare install. `--tests` used to run `pytest` that was never installed,
 # print "No module named pytest", and be swallowed by `|| true` while the script reported success.
 uv pip install -e "$ROOT[test,dev]" --no-build-isolation
