@@ -166,3 +166,64 @@ def test_the_json_twin_is_typed_and_carries_exactly_the_tsv_rows(run_dir, tmp_pa
     # Typed, so a consumer can tell a count from a version string.
     assert doc["stats"]["sample"][""]["reads"] == 4
     assert isinstance(doc["stats"]["chain"]["IGH"]["junction_aa_mean"], (int, float))
+
+
+# ── single cell in the same table ─────────────────────────────────────────────────────────────
+
+_CELL_CHAIN_COLS = ["cell_id", "locus", "chain_rank", "junction_aa", "junction", "v_call",
+                    "j_call", "c_call", "productive", "molecules", "reads", "contigs",
+                    "contig_length", "fraction_of_top", "status"]
+_CELL_CHAIN_ROWS = [
+    ["AAACCTGCAGCCTGTT", "TRB", "1", "CASSLDGTGF", "TGT", "TRBV19*01", "TRBJ2-7*01", "TRBC2",
+     "T", "9", "90", "1", "500", "1.0", "primary"],
+    ["AAACCTGCAGCCTGTT", "TRA", "1", "CAVRDSNYQLIW", "TGT", "TRAV1-2*01", "TRAJ33*01", "TRAC",
+     "T", "5", "50", "1", "480", "1.0", "primary"],
+    ["CGTTTTTATCAGCTAG", "TRB", "1", "CASSPGQGF", "TGT", "TRBV19*01", "TRBJ2-7*01", "TRBC1",
+     "T", "4", "40", "1", "510", "1.0", "primary"],
+    # Rejected by the extra-chain gate: ambient, and counting it as yield is the whole thing the
+    # gate exists to prevent.
+    ["CGTTTTTATCAGCTAG", "TRB", "2", "CASSNOISEF", "TGT", "TRBV20-1*01", "TRBJ1-1*01", "TRBC1",
+     "T", "1", "10", "1", "300", "0.25", "extra"],
+]
+
+
+@pytest.fixture
+def cells_prefix(tmp_path):
+    prefix = tmp_path / "PBMC"
+    pl.DataFrame(_CELL_CHAIN_ROWS, schema=_CELL_CHAIN_COLS, orient="row").write_csv(
+        tmp_path / "PBMC.chains.tsv", separator="\t", quote_style="never")
+    (tmp_path / "PBMC.arda.json").write_text(json.dumps({
+        "cells": 4, "molecules_in": 100, "molecules_placed": 80, "contigs": 3,
+        "contig_n50": 536, "cells_paired": 1, "cells_heavy_only": 1, "cells_light_only": 0,
+        "cells_doublet_candidate": 1, "cells_no_chain": 1, "knee_rank": 2, "knee_molecules": 5,
+    }))
+    return prefix
+
+
+def test_a_single_cell_sample_lands_in_the_same_scopes_as_a_bulk_one(cells_prefix):
+    rows = collect(cells=cells_prefix)
+    scopes = {r[0] for r in rows}
+    assert {"run", "sample", "chain", "v_gene", "j_gene", "junction_aa_len",
+            "chain_support"} <= scopes
+    assert _scope(rows, "chain", "cells") == {"TRA": "1", "TRB": "2"}
+    assert _scope(rows, "chain", "molecules") == {"TRA": "5", "TRB": "13"}
+
+
+def test_a_rejected_extra_chain_is_not_counted_as_yield(cells_prefix):
+    rows = collect(cells=cells_prefix)
+    # Three called chains, not four; and the ambient chain's V gene never appears.
+    assert _scope(rows, "chain", "chains") == {"TRA": "1", "TRB": "2"}
+    assert "TRBV20-1" not in _scope(rows, "v_gene", "chains")
+
+
+def test_chain_pairing_and_doublet_rates_are_derived_not_left_to_the_reader(cells_prefix):
+    sample = {m: v for s, k, m, v in collect(cells=cells_prefix) if s == "sample"}
+    assert sample["pairing_rate"] == "0.25"          # 1 paired cell of 4
+    assert sample["doublet_rate"] == "0.25"          # 1 doublet candidate of 4
+    assert sample["molecules_placed_fraction"] == "0.8"
+
+
+def test_the_single_cell_report_still_reaches_the_run_scope(cells_prefix):
+    run = {m: v for s, k, m, v in collect(cells=cells_prefix) if s == "run"}
+    assert run["contig_n50"] == "536"
+    assert run["knee_rank"] == "2"

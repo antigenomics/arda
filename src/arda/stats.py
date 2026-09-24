@@ -486,6 +486,98 @@ def _clone_rows(df: pl.DataFrame, out: list[tuple]) -> None:
         out.append(("isotype", f"{locus or '?'}:{isotype}", "reads", _fmt(reads)))
 
 
+# ── single cell ───────────────────────────────────────────────────────────────────────────────
+
+#: What `arda cells` writes, and what QC reads back out of it.
+_CHAIN_COLS = ("cell_id", "locus", "v_call", "j_call", "junction_aa", "molecules", "reads",
+               "status")
+
+
+def _cell_rows(prefix: Path, out: list[tuple]) -> None:
+    """``arda cells`` output as the SAME scopes a bulk run produces.
+
+    Never: single cell was the one mode that wrote no QC table at all, and its ``.arda.json``
+    shares no key with the bulk one -- so a cohort mixing the two had nothing to join on. The
+    scopes are deliberately the bulk ones (``sample`` / ``chain`` / ``v_gene`` / ``j_gene`` /
+    ``junction_aa_len``), because "which loci did this sample yield, and at what junction lengths"
+    is the same question either way. What is genuinely single-cell -- cells, molecules, the knee,
+    the contig N50 -- comes through the ``run`` scope from its own report, where it cannot be
+    mistaken for a read count.
+
+    ``pairing_rate`` and ``doublet_rate`` are derived here rather than left to the reader: they
+    are the AIRR Community's chain-pairing QC, they are the two numbers a batch is compared on,
+    and ``cell_summary`` has already assigned every cell the status they count.
+    """
+    report = prefix.parent / f"{prefix.name}.arda.json"
+    if report.exists():
+        _flatten_report(json.loads(report.read_text()), out)
+        rep = json.loads(report.read_text())
+        cells = rep.get("cells") or 0
+        if cells:
+            for status in ("paired", "doublet_candidate"):
+                n = rep.get(f"cells_{status}")
+                if n is not None:
+                    name = "pairing_rate" if status == "paired" else "doublet_rate"
+                    out.append(("sample", "", name, _fmt(n / cells)))
+        placed, seen = rep.get("molecules_placed"), rep.get("molecules_in")
+        if placed is not None and seen:
+            out.append(("sample", "", "molecules_placed_fraction", _fmt(placed / seen)))
+
+    path = prefix.parent / f"{prefix.name}.chains.tsv"
+    if not path.exists():
+        return
+    df = _read_present(path, _CHAIN_COLS)
+    if not df.height:
+        return
+    have = set(df.columns)
+    n = df.height
+    # `extra` chains are the ones the extra-chain gate REJECTED. Counting them as yield would
+    # report ambient contamination as signal -- the whole point of the gate.
+    work = pl.DataFrame({
+        "locus": (df["locus"] if "locus" in have else pl.Series([""] * n)).fill_null(""),
+        "cell_id": (df["cell_id"] if "cell_id" in have else pl.Series([""] * n)).fill_null(""),
+        "_called": ((df["status"] != "extra") if "status" in have
+                    else pl.Series([True] * n, dtype=pl.Boolean)),
+        "_mol": (df["molecules"].cast(pl.Int64, strict=False).fill_null(0)
+                 if "molecules" in have else pl.Series([0] * n, dtype=pl.Int64)),
+        "_reads": (df["reads"].cast(pl.Int64, strict=False).fill_null(0)
+                   if "reads" in have else pl.Series([0] * n, dtype=pl.Int64)),
+        "_jaa": (df["junction_aa"] if "junction_aa" in have
+                 else pl.Series([""] * n)).fill_null("").str.len_chars(),
+        "_v_gene": pl.Series([_gene(c) for c in (df["v_call"] if "v_call" in have
+                                                 else [""] * n)]),
+        "_j_gene": pl.Series([_gene(c) for c in (df["j_call"] if "j_call" in have
+                                                 else [""] * n)]),
+    }).filter(pl.col("_called"))
+
+    aggs = [("chains", pl.len()),
+            ("cells", pl.col("cell_id").n_unique()),
+            ("molecules", pl.col("_mol").sum()),
+            ("reads", pl.col("_reads").sum()),
+            ("junction_aa_min", pl.col("_jaa").filter(pl.col("_jaa") > 0).min()),
+            ("junction_aa_max", pl.col("_jaa").filter(pl.col("_jaa") > 0).max()),
+            ("junction_aa_mean", pl.col("_jaa").filter(pl.col("_jaa") > 0).mean())]
+    exprs = [e.alias(name) for name, e in aggs]
+    for row in work.group_by("locus").agg(exprs).sort("locus").iter_rows(named=True):
+        for name, _ in aggs:
+            out.append(("chain", row["locus"] or "?", name, _fmt(row[name])))
+    for name, value in zip([a for a, _ in aggs], work.select(exprs).row(0)):
+        out.append(("sample", "", name, _fmt(value)))
+
+    for seg, col in (("v_gene", "_v_gene"), ("j_gene", "_j_gene")):
+        counts = (work.filter(pl.col(col) != "").group_by(col)
+                  .agg(pl.len().alias("chains")).sort(col))
+        for gene, chains in counts.iter_rows():
+            out.append((seg, gene, "chains", _fmt(chains)))
+
+    _hist(work, "junction_aa_len", "_jaa", "chains", out)
+    # Molecules per chain, powers of two -- the same axis `scplot`'s chain_support panel draws.
+    work = work.with_columns(
+        _mol_bin=pl.when(pl.col("_mol") > 0)
+        .then((2 ** pl.col("_mol").log(2).floor()).cast(pl.Int64)).otherwise(0))
+    _hist(work, "chain_support", "_mol_bin", "chains", out)
+
+
 def _coverage_rows(out: list[tuple], organism: str) -> None:
     """``% of reference genes seen``, per locus and sample-wide, for reads and for clonotypes.
 
@@ -502,7 +594,8 @@ def _coverage_rows(out: list[tuple], organism: str) -> None:
         if scope not in ("v_gene", "j_gene"):
             continue
         seg = "V" if scope == "v_gene" else "J"
-        for label, wanted in (("reads", "reads"), ("clonotypes", "clonotypes")):
+        for label, wanted in (("reads", "reads"), ("clonotypes", "clonotypes"),
+                              ("chains", "chains")):
             if metric == wanted:
                 seen.setdefault((seg, label), set()).add(key)
                 if int(value) > 1:
@@ -512,7 +605,7 @@ def _coverage_rows(out: list[tuple], organism: str) -> None:
         total = len({g for (loc, s), genes in universe.items() if s == seg for g in genes})
         prefix = "v" if seg == "V" else "j"
         out.append(("sample", "", f"{prefix}_genes_reference", _fmt(total)))
-        for label in ("reads", "clonotypes"):
+        for label in ("reads", "clonotypes", "chains"):
             got = seen.get((seg, label), set())
             if not got:
                 continue
@@ -526,7 +619,8 @@ def _coverage_rows(out: list[tuple], organism: str) -> None:
 # ── entry points ──────────────────────────────────────────────────────────────────────────────
 
 def collect(*, airr: str | Path | None = None, clones: str | Path | None = None,
-            report: str | Path | None = None, r1: str | Path | None = None,
+            report: str | Path | None = None, cells: str | Path | None = None,
+            r1: str | Path | None = None,
             r2: str | Path | None = None, organism: str = "human",
             allele_min_frac: float = ALLELE_MIN_FRAC,
             allele_min_reads: int = ALLELE_MIN_READS) -> list[tuple]:
@@ -541,6 +635,9 @@ def collect(*, airr: str | Path | None = None, clones: str | Path | None = None,
         clones: clonotype table -> the ``chain`` clonotype rows and ``*_gene`` clonotypes.
         report: ``<prefix>.arda.json`` (or a bare ``--report`` JSON) -> the ``run`` scope, which
             is where total/mapped reads, threads, wall time and peak RSS come from.
+        cells: an ``arda cells`` output PREFIX (not a file) -> its report plus ``.chains.tsv``,
+            as the same ``sample`` / ``chain`` / ``*_gene`` / ``junction_aa_len`` scopes a bulk
+            run produces, so one batch table holds both kinds of sample.
         r1, r2: the input FASTQs. Used ONLY for their size on disk and for whether the library is
             paired -- neither is recoverable from the AIRR, which holds the mapped subset.
     """
@@ -562,6 +659,8 @@ def collect(*, airr: str | Path | None = None, clones: str | Path | None = None,
         df = _read_present(Path(clones), _CLONE_COLS)
         if df.height:
             _clone_rows(df, out)
+    if cells is not None:
+        _cell_rows(Path(cells), out)
     _coverage_rows(out, organism)
     # Never: a metric with no input is OMITTED, not blank. An aggregation over an empty filtered
     # set returns None, which `_fmt` renders as "" -- and a reader casting the column silently

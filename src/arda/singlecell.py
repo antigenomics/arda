@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 
+from ._log import logger
 from .annotate.io import open_text
 from .cell import make_parser
 
@@ -1124,8 +1125,22 @@ def run(
             summary["partition"] = scores
 
     import json
-    out(".arda.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+    # Never: the figures BEFORE the write. Drawn afterwards, `summary["figures"]` existed only in
+    # the returned dict and never reached `.arda.json` -- the one key a reader would use to find
+    # the panels this run drew.
     if plot:
         from .scplot import draw
         summary["figures"] = [str(p) for p in draw(prefix, fmt=plot, gnuplot=gnuplot)]
+    out(".arda.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+    # The same QC table a bulk run writes, so a cohort mixing single-cell and bulk samples has
+    # one thing to join on. Written unconditionally and last, for the same reason `pipeline`
+    # writes its own after the report is final.
+    from .stats import collect, write_stats, write_stats_json
+
+    rows = collect(cells=prefix, organism=organism)
+    write_stats(rows, out(".stats.tsv"))
+    write_stats_json(rows, out(".stats.json"))
+    logger.info("stats: %d rows -> %s", len(rows), out(".stats.tsv"))
     return summary

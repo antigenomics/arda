@@ -787,6 +787,11 @@ def stats_cmd(
         help="`<prefix>.arda.json` (or a single-stage `--report` JSON). This is where total and "
              "mapped reads, threads, wall time and peak RSS come from -- the AIRR holds only the "
              "reads that mapped, so nothing in it can recover them."),
+    cells: Optional[Path] = typer.Option(
+        None, "--cells",
+        help="An `arda cells` output PREFIX (not a file): its report and `.chains.tsv` become "
+             "the same sample/chain/gene/junction-length scopes a bulk run writes, so one batch "
+             "table can hold both kinds of sample. `arda cells` writes this itself."),
     r1: Optional[Path] = typer.Option(
         None, "--r1", help="Input FASTQ, read ONLY for its size on disk and to record that the "
                            "library is paired. Neither is recoverable from the AIRR."),
@@ -836,9 +841,10 @@ def stats_cmd(
 
     from .stats import collect, write_stats, write_stats_json
 
-    if airr is None and clones is None and report is None:
-        raise typer.BadParameter("give at least one of --airr / --clones / --report")
-    rows = collect(airr=airr, clones=clones, report=report, r1=r1, r2=r2, organism=organism,
+    if airr is None and clones is None and report is None and cells is None:
+        raise typer.BadParameter("give at least one of --airr / --clones / --report / --cells")
+    rows = collect(airr=airr, clones=clones, report=report, cells=cells, r1=r1, r2=r2,
+                   organism=organism,
                    allele_min_frac=allele_min_frac, allele_min_reads=allele_min_reads)
     write_stats(rows, sys.stdout if str(output) == "-" else output)
     if json_out is not None:
