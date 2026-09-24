@@ -56,4 +56,4 @@ carry what we would not think to synthesise: adapters, 3′ quality drop-off, PC
 off-target transcripts, non-overlapping mates, and reads landing in J→C rather than V.
 
 ⚠ These reads are from a **public** BioProject and may be redistributed. Do not extend this
-fixture with Gamaleya tumour reads (private) or with anything under `data_bio/`.
+fixture with private tumour reads or with anything under `data_bio/`.
