@@ -65,6 +65,28 @@ def _fasta(path: Path) -> dict[str, str]:
     return out
 
 
+def _germline_j_tail(org: str, j_call: str) -> str:
+    """Germline nucleotides from the [FW]118 codon to the J's 3' end, from COMMITTED artifacts.
+
+    Never ``database/vdj/<org>/segments.fasta``: it is GENERATED from the reference, is not
+    committed, and the fetched reference tarball does not carry it -- so a test reading it passes
+    on a built checkout and fails everywhere else. ``alleles.fasta`` and ``markup.tsv`` are both
+    committed, and ``fwr4_start .. vj_end`` on any scaffold carrying this J is exactly the span
+    wanted: FR4 **plus** the trailing partial codon the C exon completes. ``markup.tsv``'s ``fwr4``
+    column alone stops at the last whole codon and would shift the splice by one base.
+    """
+    base = ROOT / "database" / "vdj" / org
+    scaffolds = _fasta(base / "alleles.fasta")
+    rows = (base / "markup.tsv").read_text().splitlines()
+    header = rows[0].split("\t")
+    sid, fwr4_start, vj_end = (header.index(c) for c in ("scaffold_id", "fwr4_start", "vj_end"))
+    for row in rows[1:]:
+        f = row.split("\t")
+        if f[header.index("j_call")] == j_call and f[fwr4_start] and f[vj_end]:
+            return scaffolds[f[sid]][int(f[fwr4_start]) - 1:int(f[vj_end])]
+    raise AssertionError(f"{j_call} carries no markup row in {org}")
+
+
 @pytest.mark.parametrize("sid,org,seq,j_call,junction_aa,fwr4_aa", CASES, ids=[c[0] for c in CASES])
 def test_documented_call(sid, org, seq, j_call, junction_aa, fwr4_aa):
     """The page quotes these columns verbatim; they must still be what arda writes."""
@@ -90,8 +112,7 @@ def test_constant_exon_translates(sid, org, seq, j_call, _ja, _f4):
     if rec["rev_comp"] == "T":
         query = query.translate(str.maketrans("ACGTacgt", "TGCAtgca"))[::-1]
 
-    segments = _fasta(ROOT / "database" / "vdj" / org / "segments.fasta")
-    germline_j = segments[f"J|{j_call}"]
+    germline_j = _germline_j_tail(org, j_call)
 
     # A read that already runs past the J carries its own constant region (MH918759.1 has 66 nt
     # of TRAC) and needs no reconstruction. A read that stops inside the J is completed from
@@ -107,7 +128,7 @@ def test_constant_exon_translates(sid, org, seq, j_call, _ja, _f4):
                 "TRBC2*01" if rec["locus"] == "TRB" else "TRAC*01"]
             break
     else:
-        assert germline_j[-12:] in query, f"{sid}: read neither ends in nor spans the germline J"
+        assert germline_j[:12] in query, f"{sid}: read neither ends in nor spans the germline J"
 
     cys104 = int(rec["cdr3_start"]) - 3
     protein = _translate(query[cys104 - 1:] + tail)
