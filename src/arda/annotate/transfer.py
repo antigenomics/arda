@@ -547,6 +547,15 @@ _common_suffix = getattr(_markup, "common_suffix", None) or _common_suffix_py
 #: conserved codon, and it leaves the first two bases intact.
 MIN_V_ANCHOR_PREFIX = 2
 
+#: Mismatch-tolerant rescue for the exact-prefix cut above: at least ``_ANCHOR_MIN_MATCH`` of the
+#: first ``_ANCHOR_WINDOW`` junction bases matching some called V's own junction germline. A
+#: longest common prefix is destroyed outright by one substitution in base 1 or 2, and that is a
+#: sequencing error away on every read; a 5' over-extension, by contrast, is misplaced by a whole
+#: chewed-back stretch and misses across the whole window. Calibrated on both sides of the cut,
+#: two amplicons, one held out (benchmark round 28): 6/8 recovers 144 correct junctions across
+#: 92,466 truth junctions and admits ONE extra over-extension (TRA +37/+1, TRB +107/+0).
+_ANCHOR_WINDOW, _ANCHOR_MIN_MATCH = 8, 6
+
 
 def v_anchor_prefix(junction: str, v_call: str, anchors) -> int:
     """Longest prefix of ``junction`` explained by any called V's own junction germline.
@@ -565,6 +574,30 @@ def v_anchor_prefix(junction: str, v_call: str, anchors) -> int:
         if a and a.status == "ok" and g:
             best = max(best, _common_prefix(junction, g))
     return best
+
+
+def v_anchor_match(junction: str, v_call: str, anchors, window: int = _ANCHOR_WINDOW) -> int:
+    """Bases of ``junction[:window]`` that any one called V's junction germline matches."""
+    best = 0
+    for allele in (v_call or "").split(","):
+        a = anchors.get(("V", allele.strip())) if anchors else None
+        g = getattr(a, "germline_nt", "") if a else ""
+        if a and a.status == "ok" and g:
+            n = min(window, len(junction), len(g))
+            best = max(best, sum(junction[i] == g[i] for i in range(n)))
+    return best
+
+
+def v_anchor_ok(junction: str, v_call: str, anchors, prefix: int | None = None) -> bool:
+    """Whether the called V templates the junction's opening -- exactly, or near enough.
+
+    The exact prefix is the fast path and runs on ~97 % of reads; the windowed count only ever
+    runs on a junction the prefix already rejected.
+    """
+    p = prefix if prefix is not None else v_anchor_prefix(junction, v_call, anchors)
+    if p >= MIN_V_ANCHOR_PREFIX:
+        return True
+    return v_anchor_match(junction, v_call, anchors) >= _ANCHOR_MIN_MATCH
 
 
 def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"):
@@ -901,9 +934,7 @@ def transfer_hit(
                 # Declining is what IgBLAST and MiXCR both do here (see `v_anchor_prefix`).
                 # `_anchored_vj_bounds` already scanned this exact slice, so reuse its answer
                 # rather than walking every called V allele a second time.
-                prefix = (v_prefix if v_prefix is not None
-                          else v_anchor_prefix(jnt, ref.v_call, anchors))
-                if jaa and anchors and prefix < MIN_V_ANCHOR_PREFIX:
+                if jaa and anchors and not v_anchor_ok(jnt, ref.v_call, anchors, v_prefix):
                     jaa, phase = "", None
                 if jaa:
                     rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa
@@ -921,7 +952,7 @@ def transfer_hit(
                     # The same Cys104 gate the observed path applies: a junction opening on bases
                     # the called V never templates is 5'-over-extended whether or not its 3' end
                     # was completed, and completing it does not make it any less wrong.
-                    if anchors and v_anchor_prefix(jnt, ref.v_call, anchors) < MIN_V_ANCHOR_PREFIX:
+                    if anchors and not v_anchor_ok(jnt, ref.v_call, anchors):
                         phase = None
                     else:
                         rec["junction"], rec["junction_aa"], rec["cdr3_aa"] = jnt, jaa, c3aa

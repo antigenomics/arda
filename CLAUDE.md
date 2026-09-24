@@ -321,17 +321,20 @@ still exposes them individually for A/B work.
   the flag — 476 of the 483 new scaffolds drop to incomplete IgBLAST region markup. Details and the
   evidence (530 amplicon reads) are in the benchmark repo's open loops; **ask before changing the
   default either way**.
-  ⛔ **2026-09-24, benchmark round 27: the ceiling is now two NAMED causes, and the first is a defect
-  in this repo.** `airr_extract.build_germline_dbs` builds the IgBLAST V database from `locus.v`
-  alone and **ignores `locus.v_shared`**, which `_process_locus` honours -- so IgBLAST never sees a
-  TRDV germline, calls every chimeric scaffold `TRAV24*01`/`TRAV30*06`/`TRAV19*01`, and the region
-  coordinates collapse. Building it from TRAV + TRDV instead (dedupe by seq id: `makeblastdb` dies
-  on `Duplicate seq_ids ... LCL|TRAV14/DV4*01`) takes complete markup **7/483 -> 49/483**.
-  ⚠ **`Locus("TRD", ..., v_shared=("TRAV", "/DV"))` SHIPS and is on by default** -- the live TRD
-  reference marks its five dual-use genes up against a TRDV-only database. Unmeasured; measure it.
-  Cause 2 is open and inside IgBLAST: 434 of 483 still get no `j_call`, and exactly **7 of 69 TRAJ
-  alleles work, with all 7 TRDV alleles**. The class is **51.4 % of arda's junction-recall gap to
-  MiXCR** (590 of 1,147 reads). `ROADMAP.md` items 2-3.
+  ✅ **2026-09-25, benchmark round 28: cause 1 was a defect here and is FIXED.**
+  `airr_extract.build_germline_dbs` built the IgBLAST V database from `locus.v` alone and ignored
+  `locus.v_shared`, which `_process_locus` honours -- so IgBLAST never saw a TRDV germline, called
+  every chimeric scaffold `TRAV24*01`/`TRAV30*06`/`TRAV19*01`, and the region coordinates
+  collapsed. It now builds from the same allele set the scaffolds are, deduped by seq id
+  (`makeblastdb` dies on `Duplicate seq_ids ... LCL|TRAV14/DV4*01`): complete markup
+  **7/483 -> 49/483** with every V call correct.
+  ⚠ **`Locus("TRD", ..., v_shared=("TRAV", "/DV"))` was never actually exposed** -- measured
+  **73/110 complete markup either way**, because IMGT files the dual-use `TRAV*/DV*` genes under
+  BOTH stems so the TRDV germline file already carried all 15. The fix makes the database match
+  the scaffold allele set by construction instead of by IMGT filing accident; no shipped locus
+  moves. Cause 2 is open and inside IgBLAST: 434 of 483 still get no `j_call`, and exactly **7 of
+  69 TRAJ alleles work, with all 7 TRDV alleles**. The class is the whole remaining named junction
+  gap (590 of 1,147 reads). `ROADMAP.md` item 3.
 - ✅ **`v_identity`: neither gated nor deleted, and that is the decision (2026-09-24).** The loop
   asked for "a threshold or delete the column"; both branches are dead. **No threshold**, because
   the defect it would have gated — target-inverted rows, which it separates 0.216–0.288 vs ~0.98 —
@@ -370,6 +373,22 @@ still exposes them individually for A/B work.
   20 of 44 TRA genes called, ONE heterozygous, and a restriction that narrows 281 of 47,743 rows.
   Judging the rule needs full-length, 5'RACE or `arda cells` contigs (N50 536 nt) against a known
   genotype. Nothing about the rule can be settled on a library that cannot separate the alleles.
+- ✅ **The Cys104 junction gate is mismatch-tolerant now, and 92 was always the right number
+  (benchmark round 28, 2026-09-25).** `v_anchor_ok` admits a junction whose exact prefix fails if
+  **6 of its first 8 bases** match some called V's `germline_nt`; the exact prefix stays the fast
+  path and the window only ever runs on a junction it already rejected. ⛔ **Round 27's "512 reads,
+  44.6 % of the junction gap" was a MIS-ATTRIBUTION -- do not propagate it.** Those are reads arda
+  refuses *and MiXCR gets right*, but arda's own ungated junction is wrong on 420 of them. The
+  gate's real cost is **92 correct junctions against 1,360 over-extensions caught**, which is what
+  `tests/unit/test_junction_and_j_evidence_gates.py`'s docstring has said since round 18.
+  Measured on both sides, on two amplicons with one **held out** (TRB `SRR5233641`): **+144 correct
+  junctions, ONE extra over-extension, across 92,466 truth junctions**. Junction recall TRA
+  .9473 -> .9481, TRB .9898 -> **.9922** against MiXCR's .9944. ⚠ On TRB the exact gate was a
+  NET LOSS (116 correct discarded to catch 21 wrong), which is the whole reason a second locus
+  exists. ⛔ **Sliding the V germline to re-find an over-extended junction's start is measured
+  and DEAD**: at the true offset the called V's germline matches 0 bases on 1,040 of 1,369.
+  ⚠ To score this gate at all you must disable it -- a refusal emits nothing. See
+  `results/round28/run_ungated.py`.
 - ⛔ **Two performance comments in this repo are STALE -- do not trust or propagate them**
   (benchmark round 27, 2026-09-24). `rnaseq/map.py:479` says reading is *"65 % of a bulk run"*; it
   is **0.73 s of map's 16.19 s = 4.5 %** -- dnaio, the port that comment motivated, made its own

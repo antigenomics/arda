@@ -3,6 +3,44 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Fixed: the Cys104 junction gate no longer throws away a junction over one substitution
+
+`v_anchor_prefix` is a longest common prefix, so a single substitution in the first two bases of a
+junction took it to 0 and the read was declined -- and that is a sequencing error away on every
+read. The gate now admits a junction whose exact prefix fails when **6 of its first 8 bases** match
+some called V's own `germline_nt` (`v_anchor_ok`, `v_anchor_match`). The exact prefix stays the
+fast path; the window only ever runs on a junction it already rejected.
+
+Calibrated on **both sides** of the cut and on two amplicons with one held out (benchmark round 28,
+`results/round28`): **+144 correct junctions and one extra over-extension across 92,466 truth
+junctions**. `junction_nt` recall against an IgBLAST truth at `v_score >= 70` goes .9473 -> .9481
+on the TRA amplicon and **.9898 -> .9922 on the held-out TRB amplicon**, against MiXCR's .9944 --
+halving that gap. `v_gene`, `j_gene` and coverage are unchanged to four places.
+
+Never: **a refusal emits nothing, so this gate cannot be scored from arda's normal output** -- the
+measurement disables it, then sweeps the rule family offline from one run per library. On the TRB
+amplicon the exact rule was a net loss (116 correct junctions discarded to catch 21 wrong ones),
+which one library could not have shown.
+
+### Fixed: the germline BLAST V database now honours `locus.v_shared`
+
+`refbuild.build._process_locus` merges the shared V stem into the allele set the scaffolds are
+built from; `airr_extract.build_germline_dbs` built the IgBLAST V database from `locus.v` alone, so
+the database did not contain the germline half of the scaffolds it was about to mark up. IgBLAST
+called the nearest same-stem gene instead and every region coordinate collapsed -- silently, since
+`build.py` simply drops a scaffold with incomplete markup. On the chimera-enabled TRA locus that is
+complete markup **7 of 483 -> 49 of 483**, every V call correct.
+
+Alleles are deduped by seq id, first wins: IMGT files the dual-use `TRAV*/DV*` genes under both the
+TRAV and TRDV stems and `makeblastdb` dies on `Duplicate seq_ids are found: LCL|TRAV14/DV4*01`.
+
+Never: **no shipped reference moves.** `Locus("TRD", ..., v_shared=("TRAV", "/DV"))` keeps 73 of
+110 scaffolds with complete markup either way -- because that same IMGT double-filing meant the
+TRDV germline file already carried all 15 dual-use alleles. The fix makes the database match the
+scaffold allele set by construction rather than by filing accident.
+
 ## 2.27.0
 
 ### Added: personalized germline — `arda genotype`, `arda resolve-ties --genotype`

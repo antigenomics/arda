@@ -24,39 +24,37 @@ scenario set; `arda.hmm`, the same model read as inference).
 Everything below this block is the full backlog, ordered by subsystem rather than by priority.
 This is the short list, and each entry says what would make it *done* rather than what it is.
 
-Items 1–3 are new and all come from one measurement: **arda loses junction recall to MiXCR on the
-TRA amplicon by .9473 to .9708, and 1,147 of 46,787 truth junctions (2.4515 %) are the whole gap.
-Closing them takes arda to .9718 — ahead.** Evidence and method:
-`~/vcs/projects/2026-arda-benchmark/results/round27`.
+Items 1 and 2 shipped on 2026-09-25 and are kept here with what they actually bought; item 3 is
+what is left of the junction-recall gap. Evidence and method:
+`~/vcs/projects/2026-arda-benchmark/results/round27` and `results/round28`.
 
-1. **The Cys104 prefix gate is an EXACT two-base test and one substitution defeats it — 512 reads,
-   44.6 % of the gap.** `transfer.py:906` refuses a junction when
-   `v_anchor_prefix(jnt, ref.v_call, anchors) < MIN_V_ANCHOR_PREFIX` (= 2). That constant was
-   calibrated on what the gate *admits* — it separates 1,360 of 1,396 5'-over-extensions from
-   44,322 correct junctions — and nobody counted what it *refuses*. On the 512 it wrongly refuses:
-   **arda's V gene agrees with truth on 98.6 %**, the V alignment runs past its own Cys104 anchor
-   (429 of 512 by more than 12 nt, 83 by 6–12 nt), and MiXCR emits the correct junction for every
-   one. A 5'-over-extended junction is over-extended by the whole chewed-back stretch, not by one
-   base, so the discriminating signal is not an exact prefix. Wanted: a mismatch-tolerant window
-   (≥ 6 of the first 8 templated bases, say). ⚠ **Done means re-measured against the 1,396
-   over-extensions the current gate catches**, not only against the 512 — a change that recovers
-   them by admitting over-extensions is not a fix. Prize: **.9604 → ~.9708**.
+1. ✅ **The Cys104 gate is loosened, and its cost was 92 reads — not the 512 round 27 claimed.**
+   `transfer.py`'s `v_anchor_ok` now admits a junction whose exact prefix fails if **6 of its
+   first 8 bases** match some called V's own `germline_nt`. ⛔ **Do not requote round 27's "512
+   reads, 44.6 % of the gap."** Those are reads arda refuses *and MiXCR gets right*, but arda's
+   own ungated junction is wrong on 420 of them, so they were never reachable from the gate; the
+   gate refuses 1,452 junctions of which **92 are correct and 1,360 are genuine 5' over-extensions**,
+   exactly as `tests/unit/test_junction_and_j_evidence_gates.py` has said since round 18. Measured
+   on both sides and on a **held-out locus** (the TRB amplicon `SRR5233641`, never looked at while
+   the rule family was written): **+144 correct junctions and ONE extra over-extension across
+   92,466 truth junctions**. Junction recall TRA .9473 → **.9481**, TRB .9898 → **.9922** against
+   MiXCR's .9944 — the held-out gap halved — with every other metric unchanged to four places.
+   ⚠ **On TRB the exact gate was a net loss**: 116 correct junctions discarded to catch 21 wrong
+   ones, for 0.00013 of precision. There is nothing further here: arda's *ungated* ceiling on the
+   TRA amplicon is .9493, still short of MiXCR's .9708 (item 3 and the note below it).
 
-2. **`build_germline_dbs` ignores `locus.v_shared` — and the shipped TRD locus is exposed.**
-   `_process_locus` merges the shared V stem into the allele set the scaffolds are built from
-   (`build.py:60-69`), but `airr_extract.build_germline_dbs` builds the IgBLAST BLAST V database
-   from `locus.v` alone. On the chimera-enabled TRA locus that means IgBLAST never sees a TRDV
-   germline and calls every scaffold `TRAV24*01` / `TRAV30*06` / `TRAV19*01`, collapsing the region
-   coordinates: **7 of 483 scaffolds keep complete markup**. Rebuilding the db as TRAV + TRDV takes
-   it to **49 of 483** and every V call becomes correct. ⚠ Dedupe by seq id — IMGT files the
-   dual-use `TRAV*/DV*` genes under both stems and `makeblastdb` dies on
-   `Duplicate seq_ids ... LCL|TRAV14/DV4*01`. ⚠ **`Locus("TRD", …, v_shared=("TRAV", "/DV"))` ships
-   and is on by default**, so the live TRD reference marks its five dual-use genes up against a
-   TRDV-only database. Whether that costs any of its 73 scaffolds is unmeasured — measure it.
-   Done means: the db is built from the same allele set the scaffolds are, and the TRD scaffold
-   count is asserted (never the flag — a reference swap can silently be a no-op).
+2. ✅ **`build_germline_dbs` honours `locus.v_shared`, and the shipped TRD exposure measured
+   zero.** The IgBLAST V database is now built from the same allele set the scaffolds are, deduped
+   by seq id (`makeblastdb` dies on `Duplicate seq_ids ... LCL|TRAV14/DV4*01` otherwise). On the
+   chimera-enabled TRA locus that is **7 of 483 scaffolds → 49 of 483** with every V call correct.
+   ⚠ **`Locus("TRD", …, v_shared=("TRAV", "/DV"))` was never actually exposed** — the live TRD
+   reference keeps **73/110** complete markup either way, because IMGT files the dual-use
+   `TRAV*/DV*` genes under **both** stems and the TRDV germline file already carried all 15 of
+   them. The fix makes the database match the scaffold allele set by construction rather than by
+   IMGT filing accident; it moves no shipped locus.
 
-3. **TRDV × TRAJ is 51.4 % of the junction gap, and `--allow-chimeras` is the wrong gate for it.**
+3. **TRDV × TRAJ is now the whole remaining named junction gap, and `--allow-chimeras` is the
+   wrong gate for it.**
    680 truth reads (1.4534 % of this library) carry a TRDV and **all 680 pair it with a TRAJ, not
    one with a TRDJ**; arda gets .100 of them, MiXCR .968, IgBLAST calls them at `v_score ≥ 70`.
    Recovering the class is **.9473 → .9604**. The flag exists because the pairing is a domain
@@ -68,6 +66,16 @@ Closing them takes arda to .9718 — ahead.** Evidence and method:
    the 62 failing are at least as long as the shortest working one), scaffold geometry (`n_pad`
    0/1/2 exactly as for pure TRA), and anchor availability (all 7 TRDV carry a functional
    `anchor_nt`, all 73 TRAJ anchors present). **Ask before moving the default either way.**
+
+   ⛔ **What is left after item 3 is not addressable from the V side.** The 1,360 over-extensions
+   the gate correctly catches are **461 distinct junctions**, one TRAV25\*02 sequence accounting
+   for 593 reads (42.5 % of every wrong junction on the library) and 648 of them over-extended by
+   exactly 9 nt — the scaffold's `V + 9 nt N-pad + J` bridge. Re-finding the true start by sliding
+   the V germline along the junction is measured and dead: at the **true** offset the called V's
+   `germline_nt` matches **0 bases on 1,040 of 1,369**, because the V really was chewed back past
+   Cys104. Every slide rule tried is a loss on both libraries (TRA +10 right/+289 wrong, TRB
+   +0/+26). Recovering that class needs the CDR3 start located without V-germline evidence, which
+   is a mechanism arda does not have today.
 
 4. **Amplicon Stage-3 assembly costs 29 % of wall to rescue 12 reads.** `arda amplicon` against
    `--no-assemble` on a 100 k TRA amplicon, 3 reps, medians: **13.46 → 9.38 s wall (1.43×)**,
