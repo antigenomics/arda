@@ -77,3 +77,23 @@ fetches the NCBI release directly. IgBLAST is a **build-time-only** dependency.
   let arda build a private cache on first run).
 - A normal install / annotation run needs neither — the committed references are
   authoritative.
+
+## IgBLAST needs no setup step
+
+`setup.sh` puts a release in `bin/`; every other install — including a plain `pip install` —
+fetches one into `<cache>/igblast` on first use. So `arda igblast`, the gold standard every
+benchmark is scored against, works out of the box. `$ARDA_IGBLAST` reuses an existing install,
+and `arda.igblast.igblast_version()` reports which NCBI release is in play — that belongs in any
+results record.
+
+⚠ `igblast.auxiliary_data()` **raises rather than degrading**. Without
+`optional_file/<org>_gl.aux` (IgBLAST's J-frame table) IgBLAST returns V and J normally and
+`junction_aa` empty on *every* read, exit 0 — indistinguishable from a truth that genuinely has
+none. Keep it raising.
+
+## Every build writes a manifest
+
+`loci_manifest.tsv` carries one row per defined locus (V-J and J+C scaffold counts, D germlines,
+unreachable-D count, `ok`/`EMPTY` status), and the build warns at the end on any `EMPTY` locus or
+unreachable D germline. That is what makes an absent reference visible rather than silent:
+rat/rabbit/rhesus have no TR loci in IMGT, so their TCR loci build `EMPTY`.

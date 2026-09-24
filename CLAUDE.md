@@ -9,7 +9,10 @@ the markup through the alignment in C++, emitting spec-valid AIRR Rearrangement 
 This file is **how to work in this repo**. It deliberately does **not** restate benchmark results:
 every speed/accuracy number lives in `~/vcs/projects/2026-arda-benchmark` (`CLAUDE.md` there for
 the distilled record and its traps, `results/RESULTS.md` + `results/round*/` for the artifacts).
-`skills/arda/SKILL.md` is *what the library exposes*; this is *how to change it*.
+`skills/arda/SKILL.md` is *what the library exposes*; this is *how to change it*. That skill
+is **frontmatter `name` + `description` only** (the spec caps `description` at 1,024 chars) with a
+body under ~200 lines; everything deeper lives in `skills/arda/references/*.md` and is linked
+from it, so it loads on demand.
 `ROADMAP.md` for what is implemented and what is planned; `SOURCES.md` for data provenance;
 `CHANGELOG.md` per release.
 
@@ -229,7 +232,7 @@ still exposes them individually for A/B work.
   1. **Every memory figure must name its stage and its sample.** A cross-run, cross-stage "2.7 GB"
      with no artifact anywhere was duplicated verbatim in **six** files (`README.md`,
      `docs/usage.rst`, `integrations/nextflow/arda/main.nf`, `src/arda/cli.py`,
-     `src/arda/rnaseq/_res.py`, `skills/arda/SKILL.md`). Correct: Stage-3 `correct` peaked
+     `src/arda/rnaseq/_res.py`, `skills/arda/references/rnaseq-pipeline.md`). Correct: Stage-3 `correct` peaked
      **2,071.7 MB** on a B-cell-rich tumour (28,444 clonotypes, 105 M reads); `map` is flat
      **300–650 MB** at any depth; a colder **139 M**-read sample peaked **549 MB**; budget ~4 GB.
      ⚠ One wrong sentence in a shared blurb propagates to every surface — grep before editing one.
