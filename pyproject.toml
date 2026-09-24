@@ -8,7 +8,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.23.0"
+version = "2.24.0"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,14 @@ dependencies = [
     # work, and past every smoke test, because `arda --version` succeeds without it. seqtree ships
     # the same 12 wheels on the same platforms as arda (py3.10-3.13, linux/mac/win) and pulls no
     # runtime deps of its own, so requiring it costs nothing.
-    "seqtree>=0.4",
+    # Floor is 1.0 because that is where seqtree adopted semantic versioning and started shipping
+    # `seqtree.__version__`; the `<2` cap exists BECAUSE of that promise -- a project that says a
+    # breaking change needs a major bump is one whose major bump should be read before it lands,
+    # not resolved into a wheel build at 3am. arda uses only `Index.build` / `SearchParams`, so
+    # none of 1.0.0's `TextIndex` work touches it and the pybind11->nanobind move is documented as
+    # externally unchanged; verified by running the full suite (1,073 passed) against 1.0.0 before
+    # moving the floor.
+    "seqtree>=1.0,<2",
     # C-accelerated FASTQ/FASTA parsing (cutadapt's parser). Once `--prefilter` removed the search,
     # reading became the largest single cost of a bulk run -- 65 % of a 0.024 %-receptor library --
     # and dnaio is 2x the reworked pure-Python loop including mate tagging. Required rather than

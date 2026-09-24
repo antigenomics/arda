@@ -258,7 +258,33 @@ What is written
 ``.sweep.tsv``               the filter's precision and recall (needs ``--reference``)
 ``.partition.tsv``           clustering agreement (needs ``--reference``)
 ``.arda.json``               the run report
+``.stats.tsv`` / ``.json``   the QC table, in the same scopes a bulk run writes
 ===========================  ================================================================
+
+The QC table
+------------
+
+``arda cells`` writes ``<prefix>.stats.tsv`` and ``.stats.json`` like every other mode, and in the
+**same scopes** — ``sample``, ``chain`` per locus, ``v_gene``/``j_gene`` and ``junction_aa_len``.
+"Which loci did this sample yield, and at what junction lengths" is the same question whether the
+reads came one per cell or in bulk, so a cohort mixing single-cell and bulk samples has one table
+to join on. What is genuinely single-cell — cells, molecules, the knee, the contig N50 — arrives
+through the ``run`` scope from the report above, where it cannot be mistaken for a read count.
+
+Three ratios are derived for you, because they are what a batch gets compared on:
+
+``pairing_rate``
+   ``cells_paired / cells`` — the AIRR Community's chain-pairing QC.
+``doublet_rate``
+   ``cells_doublet_candidate / cells``.
+``molecules_placed_fraction``
+   ``molecules_placed / molecules_in`` — how much of the input reached a contig.
+
+A chain the extra-chain gate marked ``extra`` is **not counted as yield** anywhere in the table.
+That gate exists because an extra chain supported by one molecule is ambient 96–97 % of the time,
+and counting it would report the contamination as signal.
+
+Several samples roll up with :doc:`arda qc batch <qc>` exactly as bulk ones do.
 
 QC figures
 ----------

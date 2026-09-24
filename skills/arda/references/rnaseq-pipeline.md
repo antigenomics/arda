@@ -1,4 +1,4 @@
-# The three-stage pipeline, run reports and run QC
+# The three-stage pipeline, run reports and quality control
 
 Loaded on demand from `SKILL.md`. `map` -> `assemble` -> `correct`, what each stage owns, what the
 run report and the QC table carry, and which numbers to size a job from.
@@ -65,7 +65,17 @@ Four columns, `scope` / `key` / `metric` / `value`, one value per cell. Scopes: 
 verbatim — reads, FASTQ bytes, read length, paired, threads, wall time, peak RSS), `sample`,
 `chain` (per locus, **reads AND clonotypes**: productive/non-functional, stop codons, out-of-frame,
 truncated junctions, junction length min/max/mean, junction quality, SHM rate, chimeras),
-`v_gene`/`j_gene`, and `allele_candidate`.
+`v_gene`/`j_gene`, `allele_candidate`, and five **distribution** scopes keyed `locus:bucket` —
+`junction_aa_len`, `read_len` (10-nt buckets of the aligned length), `clone_size` (powers of two,
+weighted by clonotypes and by reads), `isotype`, and `chain_support` (`arda cells`). They exist
+because min/max/mean cannot show a shape: a bimodal junction length is two primer sets in one
+tube, a read-length cliff is an adapter left on, and a clone-size distribution with no singletons
+is an over-amplified library. Each reads as an ordinary mean. Only occupied buckets get a row.
+
+`arda cells` writes the same table in the same scopes, so a cohort can mix single-cell and bulk;
+it adds `pairing_rate`, `doublet_rate` and `molecules_placed_fraction`. Every run also writes
+`<prefix>.stats.json` — the same rows, typed and nested — built from the same list, so the two
+cannot diverge.
 
 Never: Long, not wide — the metric set differs per scope, so a wide table is mostly empty cells.
 Never: A metric with **no input is omitted, never emitted as 0**: a run without `--junction-quality`
@@ -76,6 +86,29 @@ folds them together and a QC table must not.
 allele, SHM and a miscall are the same string in the mutation list; recurrence within the allele
 (`--allele-min-frac`) and Phred are what separate them, and both are reported per variant.
 Never: Chimera / non-functional / stop-codon counts are **flags, never filters**.
+
+## A cohort: `arda qc batch` and `arda qc report`
+
+`arda qc batch -d results/ -o batch [--samples sheet.tsv]` joins every sample's QC table. It reads
+**only** the `*.stats.tsv` files — never an AIRR or a clonotype table — so a 1,000-sample cohort
+is one `concat` on a laptop against results copied off a cluster. Writes `<prefix>.qc.tsv` (long,
+with median/MAD/z), `.qc.wide.tsv` (one row per sample) and `.qc.json`. The sample sheet's optional
+`project` and `batch` columns are labels that name the group a sample is compared within; nothing
+in the pipeline reads them.
+
+Never: **no threshold is shipped.** There is no pass/fail column and no constant saying what a good
+`mapped_fraction` is — it depends on the library, the organism and the depth. Each metric carries
+its group's median, MAD and robust z (`0.6745·(x − median)/mad`, flagged at `|z| ≥ 3.5`); a group
+under 5 samples gets a median and **no z**, because MAD over four points is not a scale estimate.
+Flags, never filters.
+
+Never: **repertoire biology is not here.** Diversity, clonality, rarefaction, overlap and
+cross-sample clonotype matching belong to `vdjtools`, which takes arda as a base dependency. arda's
+QC answers "did this run work, and is this sample like its batch".
+
+`arda qc report -i batch.qc.json -o batch.qc.html` renders it (or one sample's `.stats.json`) as a
+single HTML file with the data inlined and **no external reference of any kind** — no CDN, no
+bundle, no new dependency — so it opens air-gapped and survives the results directory.
 
 The two quality columns feeding it are opt-in on `map` and use **different encodings**:
 `--junction-quality` writes raw Phred+33 *characters* over `junction`; `--mutation-quality` writes

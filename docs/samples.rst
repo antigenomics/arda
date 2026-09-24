@@ -51,6 +51,19 @@ re-sequencing rule. ``fastq_2`` may be blank for single-end. Extra columns (``st
 ``fastq2`` is not a sheet with no R2 and treating it as single-end would halve the data. Relative
 paths resolve against the **sheet's own directory**, so a sheet travels with its data.
 
+Two further columns are read if present, ``project`` and ``batch``:
+
+.. code-block:: text
+
+   sample	fastq_1	fastq_2	project	batch
+   PT01	PT01_S1_L001_R1_001.fastq.gz	PT01_S1_L001_R2_001.fastq.gz	TRIAL9	RUN3
+   PT02	PT02_S2_L001_R1_001.fastq.gz	PT02_S2_L001_R2_001.fastq.gz	TRIAL9	RUN3
+
+They are **labels only** — nothing in the pipeline reads them and no output changes because of
+them. They name the group a sample is compared within by :doc:`arda qc batch <qc>`. A sample's
+labels come from its first row: its lanes belong to one batch by definition, and a sheet that
+says otherwise has a typo rather than a meaning.
+
 .. warning::
 
    **Never sort read groups by filename.** ``A_L010`` sorts before ``A_L002``, and the clonotype

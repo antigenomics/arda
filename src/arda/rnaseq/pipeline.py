@@ -43,6 +43,7 @@ OUTPUTS = {
     "clones": "{prefix}.clones.tsv",
     "report": "{prefix}.arda.json",
     "stats": "{prefix}.stats.tsv",
+    "stats_json": "{prefix}.stats.json",
 }
 
 
@@ -139,7 +140,9 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
 
 def write_stats_for(out_dir: str | Path, out_prefix: str, *, organism: str = "human",
                     say=None) -> int:
-    """Write ``<prefix>.stats.tsv`` from the run's own artifacts. Returns the row count.
+    """Write ``<prefix>.stats.tsv`` and ``.stats.json`` from the run's own artifacts.
+
+    Returns the row count.
 
     Never: Written unconditionally, not behind a flag. It reads only files that already exist and
     costs one pass over each; the alternative is that the numbers an operator needs to decide
@@ -149,7 +152,7 @@ def write_stats_for(out_dir: str | Path, out_prefix: str, *, organism: str = "hu
     once Stages 2-3 return, so collecting inside :func:`finish` would put the Stage-2/3 time in
     the ``run`` scope under the name ``wall_seconds`` -- a wrong number that looks like a right one.
     """
-    from ..stats import collect, write_stats
+    from ..stats import collect, write_stats, write_stats_json
 
     out_dir = Path(out_dir)
     paths = {k: out_dir / v.format(prefix=out_prefix) for k, v in OUTPUTS.items()}
@@ -157,6 +160,7 @@ def write_stats_for(out_dir: str | Path, out_prefix: str, *, organism: str = "hu
                    clones=paths["clones"] if paths["clones"].exists() else None,
                    report=paths["report"], organism=organism)
     write_stats(rows, paths["stats"])
+    write_stats_json(rows, paths["stats_json"])
     (say or logger.info)(f"stats: {len(rows)} rows -> {paths['stats']}")
     return len(rows)
 

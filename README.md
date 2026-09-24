@@ -83,8 +83,9 @@ arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/ --exact   # no speed
 
 `rnaseq` and `amplicon` run `map` → `assemble` → `correct` over raw paired FASTQ and write
 `<prefix>.airr.tsv` (one AIRR row per mapped read), `<prefix>.clones.tsv` (the clonotype table),
-`<prefix>.assembled.airr.tsv`, `<prefix>.arda.json` (run report) and `<prefix>.stats.tsv` (run
-QC). Progress goes to **stderr**; the output paths, one per line, to **stdout**.
+`<prefix>.assembled.airr.tsv`, `<prefix>.arda.json` (run report) and `<prefix>.stats.tsv` /
+`.stats.json` (run QC). Progress goes to **stderr**; the output paths, one per line, to
+**stdout**.
 
 `arda cells` is the single-cell entry point and starts one step later: its input is **one UMI
 consensus per molecule** with the cell barcode in the record name — what `migec assemble` writes.
@@ -179,6 +180,8 @@ arda correct  -i mapped.airr.tsv -o clones.tsv --ec-mode accurate    # quality-g
 arda correct  -i mapped.airr.tsv -o clones.tsv --call-level gene     # collapse allele-level call splits
 arda shm      -i mapped.airr.tsv -o rescoped.airr.tsv          # recount SHM outside the junction
 arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv   # run QC
+arda qc batch  -d results/ -o results/batch --samples sheet.tsv   # every sample's QC, one table
+arda qc report -i results/batch.qc.json -o results/batch.qc.html  # ...as one self-contained page
 ```
 
 Everything else:
@@ -198,11 +201,13 @@ arda build-db   --organism all              # rebuild references (needs IgBLAST)
 arda build-index --organism all             # (re)build the precompiled mmseqs DBs
 ```
 
-### Run QC, verbosity and logging
+### Quality control
 
-Every mode run writes **`<prefix>.stats.tsv`** — the numbers that decide whether a sample is
-usable, without re-reading the FASTQ. `arda stats` produces the same table from any subset of a
-run's artifacts, so it also works on a bare `arda annotate` output:
+Every run — `rnaseq`, `amplicon` and `cells` alike — writes **`<prefix>.stats.tsv`** and
+**`<prefix>.stats.json`**: the numbers that decide whether a sample is usable, without re-reading
+the FASTQ, and in the same scopes for every mode so one cohort table holds all of them.
+`arda stats` produces the same table from any subset of a run's artifacts, so it also works on a
+bare `arda annotate` output:
 
 ```bash
 arda stats -i SAMPLE.airr.tsv -c SAMPLE.clones.tsv -r SAMPLE.arda.json \
@@ -219,6 +224,7 @@ Four columns — `scope`, `key`, `metric`, `value` — one value per cell, so a 
 | `chain` | `TRB`, `IGH`, … | per locus, **reads and clonotypes**: functional / non-functional, stop codons, truncated junctions, min/max/mean junction length, junction quality, SHM rate, chimeras |
 | `v_gene` / `j_gene` | `TRBV19` | reads and clonotypes per germline gene |
 | `allele_candidate` | `TRBV19*01:G45A` | a recurrent, high-quality V mutation, with its frequency and mean Phred |
+| `junction_aa_len` · `read_len` · `clone_size` · `isotype` · `chain_support` | `IGH:17` | the distributions, keyed `locus:bucket` — junction length in residues, aligned read length in 10-nt buckets, clonotype size in powers of two, constant-region class, molecules per chain |
 
 ```
 $ awk -F'\t' '$1=="chain" && $2=="IGH"' SAMPLE.stats.tsv
@@ -231,9 +237,42 @@ chain  IGH  clonotypes_chimeric         2
 ```
 
 A metric with no input is **omitted, never reported as 0** — a run without `--junction-quality`
-does not read as "mean quality 0". Two columns feed the quality metrics and both are opt-in on
-`map`: `--junction-quality` (Phred over the junction bases) and `--mutation-quality` (the Phred
-behind each `v_mutations` / `j_mutations` entry, one-for-one).
+does not read as "mean quality 0", and a locus no read spanned has no minimum junction length
+rather than one of zero. Two columns feed the quality metrics and both are opt-in on `map`:
+`--junction-quality` (Phred over the junction bases) and `--mutation-quality` (the Phred behind
+each `v_mutations` / `j_mutations` entry, one-for-one).
+
+The distribution scopes are there because min/max/mean cannot show a **shape**, and shape is most
+of the diagnosis: a bimodal junction length is two primer sets in one tube, a read-length cliff is
+an adapter left on, and a clone-size distribution with no singletons is a library amplified before
+it was sequenced. Each reads as an unremarkable mean.
+
+#### A cohort, and a page
+
+```bash
+arda qc batch  -d results/ -o results/batch --samples sheet.tsv --report results/batch.qc.html
+```
+
+`qc batch` reads **only** the per-sample `stats.tsv` files — never an AIRR or a clonotype table —
+so a thousand-sample cohort is one concatenation and runs on results copied off a cluster with the
+bulk data left behind. It writes `batch.qc.tsv` (long, with each metric's group median, MAD and
+robust z), `batch.qc.wide.tsv` (one row per sample) and `batch.qc.json`. The sample sheet's
+optional `project` and `batch` columns name the group a sample is compared within; they are labels
+and change nothing about a run.
+
+⚠ **No threshold is shipped.** There is no pass/fail column and no constant saying what a good
+`mapped_fraction` is — that depends on the library, the organism and the depth. What a batch can
+say is whether a sample looks like the batch it came in with, so each metric carries its group's
+median, MAD and a robust z (`|z| ≥ 3.5`, Iglewicz–Hoaglin); a group under 5 samples gets a median
+and no z, because MAD over four points is not a scale. Repertoire biology — diversity, clonality,
+rarefaction, overlap, cross-sample clonotype matching — is deliberately absent; that is
+[vdjtools](https://github.com/antigenomics/vdjtools)', which takes arda as a dependency.
+
+`arda qc report` renders any of it as **one HTML file with the data inlined and no external
+reference of any kind** — no CDN, no bundle, no fetch — so it opens on an air-gapped login node or
+as an email attachment long after the results directory is gone. Sortable sample table shaded by
+z, any metric against its batch median, the distributions overlaid per sample, and per-sample
+provenance. arda gains no plotting dependency for it.
 
 ⚠ **`allele_candidate` is a shortlist, not a genotype call.** A novel allele, somatic
 hypermutation and a base miscall are the same string in the mutation list; what separates them is
@@ -241,6 +280,8 @@ how often the mutation recurs across an allele's reads and how good the base is.
 per variant and the thresholds are yours (`--allele-min-frac`, `--allele-min-reads`). arda does not
 genotype. Likewise the chimera, non-functional and stop-codon counts are **flags, never filters** —
 nothing in `stats` removes a row from any output.
+
+#### Verbosity and logging
 
 Logging is a stdlib logger configured by three **global** options, before the subcommand:
 

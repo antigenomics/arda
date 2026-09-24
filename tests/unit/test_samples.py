@@ -163,3 +163,40 @@ def test_an_empty_sheet_is_refused(tmp_path):
     with pytest.raises(ValueError, match="no rows"):
         read_sheet(sheet)
 
+
+
+# ── the two label columns ─────────────────────────────────────────────────────────────────────
+
+def test_project_and_batch_are_read_as_labels_and_no_longer_warned(tmp_path, caplog):
+    """They change nothing about a run; `arda qc batch` groups a cohort by them."""
+    for name in ("a_1.fq", "a_2.fq", "b_1.fq", "b_2.fq"):
+        (tmp_path / name).write_text("")
+    sheet = tmp_path / "sheet.tsv"
+    sheet.write_text("sample\tfastq_1\tfastq_2\tproject\tbatch\n"
+                     "PT01\ta_1.fq\ta_2.fq\tTRIAL9\tRUN3\n"
+                     "PT02\tb_1.fq\tb_2.fq\tTRIAL9\tRUN3\n")
+    with caplog.at_level("WARNING"):
+        got = read_sheet(sheet)
+    assert [(s.id, s.project, s.batch) for s in got] == [("PT01", "TRIAL9", "RUN3"),
+                                                         ("PT02", "TRIAL9", "RUN3")]
+    assert "unknown sample-sheet column" not in caplog.text
+
+
+def test_a_sheet_without_them_still_parses_and_the_labels_are_empty(tmp_path):
+    (tmp_path / "a_1.fq").write_text("")
+    sheet = tmp_path / "sheet.tsv"
+    sheet.write_text("sample\tfastq_1\nPT01\ta_1.fq\n")
+    (one,) = read_sheet(sheet)
+    assert (one.project, one.batch) == ("", "")
+
+
+def test_a_samples_lanes_take_their_labels_from_its_first_row(tmp_path):
+    """A sample's lanes belong to one batch by definition; a sheet saying otherwise has a typo."""
+    for name in ("l1_1.fq", "l2_1.fq"):
+        (tmp_path / name).write_text("")
+    sheet = tmp_path / "sheet.tsv"
+    sheet.write_text("sample\tfastq_1\tbatch\n"
+                     "PT01\tl1_1.fq\tRUN3\n"
+                     "PT01\tl2_1.fq\tRUN4\n")
+    (one,) = read_sheet(sheet)
+    assert one.batch == "RUN3" and len(one.pairs) == 2
