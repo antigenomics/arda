@@ -12,10 +12,66 @@ run QC (`arda stats`, every mode, with the junction-length / read-length /
 clone-size / isotype distributions) and batch QC (`arda qc batch` / `qc report`:
 a cohort roll-up with per-batch robust z, and a self-contained HTML dashboard),
 single-cell support (`arda cells`: reference-free per-cell
-contig assembly, chain pairing, doublet flagging, and the QC surface), and multi-file
-samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
+contig assembly, chain pairing, doublet flagging, `umi_count`, and the QC surface),
+multi-file samples (read groups) across the CLI, SLURM, Nextflow and Snakemake, and a
+generative model of the rearrangement itself (`arda scenarios`, EM over the recombination
+scenario set; `arda.hmm`, the same model read as inference).
 
 ## TODO
+
+### Next up — ranked, 2026-09-24
+
+Everything below this block is the full backlog, ordered by subsystem rather than by priority.
+This is the short list, and each entry says what would make it *done* rather than what it is.
+
+1. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
+   output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is
+   `@lru_cache`d on the organism and reads one fixed path (`dpost.py:108-110`), so the only way to
+   use a fitted table is to overwrite a file inside the installed database. `arda.hmm.model_for`
+   already takes `prior=`; `dpost` does not. Thread a path through `load_d_prior` /
+   `posterior_d` and expose it as `arda markup --d-prior PATH`. Small, and it separates *using* an
+   estimate from *adopting* one — which is the decision the entry below is about.
+
+2. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
+   regression: OLGA has no model for them, which is the whole reason the table is derived rather
+   than measured. Verified coverage —
+
+   | organism | D loci with germlines | loci with a prior |
+   |---|---|---|
+   | human | IGH, TRB, TRD | IGH, TRB, TRD |
+   | mouse | IGH, TRB, TRD | TRB |
+   | rabbit | IGH, TRB, TRD | — |
+   | rat | IGH | — |
+   | rhesus_monkey | IGH, TRB, TRD | — |
+
+   `load_d_prior` returns `{}` for a missing organism and `posterior_d` then returns `None`
+   (`dpost.py:197-199`), so `arda markup` silently has no D posterior for three of five organisms.
+   `arda scenarios` fits exactly this table from real junctions, so the blocker is **a cohort per
+   (organism, locus)**, not code. Do human and mouse first, where the benchmark repo already has
+   the data, and A/B the fitted table against the OLGA-derived one before adopting either.
+
+3. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
+   `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,
+   and `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a
+   defect — no abundance method separates signal-to-noise ~1, which is why UMI consensus exists —
+   but one constant cannot serve both regimes. Wanted: a per-library calibration *rule*, or an
+   estimate off the data, not a re-tuned constant. ⚠ Whatever it becomes, it is not a QC threshold
+   and must not turn into one.
+
+4. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
+   HMM cannot be extended to IGH without one (it would explain mutated germline as N-region and do
+   *worse* than exact-match anchors, which at least fail safely), and `_map_d`'s amino-acid path
+   searches the three translated D frames as independent database entries, tripling `n`, when the
+   prior over `insVD` already induces a prior over frame. Biggest item here by some margin.
+
+5. **Genotyping is currently refused on purpose — revisit or close it.** `stats.py` collects
+   `allele_candidate` (a recurrent high-quality V mutation carried by >= 50 % of an allele's reads,
+   >= 10 reads) and says in its own docstring that it is *"a shortlist to look at, never a call"*.
+   Restricting a sample's V reference to the alleles its donor actually carries is annotation, not
+   repertoire biology, so it sits on arda's side of the `vdjtools` line — and the evidence is
+   already being computed and discarded. But it crosses a stance the repo took deliberately.
+   **Author's call; do not cross it silently.**
+
 
 - [ ] **Single-cell.** Staged plan in **`project/design-singlecell.md`**; that document is
       authoritative and this entry is the index.
