@@ -769,6 +769,11 @@ def rnaseq_assemble(
 @app.command("stats")
 def stats_cmd(
     output: Path = typer.Option(..., "--output", "-o", help="QC TSV ('-' for stdout)."),
+    json_out: Optional[Path] = typer.Option(
+        None, "--json", help="Also write the same rows as nested, TYPED JSON "
+                             "({scope: {key: {metric: value}}}) -- what a program reads, and "
+                             "what `arda qc report` inlines. A run writes it as "
+                             "`<prefix>.stats.json` without being asked."),
     airr: Optional[Path] = typer.Option(
         None, "--airr", "-i",
         help="Mapped-reads AIRR TSV (`map` or `annotate`): the per-read and per-chain rows, "
@@ -812,6 +817,10 @@ def stats_cmd(
       chain             TRB, IGH, ...              per locus, reads AND clonotypes
       v_gene / j_gene   TRBV19                     reads and clonotypes per germline gene
       allele_candidate  TRBV19*01:G45A             a recurrent, high-quality V mutation
+      junction_aa_len   IGH:17                     junction length in residues
+      read_len          IGH:90                     aligned read length, 10-nt buckets
+      clone_size        IGH:8                      clonotype size, powers of two
+      isotype           IGH:IGHG                   constant-region class
 
     Every input is optional and contributes its own scopes, so this works on a bare ``annotate``
     output as well as on a full run directory::
@@ -825,13 +834,15 @@ def stats_cmd(
     """
     import sys
 
-    from .stats import collect, write_stats
+    from .stats import collect, write_stats, write_stats_json
 
     if airr is None and clones is None and report is None:
         raise typer.BadParameter("give at least one of --airr / --clones / --report")
     rows = collect(airr=airr, clones=clones, report=report, r1=r1, r2=r2, organism=organism,
                    allele_min_frac=allele_min_frac, allele_min_reads=allele_min_reads)
     write_stats(rows, sys.stdout if str(output) == "-" else output)
+    if json_out is not None:
+        write_stats_json(rows, json_out)
     log.info("stats: %d rows over %d scopes", len(rows), len({r[0] for r in rows}))
     if str(output) != "-":
         typer.echo(str(output))
