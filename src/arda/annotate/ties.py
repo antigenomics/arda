@@ -33,7 +33,7 @@ reads onto a few thousand distinct spans, so the search runs once per span, not 
 
 Never: Off by default. This changes ``v_call``/``j_call`` on every library, and a downstream consumer
 that splits on ``,`` and takes ``[0]`` sees no change while one that treats the field as a single
-gene sees a new shape. Turn it on with ``--tie-lists``.
+gene sees a new shape. Run it as a separate pass: ``arda resolve-ties``.
 """
 
 from __future__ import annotations
@@ -60,8 +60,8 @@ def _containing_py(segment: str, candidates: list[str]) -> list[int]:
 class TieResolver:
     """Expand a single call into every germline the aligned span cannot rule out.
 
-    ``germlines`` maps allele name -> ungapped nucleotide sequence, i.e. exactly what
-    ``refbuild.imgt.load_functional_alleles`` returns, restricted to one segment type.
+    ``germlines`` maps allele name -> ungapped nucleotide sequence for ONE segment type, i.e.
+    exactly what :func:`arda.germline.segment_germlines` returns.
     """
 
     #: A span shorter than this is not evidence of anything — nearly every allele of a family
@@ -94,6 +94,31 @@ class TieResolver:
         # exactly as it was.
         return () if len(names) > self._max_ties else names
 
+    def candidates(self, call: str, gstart, gend) -> tuple[str, ...] | None:
+        """Every germline the aligned span cannot rule out, or ``None`` when there is no answer.
+
+        **Never: ``None`` is not ``()``, and the difference is the whole point of this method.**
+        :meth:`expand` collapses "the span was below ``MIN_SPAN``" / "the allele is not in this
+        germline set" / "the tie list ran away past ``max_ties``" into the same returned string as
+        "this span is genuinely unique to one allele" -- both leave the call untouched. That is
+        exactly right for *widening* a call and wrong for *restricting* one: a restriction must not
+        read a refusal to answer as a contradiction. So the refusals return ``None`` and a real
+        answer returns a tuple, and the caller decides.
+
+        Coordinates are the AIRR 1-based closed ``*_germline_start`` / ``*_germline_end``.
+        """
+        if not call:
+            return None
+        try:
+            s, e = int(gstart), int(gend)
+        except (TypeError, ValueError):
+            return None
+        if s <= 0 or e < s:
+            return None
+        first = call.split(",")[0].strip()
+        names = self._expand(first, s - 1, e)          # AIRR is 1-based closed
+        return names or None
+
     def expand(self, call: str, gstart, gend) -> str:
         """``call`` widened to every indistinguishable germline, or ``call`` unchanged.
 
@@ -103,17 +128,8 @@ class TieResolver:
         coordinates return the call untouched, because a tie list computed over a span that is not
         known is a guess.
         """
-        if not call:
-            return call
-        try:
-            s, e = int(gstart), int(gend)
-        except (TypeError, ValueError):
-            return call
-        if s <= 0 or e < s:
-            return call
-        first = call.split(",")[0].strip()
-        names = self._expand(first, s - 1, e)          # AIRR is 1-based closed
-        if len(names) <= 1:
+        names = self.candidates(call, gstart, gend)
+        if names is None or len(names) <= 1:
             return call
         existing = [x.strip() for x in call.split(",") if x.strip()]
         merged = existing + [n for n in names if n not in existing]
@@ -199,11 +215,9 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
     """
     import polars as pl
 
-    from ..refbuild import imgt
-    from ..refbuild.loci import IMGT_SPECIES_DIR, loci_for
+    from ..germline import segment_germlines
     from .airr_out import read_airr
 
-    species_dir = IMGT_SPECIES_DIR[organism]
     df = read_airr(path)          # one AIRR reader, one dialect (see its docstring)
     report = {"rows": df.height, "expanded": {}, "reranked": {}}
 
@@ -211,16 +225,14 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
         call_col, gs, ge = f"{seg}_call", f"{seg}_germline_start", f"{seg}_germline_end"
         if call_col not in df.columns or gs not in df.columns:
             continue
-        germ: dict[str, str] = {}
-        for locus in loci_for():
-            stem = getattr(locus, seg, None)
-            if not stem:
-                continue
-            try:
-                germ.update(imgt.load_functional_alleles(species_dir, locus.group, stem))
-            except OSError:                        # a locus whose germline files are absent
-                continue
-        if not germ:
+        # Never: the germlines come from the COMMITTED reference, not from the IMGT source tree.
+        # Reading `refbuild.imgt.load_functional_alleles` here meant `arda resolve-ties` raised on
+        # every plain `pip install` (the source tree is `arda build-db`'s input and ships with
+        # neither wheel nor reference tarball), AND sliced scaffold-space coordinates out of
+        # raw-space sequences, AND offered alleles the reference cannot call. See `arda.germline`.
+        try:
+            germ = segment_germlines(organism, seg)
+        except (FileNotFoundError, ValueError) as exc:
             # Never: Raise, never degrade. Without germlines every call is left exactly as it was, so
             # the output is byte-identical to the input and the report says `expanded: 0` -- which
             # is indistinguishable from a library that genuinely had no ties. This is the same
@@ -228,9 +240,8 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
             # red CI test: the reference is not built there, so `resolve-ties` silently did
             # nothing and only the test's own assertion noticed.
             raise ValueError(
-                f"resolve-ties needs the IMGT germline FASTAs for {seg}_call under "
-                f"{species_dir}, and none could be read. Build the reference first "
-                "(`arda build-db`), or pass an organism whose germlines are installed.")
+                f"resolve-ties needs the {seg.upper()} germlines for {organism!r}, and they "
+                f"could not be read: {exc}") from exc
         res = TieResolver(germ)
         calls = df[call_col].to_list()
         starts, ends = df[gs].to_list(), df[ge].to_list()

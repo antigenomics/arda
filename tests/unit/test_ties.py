@@ -122,18 +122,21 @@ def test_scores_must_match_the_calls():
 
 # --- end to end ---------------------------------------------------------------------------------
 
-def _has_human_germlines() -> bool:
-    from arda.refbuild import imgt
-    from arda.refbuild.loci import IMGT_SPECIES_DIR, loci_for
-    d = IMGT_SPECIES_DIR["human"]
-    for locus in loci_for():
-        if getattr(locus, "v", None):
-            try:
-                if imgt.load_functional_alleles(d, locus.group, locus.v):
-                    return True
-            except OSError:
-                continue
-    return False
+def _reference_available() -> bool:
+    """The COMMITTED reference, not the IMGT source tree.
+
+    ⚠ This gate used to ask ``refbuild.imgt.load_functional_alleles`` whether the IMGT *source*
+    directory was present -- which ``arda build-db`` downloads and neither CI nor a pip install
+    has. So every test below it skipped in CI, silently, which is how ``resolve_airr`` shipped
+    reading a germline source that did not exist on any plain install. ``markup.tsv`` and
+    ``alleles.fasta`` are committed, so gating on them means these run everywhere.
+    """
+    from arda.paths import vdj_dir
+    try:
+        base = vdj_dir("human")
+    except Exception:                              # no database at all
+        return False
+    return (base / "markup.tsv").exists() and (base / "alleles.fasta").exists()
 
 
 def test_resolve_airr_raises_when_the_germlines_are_absent(tmp_path, monkeypatch):
@@ -144,8 +147,8 @@ def test_resolve_airr_raises_when_the_germlines_are_absent(tmp_path, monkeypatch
     had no ties. That is the failure mode this project has shipped before, and here it kept a CI
     test red: the reference is not built in CI, so ``resolve-ties`` silently did nothing.
     """
+    from arda import germline as germline_mod
     from arda.annotate.ties import resolve_airr as _resolve
-    from arda.refbuild import imgt as imgt_mod
 
     src = tmp_path / "in.tsv"
     pl.DataFrame({
@@ -154,12 +157,43 @@ def test_resolve_airr_raises_when_the_germlines_are_absent(tmp_path, monkeypatch
     }).write_csv(src, separator="\t", quote_style="never")
 
     def _none(*a, **k):
-        raise OSError("no germlines here")
+        raise FileNotFoundError("no reference here")
 
-    # `resolve_airr` imports `imgt` locally, so patch it at the source module.
-    monkeypatch.setattr(imgt_mod, "load_functional_alleles", _none)
+    # `resolve_airr` imports the helper locally, so patch it at the source module.
+    monkeypatch.setattr(germline_mod, "segment_germlines", _none)
     with pytest.raises(ValueError, match="germline"):
         _resolve(src, tmp_path / "out.tsv", organism="human", segments=("v",))
+
+
+@pytest.mark.skipif(not _reference_available(), reason="no built reference")
+def test_resolve_airr_does_not_touch_the_imgt_source_tree(tmp_path, monkeypatch):
+    """Never: the germlines come from the COMMITTED reference, never from ``data/imgt``.
+
+    ``resolve_airr`` used to read ``refbuild.imgt.load_functional_alleles``, whose input is the
+    IMGT source directory that ``arda build-db`` downloads. Neither the wheel nor the reference
+    tarball carries it, so ``arda resolve-ties`` **raised on every plain pip install** -- the same
+    shape as the ``segments.fasta`` deploy trap, and invisible in a source checkout because one is
+    sitting right there.
+
+    So: break the IMGT path on purpose and require the command to work anyway.
+    """
+    from arda.annotate.ties import resolve_airr as _resolve
+    from arda.refbuild import imgt as imgt_mod
+
+    def _boom(*a, **k):
+        raise AssertionError("resolve_airr must not read the IMGT source tree")
+
+    monkeypatch.setattr(imgt_mod, "load_functional_alleles", _boom)
+    monkeypatch.setattr(imgt_mod, "ungap_gene", _boom)
+
+    src = tmp_path / "in.tsv"
+    pl.DataFrame({
+        "sequence_id": ["r1"], "v_call": ["IGLV2-23*01"],
+        "v_germline_start": ["1"], "v_germline_end": ["70"],
+    }).write_csv(src, separator="\t", quote_style="never")
+
+    report = _resolve(src, tmp_path / "out.tsv", organism="human", segments=("v",))
+    assert report["rows"] == 1
 
 
 def test_expansion_and_ranking_end_to_end_without_the_reference():
@@ -192,8 +226,7 @@ def test_expansion_and_ranking_end_to_end_without_the_reference():
     assert all(sorted(a.split(",")) == sorted(b.split(",")) for a, b in zip(widened, ranked))
 
 
-@pytest.mark.skipif(not _has_human_germlines(),
-                    reason="human IMGT germlines not installed (CI does not build a reference)")
+@pytest.mark.skipif(not _reference_available(), reason="no committed reference")
 def test_resolve_airr_expands_then_ranks_against_the_real_reference(tmp_path):
     """The same claim against the SHIPPED germlines, skipped only when they are genuinely absent.
 
@@ -214,3 +247,38 @@ def test_resolve_airr_expands_then_ranks_against_the_real_reference(tmp_path):
     assert all("IGLV2-14" in r["v_call"] and "IGLV2-23" in r["v_call"] for r in got)
     assert all(r["v_call"].startswith("IGLV2-23") for r in got)
     assert rep["expanded"]["v"] == 3 and rep["reranked"]["v"] == 1
+
+
+# --- candidates(): the refusal a restriction has to be able to see ------------------------------
+
+def test_candidates_separates_a_refusal_from_a_unique_answer():
+    """Never: ``None`` is not ``()``.
+
+    ``expand`` returns the call unchanged for BOTH "the span was too short to say anything" and
+    "the span is unique to this allele". Widening a call may conflate them; restricting one may
+    not -- a genotype restriction that reads a refusal as a contradiction deletes the read's call.
+    """
+    r = _res()
+    assert r.candidates("GENEA*01", 1, 40) == ("GENEA*01",)      # a real, unique answer
+    assert r.candidates("GENEA*01", 1, 35) == ("GENEA*01", "GENEB*01")
+    assert r.candidates("GENEA*01", 1, 20) is None               # below MIN_SPAN
+    assert r.candidates("NOSUCH*01", 1, 40) is None              # not in this germline set
+    assert r.candidates("", 1, 40) is None
+    assert r.candidates("GENEA*01", None, 40) is None            # unusable coordinates
+
+
+def test_a_runaway_tie_list_is_a_refusal_not_an_empty_answer():
+    """Above ``max_ties`` there is no answer -- which is not the same as "compatible with nothing"."""
+    many = {f"G{i}*01": _A for i in range(40)}
+    assert TieResolver(many, max_ties=16).candidates("G0*01", 1, 35) is None
+
+
+def test_expand_is_unchanged_by_the_refactor():
+    """``expand`` is now a thin wrapper over ``candidates``; its contract must not have moved."""
+    r = _res()
+    assert r.expand("GENEA*01", 1, 35) == "GENEA*01,GENEB*01"
+    assert r.expand("GENEA*01", 1, 40) == "GENEA*01"
+    assert r.expand("GENEA*01", 1, 20) == "GENEA*01"
+    assert r.expand("GENEA*01,GENEZ*99", 1, 35) == "GENEA*01,GENEZ*99,GENEB*01"
+    for gs, ge in ((None, 35), ("", ""), (0, 35), (35, 1), ("x", "y")):
+        assert r.expand("GENEA*01", gs, ge) == "GENEA*01"
