@@ -37,7 +37,7 @@ from it, so it loads on demand.
 **Never: `conda run -n arda …` does NOT work on this Mac.** Use the binary directly:
 
 ```sh
-/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.26.0
+/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.27.0
 COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
@@ -57,7 +57,7 @@ binary.
 ## Build, test, lint, docs
 
 ```sh
-python -m pytest tests/unit tests/synthetic tests/realworld -q    # 1,120 tests, the CI gate
+python -m pytest tests/unit tests/synthetic tests/realworld -q    # 1,172 tests, the CI gate
 ruff check src/                                                    # PINNED to 0.15.9 in CI
 make -C docs html                                                  # -W --keep-going; zero warnings required
 env RUN_BENCHMARK=1 ARDA_MMSEQS=$(which mmseqs) python -m pytest tests/benchmark -q
@@ -85,7 +85,7 @@ one stays load-bearing.
 | `_markup` | `src/_markup/markup.cpp` (698 ln) | the hot path: `transfer_regions` / `project_region` (walk the CIGAR, project reference region coords onto the query), plus `format_rows` (AIRR TSV row formatting), `translate`, `reverse_complement`, `d_local_align` (the D caller — mmseqs is unreliable on 8–31 nt D), `segment_cigars`, `aln_identity`, `merge_alignment`, `common_prefix`/`common_suffix`. Carries its own `__version__` (0.5.0) | shipped, always on |
 | `_prefilter` | `src/_prefilter/prefilter.cpp` (284 ln) | exact k-mer screen: reject reads that cannot align **before** MMseqs2 sees them. `hits` / `mask` / `filter`, threaded | shipped, `--prefilter`, off by default |
 | `_segmap` | `src/_segmap/segmap.cpp` (504 ln) | structure-aware chained seed-and-extend: best V and best J per read with **no homology search**. `SegmentMapper.map` | shipped, `--fast-segments`, off by default |
-| `_denoise` | `src/_denoise/denoise.cpp` (216 ln) | the two string sweeps that are per-clonotype, not per-read: `mean_phred` / `frac_below` / `subs_to` behind `rnaseq.denoise`'s quality rescue, and `containing` behind `annotate.ties` (a tie is a substring test against the reference, not a second alignment) | shipped; `containing` needs `--tie-lists`, the quality path needs `--junction-quality` |
+| `_denoise` | `src/_denoise/denoise.cpp` (216 ln) | the two string sweeps that are per-clonotype, not per-read: `mean_phred` / `frac_below` / `subs_to` behind `rnaseq.denoise`'s quality rescue, and `containing` behind `annotate.ties` (a tie is a substring test against the reference, not a second alignment) | shipped; `containing` is reached by `arda resolve-ties` (there is no `--tie-lists` flag and never was), the quality path needs `--junction-quality` |
 
 **nanobind pin.** `pyproject.toml` requires `nanobind>=2.5,<3` (2.26.0 moved off
 `pybind11>=3.0.2,<4`). Keep the upper bound whatever the library: pybind11 changed
@@ -347,4 +347,23 @@ still exposes them individually for A/B work.
   adopting a fitted table as the shipped `database/.../d_prior.tsv`, which is what would let
   `arda.dpost` stop marginalising OLGA's numbers. `arda.hmm` gates nothing; `ROADMAP.md` records
   the two measured negatives for why, so do not re-run them.
+- ✅ **2.27.0 — personalized germline shipped, and the open item is DATA, not the rule.**
+  `arda genotype` infers which V alleles a donor carries (likelihood ratio between diploid
+  genotypes; the junction is de facto a UMI so a clonotype is the unit of observation and
+  within-junction disagreement is the error estimator) and `arda resolve-ties --genotype` applies
+  one. Never: it re-assigns, it never re-aligns and never rebuilds a reference — scaffold ids are
+  positional, `build-db` needs IgBLAST, and the mmseqs freshness contract records no allele-set
+  identity. Invariants and measurements: `skills/arda/references/genotype.md`, `docs/genotype.rst`.
+  **Open: a library with the resolution.** At 151 nt TRAV/TRBV mostly cannot be separated (TRAV
+  needs a median of 175 nt from the 3' end, TRBV 150), so the honest output is mostly refusals —
+  20 of 44 TRA genes called, ONE heterozygous, and a restriction that narrows 281 of 47,743 rows.
+  Judging the rule needs full-length, 5'RACE or `arda cells` contigs (N50 536 nt) against a known
+  genotype. Nothing about the rule can be settled on a library that cannot separate the alleles.
+- ⚠ **Benchmark numbers in README / docs / the NF module are round 26 and full-pipeline.** Three
+  tools to a clonotype table, same job, 3 reps (`~/vcs/projects/2026-arda-benchmark/results/round26`).
+  Never: re-quoting a stage-vs-stage ratio there is a retraction waiting to happen — the 2.11.1
+  tables those replaced were arda's AIRR-emitting stage against MiXCR's non-AIRR-emitting one.
+  ⛔ **And print per-tool COVERAGE before any accuracy rate**: a per-tool inner join gives each
+  tool its own denominator, and MiXCR answers 46,503 of the 48,033 amplicon truth reads against
+  arda's 48,030, so the joined table flatters whichever tool emits fewer rows.
 - **Next feature work** is in `ROADMAP.md`.

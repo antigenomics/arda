@@ -92,9 +92,11 @@ Never: A metric with **no input is omitted, never emitted as 0**: a run without 
 has no `junction_quality_mean` row rather than a zero that reads like a terrible library.
 Never: Truncation, a stop codon and an out-of-frame junction are counted **separately**; `_COMPLETE`
 folds them together and a QC table must not.
-⚠ `allele_candidate` is a **shortlist, not a genotype call** — arda does not genotype. A novel
-allele, SHM and a miscall are the same string in the mutation list; recurrence within the allele
-(`--allele-min-frac`) and Phred are what separate them, and both are reported per variant.
+⚠ `allele_candidate` is a **shortlist, not a genotype call.** A novel allele, SHM and a miscall are
+the same string in the mutation list; recurrence within the allele (`--allele-min-frac`) and Phred
+are what separate them, and both are reported per variant. Never: `arda genotype` is a DIFFERENT
+object and does not read this — it is a likelihood ratio over clonotypes restricted to alleles the
+reference already catalogues, and it finds no novel alleles by design.
 Never: Chimera / non-functional / stop-codon counts are **flags, never filters**.
 
 ## A cohort: `arda qc batch` and `arda qc report`

@@ -3,7 +3,156 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.27.0
+
+### Added: personalized germline — `arda genotype`, `arda resolve-ties --genotype`
+
+A reference catalogues every allele anyone carries; no donor carries all of them and none carries
+more than two per gene, so a call naming a third is wrong before any sequence is looked at. TIgGER
+measured 11.2 % -> 1.5 % ambiguous V assignments from restricting calls to an inferred genotype on
+full-length BCR.
+
+`resolve-ties --genotype` adds **`v_call_genotyped`** and leaves `v_call` byte-identical. Never: it
+re-assigns, it never re-aligns and never rebuilds a reference -- scaffold ids are positional so
+changing the allele set renumbers every scaffold in the locus, `build-db` needs IgBLAST and IMGT
+network access a pip install does not have, and the mmseqs freshness contract records no allele-set
+identity, so a donor-specific FASTA beside the shared one would silently invalidate the index for
+every concurrent process. Given the span a read already aligned over, the restriction is a set
+intersection. Any source works -- an OGRDB set, a MiXCR-inferred library, a one-column TSV of
+allele names -- and an allele the reference cannot call **raises**.
+
+Never: an allele survives unless **its own gene** was genotyped and did not name it. Tie lists
+routinely span genes, so a gene-blind test empties every read whose tie list merely brushes a
+genotyped gene: measured on the 453-read fixture with a one-gene genotype, 79 rows came back empty
+and every one was a read of some other gene.
+
+Never: a row that never had a `v_call` is counted in `no_call`, not `contradicted` -- 74 of that
+fixture's 453 rows are J-only, and scoring them as contradictions made a correct restriction look
+like it had rejected a sixth of the library.
+
+`arda genotype` infers the set, and the call is a **likelihood ratio between diploid genotypes**,
+not a coverage rule.
+
+**The junction is de facto a UMI.** V(D)J junctional diversity makes a nucleotide junction
+essentially unique to one rearrangement, so grouping reads by `(locus, gene, J gene, junction)`
+groups them by molecule. Two things follow and the inference rests on both. The **clonotype, not
+the read, is the unit of observation** -- one junction is one independent draw from the donor's two
+chromosomes however many reads carry it, so read depth is reported beside the clonotype count and
+never substituted for it. And **disagreement within a junction is error, not allele** -- every read
+of one rearrangement carries the same V allele by construction, so a read naming another is
+hypermutation or sequencing error, which is where the per-read miscall rate is measured from
+instead of being a constant somebody picked (5.25e-04 on the amplicon below).
+
+⚠ Never: that error rate is measured over ALL reads, not the germline-exact subset the assignment
+uses. Those were selected for carrying no mismatch, so they never disagree and the estimate
+collapses silently onto its own floor -- 0 discordant reads of 77,345 on a real library, i.e. no
+estimate at all dressed up as a small one.
+
+Every single allele and every pair is scored by its multinomial likelihood under that rate;
+homozygous and heterozygous are the same formula at genotype size 1 and 2, and a gene is called
+only when the winner beats the runner-up by `--min-log10-bf` (default 1.0). Ambiguous clonotypes
+still constrain the answer: discarding them is not conservative but wrong -- if a donor is
+`*01/*02` and only `*02` is separable at the read length, every unambiguous observation is `*02`,
+the likelihood says homozygous, and the restriction then empties every `*01` read, reproducibly.
+
+⚠ **The first version of this was TIgGER's frequency rule and it had to be replaced.** "The fewest
+alleles explaining 7/8 of the calls" has no error model, so it cannot tell overwhelming evidence
+from none: on a real TRB amplicon it called `TRBV11-2` off **754 of 757** clonotypes that singled
+the allele out and `TRBV20-1` off **1 of 2,544**, reported both as `explained = 1.0000, ok`, and
+returned 43 of 53 genes with not one heterozygous. A ratio of counts is not a confidence.
+
+⚠ **Allele-level genotyping is a read-length feature, and most libraries do not have it.** Measured
+over the 801 committed human V germlines, the shortest 3'-anchored span separating a gene's alleles
+is a median of **150 nt for TRBV** (175 TRAV, 230 IGHV); only **16 of 44** multi-allele TRBV genes
+separate within 100 nt. End to end on `SRR5233641` (human TRB amplicon, 151 nt paired, 99,839
+mapped reads -> **33,440 clonotypes / 77,345 reads**): reads cover a median of **72 nt** of V
+germline, **56 nt** after clipping at the Cys104 anchor, and **not one** reaches 150. So 33.1 % of
+clonotypes can be assigned an allele and **17 of 53 genes are called** -- 11 `single_allele`
+(one catalogued allele, carried without inference) and **6 genuinely inferred**, at log10 Bayes
+factors of 223 (`TRBV11-2`), 251 (`TRBV5-6`) and 11.7 (`TRBV5-8`). The other 36 are refused,
+including `TRBV10-3` with 1,037 clonotypes none of which separate its alleles. The refusals are the
+point; a full-length, 5'RACE or `arda cells` library has the resolution this one does not.
+
+### Fixed: the restriction report counted reorderings as narrowings
+
+`TieResolver.candidates()` returns its tie list sorted by name while `v_call` carries the aligner's
+order, so `restrict` emitted `TRAV20*01,TRAV20*02` where the input said `TRAV20*02,TRAV20*01` --
+the same two alleles -- and the report's string test scored every one of those as a narrowing.
+Measured on a 100,000-read TRA amplicon: **20,587 reported, 281 real, 20,306 pure reorderings.**
+
+Two fixes. Surviving alleles now keep `v_call`'s own order, so a restriction that removes nothing
+returns a **byte-identical** string; and `narrowed` counts rows that lost an **allele**, not rows
+whose string changed, with a fourth bucket (`recalled`) so narrowed + unchanged + contradicted +
+recalled partitions the assessed rows exactly. Never: a metric that reports something other than
+what its name says is the defect class this repo keeps paying for.
+
+Also: `infer_genotype` now **raises** on an unrecognised `--scope` instead of falling through to
+`full`. The two differ only in where each read's germline span is clipped, so a typo would widen
+every span into the junction, narrow every tie set, and return calls more confident than the data
+supports -- with no error anywhere.
+
+### Changed: the benchmark tables are full-pipeline, three-way, and on one denominator
+
+`README.md`, `docs/usage.rst` and the Nextflow module's README carried stage-vs-stage numbers from
+**2.11.1** -- arda's AIRR-emitting stage against MiXCR's non-AIRR-emitting one. Replaced with
+same-job, end-to-end-to-a-clonotype-table runs of **arda 2.27.0 vs MiXCR 4.7.0 vs TRUST4**, three
+reps, medians, each tool at its best preset (benchmark repo, round 26).
+
+* **TRA amplicon, 100 k reads** -- MiXCR is **1.84x faster on wall** in its own regime; arda gets
+  there on **1.41x less CPU** and **3.16x less RSS** and returns the most clonotypes (19,841 vs
+  19,697 vs 18,559) over the most reads (43,503 / 42,712 / 37,688). TRUST4 is 5.1x slower than
+  arda -- the first same-job end-to-end amplicon wall against TRUST4 in this project.
+* **Bulk RNA-seq, 660 k pairs** -- arda returns **+27.8 % clonotypes and +97.9 % reads assigned**
+  against MiXCR and +14.0 % / +35.8 % against TRUST4, at 1.38x MiXCR's wall and 2.76x less RSS.
+  ⚠ TRUST4 is genuinely **1.61x faster on wall at 4.0x less CPU** here, reaching 87.7 % of arda's
+  clonotypes and 73.6 % of its assigned reads.
+
+⛔ **The accuracy arm now prints coverage before rates.** A per-tool inner join gives each tool its
+own denominator: of 48,033 IgBLAST truth reads at `v_score >= 70`, arda emits a row for **48,030**
+and MiXCR for **46,503**, so a joined comparison silently drops 1,530 reads MiXCR never answered.
+Over all truth reads arda leads `v_gene` recall **.9867 vs .9660** and precision **.9996 vs .9977**;
+on the common subset MiXCR leads recall .9977 vs .9869 while arda still leads precision .9997 vs
+.9977. Both denominators ship.
+
+✅ **No regression, measured rather than assumed.** arda 2.18.0 from PyPI against this release in
+one job, legs alternating, 3 reps, same committed reference (`database/` is unchanged since
+`v2.18.0`) and same mmseqs: amplicon **13.94 -> 13.66 s**, bulk **21.45 -> 21.74 s** (1.4 %, inside
+the rep spread and accounted for by the per-run QC stage 2.20.0 added), RSS identical. Clonotype
+output is **byte-identical** on both regimes by call digest, not by row count. And the published
+2.11.1 accuracy figures reproduce to every digit fifteen releases on -- `v_gene` recall .9867,
+precision .9996, `j_gene` .9892 / .9953, junction precision among emitted **.99919**.
+
+### Fixed: `arda resolve-ties` raised on every plain `pip install`
+
+Its germlines came from the IMGT **source** tree, which is `arda build-db`'s input and ships with
+neither the wheel nor the reference tarball -- the same shape as the `segments.fasta` deploy trap,
+and invisible in a source checkout because one is sitting right there. The new
+`arda.germline.segment_germlines` derives them from the committed `markup.tsv` + `alleles.fasta`
+instead, which fixes two more things at once: the coordinate spaces now agree (scaffolds are
+trimmed to coding frame, so every `v_germline_start`/`_end` arda emits was 1-2 nt off against the
+raw IMGT sequence for 10 of 884 human V alleles), and tie lists can no longer offer an allele the
+reference cannot call (884 functional in IMGT, 801 reach a scaffold).
+
+Never: `markup.tsv`'s `v_call` is **not always one allele**. Scaffolds are deduplicated by
+assembled sequence, so 23 human V entries are comma-joined groups hiding 49 alleles (3 more for J).
+Keyed on the group string they are invisible to every consumer -- `TieResolver.expand` takes
+`call.split(",")[0]`, misses the group key, and returns the call untouched, a tie list that
+silently never fires. Split into members: 801 V, 132 J.
+
+Never: `v_sequence_end` is IgBLAST's markup of ONE assembled scaffold, not a property of the
+allele, and it wobbles. Human, rat, rabbit and rhesus agree everywhere; mouse disagrees on 4 of 897
+V and 10 of 109 J alleles, always by 1-2 nt and always with a landslide majority (`TRAV16*02` is
+288 nt on 58 scaffolds and 290 nt on 1). Take the mode, ties broken by longer then by sequence --
+a total order, so two runs over one reference cannot disagree.
+
+`TieResolver.candidates()` is new: it returns `None` for "no answer possible" (span under
+`MIN_SPAN`, allele absent, tie list past `max_ties`) where `expand()` collapses that with
+"genuinely unique to one allele". Both leave a call unchanged, which is right for widening one and
+wrong for restricting it -- a restriction must not read a refusal as a contradiction.
+
+`test_ties.py`'s end-to-end gate asked the IMGT source whether to run, so it **skipped in CI** --
+which is how this shipped. It now gates on the committed reference and runs everywhere.
+
 
 ### Changed: pybind11 -> nanobind
 

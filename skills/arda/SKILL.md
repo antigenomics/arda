@@ -6,7 +6,8 @@ description: >-
   input, single sequences or whole FASTQ; for extracting a repertoire from bulk RNA-seq, amplicon
   or single-cell libraries; for marking up and repairing a bare (CDR3 amino acid, V, J) record
   that has no read behind it, as in VDJdb; for pulling germline FR/CDR subsequences per allele;
-  for run and batch quality control over one sample or a whole cohort; or for rebuilding the
+  for run and batch quality control over one sample or a whole cohort; for inferring which V
+  alleles a donor carries and restricting calls to a personalized germline; or for rebuilding the
   reference database from IMGT.
 ---
 
@@ -130,6 +131,9 @@ arda qc batch  -d out/ -o out/batch --samples sheet.tsv   # every sample's QC as
 arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-contained page
 arda scenarios -i clones.tsv -o d_prior.tsv   # EM over recombination scenarios -> a generative model
 
+arda genotype     -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB   # which V alleles this donor has
+arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv
+
 arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
 arda export-ref --kind segments --locus TRB --format fasta
 arda build-db    --organism all             # offline reference build (needs IgBLAST)
@@ -170,6 +174,9 @@ run report, `arda stats` and `arda qc`.
 split across several FASTQs, and the three cluster adapters.
 → **[references/bare-records.md](references/bare-records.md)** — `arda markup`, junction repair
 and the D posterior.
+→ **[references/genotype.md](references/genotype.md)** — `arda genotype` and
+`resolve-ties --genotype`: the personalized germline, why it never re-aligns, and why read length
+decides what it can say.
 → **[references/install-mmseqs.md](references/install-mmseqs.md)** — mmseqs env vars, the shipped
 indexes, version-mismatch handling.
 → **[references/reference-build.md](references/reference-build.md)** — the `arda.refbuild`

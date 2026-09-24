@@ -64,13 +64,39 @@ This is the short list, and each entry says what would make it *done* rather tha
    searches the three translated D frames as independent database entries, tripling `n`, when the
    prior over `insVD` already induces a prior over frame. Biggest item here by some margin.
 
-5. **Genotyping is currently refused on purpose — revisit or close it.** `stats.py` collects
-   `allele_candidate` (a recurrent high-quality V mutation carried by >= 50 % of an allele's reads,
-   >= 10 reads) and says in its own docstring that it is *"a shortlist to look at, never a call"*.
-   Restricting a sample's V reference to the alleles its donor actually carries is annotation, not
-   repertoire biology, so it sits on arda's side of the `vdjtools` line — and the evidence is
-   already being computed and discarded. But it crosses a stance the repo took deliberately.
-   **Author's call; do not cross it silently.**
+5. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
+   `arda resolve-ties --genotype` applies an allele set (`v_call_genotyped`, `v_call` untouched,
+   no re-alignment and no reference rebuild) and `arda genotype` infers one. `stats.py`'s
+   `allele_candidate` is untouched and stays *"a shortlist to look at, never a call"* — the
+   genotype is a separate, narrower object about the **reference**, never the repertoire.
+
+   The call is a **likelihood ratio between diploid genotypes**. The junction is de facto a UMI,
+   so a clonotype is one independent draw from the donor's two chromosomes and disagreement WITHIN
+   a junction is error rather than allele -- which is where the miscall rate is measured from.
+   Read and clonotype coverage are both reported. ⚠ The first version was TIgGER's frequency rule
+   and had to be replaced: with no error model it called `TRBV11-2` off **754 of 757** clonotypes
+   and `TRBV20-1` off **1 of 2,544**, reported both as `explained = 1.0000, ok`, and returned 43 of
+   53 genes with none heterozygous.
+
+   ⚠ **Open: read length is the binding constraint, not the rule.** Separating a TRBV gene's
+   alleles needs a median of 150 nt from the 3' end; a 151 nt TRB amplicon covers a median of
+   **72 nt** of V (56 after anchor-clipping, none reaching 150), so 33.1 % of clonotypes can be
+   assigned and **17 of 53** genes are called -- 6 of them genuinely inferred. On a TRA amplicon at
+   the same read length (`SRR5233635`, 21,710 clonotypes, error rate 5.53e-04) it is **20 of 44**,
+   and one of them is the first heterozygous call: `TRAV36/DV7` = `*01`/`*04`, 78 clonotypes
+   against 143, log10 BF **211**. Applying that genotype narrows **281 of 47,743** rows and
+   contradicts 75 -- you cannot restrict what you could not genotype, and 14 of the 20 called genes
+   have one catalogued allele. The whole inference is 1.53 s / 442 MB on 49,748 reads.
+   The honest next step is to run this on a library that HAS the resolution (full-length, 5'RACE,
+   or `arda cells` contigs at N50 536 nt) and measure against a known genotype; nothing about the
+   rule can be judged on a library that cannot separate the alleles in the first place.
+
+   Also open, and deliberately not in this cut: **novel-allele discovery** (needs the per-position
+   SHM model of item 4 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
+   does not supply), **J-gene genotyping** (J targets are 38–69 nt and the framework-scoped span
+   sits right on `TieResolver.MIN_SPAN`; measure before adding), and any **per-donor reference
+   rebuild** — scaffold ids are positional, `build-db` needs IgBLAST, and the mmseqs freshness
+   contract records no allele-set identity.
 
 
 - [ ] **Single-cell.** Staged plan in **`project/design-singlecell.md`**; that document is
