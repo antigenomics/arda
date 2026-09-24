@@ -261,13 +261,36 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
         says `T`, IgBLAST says `F`, and **both** report `stop_codon = F`. So not one of them
         would be changed by any productivity rule; all 8 are IgBLAST reporting
         `vj_in_frame = F` where arda reports `T`.
-  - [ ] **`vj_in_frame` on 8 fixture rows is the real open question**, and it is a domain call,
-        not a defect to patch. All three human cases are `TRAJ31*01`; the mouse ones span
-        TRAJ24/45/9 and TRBJ2-5/1-3. Both tools produce the SAME `junction_aa`, cleanly
-        translated, so arda's frame looks self-consistent -- but IgBLAST has a J-frame table
-        (`optional_file/<org>_gl.aux`) and disagrees. Do not "fix" arda to match without deciding
-        whose J frame is right; **ask before changing either.** Never: an unexplained agreement
-        is not evidence, and this is 0.22 % of rows either way.
+  - [ ] **`vj_in_frame`: 8 fixture rows, and NEITHER tool is uniformly right** (examined
+        2026-09-24, one read at a time). Of 3,601 rows where both tools were evaluable and
+        agreed on `junction_aa`, they disagree on 8 (0.22 %). Translating each read from Cys104
+        in the V frame and looking for the called J's own `templated_aa` splits them 5:3.
+
+        **arda right on 5.** The three human `TRAJ31*01` rows translate stop-free through the
+        canonical FR4 `FGDGTQLVVKP` and on into TRAC (`NIQNPDPAVYQLR...`) -- that is V and J in
+        frame by definition. Two mouse rows (`TRAJ24*02`, `TRAJ45*01`) end their junction on the
+        germline's own templated residues (`LGKLQF`, `ADRLTF`).
+
+        **arda wrong on 3**, all mouse, all different J genes: `X60894.1` (TRAJ9*01),
+        `JX277388.1` (TRBJ2-5*01), `JX277345.1` (TRBJ1-3*01). The germline's templated J
+        residues appear one or two frames away from the one arda used (`GYKLTF` at +1 where arda
+        reports `GLQTYF`; `QDTQYF` at +1 where arda reports `RHPVLF`; `GNTLYF` at +2 where arda
+        reports `EIRSIF`). These are out-of-frame rearrangements where arda anchored on an F that
+        is in frame with Cys104 but is NOT the germline [FW]118 codon -- exactly the failure
+        `CLAUDE.md` names: *a conserved-motif check is not an anchor*. IgBLAST reads the J frame
+        from `optional_file/<org>_gl.aux` and gets these right.
+
+        A fix means consulting the J germline's own frame (`partial_nt` in `cdr3_anchors.tsv`)
+        during anchor placement, which changes `junction`, `vj_in_frame` and `productive` on
+        out-of-frame reads. **Ask before doing it** -- out-of-frame is ~30 % of a real
+        repertoire, so the blast radius on live data is nothing like 0.22 %.
+
+    - [ ] **Never: do not measure this by comparing the junction's tail to `templated_aa`.**
+          Tried, and it is confounded by SHM, not by anchoring: it fires on 51.8 % of IGL,
+          51.4 % of IGK and 39.8 % of IGH (mean `v_identity` .955-.968) against 3.4 % of TRB and
+          7.1 % of TRA (mean `v_identity` .992). It measures hypermutation reaching the J, which
+          is biology. The 8 rows above were found by tool disagreement and confirmed one at a
+          time; there is no cheap global detector yet.
 
 - [ ] **Performance.** Optional per-chunk process-pool for inputs where mmseqs is
       not the bottleneck (mostly-non-receptor bulk RNA-seq); mmseqs index reuse.
