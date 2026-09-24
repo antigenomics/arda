@@ -928,6 +928,15 @@ def transfer_hit(
                         rec["junction_completed_nt"] = n_done
             vclean = all("*" not in rec.get(f"{r}_aa", "") for r in _VSIDE)
             jclean = "*" not in rec.get("junction_aa", "") and "_" not in rec.get("junction_aa", "")
+            # FR4 is inside the V(D)J alignment and was scanned by neither of the two above: the
+            # junction ends AT [FW]118, which is FR4's first residue, so residues 2..n of the J
+            # were never looked at and a read whose J carried a stop came out productive. AIRR
+            # scopes both `productive` and `stop_codon` to the whole rearrangement, so a stop
+            # there is a stop. Measured before changing it: on the committed IgBLAST fixtures
+            # every evaluable row carries an FR4 (mean 10.1 aa human, 8.6 mouse) and NONE of
+            # 4,217 contains one -- so this closed a real hole and left all 4,843 annotated rows
+            # byte-identical. `tests/synthetic/test_fr4_stop.py` is what exercises it.
+            f4clean = "*" not in rec.get("fwr4_aa", "")
             # `phase is None` means the read never reached BOTH cdr3 and fwr4, so no junction was
             # observed -- and productivity is a property of the V-J junction. Such a read is
             # `unevaluable`, not `non-productive`, exactly as a V-less read is (see the `else`
@@ -940,12 +949,13 @@ def transfer_hit(
                 rec["productive"] = ""
                 rec["vj_in_frame"] = ""
             else:
-                rec["productive"] = "T" if (phase == 0 and vclean and jclean) else "F"
+                rec["productive"] = "T" if (phase == 0 and vclean and jclean
+                                            and f4clean) else "F"
                 rec["vj_in_frame"] = "T" if phase == 0 else "F"
             # `stop_codon` is NOT gated the same way: a stop in the V-side regions is directly
             # observed whether or not the junction was reached, so it stays evaluable here.
             j_stop = "*" in rec.get("junction_aa", "")
-            rec["stop_codon"] = "F" if (vclean and not j_stop) else "T"
+            rec["stop_codon"] = "F" if (vclean and not j_stop and f4clean) else "T"
         # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call,
