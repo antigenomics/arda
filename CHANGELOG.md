@@ -119,6 +119,19 @@ per sample.
 
 Design record in `project/design-qc.md`.
 
+### seqtree floored at 1.0 and capped below 2
+
+The pin was `>=0.4`, four minor versions stale — it predated `seqtree.__version__` itself. A fresh
+`pip install` was already resolving 1.0.0, so nothing was being missed in practice; what was
+missing was the guarantee. arda uses only `Index.build` and `SearchParams`, so none of 1.0.0's
+`TextIndex` work touches it and the pybind11 → nanobind move is documented as externally
+unchanged. Verified by running the full suite against 1.0.0 (1,073 passed) before moving the
+floor.
+
+The `<2` cap exists *because* 1.0.0 is where seqtree adopted semantic versioning: a project that
+promises a breaking change will carry a major bump is one whose major bump should be read before
+it lands, not resolved into a wheel build unattended.
+
 ### Docs: the modes first, multi-file samples demoted
 
 The navbar and the landing page led with "Samples split across files", a minor convenience, while
