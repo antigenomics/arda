@@ -189,23 +189,28 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
       (`arda.cluster`). Split/merge/script are unit-tested; the cluster run is
       pending a live SLURM test.
 
-- [ ] **Nucleotide junction re-mapping → recombination-scenario counts.** `arda markup`
-      and `arda.cdr3fix` currently take an amino-acid junction (the VDJdb case); add the
-      `cdr3nt` path. With nucleotides the germline boundaries are exact rather than
-      codon-quantised, so a `(cdr3nt, V, J)` record yields the *full recombination
-      scenario*: `delV`, `insVD`, `D` + `delDl`/`delDr`, `insDJ`, `delJ`. Half of this
-      already exists — `annotate.dmap.map_d_junction` derives `v_sequence_end` /
-      `j_sequence_start` in nt (longest common prefix/suffix vs the shipped
-      `cdr3_anchors.tsv` germlines) and calls D with an E-value gate.
+- [x] **Nucleotide junction re-mapping → recombination-scenario counts.** Shipped 2026-09-24 as
+      `arda scenarios` (`src/arda/scenarios.py`, `project/design-scenarios.md`, `docs/scenarios.rst`).
+      EM over the scenario set, writing the same long `locus/kind/key/value` table `d_prior.tsv`
+      uses — a drop-in, so `arda.dpost` can stop marginalising OLGA's numbers.
+      Never: the counts are EXPECTED counts summed over scenarios, not one MAP reading — 4,346
+      tuples reproduce one real human TRB junction exactly, and counting one of them biases every
+      distribution toward less trimming and shorter inserts.
+      Never: an insertion costs its own SEQUENCE (`0.25^len`), not just its length. Without it EM
+      is degenerate — measured, `insVD` mass walked to 10–11 nt on 503 real TRB junctions with the
+      log-likelihood rising the whole way. With it, `insVD` peaks at 4 nt and `dlen` for
+      `TRBD1*01` at 4–5, reproducing `dpost`'s independently measured median of 5.
+      Open: **adopting** an estimate as the shipped `d_prior.tsv` is a measurement and a release
+      decision, deliberately not a side effect of this.
 
-      The point is the sufficient statistics: counting scenarios over a repertoire gives
-      exactly the E-step tallies needed to re-estimate a generative model by EM in the
-      style of Murugan et al. (PNAS 2012) / IGoR — `P(V)`, `P(D,J)`, `P(delV|V)`,
-      `P(delDl,delDr|D)`, `P(delJ|J)`, `P(insVD)`, `P(insDJ)` and the insertion Markov
-      matrices. arda would then generate its own priors instead of borrowing OLGA's
-      (see `arda.dpost`, whose `d_prior.tsv` tables are currently OLGA/vdjrearm-derived).
-      Note a scenario is not unique — several `(delV, insVD, ...)` explain one junction —
-      so the E-step must sum over scenarios, not take the MAP.
+  - [ ] **What is still open: the `cdr3nt` path through `arda markup` / `arda.cdr3fix`.**
+        `arda scenarios` reads nucleotide junctions and `annotate.dmap.map_d_junction` maps a D
+        into one, so the *model* half of this entry is done. What is not is bare-record REPAIR on
+        nucleotides: `cdr3fix` is 715 lines of amino-acid alignment (`templated_aa`, the
+        anchor-distance rule, the `Failed*` ladder) and `arda markup` exposes only that. A VDJdb
+        record with `cdr3nt` still has to be translated to be repaired, which throws away exactly
+        the resolution — germline boundaries exact rather than codon-quantised — that made the
+        nucleotide path worth having. Separable, and nothing in the pipeline is blocked on it.
 
 - [ ] **`arda.hmm` — a hidden semi-Markov model of V→N1→D→N2→J.** The E-step above *is*
       a forward-backward pass, so this is the same project, not a second one. Semi-Markov

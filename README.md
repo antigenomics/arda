@@ -134,6 +134,16 @@ value tracks SHM load, so it stays a per-library call and never rides the preset
 `arda shm -i in.airr.tsv -o out.airr.tsv` does the SHM recount standalone, needing **no reference
 and no re-map** — the germline anchors are already in the file.
 
+`arda scenarios -i clones.tsv -o d_prior.tsv` estimates the **generative model of V(D)J
+recombination** from nucleotide junctions — trimming and insertion distributions, P(D|J) — by EM
+over recombination scenarios. `arda.dpost` currently marginalises a model borrowed from OLGA;
+this is how arda estimates its own, and the output is the same long table, drop-in.
+
+Never: a scenario is **not identifiable from sequence** — 4,346 tuples reproduce one real human
+TRB junction exactly — so the counts are expected counts summed over scenarios, never one MAP
+reading. And an insertion costs its own sequence (`0.25^len`), not just its length: without that,
+EM explains the whole junction as insertion. [Detail](https://docs.isalgo.dev/arda/scenarios.html).
+
 ### Accuracy regimes: which knob for which question
 
 Separate from the speed flags, and set from **what you are going to do with the answer**. All are
