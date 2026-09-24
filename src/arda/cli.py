@@ -778,6 +778,76 @@ def rnaseq_assemble(
     typer.echo(str(output))
 
 
+@app.command("scenarios")
+def scenarios_cmd(
+    input: Path = typer.Option(
+        ..., "--input", "-i",
+        help="Clonotype TSV (`correct`) or AIRR TSV (`map`). Needs `junction`, `v_call`, "
+             "`j_call`; `locus` and `duplicate_count` are used when present."),
+    output: Path = typer.Option(
+        ..., "--output", "-o",
+        help="Prior TSV, the same long `locus/kind/key/value` shape as "
+             "`database/vdj/<org>/d_prior.tsv` -- so it is a drop-in for the shipped file."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    iterations: int = typer.Option(
+        5, "--iterations", help="EM iterations. The log-likelihood is echoed per pass; 4-5 is "
+                                "where it flattens on real TRB."),
+    weight: str = typer.Option(
+        "abundance", "--weight",
+        help="`abundance` (default) weights each record by `duplicate_count`, `rows` by 1. "
+             "Never defaulted silently: a clonotype row is a clonotype, not an observation of "
+             "the recombination process -- but a clonal expansion is ONE recombination event "
+             "seen many times, so neither is right for every question. The choice is written "
+             "into the output header."),
+    max_del: int = typer.Option(
+        24, "--max-del", help="Largest germline deletion considered, per side."),
+) -> None:
+    """Estimate a recombination model from nucleotide junctions (EM over scenarios).
+
+    `arda.dpost` places a D from an amino-acid junction by marginalising a generative model whose
+    every number is borrowed from OLGA. This is how arda estimates its own, from its own output.
+
+    Never: a scenario is NOT identifiable from sequence -- several `(delV, insVD, delDl, delDr,
+    insDJ, delJ)` reproduce one junction exactly. The counts here are EXPECTED counts summed over
+    scenarios, never the counts of one MAP reading, which would bias every distribution toward
+    less trimming and shorter inserts. See `project/design-scenarios.md`.
+    """
+    import polars as pl
+
+    from .scenarios import PRIOR_COLUMNS, estimate
+
+    if weight not in ("abundance", "rows"):
+        raise typer.BadParameter("--weight must be `abundance` or `rows`")
+    df = pl.read_csv(input, separator="\t", quote_char=None, infer_schema_length=0)
+    missing = [c for c in ("junction", "v_call", "j_call") if c not in df.columns]
+    if missing:
+        raise typer.BadParameter(f"{input} has no {', '.join(missing)} column")
+    has_count = weight == "abundance" and "duplicate_count" in df.columns
+    records = []
+    for row in df.iter_rows(named=True):
+        j = (row.get("junction") or "").strip()
+        if not j or not row.get("v_call") or not row.get("j_call"):
+            continue
+        w = float(row.get("duplicate_count") or 1) if has_count else 1.0
+        records.append((j, row["v_call"], row["j_call"], w))
+    if not records:
+        raise typer.BadParameter(f"{input} has no usable (junction, v_call, j_call) rows")
+
+    stats = estimate(records, organism=organism, iterations=iterations, max_del=max_del,
+                     echo=lambda m: log.info(m))
+    rows = stats.rows()
+    with open(output, "w") as fh:
+        fh.write(f"# arda scenarios: organism={organism} records={stats.records} "
+                 f"skipped={stats.skipped} iterations={iterations} "
+                 f"weight={'duplicate_count' if has_count else 'rows'}\n")
+        fh.write("\t".join(PRIOR_COLUMNS) + "\n")
+        for locus, kind, key, value in rows:
+            fh.write(f"{locus}\t{kind}\t{key}\t{value:.8g}\n")
+    log.info("scenarios: %d records (%d skipped) -> %d rows over %d loci",
+             stats.records, stats.skipped, len(rows), len({r[0] for r in rows}))
+    typer.echo(str(output))
+
+
 @app.command("stats")
 def stats_cmd(
     output: Path = typer.Option(..., "--output", "-o", help="QC TSV ('-' for stdout)."),

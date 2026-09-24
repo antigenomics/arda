@@ -5,6 +5,38 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Added: `arda scenarios` — a generative recombination model, estimated from data
+
+`arda.dpost` places a D from an amino-acid junction by marginalising a generative model whose
+every number is borrowed from OLGA/vdjrearm and shipped as `database/vdj/<org>/d_prior.tsv`. This
+is how arda estimates its own, from its own output:
+
+```bash
+arda scenarios -i sample.clones.tsv -o my_prior.tsv --organism human
+```
+
+Same long `locus / kind / key / value` table, same key grammar, so it is a **drop-in** for the
+shipped file — plus `delV` / `delJ`, which nothing shipped because nothing produced them.
+
+Never: **a scenario is not identifiable from sequence.** 4,346 tuples reproduce one real human TRB
+junction exactly — a first non-templated base that happens to match germline is indistinguishable
+from one less nucleotide of trimming, the same ambiguity `CLAUDE.md` already forbids "fixing"
+inside a junction. So the tallies are expected counts summed over scenarios under the current
+model, never the counts of one MAP reading, which would bias every trimming and insertion
+distribution toward less trimming and shorter inserts. Weight + expected counts + renormalisation
+is EM, and the log-likelihood is echoed per pass.
+
+Never: **an insertion costs its own sequence (`0.25^len`), not just its length.** The junction's 5'
+end reads either as templated V or as an insertion that happens to match V germline, and with a
+length term alone the second is free. Measured before the term existed: three iterations on 503
+real human TRB junctions moved `insVD` mass onto 10–11 nt with the log-likelihood rising
+monotonically the whole way. With it, the same data gives `insVD` peaking at 4 nt and `dlen` for
+`TRBD1*01` at 4–5 surviving nt — independently reproducing the "median surviving D is 5 nt for
+human TRB" figure measured in `dpost`.
+
+Generating a prior is not adopting one: the shipped `d_prior.tsv` is unchanged, and swapping in an
+estimate is a measurement and a release decision.
+
 ### Added: AIRR `umi_count` (`correct --cell-from`)
 
 `correct` gains `--cell-from` / `--cell-regex`, the pair `map` already took, and writes the AIRR

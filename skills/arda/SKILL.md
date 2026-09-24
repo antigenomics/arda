@@ -128,6 +128,7 @@ arda shm      -i mapped.airr.tsv -o rescoped.airr.tsv         # recount SHM outs
 arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv
 arda qc batch  -d out/ -o out/batch --samples sheet.tsv   # every sample's QC as one table
 arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-contained page
+arda scenarios -i clones.tsv -o d_prior.tsv   # EM over recombination scenarios -> a generative model
 
 arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
 arda export-ref --kind segments --locus TRB --format fasta
