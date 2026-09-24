@@ -207,6 +207,15 @@ def _yield_rows(rep: dict, out: list[tuple]) -> None:
     _ratio(rep, out, "contigs_complete_fraction",
            ("assemble", "contigs_complete"), ("assemble", "contigs"))
 
+    # The unmapped ledger, as fractions of the reads arda was handed. Same argument as above and
+    # the same denominator for every bucket, stated once: `prefilter_rejected` of 788 says nothing
+    # next to another sample's 788, but 0.597 against a batch median of 0.61 says the prefilter is
+    # behaving and 0.99 says it is eating the library.
+    total = (rep.get("map") or {}).get("total_reads")
+    for bucket, n in sorted(((rep.get("map") or {}).get("unmapped") or {}).items()):
+        if bucket != "accounted" and isinstance(n, int) and isinstance(total, int) and total:
+            out.append(("sample", "", f"unmapped_{bucket}_fraction", _fmt(n / total)))
+
 
 def _gene_universe(organism: str) -> dict[tuple[str, str], set[str]]:
     """``(locus, segment) -> {gene}`` from the reference's own anchor table.

@@ -158,6 +158,64 @@ clonotype table, assembly rescues included — not ``correct.reads``, which is e
    counter names that subset — so any fraction built from them would be nearly right, which is
    worse than a count.
 
+Why a read did not map
+----------------------
+
+``mapped_fraction`` on its own makes three different diagnoses into one number: the wrong
+organism, a library with almost no receptor content, and a ``--min-score`` that is too strict.
+The ``run/map`` scope carries an ``unmapped.*`` **ledger** that separates them, and every read
+arda was handed is in exactly one bucket or in ``mapped_reads``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - bucket
+     - what it means, and what to do about it
+   * - ``prefilter_rejected``
+     - the k-mer screen rejected the read before MMseqs2 saw it (``--prefilter`` only). Near 1.0
+       on a library that should have receptor content means the screen is eating it.
+   * - ``no_hit``
+     - MMseqs2 returned nothing. The honest "this is not a receptor read" — and, in bulk, most
+       of the library. Unexpectedly high across a whole batch: check ``--organism``.
+   * - ``hit_not_in_reference``
+     - a read hit a target the loaded reference does not carry. This is an index/reference
+       mismatch, not biology; rebuild with ``arda build-index``.
+   * - ``constant_only``
+     - every read of the fragment lay inside the constant region: receptor mRNA with no V(D)J.
+       Normal on a long insert, where R2 sits deep in C and donates its isotype to R1.
+   * - ``below_min_score``
+     - the read aligned but under ``--min-score``. Large means the cutoff is doing the
+       rejecting, not the library.
+   * - ``accounted``
+     - ``mapped_reads`` plus every bucket above. **It should equal** ``total_reads``.
+
+.. code-block:: text
+
+   $ arda stats -r L.arda.json -o - | grep unmapped
+   run     map  unmapped.accounted            1320
+   run     map  unmapped.below_min_score        17
+   run     map  unmapped.constant_only          54
+   run     map  unmapped.no_hit                  8
+   run     map  unmapped.prefilter_rejected    788
+
+``tests/data/rnaseq_real`` through ``arda rnaseq``: 453 mapped + 788 + 8 + 54 + 17 = 1,320.
+
+.. important::
+
+   ``accounted`` is stated by the report rather than left for the reader to add up, and it is
+   **recomputed** when per-shard reports are merged rather than summed. A ledger that silently
+   stops balancing — because a bucket was wired into the single-file path and not into the shard
+   merge — is worse than no ledger: it would look fine on a laptop and be wrong on every cluster
+   run.
+
+   ``constant_only`` counts **reads**, while the older ``constant_only_fragments`` counts
+   fragments. They differ on purpose: the constant-region rule also drops the constant-only
+   *mate* of a fragment it keeps, which is exactly the read whose isotype it just donated.
+
+Each bucket also appears in the ``sample`` scope as ``unmapped_<bucket>_fraction`` over
+``map.total_reads``, because a count of 788 says nothing beside another sample's 788.
+
 Distributions
 -------------
 

@@ -355,14 +355,28 @@ def _merge_map_reports(shards: list[dict]) -> dict:
         # this library, and a sharded run used to report nothing at all.
         "prefilter_stats": _sum_counters(shards, "prefilter_stats"),
         "segment_search": _merge_segment_reports(shards),
+        # Never: `accounted` is RECOMPUTED from the merged totals, not summed like the buckets
+        # around it. Summing it would be right only by coincidence, and the moment it stopped
+        # agreeing with `mapped_reads + the buckets` the ledger would go on looking balanced --
+        # which is the one thing a ledger must not do.
+        "unmapped": _merge_unmapped(shards, mapped),
     }
+
+
+def _merge_unmapped(shards: list[dict], mapped_reads: int) -> dict:
+    """Sum the per-shard unmapped ledger and restate its completeness over the whole sample."""
+    out = _sum_counters(shards, "unmapped")
+    out.pop("accounted", None)
+    if out:
+        out["accounted"] = mapped_reads + sum(out.values())
+    return out
 
 
 def _sum_counters(shards: list[dict], key: str) -> dict:
     """Add up one report sub-dict of FLAT integer counters across shards, keeping key order.
 
-    Only ``prefilter_stats`` (``seen`` / ``passed``) has that shape. ``segment_search`` does not:
-    see :func:`_merge_segment_reports`.
+    ``prefilter_stats`` (``seen`` / ``passed``) and ``unmapped`` have that shape;
+    ``segment_search`` does not, see :func:`_merge_segment_reports`.
     """
     out: dict[str, int] = {}
     for s in shards:

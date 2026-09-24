@@ -3,6 +3,37 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Why a read did not map
+
+`mapped_fraction` on its own made three different diagnoses into one number: the wrong organism, a
+library with almost no receptor content, and a `--min-score` that is too strict. The `run/map`
+scope now carries an `unmapped.*` **ledger** — `prefilter_rejected`, `no_hit`,
+`hit_not_in_reference`, `constant_only`, `below_min_score` — and the `sample` scope carries each
+as a fraction of `total_reads`, because a count of 788 says nothing beside another sample's 788.
+
+`no_hit` and `hit_not_in_reference` are separated because to the caller they are the same missing
+row and they are completely different problems. The second is how 2.23.0's first-run defect
+presented — every segment target resolving to `None` against a reference loaded before its markup
+was written — and all it looked like from outside was a low mapped fraction and exit 0.
+
+It is a **ledger**, so it states its own completeness: `accounted` is `mapped_reads` plus every
+bucket, and it should equal `total_reads`. On `tests/data/rnaseq_real`, 453 + 788 + 8 + 54 + 17 =
+1,320. `accounted` is **recomputed** when per-shard reports are merged rather than summed — a
+bucket wired into the single-file path and not into the shard merge would look fine on a laptop
+and be wrong on every cluster run, and summing an inherited `accounted` would hide exactly that.
+A four-read-group run of the fixture now reports a ledger identical to the single-file run.
+
+⚠ `constant_only` counts **reads**; the older `constant_only_fragments` counts **fragments**, and
+both stay. They differ on purpose: the constant-region rule also drops the constant-only *mate* of
+a fragment it keeps — the read whose isotype it has just donated — which `constant_only_fragments`
+never counted. Using the fragment count in the ledger left 45 of 1,320 reads in no bucket at all.
+
+Not done: splitting `no_hit` into no-V / no-J / V-and-J-on-different-mates, as MiXCR does. That
+needs the rejection reason to survive out of `_best_hits`, inside the per-read hot path; it is
+roadmapped behind a measurement rather than guessed at.
+
 ## 2.24.0
 
 ### Quality control: the distributions, a cohort table, and one HTML file
