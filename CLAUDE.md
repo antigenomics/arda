@@ -303,12 +303,20 @@ still exposes them individually for A/B work.
   the flag — 476 of the 483 new scaffolds drop to incomplete IgBLAST region markup. Details and the
   evidence (530 amplicon reads) are in the benchmark repo's open loops; **ask before changing the
   default either way**.
-- **`v_identity` is computed and never read as a gate** (`annotate/transfer.py:563`). It separates
-  the target-inverted rows 2.10.0 now drops (0.216–0.288 vs ~0.98) perfectly. Decide a threshold or
-  delete the column.
-- **`_SEGMENT_FORMAT` omits `tend`** (`annotate/mapper.py:428`), so 2.10.0's inverted-row guard
-  cannot cover the mmseqs two-pass segment path. `segmap` always emits forward `tstart`/`tend`, so
-  this only bites `--two-pass` **without** `--fast-segments` — the dominated config.
+- ✅ **`v_identity`: neither gated nor deleted, and that is the decision (2026-09-24).** The loop
+  asked for "a threshold or delete the column"; both branches are dead. **No threshold**, because
+  the defect it would have gated — target-inverted rows, which it separates 0.216–0.288 vs ~0.98 —
+  is now refused *structurally* in both reductions (below), and because this repo ships no QC
+  threshold anywhere. **Not deleted**, because 2.16.0 gave it a job: it is the framework-scoped V
+  identity, documented with its own verification recipe in `docs/shm.rst:124-172` (the pre-2.16.0
+  junction-inclusive value survives as `v_identity_full` under `--shm both`). It is a reported
+  measure, not a gate, and that is final.
+- ✅ **`_SEGMENT_FORMAT` carries `tend` — this loop is stale, do not re-open it.** It reads
+  `"query,target,bits,qstart,qend,tstart,tend"` (`annotate/mapper.py:507`) and `_segment_rows`
+  filters `tstart <= tend`, warns the count, then drops the column so a row dict from this path
+  has the same keys as one from C++ `segmap.segment_rows`. The `--two-pass`-without-
+  `--fast-segments` hole is closed; the comment at `mapper.py:503-506` says `tend` is asked for
+  *only* to close it.
 - **`--error-rate` default is wrong for variant preservation.** At the default `1e-3`,
   `rnaseq correct` erases both MIGEC published spike-in variants; `1e-5` recovers both exactly and
   `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a defect

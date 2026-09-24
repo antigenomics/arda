@@ -41,11 +41,16 @@ name  <sample>.<cell>.<umi>[.c<k>][.<m>]
 tags  RX:Z:<umi>  BC:Z:<sample>  CB:Z:<cell>  MI:Z:<name>  cD:i:<reads>
 ```
 
-Never: **the tags do not reach arda.** They live in the FASTQ comment and `dnaio` drops it. Only
-the name arrives. That is sufficient for sample, cell and UMI, and it is why they are in the name at
-all. It is **not** sufficient for `cD:i:<reads>` -- the read depth behind each consensus. If a
-depth-weighted clonotype count is ever wanted, the depth must travel as a sidecar TSV keyed on the
-molecule id, not by teaching arda to parse SAM tags.
+**The name is sufficient for sample, cell and UMI**, and that is why migec puts them there. Every
+per-cell and per-molecule feature in this document reads the name and nothing else.
+
+⚠ **Corrected 2026-09-24: `dnaio` does NOT drop the comment -- arda does.** This section used to
+say the tags cannot reach arda because dnaio discards the FASTQ comment. Measured on dnaio 1.2.4
+(arda's floor is `>=1.2`): `SequenceRecord.comment` carries the whole tag string, `.id` is the
+first whitespace-delimited token and `.name` is both. What discards it is `map.py:489`, which
+yields `rec.id`. So `cD:i:<reads>` -- the read depth behind each consensus, and the only tag
+carrying information the name does not -- is one field away, not a sidecar TSV away. `MI:Z:` is
+the name repeated and adds nothing. See S4 for what that does and does not unblock.
 
 Note: `migec/docs/formats.rst:141` documents a colon-delimited name that the code does not write.
 Parse against the code, not the page.
@@ -178,19 +183,105 @@ that looks calibrated.
 
 ## S4 -- molecule counting
 
-Add a new **`umi_count`**. Never redefine `duplicate_count` or `consensus_count`: they are
-AIRR-spec fields with defined meanings, and arda's bulk users read them.
+Rescoped 2026-09-24. The previous version parked S4 as *"blocked on a migec format decision, not
+on arda"*. It was not blocked. The blocker analysis was answering a different question from the
+one AIRR's field asks.
 
-Never: **`umi_count` cannot be reconstructed from the molecule name.** `.<m>` is a **flat index over
-(component x split)**, not a molecule index -- `migec/src/consensus.cpp:477-482` builds one flat
-vector, outer loop over overlap components and inner over the splits of each. And each suffix is
-emitted **conditionally** (`assemble.cpp:503-505`): `.c<k>` only when `components > 1`, `.<m>` only
-when `molecules.size() > components`. So on a plain `--contig` group the FASTQ name and
-`<sample>.mig.tsv` disagree about the molecule field, and a join keyed on it refuses correct input.
+### What AIRR actually asks for
 
-Two ways out, and the choice belongs to migec, not arda: define `umi_count` as distinct
-`(sample, cell, umi, contig, molecule)` and accept that it equals `consensus_count`, or make
-migec's emitter write both suffixes unconditionally first. Until one is decided, S4 does not ship.
+> `umi_count` -- Number of **distinct UMIs** represented by this sequence.
+
+Distinct UMIs. Not distinct molecules, not distinct consensus records. That distinction is the
+whole of the rescope, because the thing the old analysis called a blocker lives strictly *inside*
+one UMI:
+
+```
+name  <sample>.<cell>.<umi>[.c<k>][.<m>]
+                             │      └─ flat index over (component x split)
+                             └──────── overlap component: a CONTIG of the molecule
+```
+
+`.c<k>` and `.<m>` subdivide the reads that already share one `<umi>`. A UMI counted once is
+counted once whether it arrived as one record, as three contigs, or as a split pair -- so **no
+reading of the conditional suffixes can change a distinct-UMI count.** `<sample>`, `<cell>` and
+`<umi>` are written unconditionally, `arda.cell.parse` already returns all three, and
+`tests/unit/test_cell.py:39` already pins the suffix defaults.
+
+The old blocker is real, but it is about *molecule identity* -- joining a record to its row in
+`<sample>.mig.tsv`, where the name's conditional suffixes and the table's unconditional columns
+disagree (`migec/src/assemble.cpp:511-512`). Nothing in `umi_count` needs that join.
+
+Never: **do not implement `umi_count` as distinct `(sample, cell, umi, contig, molecule)`.** That
+counts *records*, which on one-record-per-molecule input is what `consensus_count` already is --
+a redundant column -- and on contig-mode input over-counts a molecule once per contig, which is
+the one case where `umi_count` was supposed to say something new.
+
+### Why it is worth a column at all, measured
+
+`umi_count` differs from `consensus_count` exactly when **several consensus records sharing one
+UMI land in the same clonotype**. Measured 2026-09-24 on real migec output rather than reasoned
+about, because the first version of this section reasoned about it and got it wrong.
+
+**It is the SPLIT case, not contig mode.** `assemble_component`
+(`migec/src/consensus.cpp:469-507`) cuts one overlap component into two molecules when minor
+alleles co-segregate above `linkage_threshold` (8.68) -- a saturated barcode holding two
+templates. When the co-segregating positions lie outside the junction, both records carry the
+*same* junction and land in the same clonotype. 60 reads on one UMI split 30/30 at three
+positions in V, plus 10 reads on a second UMI:
+
+```
+S.AAAACCCC.1  cD:i:30      ->  duplicate_count 3   consensus_count 3   umi_count 2
+S.AAAACCCC.2  cD:i:30
+S.GGGGTTTT    cD:i:10
+```
+
+**Contig mode does NOT produce it.** `place_reads` never extends a component across a gap, so
+two contigs of one molecule do not overlap and **at most one of them can carry a complete
+junction**; the others are dropped by `complete_only` before they ever reach a clonotype.
+Measured, 12 reads on `[0,170)` and 12 on `[230,400)` of one molecule plus a second clean UMI:
+migec emits `S.AAAACCCC.c1`, `S.AAAACCCC.c2`, `S.GGGGTTTT`, arda keeps two of the three, and
+`consensus_count == umi_count == 2`.
+
+So the column's value is **on saturated barcodes**, which is the condition migec's own occupancy
+reporting exists to surface -- not on fragmented molecules. On an unsaturated amplicon library it
+equals `consensus_count` and carries nothing new, which is why it is opt-in rather than always on.
+
+### What ships
+
+One column, `umi_count`, in `<prefix>.clones.tsv`.
+
+- `correct()` gains `cell_from: str = ""` / `cell_regex: str | None = None`, the same pair
+  `map()` already takes. `pipeline.run` already resolves `auto` to a concrete dialect once
+  (`pipeline.py:257-259`) and passes it to `map`; it passes the same resolved string to `correct`.
+  Standalone `arda correct` gets the two options so the stage is usable on its own, as every
+  other stage is.
+- Beside `dup` / `cons` at `correct.py:1332`, a third list: distinct `(sample, cell, umi)` over
+  each clonotype's read set, with `_strip_mate` applied first for the same reason `cons` applies
+  it.
+- Never: **appended LAST**, after `_flag_chimeras`, not inserted into the `pl.DataFrame` literal.
+  The literal is followed by two conditional appends (`_clonotype_d`, `_flag_chimeras`); a key
+  added to the literal moves `d_call` whenever `umi_count` is on. Same rule, and same reason, as
+  `map.py:740-743` for `cell_id`.
+- Never: **omitted, never 0**, when no dialect is active or the identifiers do not parse --
+  QC trap 4. A bulk run must not read as "1 UMI per clonotype".
+
+Acceptance: on a migec consensus FASTQ, `umi_count <= consensus_count` for every clonotype, with
+strict inequality on a barcode migec split into two molecules and equality where each UMI yields
+one junction-bearing record; a run without `--cell-from` writes a `clones.tsv` with no
+`umi_count` column at all, byte-identical to today's.
+
+### Deliberately not in S4
+
+**`cD:i:<reads>` -> `consensus_count`.** AIRR defines `consensus_count` as *"the sum of the number
+of reads for all UMIs that contribute to the query sequence"*, and `cD:i:` is literally that
+number -- so on migec input the spec-correct `consensus_count` is the summed depth, while arda
+writes distinct fragment consensuses. Now reachable (the comment survives; see the contract
+section above), and deliberately separate: it **changes an existing column's values** on an
+existing input type rather than adding a new one, so it wants its own flag, its own measurement
+and its own release note. `umi_count` changes nothing that already ships.
+
+**Molecule identity and the `.mig.tsv` join.** Still blocked on the same migec emitter decision,
+and still migec's to make. Nothing in arda needs it today.
 
 ## Out of scope, and why
 
@@ -205,6 +296,9 @@ migec's emitter write both suffixes unconditionally first. Until one is decided,
 
 ## Order
 
-S0 (in migec's comparison script) -> S1 -> S2 -> S3. S4 waits on a migec format decision.
-S1 and S2 are what the migec-against-Cell-Ranger per-cell chain axis needs; S3 is what makes the
-result readable without a join written by hand.
+S0 (in migec's comparison script) -> S1 -> S2 -> S3 -> S4. S1 and S2 are what the
+migec-against-Cell-Ranger per-cell chain axis needs; S3 is what makes the result readable without
+a join written by hand; S4 is the one column that separates a molecule from its contigs.
+
+S4 used to read "waits on a migec format decision". It does not -- see its own section. What
+still waits on migec is molecule identity for a `.mig.tsv` join, which nothing here needs.

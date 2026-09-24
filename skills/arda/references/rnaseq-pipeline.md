@@ -36,6 +36,16 @@ where a tandem D-D is both most likely and least visible to one read.
 
 - Abundance is the AIRR **`duplicate_count`** (every read encompassing the junction), with
   **`consensus_count`** for distinct fragment consensuses. There is no `count` column.
+- `--cell-from migec` adds **`umi_count`**: distinct `(sample, cell, umi)`, which is AIRR's
+  *"number of distinct UMIs"* -- several records sharing a UMI count ONCE. It falls below
+  `consensus_count` on a **saturated barcode** (migec split one barcode into two molecules whose
+  differences lie outside the junction), NOT in contig mode -- two contigs of one molecule never
+  overlap, so at most one carries a junction and the rest are dropped by `complete_only`.
+  Never: OMITTED, never 0 or 1, when the dialect names no UMI (`cellranger`, `prefix`,
+  `--cell-regex`) or the identifiers do not parse.
+  Never: `--cell-from` is a BOTH-HALVES flag on the sharded path -- Stage 1 writes `cell_id`,
+  Stage 2 writes `umi_count` from `sequence_id` itself, and `cluster.regime_flags` is the one
+  place that knows to send it to both.
 - A neighbour is an error *child* when `count[parent] * p_sub**n_subs * p_ind**n_indel >=
   count[child]`. Knobs: `--max-subs`, `--max-indel`, `--error-rate`, `--indel-rate` (per-BASE,
   length-scaled), `--require-vj`, `--error-method` (`simple|binom|betabinom`), `--complete-only`

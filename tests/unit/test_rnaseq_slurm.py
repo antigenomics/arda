@@ -298,6 +298,25 @@ def test_regime_flags_wires_stage1_to_the_denoising_preset():
     m, _ = regime_flags("rnaseq", ec_mode="fast")
     assert "--junction-quality" not in m
 
+
+def test_regime_flags_sends_cell_from_to_BOTH_halves():
+    """Never: `--cell-from` is a both-halves flag, like `--junction-quality`.
+
+    Stage 1 needs it to write `cell_id`; Stage 2 needs it to write `umi_count`, which it derives
+    from `sequence_id` itself and cannot recover from Stage 1's output. Passed to one half only,
+    a sharded run silently drops whichever column that half owns -- exit 0, plausible clonotypes,
+    a missing column that nothing reports.
+    """
+    from arda.cluster import regime_flags
+
+    m, r = regime_flags("amplicon", cell_from="migec")
+    assert "--cell-from migec" in m, "Stage 1 would write no cell_id"
+    assert "--cell-from migec" in r, "Stage 2 would write no umi_count"
+
+    # Off by default, and absent from both halves when it is.
+    m, r = regime_flags("amplicon")
+    assert "--cell-from" not in m and "--cell-from" not in r
+
     with pytest.raises(ValueError, match="regime must be one of"):
         regime_flags("bulk")
 

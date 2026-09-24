@@ -5,6 +5,54 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Added: AIRR `umi_count` (`correct --cell-from`)
+
+`correct` gains `--cell-from` / `--cell-regex`, the pair `map` already took, and writes the AIRR
+`umi_count` column. The spec asks for **distinct UMIs**, not distinct records, and that is the
+whole of the column: several consensus records sharing one `(sample, cell, umi)` count once.
+
+`project/design-singlecell.md` had S4 parked as *"blocked on a migec format decision"*. It was
+not. The blocker analysis read `.<m>` as a molecule index and concluded the count was
+unreconstructable; `.<m>` is a flat index over (component x split), but that does not matter,
+because both conditional suffixes subdivide the reads that **already share one UMI** — so no
+reading of them can change a distinct-UMI count. `<sample>`, `<cell>` and `<umi>` are written
+unconditionally.
+
+Measured on real `migec assemble` output rather than reasoned about, after the first draft of
+this reasoned about it and got it wrong. `umi_count` falls below `consensus_count` on a
+**saturated barcode** — migec splits one barcode into two molecules on minor-allele linkage, and
+when those positions lie outside the junction both records carry the same junction:
+`duplicate_count 3, consensus_count 3, umi_count 2`. It does **not** happen in contig mode: two
+contigs of one molecule never overlap, so at most one carries a complete junction and the rest
+are dropped by `complete_only` (measured: `consensus_count == umi_count == 2`).
+
+Never: the column is **omitted**, not written as 0 or 1, when the dialect names no UMI
+(`cellranger`, `prefix`, `--cell-regex` all carry a cell and no UMI) or the identifiers do not
+parse. A bulk run with the flag left on must not read as "one UMI per clonotype".
+
+Never: `--cell-from` is a **both-halves flag** on the sharded path, like `--junction-quality`.
+Stage 1 needs it for `cell_id`, Stage 2 derives `umi_count` from `sequence_id` itself and cannot
+get it from Stage 1's output, so `cluster.regime_flags` sends it to both — passed to one half
+only, a sharded run silently drops whichever column that half owns.
+
+### Fixed: a wrong premise about `dnaio`, recorded in four places
+
+`arda/cell.py`, `cli.py`, `rnaseq/map.py` and `migec/src/assemble.cpp` all stated that the FASTQ
+comment cannot reach arda because dnaio drops it. dnaio does not: `SequenceRecord.comment` carries
+the whole tag string on 1.2.4 (arda's floor is `>=1.2`), `.id` is the first token and `.name` is
+both. arda drops it, by taking `.id` at `map.py:489`. Comments corrected. Nothing behavioural
+changes — the record name is still what arda reads — but `cD:i:` (migec's per-consensus read
+depth, the one tag carrying anything the name does not) is a field away rather than unreachable.
+
+### Closed: two stale open loops
+
+`v_identity` is **neither gated nor deleted**, and that is the decision. No threshold — the
+target-inverted rows it separates (0.216–0.288 vs ~0.98) are refused structurally in both
+reductions, and this repo ships no QC threshold anywhere. Not deleted — since 2.16.0 it is the
+framework-scoped V identity with its own verification recipe in `docs/shm.rst`. `_SEGMENT_FORMAT`
+already carries `tend` (`mapper.py:507`) and `_segment_rows` already filters `tstart <= tend`, so
+the `--two-pass`-without-`--fast-segments` hole that loop described is closed.
+
 ### Documented: what `productive` / `stop_codon` / `vj_in_frame` actually mean
 
 New page [productivity](https://docs.isalgo.dev/arda/productivity.html) (`docs/productivity.rst`)

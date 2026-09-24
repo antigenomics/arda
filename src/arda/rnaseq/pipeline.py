@@ -83,7 +83,8 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
            d_max_evalue: float | None = None,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
-           map_report: dict | None = None, write_qc: bool = True, echo=None) -> dict:
+           map_report: dict | None = None, write_qc: bool = True,
+           cell_from: str = "", cell_regex: str | None = None, echo=None) -> dict:
     """Run Stages 2-3 over a Stage-1 AIRR and write the clonotype table + merged report.
 
     Called by both :func:`run` (single node) and :func:`reduce` (after a sharded Stage 1).
@@ -121,7 +122,8 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
                         d_max_evalue=d_max_evalue, ec_mode=ec_mode,
                         min_junction_q=min_junction_q, clonotype_key=clonotype_key,
                         call_level=call_level, isotype=isotype,
-                        complete_only=complete_only, extra_airr=extra)
+                        complete_only=complete_only, extra_airr=extra,
+                        cell_from=cell_from, cell_regex=cell_regex)
     say(f"correct: {crep.clonotypes_in} -> {crep.clonotypes_out} clonotypes "
         f"({crep.collapsed} collapsed) over {crep.reads} reads")
 
@@ -283,7 +285,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
                     ec_mode=ec_mode, min_junction_q=min_junction_q,
                     clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
-                    d_max_evalue=d_max_evalue,
+                    d_max_evalue=d_max_evalue, cell_from=cell_from, cell_regex=cell_regex,
                     map_report=mrep, write_qc=False, echo=echo)
     report["wall_seconds"] = round(whole.wall_seconds, 3)
     (out_dir / OUTPUTS["report"].format(prefix=out_prefix)).write_text(
@@ -414,6 +416,7 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
            d_max_evalue: float | None = None,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
+           cell_from: str = "", cell_regex: str | None = None,
            echo=None) -> dict:
     """Merge sharded Stage-1 output, then run Stages 2-3 once over the whole thing.
 
@@ -452,4 +455,5 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
                   assemble=assemble, complete_only=complete_only, map_d=map_d,
                   d_max_evalue=d_max_evalue, ec_mode=ec_mode, min_junction_q=min_junction_q,
                   clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
+                  cell_from=cell_from, cell_regex=cell_regex,
                   map_report=mrep or None, echo=echo)

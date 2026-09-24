@@ -59,8 +59,14 @@ MUTATION_QUALITY = ("v_mutation_quality", "j_mutation_quality")
 
 #: AIRR Rearrangement column written by ``--cell-from`` / ``--cell-regex``: the cell barcode lifted
 #: out of ``sequence_id`` by :mod:`arda.cell`. arda does no barcode demultiplexing and no barcode
-#: correction -- the upstream tool did both, and put the answer in the record NAME because that is
-#: what survives ``dnaio`` dropping the FASTQ comment. Empty when the identifier does not parse.
+#: correction -- the upstream tool did both, and put the answer in the record NAME, which is the
+#: part arda reads (``_read_pairs_dnaio`` yields ``rec.id``). Empty when the identifier does not
+#: parse.
+#:
+#: ⚠ ``dnaio`` does NOT drop the FASTQ comment -- it is on ``SequenceRecord.comment``, and migec
+#: writes ``RX:Z:``/``BC:Z:``/``CB:Z:``/``MI:Z:``/``cD:i:`` there. arda discards it by taking
+#: ``.id``. Only ``cD:i:`` (per-consensus read depth) carries anything the name does not; see
+#: ``project/design-singlecell.md`` S4 before reaching for it.
 CELL_ID = "cell_id"
 
 
