@@ -50,7 +50,7 @@ _MAX_SHARDS = 10 ** _SHARD_WIDTH - 1
 def regime_flags(regime: str, *, organism: str = "human", threads: int = 8, kmer: int = 12,
                  min_score: float = 75.0, reconstruct: bool = False, map_d: bool = True,
                  assemble: bool = True, complete_only: bool = True,
-                 ec_mode: str | None = None) -> tuple[str, str]:
+                 ec_mode: str | None = None, cell_from: str = "") -> tuple[str, str]:
     """The ``arda map`` and ``arda cluster reduce`` flags one regime implies. Returns both.
 
     Never: THE TWO HALVES MUST AGREE, and only this function knows how. `arda rnaseq` runs both
@@ -63,6 +63,12 @@ def regime_flags(regime: str, *, organism: str = "human", threads: int = 8, kmer
 
     Never: the two speed levers do NOT compose and each is a loss in the other's regime, so the
     regime is named here ONCE, by library type, rather than spelled as loose flags per job.
+
+    Never: ``--cell-from`` is a BOTH-HALVES flag, for the same reason ``--junction-quality`` is.
+    Stage 1 needs it to write ``cell_id``; Stage 2 needs it to write ``umi_count``, which it
+    derives from ``sequence_id`` itself and cannot get from Stage 1's output. Passed to one half
+    only, a sharded run silently drops whichever column that half owns -- exit 0, plausible
+    clonotypes, a missing column.
     """
     if regime not in _REGIME_SPEED:
         raise ValueError(f"regime must be one of {', '.join(_REGIME_SPEED)}, got {regime!r}")
@@ -78,12 +84,16 @@ def regime_flags(regime: str, *, organism: str = "human", threads: int = 8, kmer
         m.append("--reconstruct")
     if not map_d:
         m.append("--no-map-d")
+    if cell_from:
+        m.append(f"--cell-from {cell_from}")
 
     r = [f"--organism {organism}", f"--threads {threads}", f"--ec-mode {ec_mode}",
          "--assemble" if assemble else "--no-assemble",
          "--complete-only" if complete_only else "--all-junctions"]
     if not map_d:
         r.append("--no-map-d")
+    if cell_from:
+        r.append(f"--cell-from {cell_from}")
     return " ".join(x for x in m if x), " ".join(r)
 
 

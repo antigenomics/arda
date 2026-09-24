@@ -71,10 +71,19 @@ _COMPLETE_JUNCTION_HELP = (
     "junction. ⚠ On IG the imputed span can hide the SHM the read would have shown, biasing a "
     "completed junction's 3' end toward germline; TR does not hypermutate and has no such cost.")
 
+_UMI_COUNT_HELP = (
+    "Emit an AIRR `umi_count` column by lifting the UMI out of `sequence_id`, using the same "
+    "dialects as `map --cell-from`. AIRR counts DISTINCT UMIs, not distinct records, so a "
+    "molecule that arrived as several contigs counts once -- which is what separates this from "
+    "`consensus_count`. Only `migec` names a UMI field today; `cellranger`, `prefix` and "
+    "`--cell-regex` carry a cell and no UMI, and the column is then OMITTED rather than written "
+    "as a column of 1s."
+)
+
 _CELL_FROM_HELP = (
     "Emit a `cell_id` column by lifting the cell barcode out of `sequence_id`. arda does NO "
     "barcode demultiplexing and NO barcode correction -- the upstream tool did both and put the "
-    "answer in the record NAME, which is what survives dnaio dropping the FASTQ comment. "
+    "answer in the record NAME, which is the part arda reads. "
     "Dialects: `migec` (`<sample>.<cell>.<umi>`, parsed right to left because a migec sample id "
     "may itself contain a dot), `cellranger` (`<barcode>-1_contig_2`), `prefix` "
     "(`<barcode>_<rest>`), or `auto` to sniff them over a reservoir sample of the input. "
@@ -711,6 +720,8 @@ def rnaseq_correct(
              "clonotype, not per read). Coordinates are 1-based closed in JUNCTION space."),
     d_max_evalue: Optional[float] = typer.Option(
         None, "--d-max-evalue", help=_D_EVALUE_HELP),
+    cell_from: str = typer.Option("", "--cell-from", help=_UMI_COUNT_HELP),
+    cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
 ) -> None:
     """Stage 2 — collapse CDR3 sequencing errors into clonotypes (per-substitution/indel model)."""
@@ -723,6 +734,7 @@ def rnaseq_correct(
                        clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                        flag_chimeras=flag_chimeras,
                        complete_only=complete_only, read_map=read_map, extra_airr=extra_airr,
+                       cell_from=cell_from, cell_regex=cell_regex,
                        report_path=report)
     log.info(
         f"correct: {rep.clonotypes_in} -> {rep.clonotypes_out} clonotypes "
@@ -1314,6 +1326,8 @@ def rnaseq_reduce(
         "allele", "--call-level", help="`allele` (default) or `gene`, BEFORE the clonotype key."),
     isotype: bool = typer.Option(
         True, "--isotype/--no-isotype", help="Resolve the IGH isotype (`c_call` / `c_class`)."),
+    cell_from: str = typer.Option("", "--cell-from", help=_UMI_COUNT_HELP),
+    cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
 ) -> None:
     """Merge a sharded Stage 1, then run Stages 2-3 ONCE over the whole thing.
 
@@ -1326,7 +1340,8 @@ def rnaseq_reduce(
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
                     assemble=assemble, complete_only=complete_only, map_d=map_d,
                     d_max_evalue=d_max_evalue, ec_mode=ec_mode,
-                    min_junction_q=min_junction_q, call_level=call_level, isotype=isotype)
+                    min_junction_q=min_junction_q, call_level=call_level, isotype=isotype,
+                    cell_from=cell_from, cell_regex=cell_regex)
     typer.echo(f"[arda] wrote {out_dir / f'{out_prefix}.clones.tsv'}")
 
 

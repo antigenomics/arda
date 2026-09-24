@@ -323,6 +323,55 @@ every panel plus the filter sweep interactively.
 
    uvx marimo edit notebooks/singlecell_qc.py
 
+Counting molecules: ``umi_count``
+---------------------------------
+
+``correct --cell-from migec`` adds the AIRR ``umi_count`` column to ``<prefix>.clones.tsv``. The
+spec defines it as *"the number of distinct UMIs represented by this sequence"* — **distinct
+UMIs, not distinct records**, and that difference is the whole of the column:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 76
+
+   * - column
+     - what it counts
+   * - ``duplicate_count``
+     - reads encompassing the junction
+   * - ``consensus_count``
+     - distinct fragment consensuses — one per input record
+   * - ``umi_count``
+     - distinct ``(sample, cell, umi)`` — several records sharing a UMI count **once**
+
+They differ when one UMI yields more than one junction-bearing record. In practice that is a
+**saturated barcode**: ``migec assemble`` splits a barcode's reads into two molecules when minor
+alleles co-segregate, and if those positions lie outside the junction both records carry the same
+junction and land in the same clonotype.
+
+.. code-block:: text
+
+   S.AAAACCCC.1    ┐ one barcode, split into two molecules
+   S.AAAACCCC.2    ┘
+   S.GGGGTTTT        one molecule
+
+   duplicate_count 3    consensus_count 3    umi_count 2
+
+Contigs of one molecule do **not** produce this. ``migec assemble --contig`` never extends an
+overlap component across a gap, so two contigs of one molecule do not overlap and at most one of
+them carries a complete junction; the rest are dropped before they reach a clonotype.
+
+.. note::
+
+   Only ``migec`` names a UMI field. ``cellranger`` and ``prefix`` carry a cell and no UMI, and
+   ``--cell-regex`` defines a ``cell`` group and nothing else — with any of those, or on
+   identifiers that do not parse, the column is **omitted** rather than written as a column of
+   1s. A bulk run with the flag left on must not read as "one UMI per clonotype".
+
+``--cell-from`` is a **both-halves flag** on the sharded path: Stage 1 needs it for ``cell_id``,
+Stage 2 needs it for ``umi_count``, and Stage 2 derives the UMI from ``sequence_id`` itself
+rather than from Stage 1's output. ``arda cluster`` wires both from one name; passing it to one
+half only drops whichever column that half owns, with exit 0 and no warning.
+
 Limits
 ------
 

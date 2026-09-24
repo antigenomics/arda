@@ -90,6 +90,40 @@ def _strip_mate(sid: str) -> str:
     """``<id>/1`` / ``<id>/2`` -> ``<id>`` (the fragment id shared by paired mates)."""
     return sid[:-2] if sid[-2:] in ("/1", "/2") else sid
 
+
+def _umi_key(cell_from: str, cell_regex: str | None, ids: list[str]):
+    """``sequence_id -> (sample, cell, umi)`` for AIRR ``umi_count``, or ``None``.
+
+    AIRR asks for **distinct UMIs**, not distinct records, and that is why the conditional
+    ``.c<k>`` / ``.<m>`` suffixes on a migec name cannot block this: they subdivide the reads that
+    already share one ``<umi>``, so a UMI counted once is counted once whether it arrived as one
+    record, as several contigs, or as a split pair. Only the dialects that actually name a UMI
+    field qualify -- today that is ``migec`` alone. ``cellranger`` and ``prefix`` carry a cell and
+    no UMI, and ``--cell-regex`` defines a ``cell`` group and nothing else, so all three return
+    ``None`` here and the column is omitted rather than written as a column of 1s.
+
+    Never: key on ``(sample, cell, umi)``, never ``umi`` alone. A UMI is short and its collision
+    rate across cells is not small -- migec's own occupancy reporting exists because a barcode
+    space saturates -- so a bare-UMI key silently merges molecules from different cells.
+    """
+    if cell_regex is not None or not cell_from:
+        return None
+    from ..cell import DIALECTS, parse, sniff
+    dialect = cell_from
+    if dialect == "auto":
+        # A strided sample, not a head: `read_sets` is ordered by clonotype, so the head is one
+        # clone's reads and shares whatever its own barcodes share.
+        step = max(1, len(ids) // 4096)
+        dialect = sniff(ids[::step][:4096]) or ""
+    if dialect not in DIALECTS:
+        return None
+
+    def key(sid: str):
+        k = parse(_strip_mate(sid), dialect)
+        return (k.sample, k.cell, k.umi) if k is not None and k.umi else None
+
+    return key
+
 # A clonotype requires a COMPLETE junction. Stage 1 reports a junction even when the read does
 # not span it (see ``annotate.transfer``), so a raw per-read junction is a truncated fragment
 # whenever the CDR3 runs off the end of the read. Aggregating those as clonotypes inflates the
@@ -959,6 +993,8 @@ def correct_airr(
     read_map: str | Path | None = None,
     extra_airr: str | Path | None = None,
     report_path: str | Path | None = None,
+    cell_from: str = "",
+    cell_regex: str | None = None,
 ) -> CorrectReport:
     """Aggregate mapped reads into clonotypes and collapse CDR3 sequencing errors.
 
@@ -1025,6 +1061,11 @@ def correct_airr(
             before aggregation. Its rows carry a contig's complete junction for reads whose own
             Stage-1 junction was incomplete, so a long-CDR3 clone no single read spans is counted
             once (the read's incomplete Stage-1 row is dropped by ``complete_only``).
+        cell_from: identifier dialect for :func:`arda.cell.make_parser` (``migec``,
+            ``cellranger``, ``prefix``, ``auto``). Turns on the AIRR ``umi_count`` column:
+            **distinct UMIs**, per the spec, not distinct records. Empty disables it, and the
+            column is then OMITTED rather than written as a column of 1s.
+        cell_regex: regex escape hatch for ``cell_from``, as on :func:`arda.rnaseq.map.map`.
 
     Returns:
         A :class:`CorrectReport`.
@@ -1331,6 +1372,15 @@ def correct_airr(
         read_sets = [agg_reads[i] for i in roots]
     dup = [len(rs) for rs in read_sets]                                 # AIRR duplicate_count: reads
     cons = [len({_strip_mate(x) for x in rs}) for rs in read_sets]      # AIRR consensus_count: fragments
+    # AIRR umi_count: DISTINCT UMIs. Equal to `cons` on one-record-per-molecule input and strictly
+    # below it in migec contig mode, where one molecule's overlap components are separate records.
+    umi_of = _umi_key(cell_from, cell_regex, [x for rs in read_sets for x in rs])
+    umis = ([len({u for x in rs if (u := umi_of(x)) is not None}) for rs in read_sets]
+            if umi_of is not None else None)
+    # Never: OMITTED, never a column of zeros -- QC trap 4. A dialect that parses no UMI out of a
+    # single identifier is a bulk run with the flag left on, not a cohort of 0-UMI clonotypes.
+    if umis is not None and not any(umis):
+        umis = None
     # Never: THE read-conservation invariant, reported so it is checkable on a real run. `reads` above
     # cannot move (it is counted before correction), so a benchmark comparing it across --ec-mode
     # sees 0 everywhere and reads that as conservation. Measured full-depth on the golden set with
@@ -1412,6 +1462,11 @@ def correct_airr(
         # Never: Appended LAST and never used to drop a row -- see `_flag_chimeras` for the measured
         # rate (0.40 % of bulk IG clonotypes) and why that does not justify deletion.
         out = out.with_columns(_flag_chimeras(out, organism))
+    if umis is not None:
+        # Never: after the chimera column, not inside the DataFrame literal above. The literal is
+        # followed by two conditional appends, so a key added to it moves `d_call` whenever
+        # `umi_count` is on. Same rule as `map.py`'s `cell_id`: every extra goes at the END.
+        out = out.with_columns(umi_count=pl.Series([umis[r] for r in order], dtype=pl.Int64))
     out.write_csv(output, separator="\t", quote_style="never")
 
     if read_map is not None:

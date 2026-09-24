@@ -128,6 +128,8 @@ value tracks SHM load, so it stays a per-library call and never rides the preset
 | `--map-d` *(default on)* | D and tandem D-D alignment into the junction |
 | `map --junction-quality` | Phred+33 string over exactly the bases of `junction`; needed by `correct --min-junction-q` and by `stats`' junction-quality metrics |
 | `map --mutation-quality` | Phred behind each `v_mutations` / `j_mutations` entry, comma-joined and one-for-one; what `stats` scores `allele_candidate` on |
+| `map --cell-from <dialect>` | lift the cell barcode out of `sequence_id` into `cell_id`; arda does **no** demultiplexing and no barcode correction — the upstream tool did both |
+| `correct --cell-from migec` | AIRR `umi_count`: **distinct UMIs**, not distinct records, so a saturated barcode migec split into two molecules counts once. Omitted — never 0 or 1 — when the dialect names no UMI or the ids do not parse |
 
 `arda shm -i in.airr.tsv -o out.airr.tsv` does the SHM recount standalone, needing **no reference
 and no re-map** — the germline anchors are already in the file.

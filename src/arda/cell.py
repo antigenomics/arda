@@ -1,8 +1,10 @@
 """Lift a cell barcode out of a sequence identifier that already carries one.
 
 arda has no barcode or UMI concept and does not need one: the tools that produce single-cell input
-put the barcode in the record NAME, and the name is what survives ``dnaio`` (which drops FASTQ
-comments). This module is the whole of the single-cell front end -- a pure parser, no I/O.
+put the barcode in the record NAME, and the name is what arda reads -- ``map`` yields
+``rec.id``, the first whitespace-delimited token. (``dnaio`` itself keeps the FASTQ comment on
+``.comment``; arda is what drops it. See ``project/design-singlecell.md``.) This module is the
+whole of the single-cell front end -- a pure parser, no I/O.
 
 Three dialects ship, and a regex escape hatch for the rest:
 
