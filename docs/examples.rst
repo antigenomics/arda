@@ -267,28 +267,70 @@ stage: summing forty array tasks' wall time and calling it "wall seconds" would 
 
 :doc:`qc` lists every scope and metric it writes.
 
-Cohort QC in one table
-----------------------
+Cohort QC in one table, and one page
+------------------------------------
 
-The QC tables are long format precisely so a cohort concatenates without a schema decision:
+Every run already wrote its own QC table. ``arda qc batch`` joins them — reading **only** those
+tables, never the AIRR or the clonotypes, so this stays cheap on a cohort of any size:
+
+.. code-block:: bash
+
+   arda qc batch -d results/ -o results/cohort --samples sheet.tsv
+
+.. code-block:: text
+
+   [arda] qc batch: 6 samples, 2205 rows, 41 flagged
+   results/cohort.qc.tsv
+   results/cohort.qc.wide.tsv
+   results/cohort.qc.json
+
+``--samples`` is read only for the sheet's optional ``project`` and ``batch`` columns: they name
+the group each sample is compared within. ``cohort.qc.wide.tsv`` is one row per sample:
+
+.. code-block:: text
+
+   $ cut -f1,2,3 results/cohort.qc.wide.tsv | head -4
+   sample  project  batch
+   S0      TRIAL9   RUN1
+   S1      TRIAL9   RUN1
+   S2      TRIAL9   RUN1
+
+Nothing is filtered and no threshold is shipped. What the long table adds is each metric's group
+median, its MAD and a robust z, so the question "is this sample like its batch" has an answer:
 
 .. code-block:: python
 
-   import glob
    import polars as pl
 
-   cohort = pl.concat([
-       pl.read_csv(p, separator="\t", quote_char=None).with_columns(
-           pl.lit(p.split("/")[-1].removesuffix(".stats.tsv")).alias("sample")
-       )
-       for p in sorted(glob.glob("results/*.stats.tsv"))
-   ])
-   mapped = cohort.filter(
-       (pl.col("scope") == "run") & (pl.col("metric") == "mapped_fraction")
-   ).select("sample", "value")
+   long = pl.read_csv("results/cohort.qc.tsv", separator="\t",
+                      infer_schema_length=0, quote_char=None)
+   flagged = long.filter((pl.col("outlier") == "1") & (pl.col("scope") == "sample"))
+   print(flagged.select("sample", "metric", "value", "median", "z"))
 
-A sample whose ``mapped_fraction`` is an order of magnitude below its cohort is the one to look at
-first: wrong organism, wrong regime, or a library that did not work.
+.. code-block:: text
+
+   ┌────────┬───────────────────────────┬───────────┬───────────┬────────────┐
+   │ sample ┆ metric                    ┆ value     ┆ median    ┆ z          │
+   ╞════════╪═══════════════════════════╪═══════════╪═══════════╪════════════╡
+   │ S0     ┆ clonotype_junction_aa_max ┆ 21        ┆ 16.000000 ┆ 6.745000   │
+   │ S4     ┆ clonotype_junction_aa_max ┆ 21        ┆ 16.000000 ┆ 6.745000   │
+   │ S2     ┆ j_gene_coverage_reads     ┆ 0.0485437 ┆ 0.121359  ┆ -10.117264 │
+   │ S3     ┆ j_gene_coverage_reads     ┆ 0.165049  ┆ 0.121359  ┆ 6.070361   │
+   └────────┴───────────────────────────┴───────────┴───────────┴────────────┘
+
+``S2``'s J-gene coverage is a third of its cohort's, which is where to look first: an order of
+magnitude below the batch usually means the wrong organism, the wrong regime, or a library that
+did not work. Note these six "samples" are contiguous cuts of one small fixture, so the spread
+is the fixture's, not a real cohort's.
+
+Finally, the whole thing as one file you can send someone:
+
+.. code-block:: bash
+
+   arda qc report -i results/cohort.qc.json -o results/cohort.qc.html
+
+It inlines its own data and fetches nothing, so it opens on an air-gapped login node or as an
+email attachment long after ``results/`` is gone. See :doc:`qc`.
 
 Export the reference for a genome browser
 -----------------------------------------
