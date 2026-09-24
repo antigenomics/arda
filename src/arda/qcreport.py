@@ -18,6 +18,7 @@ a single run is a cohort of one, and the panels are the same.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .scplot import DARK2, INK
@@ -58,8 +59,12 @@ def build(doc: dict, *, title: str = "arda QC") -> str:
     payload = json.dumps(doc, sort_keys=True).replace("</", "<\\/")
     js = (_JS.replace("__PALETTE__", json.dumps(DARK2))
              .replace("__DISTRIBUTIONS__", json.dumps(_DISTRIBUTIONS)))
-    return (_PAGE.replace("__TITLE__", _escape(title)).replace("__CSS__", _CSS)
-            .replace("__PAYLOAD__", payload).replace("__JS__", js))
+    # Never: ONE pass. Chained `.replace()` substitutes into what it has already substituted, so a
+    # sample id or a filename holding a later token -- `__JS__`, `__PAYLOAD__` -- would have the
+    # script or the whole data blob spliced in where its own name should be. Inserted values are
+    # never rescanned here.
+    parts = {"__TITLE__": _escape(title), "__CSS__": _CSS, "__PAYLOAD__": payload, "__JS__": js}
+    return re.sub("|".join(parts), lambda m: parts[m.group(0)], _PAGE)
 
 
 def render(input: str | Path, output: str | Path, *, title: str | None = None) -> Path:

@@ -101,6 +101,18 @@ def test_a_single_sample_stats_json_renders_as_a_cohort_of_one(tmp_path):
     assert blob["stats"]["PT01"]["sample"][""]["reads"] == 7
 
 
+def test_a_value_naming_a_later_placeholder_is_not_substituted_into():
+    """Chained `.replace()` substitutes into what it has already substituted, so a sample id of
+    `__JS__` would have the whole script spliced in where its name belongs."""
+    doc = dict(_DOC, samples=["__JS__"], labels={"__JS__": {"project": "", "batch": ""}},
+               stats={"__JS__": {"sample": {"": {"reads": 3}}}})
+    page = build(doc, title="__PAYLOAD__")
+    blob = page.split('id="qc-data">')[1].split("</script>")[0]
+    assert "const DOC" not in blob
+    assert page.count("const DOC = JSON.parse") == 1
+    assert '"__JS__"' in blob
+
+
 def test_the_title_is_escaped():
     """It comes from a filename, and a filename is not trusted markup."""
     page = build(_DOC, title="<script>alert(1)</script>")
