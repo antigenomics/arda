@@ -24,11 +24,16 @@ from pathlib import Path
 
 from ._log import logger
 
-__all__ = ["Sample", "load", "read_sheet", "SHEET_COLUMNS"]
+__all__ = ["Sample", "load", "read_sheet", "SHEET_COLUMNS", "LABEL_COLUMNS"]
 
 #: The sample-sheet columns arda reads. Deliberately nf-core's spelling, so an existing
 #: nf-core samplesheet works here unmodified.
-SHEET_COLUMNS = ("sample", "fastq_1", "fastq_2")
+SHEET_COLUMNS = ("sample", "fastq_1", "fastq_2", "project", "batch")
+
+#: The two that are LABELS, not inputs. Nothing in the pipeline reads them and no output changes
+#: because of them; they exist so ``arda qc batch`` can group a cohort the way it was collected,
+#: and so a sheet that already carries them stops being warned about.
+LABEL_COLUMNS = ("project", "batch")
 
 #: Characters a sample id may not contain: it becomes an output *filename*.
 _ID_FORBIDDEN = set('/\\:*?"<>|')
@@ -44,6 +49,9 @@ class Sample:
 
     id: str
     pairs: tuple[tuple[Path, Path | None], ...]
+    #: Free-text grouping labels from the sheet. Empty when it did not carry them.
+    project: str = ""
+    batch: str = ""
 
 
 def _check_id(sid: str, where: str) -> str:
@@ -58,7 +66,8 @@ def _check_id(sid: str, where: str) -> str:
     return sid
 
 
-def _group(rows: list[tuple[str, Path, Path | None]], where: str) -> list[Sample]:
+def _group(rows: list[tuple[str, Path, Path | None]], where: str,
+           labels: dict[str, tuple[str, str]] | None = None) -> list[Sample]:
     """Merge rows sharing an id, keeping first-appearance order for ids and row order within one.
 
     Never: a sample is single-end or paired, never both. Half its reads silently losing their mate
@@ -78,7 +87,8 @@ def _group(rows: list[tuple[str, Path, Path | None]], where: str) -> list[Sample
             raise ValueError(
                 f"{where}: sample {sid!r} mixes paired and single-end read groups; give every "
                 f"read group an R2, or none of them")
-        out.append(Sample(sid, tuple(pairs)))
+        project, batch = (labels or {}).get(sid, ("", ""))
+        out.append(Sample(sid, tuple(pairs), project, batch))
     return out
 
 
@@ -96,6 +106,11 @@ def read_sheet(path: str | Path) -> list[Sample]:
     written. Extra columns are ignored, but **named once in a warning**: a sheet whose header says
     ``fastq2`` is not a sheet with no R2, and silently treating it as single-end halves the data.
 
+    ``project`` and ``batch`` are optional LABELS: nothing in the pipeline reads them and no output
+    changes, but ``arda qc batch`` groups a cohort by them. Read from the sample's FIRST row --
+    a sample's lanes belong to one batch by definition, and a sheet that says otherwise has a
+    typo rather than a meaning.
+
     Relative paths resolve against the **sheet's own directory**, so a sheet travels with its data.
     """
     path = Path(path)
@@ -111,7 +126,9 @@ def read_sheet(path: str | Path) -> list[Sample]:
         if missing:
             raise ValueError(
                 f"{path}: sample sheet is missing {', '.join(missing)}. Expected the columns "
-                f"{', '.join(SHEET_COLUMNS)} (fastq_2 optional), {'comma' if delim == ',' else 'tab'}"
+                f"{', '.join(SHEET_COLUMNS[:2])} (plus optional "
+                f"{', '.join(('fastq_2',) + LABEL_COLUMNS)}), "
+                f"{'comma' if delim == ',' else 'tab'}"
                 f"-separated; saw {', '.join(header) or '(no header)'}")
         extra = [h for h in header if h and h not in SHEET_COLUMNS]
         if extra:
@@ -119,6 +136,7 @@ def read_sheet(path: str | Path) -> list[Sample]:
                            path.name, ", ".join(extra))
 
         rows: list[tuple[str, Path, Path | None]] = []
+        labels: dict[str, tuple[str, str]] = {}
         for n, row in enumerate(reader, start=2):        # 1 is the header
             where = f"{path}:{n}"
             sid = _check_id(row.get("sample") or "", where)
@@ -129,9 +147,11 @@ def read_sheet(path: str | Path) -> list[Sample]:
             rows.append((sid,
                          _exists(_resolve(r1, base), where),
                          _exists(_resolve(r2, base), where) if r2 else None))
+            labels.setdefault(sid, ((row.get("project") or "").strip(),
+                                    (row.get("batch") or "").strip()))
     if not rows:
         raise ValueError(f"{path}: sample sheet has a header but no rows")
-    return _group(rows, str(path))
+    return _group(rows, str(path), labels)
 
 
 def _resolve(value: str, base: Path) -> Path:

@@ -1554,5 +1554,99 @@ def resolve_ties_cmd(
     typer.echo(str(output))
 
 
+# ── QC ────────────────────────────────────────────────────────────────────────────────────────
+# `arda stats` is ONE sample's QC table and stays exactly that. `arda qc` combines several and
+# renders them; the split is between "reduce this run" and "compare these runs".
+qc_app = typer.Typer(add_completion=False,
+                     help="Combine many samples' QC tables, and render them as one HTML page.")
+app.add_typer(qc_app, name="qc")
+
+
+@qc_app.command("batch")
+def qc_batch(
+    out_dir: Path = typer.Option(..., "--dir", "-d",
+                                 help="Results directory to glob `*.stats.tsv` from."),
+    output: Path = typer.Option(..., "--output", "-o",
+                                help="Output PREFIX. Writes <prefix>.qc.tsv, .qc.wide.tsv and "
+                                     ".qc.json."),
+    samples: Optional[Path] = typer.Option(
+        None, "--samples",
+        help="Sample sheet, read ONLY for its optional `project` and `batch` columns -- the "
+             "groups a sample is compared within. A sample the sheet does not mention keeps "
+             "empty labels rather than being dropped."),
+    report: Optional[Path] = typer.Option(
+        None, "--report", help="Also render the dashboard to this HTML file, saving a second "
+                               "`arda qc report` call."),
+) -> None:
+    """Combine every sample's QC table in a directory into one cohort view.
+
+    Reads only the per-sample `*.stats.tsv` — never an AIRR or a clonotype table — so a
+    thousand-sample cohort is one `concat` and runs on results copied off a cluster::
+
+        arda qc batch -d results/ -o results/batch --samples sheet.tsv
+
+    \b
+      <prefix>.qc.tsv        long: sample x scope x key x metric, with median / MAD / z
+      <prefix>.qc.wide.tsv   one row per sample, `sample` scope — the table you read
+      <prefix>.qc.json       typed and nested, what `arda qc report` inlines
+
+    ⚠ **Flags, never filters, and no shipped threshold.** There is no pass/fail column and no
+    constant saying what a good `mapped_fraction` is — that depends on the library, the organism
+    and the depth. What a batch can say is whether a sample looks like the batch it came in with,
+    so each metric carries its group's median, its MAD and a robust z, and you decide. A group of
+    fewer than 5 samples gets a median but no z: MAD over four points is not a scale.
+
+    Repertoire biology is deliberately absent — no diversity, clonality, rarefaction or overlap.
+    Those are `vdjtools`'; this answers "did this run work, and is this sample like its batch".
+    """
+    import polars as pl
+
+    from . import qc
+
+    paths = qc.find_stats(out_dir)
+    if not paths:
+        raise typer.BadParameter(f"no *.stats.tsv under {out_dir}")
+    df = qc.collect_batch(paths, sheet=samples)
+    written = qc.write_batch(df, output)
+    n_out = qc.outliers(df).filter(pl.col("outlier") == 1).height
+    log.info("qc batch: %d samples, %d rows, %d flagged", len(paths), df.height, n_out)
+    for path in written:
+        typer.echo(str(path))
+    if report is not None:
+        from .qcreport import render
+
+        typer.echo(str(render(written[-1], report)))
+
+
+@qc_app.command("report")
+def qc_report(
+    input: Path = typer.Option(..., "--input", "-i",
+                               help="A `<prefix>.qc.json` from `arda qc batch`, or one sample's "
+                                    "`<prefix>.stats.json`."),
+    output: Path = typer.Option(..., "--output", "-o", help="HTML file to write."),
+    title: Optional[str] = typer.Option(None, "--title", help="Page heading. Defaults to the "
+                                                              "input's stem."),
+) -> None:
+    """Render a QC JSON as one self-contained, interactive HTML page.
+
+    The data is inlined and the charts are drawn by a few hundred lines of plain JavaScript, so
+    the file has **no external reference of any kind**: it opens on an air-gapped login node, off
+    a USB stick, or as an email attachment, and it keeps working after the results directory is
+    gone. That is the same stance as `arda cells --plot`, which writes its gnuplot script whether
+    or not gnuplot exists.
+
+    \b
+      sortable sample table   one row per sample, shaded by robust z, filtered by project/batch
+      metric across samples   any `sample`-scope metric as a bar chart, with the group median
+      distributions           junction length, read length, clone size, gene usage, overlaid
+      provenance              arda and mmseqs versions, reference, flags, per sample
+
+    Takes either a batch JSON or a single sample's `.stats.json` — one sample is a cohort of one.
+    """
+    from .qcreport import render
+
+    typer.echo(str(render(input, output, title=title)))
+
+
 if __name__ == "__main__":
     app()
