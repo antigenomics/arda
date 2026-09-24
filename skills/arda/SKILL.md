@@ -6,7 +6,8 @@ description: >-
   input, single sequences or whole FASTQ; for extracting a repertoire from bulk RNA-seq, amplicon
   or single-cell libraries; for marking up and repairing a bare (CDR3 amino acid, V, J) record
   that has no read behind it, as in VDJdb; for pulling germline FR/CDR subsequences per allele;
-  or for rebuilding the reference database from IMGT.
+  for run and batch quality control over one sample or a whole cohort; or for rebuilding the
+  reference database from IMGT.
 ---
 
 # arda
@@ -125,6 +126,8 @@ arda assemble -i mapped.airr.tsv -o assembled.airr.tsv
 arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
 arda shm      -i mapped.airr.tsv -o rescoped.airr.tsv         # recount SHM outside the junction
 arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv
+arda qc batch  -d out/ -o out/batch --samples sheet.tsv   # every sample's QC as one table
+arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-contained page
 
 arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
 arda export-ref --kind segments --locus TRB --format fasta
@@ -161,7 +164,7 @@ tool (e.g. `migec`) does all four and leaves the barcode in the record name.
 → **[references/speed-flags.md](references/speed-flags.md)** — each flag's measured regime, the
 segment reference and rescue guarantee, and the internals a hot-path change must respect.
 → **[references/rnaseq-pipeline.md](references/rnaseq-pipeline.md)** — what each stage owns, the
-run report, and `arda stats`.
+run report, `arda stats` and `arda qc`.
 → **[references/read-groups-and-cluster.md](references/read-groups-and-cluster.md)** — a sample
 split across several FASTQs, and the three cluster adapters.
 → **[references/bare-records.md](references/bare-records.md)** — `arda markup`, junction repair

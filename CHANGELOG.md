@@ -3,7 +3,95 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.24.0
+
+### Quality control: the distributions, a cohort table, and one HTML file
+
+The per-sample QC table has existed since 2.14.0 and says in its own docstring that its long
+format is there so a metric can be joined across samples. Nothing performed that join: no code
+globbed `*.stats.tsv`, `_mode_run` emitted no combined artifact, and the Snakemake `rule all`
+only expanded per-sample paths. `arda cells` wrote no QC table at all, and its report shares no
+key with the bulk one. Nothing rendered any of it.
+
+**Distributions.** Five new scopes, all keyed `locus:bucket` and all sparse (only occupied
+buckets get a row, as `v_gene` already did): `junction_aa_len` in residues over reads that span
+both anchors, `read_len` in 10-nt buckets of the length arda actually aligned, `clone_size` in
+powers of two weighted both by clonotypes and by reads, `isotype` from the clonotype's dominant
+`c_call`, and `chain_support` for single cell. Plus `reads_rev_comp` and
+`reads_junction_completed`. Nothing new is computed — `mmseqs2_qlen`, `rev_comp`,
+`junction_completed_nt` and `c_call` were already being read into `stats.py` and discarded. They
+are there because min/max/mean cannot show a shape, and shape is most of the diagnosis: a bimodal
+junction length is two primer sets in one tube, a read-length cliff is an adapter left on, and a
+clone-size distribution with no singletons is a library amplified before it was sequenced. Each
+reads as an unremarkable mean.
+
+### Fixed: three ways the QC table corrupted a cross-sample join rather than failing one
+
+`_merge_map_reports` renames `wall_seconds` to `wall_seconds_max`/`_sum` and `peak_rss_mb` to
+`peak_rss_mb_max` for a sample delivered as several FASTQ pairs. So `run/map/wall_seconds` existed
+for single-file samples and not for lane-split ones, and a join on it silently dropped exactly the
+samples that arrived as lanes. The canonical name is restored where a report becomes QC rows;
+`.arda.json` is unchanged, and `wall_seconds_sum` keeps its own name because it is a different
+fact.
+
+`segment_search.reasons` is a dict inside a dict and the one-level flatten dropped it — the only
+evidence for why `fast_fraction` is low on a sample.
+
+An aggregation over an empty filtered set returned None and was written as a blank cell, which a
+reader casts to 0: `chain/IGH/junction_nt_min` read as "the shortest IGH junction was 0 nt" where
+the truth is "no IGH read spanned both anchors". Omitted now, as `docs/qc.rst` already promised.
+
+Also: `arda cells` assigned `summary["figures"]` after writing `.arda.json`, so the one key naming
+the panels a run drew never reached disk.
+
+### `arda cells` writes the same QC table a bulk run does
+
+Same scopes — `sample`, `chain` per locus, `v_gene`/`j_gene` with coverage, `junction_aa_len` —
+because "which loci did this sample yield, and at what junction lengths" is the same question
+whether the reads came one per cell or in bulk. What is genuinely single-cell (cells, molecules,
+the knee, contig N50) arrives through the `run` scope from its own report. `pairing_rate`,
+`doublet_rate` and `molecules_placed_fraction` are derived: the first two are the AIRR Community's
+chain-pairing QC and `cell_summary` had already assigned every cell the status they count. A chain
+the extra-chain gate marked `extra` is not counted as yield anywhere — it is ambient 96–97 % of
+the time, which is why the gate exists.
+
+### `arda qc batch` — a cohort's QC tables as one view
+
+Reads **only** the per-sample `*.stats.tsv`, never an AIRR or a clonotype table, so a
+thousand-sample cohort is one concatenation and runs on a laptop against results copied off a
+cluster. Writes `<prefix>.qc.tsv` (long, with median/MAD/z), `.qc.wide.tsv` (one row per sample)
+and `.qc.json` (typed, nested). Every run now also writes `<prefix>.stats.json` beside its TSV,
+built from the same rows so the two cannot diverge, and `arda stats --json` asks for it directly.
+
+The sample sheet gains optional `project` and `batch` columns: labels read from a sample's first
+row, which nothing in the pipeline looks at and no output changes because of. They name the group
+a sample is compared within. A sheet that already carried them was being warned about.
+
+**No threshold is shipped.** There is no pass/fail column and no constant saying what a good
+`mapped_fraction` is — that depends on the library, the organism and the depth, and a number that
+looked calibrated would be worse than none. What a batch can say is whether a sample looks like
+the batch it came in with, so each metric carries its group's median, its MAD and a robust z
+(`0.6745·(x − median)/mad`, flagged at `|z| ≥ 3.5`, Iglewicz–Hoaglin). A group of fewer than five
+samples gets a median and no z, because MAD over four points is not a scale estimate. Flags, never
+filters.
+
+Repertoire biology is deliberately absent — no diversity, clonality, rarefaction, overlap or
+cross-sample clonotype matching. Those are `vdjtools`', which takes arda as a base dependency.
+
+### `arda qc report` — one HTML file that fetches nothing
+
+The QC JSON is inlined and the charts are drawn by plain JavaScript, so the page has no external
+reference of any kind: no CDN, no bundle, no build step, and **no new dependency**. It opens on an
+air-gapped login node, off a USB stick or as an email attachment, and keeps working after the
+results directory is gone. A chart library would be richer and would cost the one property the
+file exists for. Palette and ink are `scplot`'s ColorBrewer Dark2 over a transparent background.
+
+Sortable sample table shaded by robust z, any metric as a bar chart against its group's median,
+the distributions overlaid per sample as a fraction of each sample's own total, and per-sample
+provenance — all filterable together by project, batch and name. Takes a batch JSON or one
+sample's `.stats.json`; one run is a cohort of one.
+
+Design record in `project/design-qc.md`.
 
 ### Docs: the modes first, multi-file samples demoted
 

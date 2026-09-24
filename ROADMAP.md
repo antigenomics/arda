@@ -8,7 +8,10 @@ orientation via `rev_comp`), reverse-complement handling, all-loci single-DB
 querying, streaming/bounded-memory FASTQ I/O (optional quality retention),
 out-of-frame junction translation, extended V/J-position markup, D-segment mapping
 (incl. D-D fusions across all D loci), offline GenBank-vs-IgBLAST test fixtures,
-run QC (`arda stats`), single-cell support (`arda cells`: reference-free per-cell
+run QC (`arda stats`, every mode, with the junction-length / read-length /
+clone-size / isotype distributions) and batch QC (`arda qc batch` / `qc report`:
+a cohort roll-up with per-batch robust z, and a self-contained HTML dashboard),
+single-cell support (`arda cells`: reference-free per-cell
 contig assembly, chain pairing, doublet flagging, and the QC surface), and multi-file
 samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
 
@@ -116,6 +119,41 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
   - [ ] **`--jobs N` for concurrent samples on one box** is deliberately absent. It can only pay
         when each sample is too small to saturate mmseqs; measure a many-small-samples sheet
         before adding it.
+
+- [x] **Batch quality control.** Staged plan in **`project/design-qc.md`**; that document is
+      authoritative and this entry is the index. The per-sample QC table has existed since
+      2.14.0 and says in its own docstring that its long format is there to be joined across
+      samples -- nothing performed that join, no mode but bulk wrote the table, and nothing
+      rendered it.
+  - [x] **The distributions, and one address per fact.** Five sparse scopes keyed
+        `locus:bucket` (`junction_aa_len`, `read_len`, `clone_size`, `isotype`,
+        `chain_support`), all from columns `stats.py` was already reading and discarding.
+        Never: min/max/mean cannot show a SHAPE -- a bimodal junction length is two primer sets
+        in one tube, a read-length cliff is an adapter left on, and each reads as an ordinary
+        mean. Three run-scope defects fixed with them, all of which corrupt a cross-sample join
+        rather than failing it: `_merge_map_reports` renamed `wall_seconds`/`peak_rss_mb` for
+        lane-split samples only, `segment_search.reasons` never survived the one-level flatten,
+        and an empty aggregation was written blank instead of omitted.
+  - [x] **`arda cells` writes the same table.** Same scopes as bulk, so a cohort can mix them;
+        `pairing_rate` / `doublet_rate` derived, since they are the AIRR chain-pairing QC and
+        `cell_summary` had already assigned every cell its status. Never: a chain the
+        extra-chain gate marked `extra` is not yield -- it is ambient 96-97 % of the time.
+  - [x] **`arda qc batch` -- the roll-up.** Reads ONLY the per-sample `*.stats.tsv`, never an
+        AIRR or a clonotype table, so a 1,000-sample cohort is one `concat` on a laptop against
+        results copied off a cluster. The sheet gains optional `project`/`batch` labels.
+        Never: no shipped threshold. Each metric carries its group's median, MAD and robust z
+        (|z| >= 3.5); a group under 5 samples gets no z, because MAD over four points is not a
+        scale. Flags, never filters, as `stats` already refused to decide.
+  - [x] **`arda qc report` -- one self-contained HTML file.** Data inlined, SVG drawn by plain
+        JavaScript, **no CDN, no bundle, no new dependency** -- it opens air-gapped and survives
+        the results directory. Same stance as `scplot`'s always-written gnuplot script.
+  - [ ] **Repertoire biology stays out**, deliberately. Diversity, clonality, rarefaction,
+        overlap and cross-sample clonotype matching are `vdjtools`', which takes arda as a base
+        dependency. arda's QC answers "did this run work, and is this sample like its batch".
+  - [ ] **The MiAIRR Repertoire/DataProcessing document** is absent because arda cannot fill
+        the read-QC fields honestly -- `total_reads_passing_qc_filter` is the facility's count,
+        upstream of annotation, and `mapped_reads` is not it. Unblocks when someone submits arda
+        output to iReceptor or VDJServer.
 
 - [x] **Multi-node sharding.** `arda cluster split-fasta` round-robins a huge FASTA/FASTQ into N
       shards (one pass); `arda cluster merge` concatenates per-shard AIRR TSVs (single
