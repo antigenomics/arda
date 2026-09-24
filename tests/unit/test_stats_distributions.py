@@ -227,3 +227,49 @@ def test_the_single_cell_report_still_reaches_the_run_scope(cells_prefix):
     run = {m: v for s, k, m, v in collect(cells=cells_prefix) if s == "run"}
     assert run["contig_n50"] == "536"
     assert run["knee_rank"] == "2"
+
+
+# ── the yield ledger ──────────────────────────────────────────────────────────────────────────
+
+_REPORT = {
+    "arda_version": "9.9.9",
+    "map": {"total_reads": 330, "mapped_reads": 210},
+    "assemble": {"contigs": 8, "contigs_complete": 5},
+    "correct": {"reads_assigned": 28, "clonotypes_out": 19},
+}
+
+
+def _sample_scope(rows):
+    return {m: v for s, k, m, v in rows if s == "sample"}
+
+
+def _report(tmp_path, doc):
+    path = tmp_path / "s.arda.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def test_the_yield_ratios_reconcile_counters_from_different_stage_blocks(tmp_path):
+    """A count does not compare across samples; a fraction does. `reads_assigned` of 28 means
+    nothing beside another sample's 28 until you know one was handed 330 reads and the other
+    3.3 million — and those two numbers sit in different blocks of the report, so the reader
+    divides by hand or never asks."""
+    # rel=1e-5 because `_fmt` writes six significant digits — the table's precision, not floats'.
+    got = _sample_scope(collect(report=_report(tmp_path, _REPORT)))
+    assert float(got["reads_used_fraction"]) == pytest.approx(28 / 330, rel=1e-5)
+    assert float(got["reads_used_of_mapped_fraction"]) == pytest.approx(28 / 210, rel=1e-5)
+    assert float(got["reads_per_clonotype_mean"]) == pytest.approx(28 / 19, rel=1e-5)
+    assert float(got["contigs_complete_fraction"]) == pytest.approx(5 / 8, rel=1e-5)
+
+
+def test_a_ratio_with_no_denominator_is_omitted_rather_than_guessed(tmp_path):
+    """An `annotate`-only report has no `correct` block; a zero denominator has no quotient."""
+    bare = _sample_scope(collect(report=_report(tmp_path, {"map": {"total_reads": 330}})))
+    assert "reads_used_fraction" not in bare
+    assert "contigs_complete_fraction" not in bare
+
+    empty = _sample_scope(collect(report=_report(tmp_path, {
+        "map": {"total_reads": 0, "mapped_reads": 0},
+        "correct": {"reads_assigned": 0, "clonotypes_out": 0}})))
+    assert "reads_used_fraction" not in empty
+    assert "reads_per_clonotype_mean" not in empty

@@ -122,6 +122,42 @@ has no ``junction_quality_mean`` row rather than a zero that reads like a terrib
 same holds for an aggregation with nothing to aggregate: if no IGH read spans both anchors there
 is no ``chain IGH junction_nt_min`` row, rather than a blank that casts to zero.
 
+Where the reads went
+--------------------
+
+The counters that say what a run yielded live in three different blocks of the report:
+``map.total_reads``, ``map.mapped_reads`` and ``correct.reads_assigned``. A count does not compare
+across samples — ``reads_assigned`` of 28 means nothing beside another sample's 28 until you know
+one was handed 330 reads and the other 3.3 million — so the ratios are metrics in their own right,
+in the ``sample`` scope, each over a stated denominator:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - metric
+     - definition
+   * - ``reads_used_fraction``
+     - ``correct.reads_assigned`` / ``map.total_reads`` — of every read arda was handed, the
+       fraction that ended up inside a clonotype. The library-level yield.
+   * - ``reads_used_of_mapped_fraction``
+     - ``correct.reads_assigned`` / ``map.mapped_reads`` — of the receptor-bearing reads, the
+       fraction that survived assembly and correction.
+   * - ``reads_per_clonotype_mean``
+     - ``correct.reads_assigned`` / ``correct.clonotypes_out``
+   * - ``contigs_complete_fraction``
+     - ``assemble.contigs_complete`` / ``assemble.contigs``
+
+``reads_assigned`` is the read-conservation invariant — the sum of ``duplicate_count`` over the
+clonotype table, assembly rescues included — not ``correct.reads``, which is explicitly not it.
+
+.. note::
+
+   ``reads_incomplete`` and ``reads_low_quality`` stay **counts**. They are tallied inside
+   ``correct``, whose input is the junction-bearing subset rather than every mapped read, and no
+   counter names that subset — so any fraction built from them would be nearly right, which is
+   worse than a count.
+
 Distributions
 -------------
 

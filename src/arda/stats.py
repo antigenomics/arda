@@ -173,6 +173,41 @@ def _flatten_report(rep: dict, out: list[tuple], section: str = "") -> None:
             out.append(("run", section, name, _fmt(v)))
 
 
+def _ratio(rep: dict, out: list[tuple], name: str, num: tuple[str, str],
+           den: tuple[str, str]) -> None:
+    """Emit ``sample / "" / name`` = ``num / den``, or nothing if either is missing or zero."""
+    a = (rep.get(num[0]) or {}).get(num[1])
+    b = (rep.get(den[0]) or {}).get(den[1])
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b:
+        out.append(("sample", "", name, _fmt(a / b)))
+
+
+def _yield_rows(rep: dict, out: list[tuple]) -> None:
+    """The ratios that say where a library's reads ended up.
+
+    Never: **a count does not compare across samples; a fraction does.** `reads_assigned` of
+    28 means nothing next to another sample's 28 until you know one was handed 330 reads and the
+    other 3.3 million -- and today those two numbers live in different stage blocks of the report,
+    so the reader divides by hand or does not ask. A batch table compares METRICS, so the ratio
+    has to be a metric.
+
+    Only ratios whose denominator is unambiguous ship. `reads_incomplete` and `reads_low_quality`
+    are counted inside `correct`, whose input is the junction-bearing subset rather than every
+    mapped read, and there is no counter that names that subset (`correct.reads` is explicitly
+    NOT the conservation invariant, `correct.py:150-155`). Rather than divide by a denominator
+    that is nearly right, they stay counts.
+    """
+    # `reads_assigned` is the read-conservation invariant -- the sum of `duplicate_count` over the
+    # clonotype table, i.e. every read that ended up inside a clonotype, assembly rescues included.
+    _ratio(rep, out, "reads_used_fraction", ("correct", "reads_assigned"), ("map", "total_reads"))
+    _ratio(rep, out, "reads_used_of_mapped_fraction",
+           ("correct", "reads_assigned"), ("map", "mapped_reads"))
+    _ratio(rep, out, "reads_per_clonotype_mean",
+           ("correct", "reads_assigned"), ("correct", "clonotypes_out"))
+    _ratio(rep, out, "contigs_complete_fraction",
+           ("assemble", "contigs_complete"), ("assemble", "contigs"))
+
+
 def _gene_universe(organism: str) -> dict[tuple[str, str], set[str]]:
     """``(locus, segment) -> {gene}`` from the reference's own anchor table.
 
@@ -643,7 +678,9 @@ def collect(*, airr: str | Path | None = None, clones: str | Path | None = None,
     """
     out: list[tuple] = []
     if report is not None and Path(report).exists():
-        _flatten_report(json.loads(Path(report).read_text()), out)
+        rep = json.loads(Path(report).read_text())
+        _flatten_report(rep, out)
+        _yield_rows(rep, out)
     if r1 is not None:
         paths = [Path(p) for p in (r1, r2) if p is not None]
         out.append(("sample", "", "paired", _fmt(r2 is not None)))

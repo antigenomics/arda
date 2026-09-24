@@ -78,6 +78,21 @@ filters.
 Repertoire biology is deliberately absent — no diversity, clonality, rarefaction, overlap or
 cross-sample clonotype matching. Those are `vdjtools`', which takes arda as a base dependency.
 
+### Where the reads went
+
+The counters that say what a run yielded sit in three different blocks of the report —
+`map.total_reads`, `map.mapped_reads`, `correct.reads_assigned` — so the reader divided by hand
+or never asked. A count does not compare across samples anyway: `reads_assigned` of 28 means
+nothing beside another sample's 28 until you know one was handed 330 reads and the other 3.3
+million, and a batch table compares *metrics*. So the ratios are metrics now, in the `sample`
+scope, each over a stated denominator: `reads_used_fraction`, `reads_used_of_mapped_fraction`,
+`reads_per_clonotype_mean` and `contigs_complete_fraction`.
+
+Only ratios whose denominator is unambiguous ship. `reads_incomplete` and `reads_low_quality` are
+tallied inside `correct`, whose input is the junction-bearing subset rather than every mapped
+read, and no counter names that subset — a fraction built from them would be nearly right, which
+is worse than a count. They stay counts.
+
 ### `arda qc report` — one HTML file that fetches nothing
 
 The QC JSON is inlined and the charts are drawn by plain JavaScript, so the page has no external
@@ -87,9 +102,20 @@ results directory is gone. A chart library would be richer and would cost the on
 file exists for. Palette and ink are `scplot`'s ColorBrewer Dark2 over a transparent background.
 
 Sortable sample table shaded by robust z, any metric as a bar chart against its group's median,
-the distributions overlaid per sample as a fraction of each sample's own total, and per-sample
-provenance — all filterable together by project, batch and name. Takes a batch JSON or one
-sample's `.stats.json`; one run is a cohort of one.
+the distributions overlaid per sample as a fraction of each sample's own total, and provenance —
+all filterable together by project, batch and name. Takes a batch JSON or one sample's
+`.stats.json`; one run is a cohort of one.
+
+The distributions are drawn as **histograms**, which is not a detail: `stats` stores them sparsely
+and joining the stored points with straight lines bridges every empty bucket, drawing an
+interpolation that is not in the data — a gap at junction length 14 became a diagonal through it.
+Absent means zero here, and zero is drawn, stepped, with the bar edges at the bin edges. Hovering
+a bucket reads every visible sample at once, empty buckets included.
+
+Provenance is one table with the samples down the side, and the fields every sample agrees on
+lifted out above it — so the only question worth asking there, "is one of these built against a
+different reference?", is a glance down a column rather than a scroll through a definition list
+per sample.
 
 Design record in `project/design-qc.md`.
 

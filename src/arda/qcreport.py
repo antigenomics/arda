@@ -104,7 +104,8 @@ select, input { font: inherit; padding: .15rem .3rem; }
 .empty { color: INKCOLOR; font-style: italic; }
 svg text { fill: INKCOLOR; font-size: 11px; }
 .tip { position: fixed; pointer-events: none; background: #222; color: #eee; padding: .2rem .45rem;
-       border-radius: 3px; font-size: 12px; opacity: 0; transition: opacity .1s; }
+       border-radius: 3px; font-size: 12px; opacity: 0; transition: opacity .1s;
+       white-space: pre; font-variant-numeric: tabular-nums; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .1rem .75rem; margin: 0; }
 dt { color: INKCOLOR; }
 dd { margin: 0; }
@@ -241,7 +242,7 @@ function drawTable() {
 }
 
 // ── SVG helpers ─────────────────────────────────────────────────────────────────────────────
-const tip = el('div', { class: 'tip' });
+const tip = el('div', { class: 'tip' });   // `white-space: pre` -- the bucket readout is multi-line
 document.body.appendChild(tip);
 const hover = (node, text) => {
   node.addEventListener('mousemove', (e) => {
@@ -369,15 +370,38 @@ function drawDist() {
   const svg = el('svg', { viewBox: `0 0 ${w} ${h}`, width: '100%', height: h });
   svg.appendChild(axes(w, h, pad, $('#d-scope').selectedOptions[0].textContent, yMax,
     labels.filter((_, i) => i % every === 0).map((b) => [x(b), b])));
-  scaled.forEach(([s, pts], i) => {
+
+  // Never: this is a HISTOGRAM, not a series. `stats` stores distributions sparsely -- only
+  // occupied buckets get a row -- so joining the stored points with straight lines bridges every
+  // empty bucket and draws an interpolation that is not in the data: a gap at length 14 became a
+  // diagonal through it. Absent means ZERO here, and zero is drawn. Stepped, one flat top per
+  // bucket, so the bar edges are where the bin edges are.
+  const single = scaled.length === 1;
+  scaled.forEach(([s, pts]) => {
     const colour = PALETTE[series.findIndex(([n]) => n === s) % PALETTE.length];
-    const sorted = pts.slice().sort((a, b) => idx[a[0]] - idx[b[0]]);
-    const d = sorted.map((p, k) => (k ? 'L' : 'M') + x(p[0]) + ' ' + y(p[1])).join(' ');
+    const at = Object.fromEntries(pts);
+    let d = '';
+    labels.forEach((b, i) => {
+      const v = at[b] || 0, x0 = pad.l + step * i, x1 = x0 + step;
+      d += (i ? ' L' : 'M') + x0 + ' ' + y(v) + ' L' + x1 + ' ' + y(v);
+    });
+    if (single) {
+      // One series reads best as filled bars; several would be mud, so they stay outlines.
+      svg.appendChild(el('path', {
+        d: d + ` L${pad.l + step * labels.length} ${y(0)} L${pad.l} ${y(0)} Z`,
+        fill: colour, 'fill-opacity': .22, stroke: 'none' }));
+    }
     svg.appendChild(el('path', { d: d, fill: 'none', stroke: colour, 'stroke-width': 1.8,
-                                 'stroke-opacity': .85 }));
-    for (const p of sorted)
-      svg.appendChild(hover(el('circle', { cx: x(p[0]), cy: y(p[1]), r: 2.5, fill: colour }),
-        `${s}  ${p[0]}: ${fmt(p[1])}`));
+                                 'stroke-opacity': .9, 'stroke-linejoin': 'miter' }));
+  });
+  // One hover target per BUCKET, reading every visible sample at once -- which is the comparison
+  // the overlay is for, and it works on an empty bucket too.
+  labels.forEach((b, i) => {
+    const text = [b + ':', ...scaled.map(([s, pts]) =>
+      `  ${s} ${fmt(Object.fromEntries(pts)[b] || 0)}`)].join('\n');
+    svg.appendChild(hover(el('rect', {
+      x: pad.l + step * i, y: pad.t, width: step, height: h - pad.b - pad.t,
+      fill: 'transparent' }), text));
   });
   const legend = el('div', { class: 'legend' }, series.map(([s], i) =>
     el('span', { class: hidden.has(s) ? 'off' : '',
@@ -387,15 +411,38 @@ function drawDist() {
 }
 
 // ── panel 4: provenance ─────────────────────────────────────────────────────────────────────
+// One table, samples down, fields across. A definition list per sample was a screenful per sample
+// and, worse, made the only question worth asking here -- "is one of these built against a
+// different reference?" -- a scrolling exercise instead of a glance down a column.
+const PROV = ['arda_version', 'mmseqs_version', 'reference.path', 'map.organism', 'map.threads',
+  'map.min_score', 'map.paired', 'map.shards', 'map.read_groups', 'map.input'];
+
 function drawProvenance() {
-  const keys = ['arda_version', 'mmseqs_version', 'reference.path', 'organism', 'map.organism',
-    'map.threads', 'map.min_score', 'map.input', 'map.paired', 'map.shards', 'map.read_groups'];
-  const rows = visibleSamples().map((s) => {
-    const have = keys.filter((k) => ROWS[s][k] !== undefined);
-    return el('div', {}, [el('h3', { text: s, style: 'font-size:.95rem;margin:.8rem 0 .2rem' }),
-      el('dl', {}, have.flatMap((k) => [el('dt', { text: k }), el('dd', { text: fmt(ROWS[s][k]) })]))]);
-  });
-  $('#prov').replaceChildren(...rows);
+  const rows = visibleSamples();
+  const cols = PROV.filter((k) => rows.some((s) => ROWS[s][k] !== undefined));
+  if (!rows.length || !cols.length) {
+    $('#prov').replaceChildren(el('p', { class: 'empty', text: 'No provenance recorded.' }));
+    return;
+  }
+  // A field every sample agrees on is stated once above the table rather than repeated down a
+  // column; what is left is only what DIFFERS, which is the whole reason to look.
+  const uniform = cols.filter((k) =>
+    new Set(rows.map((s) => String(ROWS[s][k] ?? ''))).size === 1);
+  const varying = cols.filter((k) => !uniform.includes(k));
+  const shared = el('dl', {}, uniform.flatMap((k) =>
+    [el('dt', { text: k }), el('dd', { text: fmt(ROWS[rows[0]][k]) })]));
+  const head = el('tr', {}, ['sample', ...varying].map((c) => el('th', { text: c })));
+  const body = rows.map((s) => el('tr', {}, [el('td', { text: s }),
+    ...varying.map((c) => el('td', { title: String(ROWS[s][c] ?? ''), text: fmt(ROWS[s][c]) }))]));
+  const parts = [shared];
+  if (varying.length) {
+    parts.push(el('div', { class: 'scroll' },
+      [el('table', {}, [el('thead', {}, [head]), el('tbody', {}, body)])]));
+  } else {
+    parts.push(el('p', { class: 'empty',
+                         text: 'Every sample agrees on all of the above.' }));
+  }
+  $('#prov').replaceChildren(...parts);
 }
 
 // ── wiring ──────────────────────────────────────────────────────────────────────────────────
