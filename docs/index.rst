@@ -110,6 +110,7 @@ repository so they can be re-run: see the ``README`` benchmark tables and
 
    use_cases
    productivity
+   genotype
    scenarios
    error_correction
    shm

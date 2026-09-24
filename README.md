@@ -335,6 +335,43 @@ Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on *
 by default (reverse-complement reads are re-oriented and flagged `rev_comp=T`); a single search
 annotates a mixed bulk RNA-seq file across all loci.
 
+## Personalized germline: `arda genotype`, `resolve-ties --genotype`
+
+A reference catalogues every allele anyone carries; no donor carries all of them, and none carries
+more than two per gene. Restricting V calls to the carried set removes ambiguity that was never
+real — TIgGER measured 11.2 % → 1.5 % ambiguous assignments doing this on full-length BCR.
+
+```bash
+# apply an allele set you already trust -- one column of allele names is a valid genotype file
+arda resolve-ties -i sample.airr.tsv -o sample.genotyped.tsv --genotype genotype.tsv
+
+# or infer one from reads arda has already mapped
+arda genotype -i sample.airr.tsv -o sample.genotype.tsv --loci TRB
+```
+
+Restriction adds `v_call_genotyped` and leaves `v_call` byte-identical. It **never re-aligns and
+never rebuilds a reference**: given the span a read already aligned over, it is a set intersection.
+An OGRDB set, a MiXCR-inferred library or a hand-written list are all valid input, and every named
+allele is validated against the reference — an unknown one raises rather than silently restricting
+nothing.
+
+The inference groups reads by junction — **junctional diversity makes a junction de facto a UMI**,
+so one junction is one rearrangement and one independent draw from the donor's two chromosomes, and
+disagreement *within* a junction is error rather than allele (which is where the error rate is
+measured from). The call is a **likelihood ratio between diploid genotypes**, not a coverage rule:
+homozygous and heterozygous are the same multinomial formula at genotype size 1 and 2, and a gene
+is called only if the winner beats the runner-up by `--min-log10-bf`.
+
+⚠ **Allele-level genotyping is a read-length feature, and most libraries do not have it.**
+Separating a gene's alleles needs a median of 150 nt of TRBV (175 TRAV, 230 IGHV) from the 3' end;
+only 16 of 44 multi-allele human TRBV genes separate within 100 nt. On a real TRB amplicon
+(`SRR5233641`, 151 nt paired, 33,440 clonotypes) reads cover a median of **72 nt** of V — 56 after
+anchor-clipping, **none** reaching 150 — so 33.1 % of clonotypes can be assigned an allele and
+**17 of 53 genes are called**: 11 trivially (one catalogued allele) and **6 genuinely inferred**,
+at log₁₀ Bayes factors up to 251. The other 36 are refused, including one with 1,037 clonotypes
+that still cannot separate its alleles. The refusals are the point. Details in
+[`docs/genotype.rst`](docs/genotype.rst).
+
 ## Productivity: `productive`, `stop_codon`, `vj_in_frame`
 
 These three AIRR columns are the most misread ones arda writes, because each is scoped

@@ -1611,6 +1611,10 @@ def resolve_ties_cmd(
                                  help="Which calls to widen (comma-joined): v, j."),
     rank: bool = typer.Option(True, "--rank/--no-rank",
                               help="Second pass: put the allele the WHOLE LIBRARY supports first."),
+    genotype: Path = typer.Option(None, "--genotype",
+                                  help="Genotype TSV (`arda genotype`, or your own list of allele "
+                                       "names). Adds `v_call_genotyped`: v_call restricted to the "
+                                       "alleles this donor carries. `v_call` is left untouched."),
 ) -> None:
     """Widen ``v_call``/``j_call`` to every germline the read's alignment cannot rule out.
 
@@ -1636,6 +1640,72 @@ def resolve_ties_cmd(
     segs = tuple(x.strip() for x in segments.split(",") if x.strip())
     rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank)
     log.info("resolve-ties: %d rows", rep["rows"])
+    if genotype is not None:
+        from .genotype import read_genotype, restrict_airr
+        rep.update(restrict_airr(output, output, read_genotype(genotype, organism=organism),
+                                 organism=organism))
+    typer.echo(str(output))
+
+
+@app.command("genotype")
+def genotype_cmd(
+    input: Path = typer.Option(..., "--input", "-i", help="AIRR TSV from `map` (Stage 1)."),
+    output: Path = typer.Option(..., "--output", "-o", help="Genotype TSV."),
+    organism: str = typer.Option("human", "--organism"),
+    loci: str = typer.Option(None, "--loci", help="Comma-joined subset, e.g. `TRA,TRB`."),
+    min_log10_bf: float = typer.Option(
+        None, "--min-log10-bf",
+        help="Smallest log10 Bayes factor over the runner-up genotype before a gene is called "
+             "(default 1.0 = ten times more likely)."),
+    min_clonotypes: int = typer.Option(
+        None, "--min-clonotypes",
+        help="Below this many voting clonotypes a gene is reported with no alleles (default 10)."),
+    scope: str = typer.Option("framework", "--scope",
+                              help="`framework` clips each read's span at the Cys104 anchor; "
+                                   "`full` uses the whole V germline."),
+    unmutated: bool = typer.Option(True, "--unmutated/--no-unmutated",
+                                   help="Only germline-exact reads vote."),
+) -> None:
+    """Infer which V alleles this donor carries, from reads arda has already mapped.
+
+    A reference is a catalogue of every allele anyone has; no donor has all of them, and at most
+    two per gene. Restricting calls to the carried set removes ambiguity that was never real --
+    TIgGER measured 11.2 % -> 1.5 % ambiguous assignments doing this on full-length BCR.
+
+    Never: this is a claim about the GERMLINE REFERENCE, never about the repertoire. It does not
+    replace `stats`' `allele_candidate` scope, which stays a shortlist to look at and never a call.
+
+    Never: it re-assigns, it never re-aligns and never rebuilds a reference. Scaffold ids are
+    positional, `build-db` needs IgBLAST, and the mmseqs freshness contract records no allele-set
+    identity -- so a per-donor reference is three traps, and unnecessary: given the span a read
+    already aligned over, the restriction is a set intersection. Apply it with
+    `arda resolve-ties --genotype`.
+
+    ⚠ **Allele-level genotyping is a read-length feature.** Separating a gene's alleles needs a
+    median of 150 nt of TRBV (175 TRAV, 230 IGHV) measured from the 3' end; only 16 of 44
+    multi-allele human TRBV genes separate within 100 nt. Genes the library cannot resolve are
+    reported with a `note` and NO alleles -- omitted with a reason, never guessed.
+    """
+    from .genotype import MIN_CLONOTYPES, MIN_LOG10_BF, infer_genotype, write_genotype
+
+    bf = MIN_LOG10_BF if min_log10_bf is None else min_log10_bf
+    mc = MIN_CLONOTYPES if min_clonotypes is None else min_clonotypes
+    rows, rep = infer_genotype(
+        input, organism=organism,
+        loci=tuple(x.strip() for x in loci.split(",") if x.strip()) if loci else None,
+        min_log10_bf=bf, min_clonotypes=mc, scope=scope, unmutated_only=unmutated)
+    write_genotype(rows, output, params={
+        "organism": organism, "arda": __version__,
+        "min_log10_bf": bf, "min_clonotypes": mc,
+        "scope": scope, "unmutated_only": unmutated,
+        "clonotypes": rep["clonotypes"], "reads": rep["reads"],
+        "assigned_fraction": f"{rep['assigned_fraction']:.4f}",
+        "error_rate": f"{rep['error_rate']:.2e}",
+    })
+    log.info("genotype: %d/%d genes called (%d het, %d hom) from %d clonotypes / %d reads; "
+             "%.1f %% of clonotypes could be assigned an allele, error rate %.2e",
+             rep["called"], rep["genes"], rep["het"], rep["hom"], rep["clonotypes"],
+             rep["reads"], 100 * rep["assigned_fraction"], rep["error_rate"])
     typer.echo(str(output))
 
 
