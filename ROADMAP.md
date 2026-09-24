@@ -58,10 +58,22 @@ samples (read groups) across the CLI, SLURM, Nextflow and Snakemake.
         on a real curve, stopping at rank 15 of 136,032. And a global maximum always exists, so
         an ambient-only library returns a rank too; `find_knee` refuses one below 10x the mean
         molecules per barcode. Agrees with migec's C++ exactly (rank 376, 308 molecules).
-  - [ ] **S4 — `umi_count`.** Never redefine `duplicate_count` or `consensus_count`; they are
-        AIRR-spec fields. Never: It cannot be reconstructed from a migec molecule name: `.<m>` is a flat
-        index over (component × split) and both suffixes are emitted conditionally, so the FASTQ
-        name and `<sample>.mig.tsv` disagree. Blocked on a migec format decision, not on arda.
+  - [x] **S4 — `umi_count`.** Shipped 2026-09-24 as `correct --cell-from` / `--cell-regex`.
+        `duplicate_count` and `consensus_count` are untouched — they are AIRR-spec fields.
+        Never: it was NOT blocked on a migec format decision, and the entry that said so was
+        answering the wrong question. AIRR asks for **distinct UMIs**, and `.c<k>` / `.<m>`
+        subdivide reads that ALREADY SHARE one `<umi>`, so no reading of the conditional suffixes
+        can change the count; `<sample>`, `<cell>` and `<umi>` are unconditional. What is still
+        blocked on migec is *molecule identity* for a `<sample>.mig.tsv` join, which nothing in
+        arda needs.
+        Never: measured, not reasoned — `umi_count < consensus_count` on a **saturated barcode**
+        (migec splits one barcode into two molecules; differences outside the junction leave both
+        records in one clonotype: 3 / 3 / 2), and **not** in contig mode, where components never
+        overlap so at most one contig carries a junction and the rest are dropped by
+        `complete_only`. The first draft of the rescope claimed the opposite.
+        Never: OMITTED, never 0 or 1, when the dialect names no UMI or the ids do not parse; and
+        `--cell-from` is a BOTH-HALVES flag in `cluster.regime_flags`. Details in
+        `project/design-singlecell.md` S4.
   - [ ] **`arda singlecell` stays reserved as a MODE name** — the work lives in `arda cells`. Never: Its only sensible preset is the all-False vector,
         which is byte-for-byte what `--exact` already gives on either existing mode — a no-op mode.
         It ships when a measured speed row differs from both presets.
