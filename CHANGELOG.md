@@ -5,6 +5,61 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Changed (BREAKING): the integrations are nf-core/airrflow's, not arda's own
+
+All three runners — Nextflow, Snakemake and SLURM — now speak
+[nf-core/airrflow](https://github.com/nf-core/airrflow)'s vocabulary instead of an arda-only one.
+The point is not tidiness: a second name for the library protocol is a second place to get it
+wrong, and getting it wrong is a silent 2-4x slowdown rather than an error.
+
+**`arda.samples.read_sheet` reads two dialects.** nf-core's generic `sample` / `fastq_1` /
+`fastq_2` (unchanged, byte for byte), and airrflow's `sample_id` / `filename_R1` / `filename_R2`
+plus the AIRR metadata its schema requires. `species` selects the reference organism and
+`single_cell` is refused; `subject_id` and `tissue` become the `arda qc batch` grouping labels.
+One samplesheet therefore drives the Nextflow module, the Snakemake workflow and `arda cluster`
+with no translation step anywhere.
+
+Never: a sheet carrying **both** id columns is refused rather than resolved -- it does not say
+which column names the repertoire, and picking one silently splits or merges a sample.
+
+**The Nextflow module is rewritten.** `process ARDA` -> **`ARDA_ASSIGN`**, a drop-in for
+`CHANGEO_ASSIGNGENES` + `CHANGEO_MAKEDB`. `params.regime` is **gone**: the mode comes from
+airrflow's `--library_generation_method` (`specific_pcr*` / `dt_5p_race*` -> `arda amplicon`,
+`trust4` -> `arda rnaseq`) and the organism from the samplesheet's `species`. The four
+`arda_shm` / `arda_call_level` / `arda_ec_mode` / `arda_clonotype_key` params collapse into one
+`arda_args` passthrough -- each is a decision about what a clonotype IS, and listing them in a
+pipeline config invited setting them unread. Migration table in the module's README.
+
+⛔ **`sc_10x_genomics` is refused, with a message.** `arda cells` takes ONE per-molecule UMI
+consensus FASTQ with the barcode in the record name -- not a raw 10x read pair. arda does no
+barcode demultiplexing and no UMI collapse; both belong upstream. Mapping it would hand `arda
+cells` reads it cannot interpret and the failure would look like a bad repertoire rather than a
+wiring error.
+
+⛔ **`productive_only`, `reference_igblast`, `reference_fasta` and `fetch_germlines` are named as
+deliberately unconsumed.** arda has no productive filter -- it emits the AIRR `productive` column
+and leaves the decision to the consumer -- and its reference is built offline, once, so there is
+no per-run germline database to stage. A parameter accepted while doing nothing is this project's
+recurring failure mode, so they are documented rather than quietly wired to nothing.
+
+The Snakemake workflow reads `species` per sample (a cohort may mix organisms; `--config
+organism=` is the fallback) and refuses a single-cell sheet. `arda cluster` needed no change --
+it already parsed the sheet through `read_sheet`.
+
+### Fixed: the Nextflow module's Dockerfile failed on every correct install
+
+Its acceptance check grepped `arda rnaseq --help` for `--two-pass`, `--fast-segments`,
+`--v-only-on-segment` and `--indel-rescue`. Since 2.16.0 the regime IS the command name and
+`arda rnaseq` exposes none of them -- they live on `arda map`. It also invoked `arda rnaseq run`,
+removed in 2.16.0. No CI job builds the image, so nothing caught it.
+
+`tests/unit/test_nextflow_integration.py` now covers the module the way
+`test_snakemake_integration.py` covers the workflow: every version pin against
+`arda.__version__`, every mode in the protocol map is a real subcommand, and **every flag the
+script block emits exists on every mode it targets** -- the check that caught `--productive-only`,
+a flag arda has never had.
+
+
 ### Fixed: the Cys104 junction gate no longer throws away a junction over one substitution
 
 `v_anchor_prefix` is a longest common prefix, so a single substitution in the first two bases of a

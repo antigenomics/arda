@@ -200,3 +200,102 @@ def test_a_samples_lanes_take_their_labels_from_its_first_row(tmp_path):
                      "PT01\tl2_1.fq\tRUN4\n")
     (one,) = read_sheet(sheet)
     assert one.batch == "RUN3" and len(one.pairs) == 2
+
+
+# --- the nf-core/airrflow dialect ------------------------------------------------------------
+# One samplesheet has to drive the Nextflow module, the Snakemake workflow and `arda cluster`
+# alike, and airrflow's is the community standard for AIRR-seq. Reading it HERE is what keeps
+# each integration from inventing its own parser -- the drift this module exists to prevent.
+
+def _airrflow(tmp_path, rows, name="s.tsv", header=None):
+    """Write an airrflow-schema sheet whose FASTQs exist (arda validates inputs at parse time)."""
+    cols = header or ["sample_id", "subject_id", "species", "pcr_target_locus", "tissue", "sex",
+                      "age", "biomaterial_provider", "single_cell", "filename_R1", "filename_R2"]
+    out = []
+    for r in rows:
+        for key in ("filename_R1", "filename_R2"):
+            if r.get(key):
+                (tmp_path / r[key]).write_text("@r\nACGT\n+\nIIII\n")
+        out.append("\t".join(str(r.get(c, "")) for c in cols))
+    p = tmp_path / name
+    p.write_text("\t".join(cols) + "\n" + "\n".join(out) + "\n")
+    return p
+
+
+def _row(**kw):
+    base = dict(sample_id="S1", subject_id="D1", species="human", pcr_target_locus="ig",
+                tissue="blood", sex="F", age="42", biomaterial_provider="lab", single_cell="FALSE",
+                filename_R1="a_1.fq", filename_R2="a_2.fq")
+    base.update(kw)
+    return base
+
+
+def test_an_airrflow_samplesheet_is_read_without_translation(tmp_path):
+    s = _airrflow(tmp_path, [_row()])
+    got = read_sheet(s)
+    assert [x.id for x in got] == ["S1"]
+    assert got[0].pairs == ((tmp_path / "a_1.fq", tmp_path / "a_2.fq"),)
+
+
+def test_the_airrflow_columns_that_change_the_command_are_carried(tmp_path):
+    """`species` picks the reference and `single_cell` picks `arda cells`; the rest are labels."""
+    s = _airrflow(tmp_path, [_row(species="Mouse", pcr_target_locus="tr", single_cell="TRUE")])
+    got = read_sheet(s)[0]
+    assert got.species == "mouse"          # normalised: --organism is lower-case
+    assert got.locus == "TR"               # normalised: airrflow's enum allows ig/Ig/IG
+    assert got.single_cell is True
+
+
+def test_subject_and_tissue_become_the_qc_grouping_labels(tmp_path):
+    """So `arda qc batch` groups a cohort by donor and tissue without being told twice."""
+    got = read_sheet(_airrflow(tmp_path, [_row(subject_id="DONOR7", tissue="PBMC")]))[0]
+    assert (got.project, got.batch) == ("DONOR7", "PBMC")
+
+
+def test_airrflow_rows_merge_by_sample_id_in_row_order(tmp_path):
+    s = _airrflow(tmp_path, [_row(filename_R1="a_1.fq", filename_R2="a_2.fq"),
+                             _row(filename_R1="b_1.fq", filename_R2="b_2.fq"),
+                             _row(sample_id="S2", filename_R1="c_1.fq", filename_R2="c_2.fq")])
+    got = read_sheet(s)
+    assert [x.id for x in got] == ["S1", "S2"]
+    assert got[0].pairs == ((tmp_path / "a_1.fq", tmp_path / "a_2.fq"),
+                            (tmp_path / "b_1.fq", tmp_path / "b_2.fq"))
+
+
+def test_a_blank_filename_r2_is_single_end(tmp_path):
+    got = read_sheet(_airrflow(tmp_path, [_row(filename_R2="")]))[0]
+    assert got.pairs == ((tmp_path / "a_1.fq", None),)
+
+
+def test_a_sheet_carrying_both_id_columns_is_refused(tmp_path):
+    """Never: it does not say which column names the repertoire, and guessing splits a sample."""
+    (tmp_path / "a_1.fq").write_text("@r\nACGT\n+\nIIII\n")
+    p = tmp_path / "s.tsv"
+    p.write_text(f"sample\tsample_id\tfastq_1\tfilename_R1\nA\tB\t{tmp_path/'a_1.fq'}\t\n")
+    with pytest.raises(ValueError, match="does not say which column names"):
+        read_sheet(p)
+
+
+def test_a_sheet_with_no_recognised_id_column_names_both_dialects(tmp_path):
+    p = tmp_path / "s.tsv"
+    p.write_text("name\tread1\nA\tx.fq\n")
+    with pytest.raises(ValueError, match="no recognised id column"):
+        read_sheet(p)
+
+
+def test_airrflow_metadata_columns_are_not_warned_about(tmp_path, caplog):
+    """The schema's required columns are known, not 'unknown' -- a warning per sample is noise."""
+    s = _airrflow(tmp_path, [_row()])
+    caplog.clear()
+    read_sheet(s)
+    assert "ignoring unknown" not in caplog.text
+
+
+def test_an_nf_core_sheet_is_unchanged_by_the_dialect_layer(fq):
+    """Never: the generic spelling keeps working exactly as before, labels included."""
+    a, b = fq("a_1.fq"), fq("a_2.fq")
+    sheet = a.parent / "s.tsv"
+    sheet.write_text(f"sample\tfastq_1\tfastq_2\tproject\tbatch\nA\t{a}\t{b}\tP\tB\n")
+    got = read_sheet(sheet)
+    assert got == [Sample("A", ((a, b),), "P", "B")]
+    assert got[0].species == "" and got[0].single_cell is False

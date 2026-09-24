@@ -1,4 +1,4 @@
-sample	fastq_1	fastq_2
-PT01	PT01_S1_L001_R1_001.fastq.gz	PT01_S1_L001_R2_001.fastq.gz
-PT01	PT01_S1_L002_R1_001.fastq.gz	PT01_S1_L002_R2_001.fastq.gz
-PT02	PT02_S2_L001_R1_001.fastq.gz	PT02_S2_L001_R2_001.fastq.gz
+sample_id	subject_id	species	pcr_target_locus	tissue	sex	age	biomaterial_provider	single_cell	filename_R1	filename_R2
+PT01	DONOR_A	human	ig	blood	F	42	lab	FALSE	PT01_S1_L001_R1_001.fastq.gz	PT01_S1_L001_R2_001.fastq.gz
+PT01	DONOR_A	human	ig	blood	F	42	lab	FALSE	PT01_S1_L002_R1_001.fastq.gz	PT01_S1_L002_R2_001.fastq.gz
+PT02	DONOR_B	human	tr	blood	M	37	lab	FALSE	PT02_S2_L001_R1_001.fastq.gz	PT02_S2_L001_R2_001.fastq.gz

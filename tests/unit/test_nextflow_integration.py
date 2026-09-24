@@ -56,14 +56,58 @@ def test_every_version_pin_tracks_the_package():
     assert f"arda {__version__}" in readme or f"arda-mapper:{__version__}" in readme
 
 
-def test_the_regime_map_names_real_arda_subcommands():
-    """`modes = ['bulk': ['cmd': 'rnaseq', ...], ...]` -- every `cmd` must be a real command."""
-    block = MAIN_NF[MAIN_NF.index("def modes = ["):]
-    block = block[:block.index("]\n")]
-    cmds = set(re.findall(r"'cmd'\s*:\s*'([a-z-]+)'", block))
-    assert cmds, "could not find the regime->command map in main.nf"
-    for cmd in sorted(cmds):
-        assert _help(cmd), cmd
+def _protocol_map() -> dict[str, str]:
+    """airrflow's `library_generation_method` -> the arda mode the module runs for it."""
+    block = MAIN_NF[MAIN_NF.index("def protocols = ["):]
+    block = block[:block.index("\n    ]")]
+    return dict(re.findall(r"'([a-z0-9_]+)'\s*:\s*'([a-z]+)'", block))
+
+
+def test_the_protocol_map_covers_airrflows_bulk_enum_and_nothing_invented():
+    """Never: the protocol comes from airrflow's own field, so the keys must be ITS enum.
+
+    A key airrflow cannot emit is dead config; a bulk method missing from the map is a sample the
+    module refuses for no reason. `sc_10x_genomics` is deliberately absent -- it is refused, with
+    a message, because `arda cells` consumes a per-molecule UMI consensus and not raw 10x reads.
+    """
+    airrflow_enum = {"specific_pcr_umi", "specific_pcr", "dt_5p_race", "dt_5p_race_umi",
+                     "sc_10x_genomics", "trust4"}
+    got = _protocol_map()
+    assert set(got) == airrflow_enum - {"sc_10x_genomics"}
+    assert "sc_10x_genomics" in MAIN_NF, "the single-cell refusal must name the method"
+
+
+def test_every_mode_the_protocol_map_names_is_a_real_arda_command():
+    for method, mode in sorted(_protocol_map().items()):
+        assert _help(mode), f"{method} -> arda {mode}"
+
+
+def test_single_cell_is_refused_rather_than_mapped_to_a_mode():
+    """⛔ `arda cells` takes a positional UMI-consensus FASTQ and no --r1/--out-dir at all.
+
+    Routing raw 10x reads at it would fail as a bad repertoire rather than as a wiring error.
+    """
+    assert "cells" not in _protocol_map().values()
+    assert "single_cell" in MAIN_NF and "IllegalArgumentException" in MAIN_NF
+    cells_help = _help("cells")
+    for flag in ("--r1", "--out-dir", "--out-prefix"):
+        assert flag not in cells_help, f"arda cells now has {flag}; revisit the refusal"
+
+
+def test_every_flag_the_script_block_emits_exists_on_every_mode_it_targets():
+    """⛔ The check that caught `--productive-only`, a flag arda has never had.
+
+    The module writes ONE command template and runs it for several modes, so a flag is only safe
+    if EVERY targeted mode offers it. Nothing else in this repo compares the two.
+    """
+    script = MAIN_NF[MAIN_NF.index('    """\n    ${mmseqs_pin}'):]
+    script = script[:script.index("END_VERSIONS")]
+    flags = sorted(set(re.findall(r"(--[a-z][a-z-]+)", script)))
+    assert flags, "no flags found in the script block; update this test"
+    for mode in sorted(set(_protocol_map().values())):
+        text = _help(mode)
+        missing = [f for f in flags if f not in text]
+        assert not missing, f"arda {mode} does not offer {missing}"
 
 
 def test_the_dockerfile_acceptance_check_only_names_flags_the_cli_has():
@@ -130,3 +174,20 @@ def test_conda_and_container_never_sit_at_bare_process_scope():
     before_withname = head[:head.index("withName:")]
     for directive in ("conda", "container", "ext.args", "ext.when", "publishDir"):
         assert not re.search(rf"^\s+{re.escape(directive)}\s*=", before_withname, re.M), directive
+
+
+def test_the_process_is_named_for_what_it_replaces_in_airrflow():
+    assert "process ARDA_ASSIGN {" in MAIN_NF
+    assert "withName: 'ARDA_ASSIGN'" in CONFIG
+
+
+def test_the_module_does_not_wire_params_airrflow_applies_itself():
+    """Never: a parameter accepted and silently doing nothing is this project's recurring failure.
+
+    arda has no productive filter and stages no per-run germline DB, so `productive_only` and the
+    `reference_*` params must be NAMED as unconsumed rather than read into a flag.
+    """
+    for name in ("productive_only", "reference_igblast"):
+        assert name in CONFIG, f"{name} must be named in the config as deliberately unconsumed"
+    code = re.sub(r"//.*$", "", MAIN_NF, flags=re.M)
+    assert "productive_only" not in code, "productive_only must not be read in the script"
