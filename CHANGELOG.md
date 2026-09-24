@@ -3,6 +3,29 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Documented: what `productive` / `stop_codon` / `vj_in_frame` actually mean
+
+New page [productivity](https://docs.isalgo.dev/arda/productivity.html) (`docs/productivity.rst`)
+plus a README section, written because the three columns are the most misread ones arda emits and
+nothing stated their scoping in one place: `vj_in_frame` is `(fwr4_start - v_coding_start) % 3 ==
+0` — *where the frame lands at FR4*, which decides whether the constant exon translates;
+`stop_codon` covers FR1–FR3, CDR1–CDR2, the junction **and** FR4; `productive` is the conjunction;
+and all three are empty, not `F`, when the read never reached both the junction and FR4.
+
+Taught with real GenBank reads rather than prose. `JX277388.1` (mouse TRB) carries two nucleotides
+`TRBJ2-5*01` does not have, so the J's 5′ germline residues and its own FR4 cannot both sit in the
+germline frame — arda lands on the FR4 side, and splicing `TRBC2*01` on gives **0 stop codons over
+375 nt** of real TRBC2 protein. `X60894.1` shows the other case: a J truncated to one FR4 residue,
+which no tool can call from that read.
+
+The page also names the trap it exists for: matching a junction's 3′ tail against the called J's
+germline residues is *not* a frame test. It fires on 51.8 % of IGL, 51.4 % of IGK and 39.8 % of IGH
+rows (mean `v_identity` .955–.968) against 3.4 % of TRB and 7.1 % of TRA (.992) — it detects
+hypermutation reaching the J. Every claim on the page is asserted by
+`tests/realworld/test_productivity_examples.py`.
+
 ## 2.25.0
 
 ### Fixed: a stop codon in FR4 left a read productive

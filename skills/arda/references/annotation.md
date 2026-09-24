@@ -101,7 +101,17 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
 - `{region}` is the nucleotide (or aa, for aa input) slice; `{region}_aa` is the
   amino-acid translation (V-side regions read in the V frame; FR4 in the J frame).
 - `productive` = "T" only when in-frame and free of stop codons / N-bridge;
-  `stop_codon` and `vj_in_frame` surface the two facts it collapses.
+  `stop_codon` and `vj_in_frame` surface the two facts it collapses. All three are **empty**
+  (unevaluable, ~72 % of mapped bulk reads) when the read reached neither the junction nor FR4 —
+  never "F". Flags, never filters.
+- Never: `vj_in_frame` is `phase = (fwr4_start - v_coding_start) % 3 == 0` — *where the frame
+  lands at FR4*, which is what decides whether the constant exon translates. It is NOT "the
+  junction's 3' residues match the called J's germline residues". Reading it as the latter
+  reports ~40-52 % of IG rows out of frame (it tracks SHM reaching the J: mean `v_identity`
+  .955-.968 vs .992 for TR) and gets `JX277388.1` wrong — a read carrying 2 nt `TRBJ2-5*01` does
+  not have, whose FR4 and spliced `TRBC2*01` still translate stop-free. The only sound check is
+  splicing C on and counting stops. Worked examples: `docs/productivity.rst`,
+  pinned by `tests/realworld/test_productivity_examples.py`.
 - The `mmseqs2_*` columns carry the scaffold hit's alignment score and geometry;
   `t_vend`/`t_jstart`/`t_vjend` are the scaffold's V-end / J-start / V-J-end, which
   tell V-J hits from `J + C` constant-region hits (`tstart ≥ t_vjend` ⇒ wholly in C).
