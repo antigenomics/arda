@@ -67,6 +67,13 @@ invalidate the index for every concurrent process.
 An allele survives unless **its own gene** was genotyped and did not name it. Tie lists routinely
 span genes, so a gene-blind test empties every read whose tie list merely brushes a genotyped gene.
 
+Surviving alleles keep ``v_call``'s **own order**, so a restriction that removes nothing returns a
+byte-identical string. ⚠ That is not cosmetic: the tie list comes back sorted by name while
+``v_call`` carries the aligner's order, and emitting the sorted one made a pure reordering
+indistinguishable from a real narrowing — on a 100,000-read TRA amplicon the run report said
+**20,587 narrowed** when **20,306** of those were ``TRAV20*02,TRAV20*01`` becoming
+``TRAV20*01,TRAV20*02``. The real number was 281.
+
 Any source works: an OGRDB set, a library MiXCR inferred, a list typed by hand. Every named allele
 is validated against the reference and an unknown one **raises** — 884 human V alleles are
 functional in IMGT and 801 reach a scaffold, so naming one of the others is an easy mistake that
@@ -151,9 +158,27 @@ including ``TRBV10-3`` with 1,037 clonotypes, none of which can separate its all
 That is the honest output for that library, and the refusals are the point: a full-length, 5'RACE
 or ``arda cells`` library (contig N50 536 nt) has the resolution this one does not.
 
+**What it looks like when a gene IS separable.** On a TRA amplicon (``SRR5233635``, 100,000 reads,
+151 nt, 21,710 clonotypes / 45,007 reads, error rate **5.53 × 10⁻⁴** — two independent libraries,
+same order of magnitude), **20 of 44 genes are called and one is heterozygous**:
+``TRAV36/DV7`` = **\*01 / \*04**, 78 clonotypes against 143, at a log₁₀ Bayes factor of **211**
+over the gene's 290 clonotypes. Five more are inferred homozygous at log₁₀ BF 53–221, 14 have one
+catalogued allele, and **24 are refused** ``low_support`` — TRAV needs 175 nt and these reads are
+151. The whole inference takes **1.53 s and 442 MB** on 49,748 mapped reads.
+
+**Applying that genotype narrows 281 of 47,743 rows**, contradicts 75, and leaves 47,387
+unchanged. That is the honest shape of the feature at this read length and it follows directly
+from the table above: you cannot restrict what you could not genotype, and 14 of the 20 genes that
+were called have only one allele to begin with. ⚠ The narrowing a full-length library buys is the
+11.2 % → 1.5 % TIgGER measured; it is not what a 151 nt amplicon can show.
+
 The output has one row per carried allele, and a row with an empty ``allele`` for every gene that
-could not be called. ``clonotypes`` and ``reads`` are that allele's coverage at both levels;
-``log10_bf`` is the margin over the runner-up genotype.
+could not be called — ``locus, gene, allele, clonotypes, reads, gene_clonotypes, log10_bf, note``.
+``clonotypes`` and ``reads`` are that allele's coverage at both levels, ``gene_clonotypes`` is
+every clonotype of the gene including the ones no allele could be assigned to, and ``log10_bf`` is
+the margin over the runner-up genotype. The parameters that produced the file, the clonotype and
+read totals, the assigned fraction and the measured error rate are written as ``#`` comments at the
+top, because a genotype is only meaningful against the reference and the evidence it came from.
 
 .. list-table::
    :header-rows: 1

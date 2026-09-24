@@ -886,7 +886,8 @@ def stats_cmd(
         help="A V mutation is a CANDIDATE ALLELE at or above this frequency among the reads "
              "calling that allele. A germline the reference does not carry is in essentially "
              "every read of its allele; somatic hypermutation is per-clone and does not reach "
-             "half. ⚠ A shortlist to look at, never a genotype call -- arda does not genotype."),
+             "half. ⚠ A shortlist to look at, never a genotype call -- `arda genotype` is a "
+             "separate object and does not read this."),
     allele_min_reads: int = typer.Option(
         10, "--allele-min-reads",
         help="...and in at least this many reads, so a 2-read allele cannot mint a candidate off "

@@ -27,7 +27,7 @@ Given the span a read already aligned over, the restriction is a set intersectio
 
 The file
 --------
-One row per carried allele -- ``locus, gene, allele, votes, gene_votes, explained, note`` -- because
+One row per carried allele -- :data:`GENOTYPE_COLUMNS` -- because
 a cell holding ``TRBV19*01,TRBV19*03`` cannot be sorted, joined or summed. A gene that could not be
 called gets a row with an empty ``allele`` and a ``note`` saying why: **omitted with a reason, never
 silently absent.**
@@ -168,7 +168,9 @@ def restrict(candidates: tuple[str, ...] | None, call: str,
         **Never: a refusal to answer is not a contradiction.** Treating the two alike would delete
         the call of every short read in the library.
     a narrower call
-        the usual case, and the whole point.
+        the usual case, and the whole point. Alleles ``call`` already named keep ``call``'s own
+        order, so a restriction that removes nothing is byte-identical rather than a reordering
+        that every downstream string comparison would read as a change.
     empty
         every candidate belongs to a genotyped gene and none is carried. This read contradicts the
         genotype. It is a COLUMN value and not a dropped row so a consumer can answer it per row,
@@ -185,9 +187,17 @@ def restrict(candidates: tuple[str, ...] | None, call: str,
     # 453-read fixture with a one-gene genotype: 79 rows came back empty, and all of them were
     # reads of other genes whose tie list merely brushed the genotyped one.
     kept = [a for a in candidates if gene_of(a) not in genotype or a in genotype[gene_of(a)]]
-    if kept:
-        return ",".join(kept)
-    return ""
+    if not kept:
+        return ""
+    # Never: keep ``call``'s OWN order for the alleles it already named, so a restriction that
+    # removes nothing returns a byte-identical string. ``candidates`` comes back sorted by name
+    # while ``v_call`` carries the aligner's order, and emitting the sorted one made a pure
+    # reordering indistinguishable from a real narrowing: measured on a 100 k TRA amplicon,
+    # 20,306 of 20,587 rows the report called "narrowed" were `TRAV20*02,TRAV20*01` ->
+    # `TRAV20*01,TRAV20*02`, the same two alleles. The real number was 281.
+    order = {a: i for i, a in enumerate(x.strip() for x in call.split(",")) if a}
+    kept.sort(key=lambda a: (order.get(a, len(order)), a))
+    return ",".join(kept)
 
 
 def restrict_airr(path, out, genotype: dict[str, tuple[str, ...]], *, organism: str = "human",
@@ -217,18 +227,30 @@ def restrict_airr(path, out, genotype: dict[str, tuple[str, ...]], *, organism: 
     # 453-read fixture 74 rows are J-only; scoring them as contradictions made a correct
     # restriction look like it had rejected a sixth of the library.
     assessed = [(a or "", b) for a, b in zip(calls, values) if (a or "")]
+
+    # Never: `narrowed` counts rows that lost an ALLELE, not rows whose STRING changed. Those are
+    # not the same number and the gap is not small: on a 100 k TRA amplicon a string test reported
+    # 20,587 narrowed where 281 rows had actually lost an allele, the other 20,306 being the same
+    # set in a different order. The four buckets below partition `assessed` exactly.
+    def _n(s: str) -> int:
+        return sum(1 for x in s.split(",") if x.strip())
+
     report = {
         "rows": df.height,
         "no_call": df.height - len(assessed),
-        "narrowed": sum(1 for a, b in assessed if b and b != a),
+        "narrowed": sum(1 for a, b in assessed if b and _n(b) < _n(a)),
         "contradicted": sum(1 for _a, b in assessed if not b),
         "unchanged": sum(1 for a, b in assessed if b == a),
+        # Neither narrower nor byte-identical: the tie test named a set `v_call` did not, and the
+        # genotype kept it. Reported rather than folded into `unchanged`, so the buckets add up.
+        "recalled": sum(1 for a, b in assessed if b and b != a and _n(b) >= _n(a)),
         "genes": len(genotype),
     }
     df.with_columns(pl.Series(column, values)).write_csv(out, separator="\t", quote_style="never")
     (echo or logger.info)(
         f"{column}: {report['narrowed']} narrowed, {report['contradicted']} contradicted, "
         f"{report['unchanged']} unchanged over {report['genes']} genotyped genes"
+        + (f", {report['recalled']} re-called" if report["recalled"] else "")
         + (f"; {report['no_call']} rows had no v_call" if report["no_call"] else ""))
     return report
 
@@ -466,6 +488,13 @@ def infer_genotype(airr, *, organism: str = "human", loci=None,
     """
     from .annotate.airr_out import read_airr
     from .annotate.ties import TieResolver
+
+    # Never: an unrecognised scope must RAISE, not fall through to `full`. The two differ only in
+    # where each read's span is clipped, so a typo would silently widen every span into the
+    # junction, narrow every tie set, and return more confident calls than the data supports --
+    # with no error and no warning anywhere.
+    if scope not in ("framework", "full"):
+        raise ValueError(f"unknown scope {scope!r}; expected 'framework' or 'full'")
 
     df = read_airr(airr)
     for col in ("v_call", "v_germline_start", "v_germline_end"):

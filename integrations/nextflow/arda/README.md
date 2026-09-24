@@ -5,7 +5,7 @@ per-sample **AIRR clonotype tables** to `${params.outdir}/arda/`. It wraps a sin
 `arda <mode>` call (map + assemble + correct) and emits a `versions.yml`, so it composes with
 any DSL2 pipeline the same way STAR/Salmon/fastp do.
 
-Pinned to **arda 2.26.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
+Pinned to **arda 2.27.0** (`environment.yml`, the `container` tag, and the `Dockerfile`).
 
 > **Never: 2.16.0 is a hard minimum, and it is a BREAKING one.** `arda rnaseq run` — the command every
 > earlier version of this module invoked — was removed there. The regime is now the **command
@@ -63,25 +63,33 @@ regime pays; low (~.05) means it is overhead.
 arda is **CPU-bound** — the aligner dominates — so give the process cores. `--threads` follows
 `task.cpus` automatically.
 
-**TRA amplicon, 100,000 reads, 8 threads, same input file in the same job:**
+⛔ **A stage comparison is not a benchmark** — every leg below runs end to end and emits
+clonotypes, each tool at its best-fitting preset. One job, six legs alternating, three reps,
+medians. 8 threads; arda 2.27.0, MiXCR 4.7.0, TRUST4. TRUST4's rows count only its **complete**
+CDR3s so the last two columns mean the same thing in every row.
 
-| tool | config | wall (s) | CPU (s) | peak RSS (MB) |
-|---|---|---|---|---|
-| arda 2.11.1 | `--regime amplicon` | **5.35** | **12.73** | **631** |
-| MiXCR 4.7.0 | `align --preset rna-seq --species hsa` | 5.90 | 45.24 | 3,027 |
+**TRA amplicon, 100,000 reads:**
 
-1.10× faster on wall, **3.6× less CPU, 4.8× less RSS**.
+| pipeline | wall (s) | CPU (s) | peak RSS (MB) | clonotypes | reads in clonotypes |
+|---|---:|---:|---:|---:|---:|
+| MiXCR `generic-amplicon` | **7.82** | 42.91 | 3,052 | 19,697 | 42,712 |
+| **arda** `amplicon` | 14.40 | **30.49** | 965 | **19,841** | **43,503** |
+| TRUST4 | 73.77 | 117.96 | **490** | 18,559 | 37,688 |
 
-**Bulk RNA-seq, 100,000 reads:**
+MiXCR is 1.84× faster on wall in its own regime; arda gets there on 1.41× less CPU and 3.16× less
+RSS, and returns the most clonotypes over the most reads.
 
-| tool | wall (s) | CPU (s) | peak RSS (MB) |
-|---|---|---|---|
-| arda 2.11.1 | 2.51 | 5.4 | 234 |
-| MiXCR 4.7.0 | 4.54 | 31.8 | 3,022 |
-| TRUST4 | **1.91** | **4.36** | **192** |
+**Bulk RNA-seq, 660,000 pairs (SRR5233639):**
 
-⚠ TRUST4's stage here is **candidate read extraction**, not a per-read AIRR record with a junction;
-arda's and MiXCR's are. The three numbers are not like-for-like work.
+| pipeline | wall (s) | CPU (s) | peak RSS (MB) | clonotypes | reads in clonotypes |
+|---|---:|---:|---:|---:|---:|
+| TRUST4 | **13.68** | **54.53** | **460** | 1,941 | 6,247 |
+| **arda** `rnaseq` | 21.95 | 219.68 | 1,033 | **2,213** | **8,484** |
+| MiXCR `rna-seq` | 30.23 | 233.11 | 2,849 | 1,732 | 4,288 |
+
+**+27.8 % clonotypes and +97.9 % reads assigned against MiXCR** (+14.0 % / +35.8 % against
+TRUST4), at 1.38× MiXCR's wall and 2.76× less RSS. ⚠ TRUST4 is genuinely 1.61× faster on wall at
+4.0× less CPU here, reaching 87.7 % of arda's clonotypes and 73.6 % of its assigned reads.
 
 **IGH RepSeq amplicon, 100,000 pairs, 32 threads** — what the regime is worth on a real repertoire:
 
@@ -115,21 +123,28 @@ withName: 'ARDA' { cpus = 32; memory = 8.GB; time = 4.h }
 
 ## Accuracy
 
-Against an IgBLAST truth on the same 100,000-read TRA amplicon:
+Against an IgBLAST truth on the same 100,000-read TRA amplicon, arda 2.27.0 and MiXCR 4.7.0 at
+its best amplicon preset, scored per read from one truth file in one job.
 
-| metric | arda 2.11.1 | MiXCR 4.7.0 |
-|---|---|---|
-| `v_gene` recall | .9867 | **.9973** |
-| `v_gene` precision | **.9996** | .9978 |
-| `v_allele` resolved | **.9868** | n/a |
-| `j_gene` recall | .9892 | **.9904** |
-| `j_gene` precision | .9953 | **.9995** |
-| junction precision among emitted | .99919 | **.99991** |
+⛔ **Coverage before rates.** A per-tool inner join gives each tool its own denominator. Of the
+48,033 truth reads at `v_score >= 70`, **arda emits a row for 48,030 (99.99 %), MiXCR for 46,503
+(96.81 %)** — so both denominators are shown.
 
-arda is **more precise on the V call and declines rather than guessing**; MiXCR recalls slightly
-more. MiXCR emits `*00` and so makes no allele call at all — across 25 cluster datasets arda's
-median `v_allele` is **.9763** resolved (**.8328** by exact string, the difference being ambiguous
-allele tie-lists, which are a scoring convention, not a call).
+| metric | arda, all truth | MiXCR, all truth | arda / MiXCR, common subset |
+|---|---:|---:|---:|
+| `v_gene` recall | **.9867** | .9660 | .9869 / **.9977** |
+| `v_gene` precision | **.9996** | .9977 | **.9997** / .9977 |
+| `j_gene` recall | **.9892** | **.9892** | .9959 / **.9996** |
+| `j_gene` precision | .9953 | **.9996** | .9979 / **.9996** |
+| `junction` recall (nt, exact) | .9473 | **.9708** | .9533 / **.9778** |
+
+**On the reads it emits MiXCR is the more accurate caller; over the whole library arda recalls
+more V genes**, because MiXCR emits nothing for 1,530 truth reads against arda's 3. arda's V calls
+are the more precise under either denominator — it declines rather than guessing. Of 46,787 truth
+junctions arda emits one for 94.81 % at **.99919** precision among emitted, MiXCR for 97.09 % at
+.99989. MiXCR emits `*00` and so makes no allele call at all; arda's `v_allele` is **.9868**
+resolved (.9461 by exact string, the difference being ambiguous-allele tie lists, a scoring
+convention rather than a call).
 
 **Never: A V/J boundary disagreement *inside* a junction is not an error.** V(D)J recombination is
 probabilistic — exonuclease chew-back plus N/P-nucleotide addition mean the V-end / NDN / J-start
@@ -143,7 +158,7 @@ and whether a tool **invents a junction it has no anchor for**.
 arda is pip-installable and needs the `mmseqs2` binary — both are declared in `environment.yml`.
 
 - **`-profile conda`** works out of the box (Nextflow builds the env from `environment.yml`) — once
-  arda 2.26.0 is on PyPI; see the note at the top.
+  arda 2.27.0 is on PyPI; see the note at the top.
 - **`-profile docker`/`singularity`**: build the image from the `Dockerfile` here, push it to your
   registry, and point the module's `container` at it (see the Dockerfile header). A pinned image is
   the reproducible choice for a shared pipeline.
@@ -268,7 +283,7 @@ changes. Five edits, all mirroring how an existing tool is wired:
    (boolean), `arda_organism` (string), `arda_mmseqs` (string), `arda_args` (string).
 
 5. **Container override** (only for `-profile docker/singularity/<your-profile>`): add
-   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.26.0' }` to your deployment
+   `withName: 'ARDA' { container = '<your-registry>/arda-mapper:2.27.0' }` to your deployment
    config (e.g. `conf/<profile>.config`), exactly as the other tools' images are pinned there.
 
 Run with `--run_arda`:

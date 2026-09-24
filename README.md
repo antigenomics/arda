@@ -206,6 +206,9 @@ arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand on
 arda annotate -i reads.fastq -o out.airr.tsv --d-max-evalue 0.01  # the strict D band
 arda markup -i junctions.tsv -o marked.tsv --report -           # mark up + repair bare (CDR3aa, V, J) records
 arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv        # every germline the read cannot rule out
+arda genotype -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB          # which V alleles this donor carries
+arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv  # ...and apply one
+arda scenarios -i clones.tsv -o d_prior.tsv                     # EM over the recombination scenario set
 arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 20 --partition cpu
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda export-ref --kind segments --locus TRB --format fasta      # the reference, out of the CLI
@@ -426,31 +429,62 @@ IgBLAST is the gold standard but is slow to invoke per-batch and awkward to embe
 
 ## Performance
 
-### Head-to-head, same input and same job
+### Head-to-head: the full pipeline, to a clonotype table
 
-**TRA amplicon, 100,000 reads, 8 threads.**
+⛔ **A stage comparison is not a benchmark.** Every leg below runs **end to end and emits
+clonotypes**; the only latitude a tool gets is picking its best-fitting preset for the library
+type. One job, six legs alternating, three reps, medians reported. M3 Mac, 8 threads, arda 2.27.0
+· MiXCR 4.7.0 · TRUST4. TRUST4 rows count only its **complete** CDR3s (`C…[FW]`, no `_`/`?`), so
+the clonotype and read columns mean the same thing in all three rows.
 
-| tool | config | wall (s) | CPU (s) | peak RSS (MB) |
-|---|---|---:|---:|---:|
-| arda 2.11.1 | `--two-pass --fast-segments --v-only-on-segment` | **5.35** | **12.73** | **631** |
-| MiXCR 4.7.0 | `align --preset rna-seq --species hsa` | 5.90 | 45.24 | 3,027 |
+**TRA amplicon, 100,000 reads** — `arda amplicon` · `mixcr analyze generic-amplicon --rna` ·
+TRUST4 defaults:
 
-arda is **1.10× faster on wall clock at 3.6× less CPU and 4.8× less RSS** — the wall figures are
-close, the resource figures are not, which is what matters when many samples share a node.
+| pipeline | wall (s) | CPU (s) | peak RSS (MB) | clonotypes | reads in clonotypes |
+|---|---:|---:|---:|---:|---:|
+| MiXCR `generic-amplicon` | **7.82** | 42.91 | 3,052 | 19,697 | 42,712 |
+| **arda `amplicon`** | 14.40 | **30.49** | 965 | **19,841** | **43,503** |
+| TRUST4 | 73.77 | 117.96 | **490** | 18,559 | 37,688 |
 
-**Bulk RNA-seq, 100,000 reads.**
+**MiXCR is 1.84× faster on wall** on a primer-anchored amplicon — that is its regime and the
+number is not disputed here. arda spends **1.41× less CPU** and **3.16× less RSS** to get there,
+and returns the most clonotypes (+0.7 % over MiXCR, +6.9 % over TRUST4) over the most reads
+(+1.9 %, +15.4 %). TRUST4 is **5.1× slower than arda** on this arm.
 
-| tool | wall (s) | CPU (s) | peak RSS (MB) | what it produced |
-|---|---:|---:|---:|---|
-| arda 2.11.1 | 2.51 | 5.4 | 234 | AIRR record per read, with junction |
-| MiXCR 4.7.0 | 4.54 | 31.8 | 3,022 | AIRR record per read, with junction |
-| TRUST4 | **1.91** | **4.36** | **192** | candidate read extraction only |
+**Bulk RNA-seq, 660,000 pairs (SRR5233639)** — `arda rnaseq` · `mixcr analyze rna-seq` · TRUST4
+defaults:
 
-⚠ TRUST4's stage here is **candidate extraction**, not a per-read AIRR record with a junction —
-it is doing less work, so the three rows are not like-for-like.
+| pipeline | wall (s) | CPU (s) | peak RSS (MB) | clonotypes | reads in clonotypes |
+|---|---:|---:|---:|---:|---:|
+| TRUST4 | **13.68** | **54.53** | **460** | 1,941 | 6,247 |
+| **arda `rnaseq`** | 21.95 | 219.68 | 1,033 | **2,213** | **8,484** |
+| MiXCR `rna-seq` | 30.23 | 233.11 | 2,849 | 1,732 | 4,288 |
 
-**IGH RepSeq amplicon, 100,000 pairs, 32 threads.** What the amplicon configuration is worth
-against the shipped one-pass default on hypermutated IGH:
+**arda finds the most on the regime it exists for**: +27.8 % clonotypes and **+97.9 % reads
+assigned** against MiXCR, +14.0 % and +35.8 % against TRUST4, at **1.38× MiXCR's wall** and
+**2.76× less RSS** for comparable CPU. ⚠ TRUST4 is genuinely **1.61× faster on wall at 4.0× less
+CPU** on this arm, and it is the cheapest of the three on memory in both — it reaches 87.7 % of
+arda's clonotypes and 73.6 % of its assigned reads to do it. All three walls were stable across
+three reps (arda 21.88–24.04, MiXCR 30.09–30.83, TRUST4 13.65–14.22).
+
+**No regression across eight releases.** arda **2.18.0** (the version these arms were last
+measured on) against this one, same job, legs alternating, 3 reps, the same committed reference
+and the same mmseqs binary — `database/` has not changed since `v2.18.0`, which is what makes the
+comparison valid:
+
+| arm | 2.18.0 wall (s) | 2.27.0 wall (s) | 2.18.0 RSS | 2.27.0 RSS | clonotypes / reads |
+|---|---:|---:|---:|---:|---|
+| amplicon 100 k | 13.94 | **13.66** | 939 MB | 939 MB | 19,841 / 43,503 |
+| bulk 660 k pairs | **21.45** | 21.74 | 1,033 MB | 1,033 MB | 2,213 / 8,484 |
+
+Medians of three. Bulk is **1.4 % slower on wall and 0.8 % more CPU**, inside the rep spread
+(2.18.0 21.06–22.26, 2.27.0 21.52–22.07) and accounted for by the per-run QC stage that 2.20.0
+added; amplicon is 2.0 % faster. ⛔ **A count-equal leg can still be a changed leg**, so the check
+is a call digest over `(locus, v_call, j_call, junction, duplicate_count)`, not a row count: both
+arms are **byte-identical** between the two versions.
+
+**IGH RepSeq amplicon, 100,000 pairs, 32 threads** (aldan3). What the amplicon configuration is
+worth against the shipped one-pass default on hypermutated IGH:
 
 | dataset | config | wall (s) | peak RSS (MB) |
 |---|---|---:|---:|
@@ -461,8 +495,8 @@ against the shipped one-pass default on hypermutated IGH:
 
 4.15× and 4.71×, at ~2.7× less memory.
 
-**vs TRUST4 on amplicon, same job, same staged input, same read cap** (round 20, 32 threads on
-aldan3; every leg of a tier ran on the same input, so no ratio here is cross-job):
+**vs TRUST4 on IGH amplicon at 32 threads** (round 20, aldan3; every leg of a tier ran on the same
+staged input, so no ratio here is cross-job):
 
 | dataset | reads | arda `amplicon` wall (s) | TRUST4 wall (s) |
 |---|---:|---:|---:|
@@ -471,9 +505,8 @@ aldan3; every leg of a tier ran on the same input, so no ratio here is cross-job
 | migec_exp1_TCR | 500,000 | **316.25** | 423.96 |
 | migec_exp1_IGH | 500,000 | 223.77 | **225.10** |
 
-⚠ Wall clock only. The **full-depth (hours-scale) head-to-head and the IgBLAST-truth accuracy leg
-scoring both tools on amplicon are scheduled for the next release** — neither is measured yet, and
-neither is projected here.
+⚠ Wall clock only, and the full-depth (hours-scale) head-to-head is still cluster work.
+
 
 ### Synthetic benchmarks vs IgBLAST
 
@@ -550,24 +583,47 @@ independent of it there.
 
 ### Gene calls on a targeted amplicon
 
-Against an IgBLAST truth on a TRA amplicon, 100,000 reads:
+Against an IgBLAST truth on the TRA amplicon, 100,000 reads, arda 2.27.0 and MiXCR 4.7.0 at its
+best amplicon preset, both scored per read from the same truth file in the same job.
 
-| metric | arda 2.11.1 | MiXCR 4.7.0 |
+⛔ **Print the coverage before the rates.** A per-tool inner join hands each tool its own
+denominator — a truth read the tool emitted no row for simply vanishes instead of counting as a
+miss. Over the 48,033 truth reads at `v_score ≥ 70`, **arda emits a row for 48,030 (99.99 %) and
+MiXCR for 46,503 (96.81 %)**. So both denominators are shown:
+
+| metric | arda 2.27.0 | MiXCR 4.7.0 |
 |---|---:|---:|
-| v_gene recall | .9867 | **.9973** |
-| v_gene precision | **.9996** | .9978 |
-| v_allele resolved | **.9868** | n/a |
-| j_gene recall | .9892 | **.9904** |
-| j_gene precision | .9953 | **.9995** |
-| junction precision, among emitted | .99919 | **.99991** |
+| **all 48,033 truth reads** | | |
+| `v_gene` recall | **.9867** | .9660 |
+| `v_gene` precision | **.9996** | .9977 |
+| `j_gene` recall | **.9892** | **.9892** |
+| `j_gene` precision | .9953 | **.9996** |
+| `junction` recall (nt, exact) | .9473 | **.9708** |
+| **common subset, 46,502 reads** | | |
+| `v_gene` recall | .9869 | **.9977** |
+| `v_gene` precision | **.9997** | .9977 |
+| `j_gene` recall | .9959 | **.9996** |
+| `junction` recall (nt, exact) | .9533 | **.9778** |
 
-arda's V calls are the more **precise** of the two: it declines rather than guessing. MiXCR
-suffixes every allele `*00`, i.e. it makes no allele call at all, so `v_allele` has no comparator.
+The two views say different and equally true things. **On the reads it emits, MiXCR is the more
+accurate caller.** **Over the whole library, arda recalls more V genes** — .9867 against .9660 —
+because MiXCR emits nothing at all for 1,530 truth reads and arda for 3. arda's V calls are also
+the more **precise** of the two under either denominator: it declines rather than guessing.
+
+Junction, stated the same way: of the 46,787 truth junctions, **arda emits one for 94.81 % at
+.99919 precision among emitted; MiXCR for 97.09 % at .99989.** The 5.19 % arda declines are reads
+that *have* an anchor pair and lost the projection — a known and specific gap, not a calling
+error. MiXCR suffixes every allele `*00`, i.e. makes no allele call at all, so there is no
+`v_allele` comparator; arda's is **.9868 resolved** (.9461 by exact string, the 4-point difference
+being ambiguous-allele tie lists, which are a scoring convention and not a call).
+
+⚠ These five arda figures are **unchanged from 2.11.1**, fifteen releases back: `v_gene` recall
+.9867, precision .9996, `j_gene` recall .9892, precision .9953, junction precision among emitted
+.99919 all reproduce to every digit published.
 
 **Score alleles as tie lists, not exact strings.** IgBLAST and arda both return an ambiguous
 allele as a comma-joined set; scoring that as a miss is a scoring artifact, not an error. Across
-25 datasets the median is `v_allele_exact` **.8328** against `v_allele_resolved` **.9763** —
-14 points of the apparent gap is the scoring rule.
+25 datasets the median is `v_allele_exact` **.8328** against `v_allele_resolved` **.9763**.
 
 **A V/J boundary disagreement *inside* the junction is not an error.** V(D)J recombination is
 probabilistic: exonuclease chew-back and N/P-nucleotide addition mean the V-end / N-D-N / J-start
@@ -581,6 +637,7 @@ gzipped test fixtures), region concordance with IgBLAST on productive records is
 organism, and `junction_aa`/`cdr3_aa` match IgBLAST ~99% while satisfying the AIRR invariants
 exactly. (GenBank also contains genomic/partial/non-productive entries that confuse both tools;
 those are excluded.)
+
 
 ## The three stages, in detail
 

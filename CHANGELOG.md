@@ -3,7 +3,7 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.27.0
 
 ### Added: personalized germline — `arda genotype`, `arda resolve-ties --genotype`
 
@@ -72,6 +72,55 @@ clonotypes can be assigned an allele and **17 of 53 genes are called** -- 11 `si
 factors of 223 (`TRBV11-2`), 251 (`TRBV5-6`) and 11.7 (`TRBV5-8`). The other 36 are refused,
 including `TRBV10-3` with 1,037 clonotypes none of which separate its alleles. The refusals are the
 point; a full-length, 5'RACE or `arda cells` library has the resolution this one does not.
+
+### Fixed: the restriction report counted reorderings as narrowings
+
+`TieResolver.candidates()` returns its tie list sorted by name while `v_call` carries the aligner's
+order, so `restrict` emitted `TRAV20*01,TRAV20*02` where the input said `TRAV20*02,TRAV20*01` --
+the same two alleles -- and the report's string test scored every one of those as a narrowing.
+Measured on a 100,000-read TRA amplicon: **20,587 reported, 281 real, 20,306 pure reorderings.**
+
+Two fixes. Surviving alleles now keep `v_call`'s own order, so a restriction that removes nothing
+returns a **byte-identical** string; and `narrowed` counts rows that lost an **allele**, not rows
+whose string changed, with a fourth bucket (`recalled`) so narrowed + unchanged + contradicted +
+recalled partitions the assessed rows exactly. Never: a metric that reports something other than
+what its name says is the defect class this repo keeps paying for.
+
+Also: `infer_genotype` now **raises** on an unrecognised `--scope` instead of falling through to
+`full`. The two differ only in where each read's germline span is clipped, so a typo would widen
+every span into the junction, narrow every tie set, and return calls more confident than the data
+supports -- with no error anywhere.
+
+### Changed: the benchmark tables are full-pipeline, three-way, and on one denominator
+
+`README.md`, `docs/usage.rst` and the Nextflow module's README carried stage-vs-stage numbers from
+**2.11.1** -- arda's AIRR-emitting stage against MiXCR's non-AIRR-emitting one. Replaced with
+same-job, end-to-end-to-a-clonotype-table runs of **arda 2.27.0 vs MiXCR 4.7.0 vs TRUST4**, three
+reps, medians, each tool at its best preset (benchmark repo, round 26).
+
+* **TRA amplicon, 100 k reads** -- MiXCR is **1.84x faster on wall** in its own regime; arda gets
+  there on **1.41x less CPU** and **3.16x less RSS** and returns the most clonotypes (19,841 vs
+  19,697 vs 18,559) over the most reads (43,503 / 42,712 / 37,688). TRUST4 is 5.1x slower than
+  arda -- the first same-job end-to-end amplicon wall against TRUST4 in this project.
+* **Bulk RNA-seq, 660 k pairs** -- arda returns **+27.8 % clonotypes and +97.9 % reads assigned**
+  against MiXCR and +14.0 % / +35.8 % against TRUST4, at 1.38x MiXCR's wall and 2.76x less RSS.
+  ⚠ TRUST4 is genuinely **1.61x faster on wall at 4.0x less CPU** here, reaching 87.7 % of arda's
+  clonotypes and 73.6 % of its assigned reads.
+
+⛔ **The accuracy arm now prints coverage before rates.** A per-tool inner join gives each tool its
+own denominator: of 48,033 IgBLAST truth reads at `v_score >= 70`, arda emits a row for **48,030**
+and MiXCR for **46,503**, so a joined comparison silently drops 1,530 reads MiXCR never answered.
+Over all truth reads arda leads `v_gene` recall **.9867 vs .9660** and precision **.9996 vs .9977**;
+on the common subset MiXCR leads recall .9977 vs .9869 while arda still leads precision .9997 vs
+.9977. Both denominators ship.
+
+✅ **No regression, measured rather than assumed.** arda 2.18.0 from PyPI against this release in
+one job, legs alternating, 3 reps, same committed reference (`database/` is unchanged since
+`v2.18.0`) and same mmseqs: amplicon **13.94 -> 13.66 s**, bulk **21.45 -> 21.74 s** (1.4 %, inside
+the rep spread and accounted for by the per-run QC stage 2.20.0 added), RSS identical. Clonotype
+output is **byte-identical** on both regimes by call digest, not by row count. And the published
+2.11.1 accuracy figures reproduce to every digit fifteen releases on -- `v_gene` recall .9867,
+precision .9996, `j_gene` .9892 / .9953, junction precision among emitted **.99919**.
 
 ### Fixed: `arda resolve-ties` raised on every plain `pip install`
 

@@ -30,7 +30,7 @@ process ARDA {
     // than the one this module was validated with. If you must override it from a config, it goes
     // under `withName: 'ARDA' { conda = ... }` -- see nextflow.config beside this file.
     conda "${moduleDir}/environment.yml"
-    container "arda-mapper:2.26.0"
+    container "arda-mapper:2.27.0"
 
     input:
     tuple val(meta), path(reads)

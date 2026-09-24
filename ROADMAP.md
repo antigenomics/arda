@@ -81,10 +81,15 @@ This is the short list, and each entry says what would make it *done* rather tha
    ⚠ **Open: read length is the binding constraint, not the rule.** Separating a TRBV gene's
    alleles needs a median of 150 nt from the 3' end; a 151 nt TRB amplicon covers a median of
    **72 nt** of V (56 after anchor-clipping, none reaching 150), so 33.1 % of clonotypes can be
-   assigned and **17 of 53** genes are called -- 6 of them genuinely inferred. The honest next step
-   is to run this on a library that HAS the resolution (full-length, 5'RACE, or `arda cells`
-   contigs at N50 536 nt) and measure against a known genotype; nothing about the rule can be
-   judged on a library that cannot separate the alleles in the first place.
+   assigned and **17 of 53** genes are called -- 6 of them genuinely inferred. On a TRA amplicon at
+   the same read length (`SRR5233635`, 21,710 clonotypes, error rate 5.53e-04) it is **20 of 44**,
+   and one of them is the first heterozygous call: `TRAV36/DV7` = `*01`/`*04`, 78 clonotypes
+   against 143, log10 BF **211**. Applying that genotype narrows **281 of 47,743** rows and
+   contradicts 75 -- you cannot restrict what you could not genotype, and 14 of the 20 called genes
+   have one catalogued allele. The whole inference is 1.53 s / 442 MB on 49,748 reads.
+   The honest next step is to run this on a library that HAS the resolution (full-length, 5'RACE,
+   or `arda cells` contigs at N50 536 nt) and measure against a known genotype; nothing about the
+   rule can be judged on a library that cannot separate the alleles in the first place.
 
    Also open, and deliberately not in this cut: **novel-allele discovery** (needs the per-position
    SHM model of item 4 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR

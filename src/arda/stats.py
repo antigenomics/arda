@@ -33,9 +33,12 @@ a suffix.
 
 ⚠ **Alleles vs SHM is a heuristic, and it is reported as one.** A mutation seen in most of an
 allele's reads at high Phred is far more likely a germline the reference does not carry than
-somatic hypermutation or a miscall -- but arda does not genotype, and ``allele_candidate`` is a
-shortlist to look at, never a call. The thresholds are exposed (``--allele-min-frac``,
-``--allele-min-reads``) precisely so the number can be re-derived rather than trusted.
+somatic hypermutation or a miscall -- but ``allele_candidate`` is a shortlist to look at, never a
+call. The thresholds are exposed (``--allele-min-frac``, ``--allele-min-reads``) precisely so the
+number can be re-derived rather than trusted. Never: ``arda genotype`` is a DIFFERENT object and
+this one does not feed it -- that call is a likelihood ratio between diploid genotypes over
+clonotypes, restricted to alleles the reference already catalogues, and it never reads this
+shortlist.
 """
 
 from __future__ import annotations

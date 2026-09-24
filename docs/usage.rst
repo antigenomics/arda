@@ -137,28 +137,81 @@ Amplicon / RepSeq
    ``assemble`` just built are silently discarded — the clonotypes whose CDR3 no single read
    spans never reach the table. ``arda rnaseq`` / ``arda amplicon`` wire this up for you.
 
-Measured on the same 100 k-read TRA amplicon, in one job, at 8 threads:
+⛔ **A stage comparison is not a benchmark.** The legs below run **end to end and emit
+clonotypes**; each tool gets its best-fitting preset and nothing else. One job, six legs
+alternating, three reps, medians. 8 threads; arda 2.27.0, MiXCR 4.7.0, TRUST4. TRUST4's rows
+count only its **complete** CDR3s, so the last two columns mean the same thing in every row.
+
+TRA amplicon, 100,000 reads:
 
 .. list-table::
    :header-rows: 1
-   :widths: 46 18 18 18
+   :widths: 26 13 13 15 16 17
 
-   * - tool
+   * - pipeline
      - wall (s)
      - CPU (s)
      - peak RSS (MB)
-   * - arda ``--two-pass --fast-segments --v-only-on-segment``
-     - **5.35**
-     - **12.73**
-     - **631**
-   * - MiXCR 4.7.0 ``align --preset rna-seq --species hsa``
-     - 5.90
-     - 45.24
-     - 3,027
+     - clonotypes
+     - reads in clonotypes
+   * - MiXCR ``generic-amplicon``
+     - **7.82**
+     - 42.91
+     - 3,052
+     - 19,697
+     - 42,712
+   * - **arda** ``amplicon``
+     - 14.40
+     - **30.49**
+     - 965
+     - **19,841**
+     - **43,503**
+   * - TRUST4
+     - 73.77
+     - 117.96
+     - **490**
+     - 18,559
+     - 37,688
 
-That is 1.10× on wall, **3.6× less CPU** and **4.8× less RSS**. The wall figures are close
-because both tools are already near the I/O floor at this size; the CPU and RSS columns are
-where the difference lives, and they are what decides how many samples fit on a node.
+MiXCR is **1.84× faster on wall** in its own regime; arda gets there on **1.41× less CPU** and
+**3.16× less RSS**, and returns the most clonotypes over the most reads. TRUST4 is 5.1× slower
+than arda here.
+
+Bulk RNA-seq, 660,000 pairs (``SRR5233639``):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 26 13 13 15 16 17
+
+   * - pipeline
+     - wall (s)
+     - CPU (s)
+     - peak RSS (MB)
+     - clonotypes
+     - reads in clonotypes
+   * - TRUST4
+     - **13.68**
+     - **54.53**
+     - **460**
+     - 1,941
+     - 6,247
+   * - **arda** ``rnaseq``
+     - 21.95
+     - 219.68
+     - 1,033
+     - **2,213**
+     - **8,484**
+   * - MiXCR ``rna-seq``
+     - 30.23
+     - 233.11
+     - 2,849
+     - 1,732
+     - 4,288
+
+On the regime arda exists for it returns **+27.8 % clonotypes and +97.9 % reads assigned** against
+MiXCR (+14.0 % / +35.8 % against TRUST4), at 1.38× MiXCR's wall and 2.76× less RSS. ⚠ TRUST4 is
+genuinely 1.61× faster on wall at 4.0× less CPU on this arm, reaching 87.7 % of arda's clonotypes
+and 73.6 % of its assigned reads.
 
 On real IGH RepSeq at 32 threads (aldan3, 100 k pairs), against arda's own shipped one-pass
 default:
@@ -188,38 +241,61 @@ default:
 Accuracy in the amplicon configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Against an IgBLAST truth on the same 100 k-read TRA amplicon (arda 2.11.1):
+Against an IgBLAST truth on the same 100 k-read TRA amplicon, arda 2.27.0 and MiXCR 4.7.0 at its
+best amplicon preset, scored per read from one truth file in one job.
+
+.. important::
+
+   **Print the coverage before the rates.** A per-tool inner join gives each tool its own
+   denominator — a truth read the tool emitted no row for vanishes instead of counting as a miss.
+   Of the 48,033 truth reads at ``v_score >= 70``, **arda emits a row for 48,030 (99.99 %) and
+   MiXCR for 46,503 (96.81 %)**, so both denominators are reported below.
 
 .. list-table::
    :header-rows: 1
-   :widths: 44 22 22
+   :widths: 40 16 16 16
 
    * - metric
-     - arda
-     - MiXCR
+     - arda, all truth
+     - MiXCR, all truth
+     - arda / MiXCR, common
    * - ``v_gene`` recall
-     - .9867
-     - **.9973**
+     - **.9867**
+     - .9660
+     - .9869 / **.9977**
    * - ``v_gene`` precision
      - **.9996**
-     - .9978
-   * - ``v_allele`` resolved
-     - **.9868**
-     - n/a
+     - .9977
+     - **.9997** / .9977
    * - ``j_gene`` recall
-     - .9892
-     - **.9904**
+     - **.9892**
+     - **.9892**
+     - .9959 / **.9996**
    * - ``j_gene`` precision
      - .9953
-     - **.9995**
-   * - ``junction`` precision among emitted
-     - .99919
-     - **.99991**
+     - **.9996**
+     - .9979 / **.9996**
+   * - ``junction`` recall (nt, exact)
+     - .9473
+     - **.9708**
+     - .9533 / **.9778**
 
-arda trades a little recall for precision on the V call: it **declines rather than guesses**,
-which is why its ``v_gene`` precision is the higher of the two. MiXCR emits ``*00`` for every
-allele, i.e. it makes no allele call at all, so there is no ``v_allele`` figure to compare
-against.
+The two views say different and equally true things. **On the reads it emits MiXCR is the more
+accurate caller**; **over the whole library arda recalls more V genes** (.9867 vs .9660), because
+MiXCR emits nothing at all for 1,530 truth reads against arda's 3. arda's V calls are the more
+precise of the two under either denominator — it declines rather than guessing. Of the 46,787
+truth junctions arda emits one for **94.81 % at .99919 precision among emitted**, MiXCR for
+97.09 % at .99989; the 5.19 % arda declines are reads that *have* an anchor pair and lost the
+projection.
+
+MiXCR emits ``*00`` for every allele, i.e. it makes no allele call, so there is no ``v_allele``
+comparator. arda's is **.9868 resolved** and .9461 by exact string.
+
+.. note::
+
+   These five arda figures are **unchanged from 2.11.1**, fifteen releases back — ``v_gene``
+   recall .9867, precision .9996, ``j_gene`` recall .9892, precision .9953 and junction precision
+   among emitted .99919 all reproduce to every published digit.
 
 .. note::
 

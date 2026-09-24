@@ -291,9 +291,11 @@ is per-clone — and how good the base is. ``arda stats`` reports both, per vari
 
 .. warning::
 
-   This is a **shortlist to look at, never a genotype call** — arda does not genotype. The
-   thresholds are exposed (``--allele-min-frac``, default 0.5; ``--allele-min-reads``, default 10)
-   precisely so the number can be re-derived rather than trusted.
+   This is a **shortlist to look at, never a genotype call.** The thresholds are exposed
+   (``--allele-min-frac``, default 0.5; ``--allele-min-reads``, default 10) precisely so the number
+   can be re-derived rather than trusted. :doc:`genotype` is a separate and much narrower object —
+   a likelihood ratio over clonotypes, restricted to alleles the reference already catalogues — and
+   it does not read this shortlist.
 
 Likewise the chimera, non-functional and stop-codon counts are **flags, not filters**: nothing in
 ``stats`` removes a row from any output, and the chimera signature cannot separate a true PCR

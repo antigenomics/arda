@@ -160,6 +160,15 @@ def test_the_unmutated_guard_raises_rather_than_silently_skipping(tmp_path):
         infer_genotype(path)
 
 
+def test_an_unknown_scope_raises_rather_than_falling_through_to_full(tmp_path):
+    """Never: the two scopes differ only in where a read's span is clipped, so a typo would widen
+    every span into the junction, narrow every tie set, and return calls more confident than the
+    data supports -- with no error anywhere."""
+    path = _airr(tmp_path, [("G*02", 120, "c0")])
+    with pytest.raises(ValueError, match="unknown scope"):
+        infer_genotype(path, scope="framwork")
+
+
 def test_output_does_not_depend_on_row_order(tmp_path):
     """Determinism is a requirement: polars `group_by` is a multithreaded hash aggregation."""
     reads = [("G*02", 120, f"c{i}") for i in range(10)] + [("G*01", 120, f"d{i}") for i in range(10)]
@@ -189,6 +198,33 @@ def test_a_contradicted_read_gets_an_empty_call_not_a_guess():
 
 def test_a_gene_that_was_not_genotyped_passes_through():
     assert restrict(("H*01",), "H*01", _GENOTYPE) == "H*01"
+
+
+#: Carries the pair a 1..60 span cannot separate, so a restriction over that span removes nothing.
+_GENOTYPE_13 = {"G": ("G*01", "G*03")}
+
+
+def test_a_restriction_that_removes_nothing_is_byte_identical():
+    """Never: ``candidates`` comes back sorted by name while ``v_call`` carries the aligner's
+    order, so emitting the sorted one turns a no-op into a reordering that every string comparison
+    downstream reads as a change. Measured on a 100 k TRA amplicon: 20,306 of the 20,587 rows the
+    report called "narrowed" were the same two alleles swapped. The real number was 281."""
+    assert restrict(("G*01", "G*03"), "G*03,G*01", _GENOTYPE_13) == "G*03,G*01"
+
+
+def test_narrowed_counts_lost_alleles_not_changed_strings(tmp_path):
+    """The bucket the reordering defect hid in -- and the four buckets must partition `assessed`."""
+    from arda.genotype import restrict_airr
+
+    src = _airr(tmp_path, [("G*03,G*01", 60, "a"),    # both carried, both indistinguishable here
+                           ("G*01", 60, "b"),          # the tie test adds *03, the genotype keeps it
+                           ("G*02", 120, "c")])        # not carried -> contradicted
+    report = restrict_airr(src, tmp_path / "o.tsv", _GENOTYPE_13, echo=lambda _m: None)
+    assert report["narrowed"] == 0
+    assert report["unchanged"] == 1 and report["recalled"] == 1 and report["contradicted"] == 1
+    assessed = report["rows"] - report["no_call"]
+    assert (report["narrowed"] + report["unchanged"] + report["contradicted"]
+            + report["recalled"]) == assessed
 
 
 def test_restrict_airr_adds_a_column_and_leaves_v_call_alone(tmp_path):
@@ -270,7 +306,7 @@ def test_a_row_with_no_v_call_is_not_counted_as_contradicted(tmp_path):
     src = _airr(tmp_path, [("G*01", 120, "a"), ("", 120, "b"), ("G*03", 120, "c")])
     report = restrict_airr(src, tmp_path / "out.tsv", _GENOTYPE, echo=lambda _m: None)
     assert report == {"rows": 3, "no_call": 1, "narrowed": 0, "contradicted": 1,
-                      "unchanged": 1, "genes": 1}
+                      "unchanged": 1, "recalled": 0, "genes": 1}
 
 
 # --- the likelihood test ------------------------------------------------------------------------
