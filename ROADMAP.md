@@ -83,9 +83,13 @@ what is left of the junction-recall gap. Evidence and method:
    structural — the mode exists for reads that span V into J, so **89.4 % of its mapped reads
    already carry a complete junction** and assembly has nothing to build; on bulk that figure is
    10.8 % and the same stage rescues 2,584 reads from 1,931 complete contigs, so `rnaseq` must keep
-   it on. ⚠ **Not shippable on one library**: IGH RepSeq has long hypermutated CDR3s and is where
-   amplicon assembly would pay, and it is on aldan3. Done means that A/B runs first; until then
-   `--no-assemble` is a documented option, not a preset change.
+   it on. Round 28 **replicated it on a second library** — the TRB amplicon `SRR5233641`:
+   **14.21 → 11.18 s wall (1.27×)**, 30.14 → 24.49 s CPU, for 3 clonotypes of 22,589 (0.013 %) and
+   **16 contigs built across 100,000 reads**. ⚠ **Still not shippable**: both are TCR amplicons
+   from one patient, so that is evidence the TRA result was not a fluke and no evidence about IGH.
+   IGH RepSeq has long hypermutated CDR3s and is where amplicon assembly would pay, and it is on
+   aldan3. Done means that A/B runs first; until then `--no-assemble` is a documented option, not
+   a preset change.
 
 5. **Re-price `--adaptive` in its own help text, and delete the stale read-path claim.** Two
    documentation defects of the class `CLAUDE.md` doc-invariant 1 is about — a number that was true
