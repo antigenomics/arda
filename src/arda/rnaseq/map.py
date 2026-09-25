@@ -347,6 +347,11 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
 #
 # Safe to change because `chunked_fragments` made the output invariant to it -- verified:
 # identical AIRR checksum and identical `isotype_from_mate` at 50k / 200k / 400k.
+#
+# ⛔ And not worth changing. The sweep above exists because the background reader was meant to
+# overlap the search; with reading re-measured at 4.5 % of map (see `_read_pairs_dnaio`) there is
+# nothing left to overlap, and round 27 confirmed it directly on 660 k real bulk pairs: **1 chunk
+# vs 4 is 16.48 s vs 16.34 s** with byte-identical output. Re-tuning `--chunk-size` is dead work.
 _RNASEQ_CHUNK = 400_000
 
 
@@ -476,10 +481,14 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool,
                       with_qual: bool = False) -> Iterator[tuple]:
     """The same stream, parsed in C.
 
-    Once ``--prefilter`` removed the search, reading became the largest single cost of a bulk run
-    -- 65 % of a 0.024 %-receptor library, where before it was 3 % and explicitly not worth
-    touching. Reworking the pure-Python loop bought 1.43x; dnaio is 2x on top of that including
-    the mate tagging (3.25 vs 1.63 M records/s on a 1 M-pair fixture).
+    Reworking the pure-Python loop bought 1.43x; dnaio is 2x on top of that including the mate
+    tagging (3.25 vs 1.63 M records/s on a 1 M-pair fixture), and that throughput still stands.
+
+    ⛔ What does NOT stand is the premise that motivated it: "reading is 65 % of a bulk run" was
+    true of a ``--prefilter``ed 0.024 %-receptor library BEFORE this port, and the port made its
+    own premise false. Re-measured on 660 k real bulk pairs (benchmark round 27): reading is
+    **0.73 s of map's 16.19 s = 4.5 %**, and mmseqs + transfer + format is **95.5 %**. Optimising
+    the bulk read path further is dead work -- go at the search.
 
     It is used only because it makes the SAME two assertions this function has always made, and
     both are load-bearing: a truncated mate file and a shuffled mate file each produced a

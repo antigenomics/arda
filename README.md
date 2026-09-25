@@ -375,6 +375,23 @@ at log₁₀ Bayes factors up to 251. The other 36 are refused, including one wi
 that still cannot separate its alleles. The refusals are the point. Details in
 [`docs/genotype.rst`](docs/genotype.rst).
 
+⚠ **The same axis sets what a `v_call` is worth on IG, one level coarser.** Naming the *gene* is
+much cheaper than separating its alleles, but it is not free: measured against an IgBLAST truth
+(`v_score >= 70`) on a human IGH 5'RACE library of 98,639 truth reads, `v_gene` recall is
+**.1170 on reads covering under 60 nt of V germline and .9896 on reads covering 200 nt or more** —
+and **.9896 is the TRA amplicon's .9867**, so there is no IG-specific accuracy deficit at that
+coverage. The 5.9 % of reads under 60 nt produce about 56 % of every V miss.
+
+**Position beats length**: IGHV genes diverge in FR1/CDR1/CDR2 and are conserved through FR3 near
+Cys104, so a short **5'** alignment identifies the gene and a short **3'** one does not — the same
+`< 60 nt` bin scores **.1170** on 5'RACE (whose reads run C → J → V) against **.8472** on bulk
+RNA-seq of the same locus. Somatic hypermutation does *not* order this: stratified by IgBLAST's
+own `v_identity` the deficit is non-monotonic, with the nearly-unmutated `97–99 %` bin the worst
+of six. arda ships **no threshold** on it — a span gate was measured at 7.6 : 1 in favour on IGH
+5'RACE and a clear loss on bulk IGH/IGK/IGL — so `v_germline_start` / `v_germline_end` are there
+for you to filter on. Tables in
+[`docs/usage.rst`](docs/usage.rst#what-an-ig-v-call-means-when-the-read-is-short).
+
 ## Productivity: `productive`, `stop_codon`, `vj_in_frame`
 
 These three AIRR columns are the most misread ones arda writes, because each is scoped

@@ -46,6 +46,53 @@ The Snakemake workflow reads `species` per sample (a cohort may mix organisms; `
 organism=` is the fallback) and refuses a single-cell sheet. `arda cluster` needed no change --
 it already parsed the sheet through `read_sheet`.
 
+### Added: `arda markup --d-prior` — score against a fitted prior without adopting it
+
+`arda scenarios` fits exactly the table `arda.dpost` reads, and `docs/scenarios.rst` called its
+output a drop-in for `database/vdj/<org>/d_prior.tsv`. It was -- by **format**. `load_d_prior` was
+`@lru_cache`d on the organism alone and read one fixed path, so the only way to actually *use* a
+fitted table was to overwrite a file inside the installed database: a change that silently alters
+every later run on the machine and leaves no record it happened.
+
+`load_d_prior(organism, path)` and `posterior_d(..., prior_path=)` now take one, and
+`arda markup --d-prior PATH` exposes it (implying `--d-posterior`, because a prior nothing reads
+is the failure mode this repo keeps hitting). It is the same knob `arda.hmm.model_for` already
+took as `prior=`, so the two readings of the model agree about where their numbers come from.
+
+This is what makes the 11 of 13 shipped `(organism, D-locus)` pairs with **no** prior approachable:
+OLGA has no model for them, `posterior_d` correctly returns `None`, and a table fitted from a real
+cohort can now be tried against them without being installed first.
+
+Never: the shipped table is **allowed** to be missing -- that is what `None` means -- but a path
+the caller typed is a request, so a `--d-prior` that is not there **raises** instead of silently
+scoring on an empty prior.
+
+### Changed: `--adaptive` is re-priced off a real library, not the 453-read fixture
+
+`--adaptive`'s own help text (and the comment at `_ADAPTIVE_TRIGGER`) quoted "3 of 453 reads" from
+a test fixture. Re-measured at **79x that scale** -- 660,000 real bulk read pairs -- and the
+fixture understated it: `--adaptive` is **1.84x wall and 3.04x CPU** there (16.34 -> 8.90 s,
+198.20 -> 65.13 s, 1,033 -> 771 MB) with the read set preserved exactly, and it moves `junction`
+on **93 of 35,795 rows** -- one-directional, **89 to empty against 4 the other way**, a net -85
+against the 3,856 reads carrying one. **91 of the 93 score 90-150 bits, above the 90-bit
+trigger**, so the score-only trigger is taken as uncalibratable rather than untuned. The default
+is unchanged: off.
+
+Two stale performance claims went with it. `rnaseq/map.py`'s "reading is 65 % of a bulk run" was
+true *before* the dnaio port that comment motivated, and the port made its own premise false --
+reading is **0.73 s of map's 16.19 s = 4.5 %**, and mmseqs + transfer + format is 95.5 %. The
+`--chunk-size` sweep beside it existed to overlap the background reader with the search; with
+nothing left to overlap, **1 chunk vs 4 is 16.48 s vs 16.34 s** with byte-identical output.
+
+### Added (docs): what an IG V call means when the read is short
+
+`docs/usage.rst` now carries the read-coverage floor, which is the one IG finding a user can act
+on today: `v_gene` recall against an IgBLAST truth is **.1170 on reads covering under 60 nt of V
+germline and .9896 on reads covering 200 nt or more** -- and .9896 *is* the TRA amplicon's .9867,
+so there is no IG-specific deficit at that coverage. With the bulk RNA-seq table (two libraries,
+three loci), why **position beats length**, why somatic hypermutation does **not** order this, and
+why arda ships no threshold on it.
+
 ### Fixed: the Nextflow module's Dockerfile failed on every correct install
 
 Its acceptance check grepped `arda rnaseq --help` for `--two-pass`, `--fast-segments`,

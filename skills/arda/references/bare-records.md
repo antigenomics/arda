@@ -44,3 +44,15 @@ Repair is deliberately conservative and its two decisions are separate:
 which pins `insVD + |D surviving| + insDJ`. Shipped for human IGH/TRB/TRD and mouse TRB only
 (the pairs with a published generative model); **every other pair returns `None` rather than
 guessing** — do not substitute a human proxy.
+
+```python
+posterior_d(junction_aa, v_call, j_call, "rhesus_monkey", prior_path="fitted.tsv")
+```
+
+`prior_path` (CLI: `arda markup --d-prior PATH`, which implies `--d-posterior`) scores against a
+table `arda scenarios` fitted instead of the shipped `database/vdj/<org>/d_prior.tsv`. That is the
+only way to reach the **11 of 13 shipped (organism, D-locus) pairs that have no prior at all** --
+OLGA has no model for them -- without overwriting a file inside the installed database, which
+would silently change every later run on the machine. Using an estimate is not adopting one.
+⚠ A `prior_path` that does not exist **raises**: the shipped table is allowed to be missing, a
+path the caller typed is not.

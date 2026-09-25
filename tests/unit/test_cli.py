@@ -252,3 +252,39 @@ def test_cluster_submit_samples_renders_two_arrays_without_submitting(two_sample
     assert "--partition=medium" in script
     assert '"$ARDA" map' in script and '"$ARDA" cluster reduce' in script
     assert "IFS=" not in script and "cut -f3" in script   # see render_samples_submit_script
+
+
+def test_markup_d_prior_implies_the_posterior_rather_than_being_accepted_and_ignored(tmp_path):
+    """Never: a parameter accepted while doing nothing is this project's recurring failure.
+
+    `--d-prior` on its own used to be unrepresentable -- the prior columns were gated on
+    `--d-posterior` alone -- so a user who passed a table they had just fitted would get a file
+    with no D columns in it and exit 0.
+    """
+    records = tmp_path / "in.tsv"
+    records.write_text("cdr3\tv\tj\tspecies\n"
+                       "CASSLAPGATNEKLFF\tTRBV5-1*01\tTRBJ1-4*01\thuman\n")
+    prior = tmp_path / "prior.tsv"
+    rows = ["locus\tkind\tkey\tvalue"]
+    for i in range(16):
+        rows += [f"TRB\tinsVD\t{i}\t{1 / 16:.6f}", f"TRB\tinsDJ\t{i}\t{1 / 16:.6f}"]
+    for allele in ("TRBD1*01", "TRBD2*01"):
+        rows += [f"TRB\tdlen\t{allele}:{n}\t{1 / 12:.6f}" for n in range(1, 13)]
+        rows.append(f"TRB\td_marginal\t{allele}\t0.5")
+    rows.append("TRB\tbeta\tbeta\t1.25")
+    prior.write_text("\n".join(rows) + "\n")
+
+    out = tmp_path / "out.tsv"
+    result = runner.invoke(app, ["markup", "-i", str(records), "-o", str(out),
+                                 "--d-prior", str(prior)])
+    assert result.exit_code == 0, result.output
+    assert "d_call" in out.read_text().splitlines()[0]
+
+
+def test_markup_d_prior_refuses_a_path_that_is_not_there(tmp_path):
+    records = tmp_path / "in.tsv"
+    records.write_text("cdr3\tv\tj\tspecies\n"
+                       "CASSLAPGATNEKLFF\tTRBV5-1*01\tTRBJ1-4*01\thuman\n")
+    result = runner.invoke(app, ["markup", "-i", str(records), "-o", str(tmp_path / "o.tsv"),
+                                 "--d-prior", str(tmp_path / "absent.tsv")])
+    assert result.exit_code != 0

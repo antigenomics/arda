@@ -91,7 +91,15 @@ what is left of the junction-recall gap. Evidence and method:
    aldan3. Done means that A/B runs first; until then `--no-assemble` is a documented option, not
    a preset change.
 
-5. **Re-price `--adaptive` in its own help text, and delete the stale read-path claim.** Two
+5. ✅ **`--adaptive` is re-priced and the two stale read-path claims are gone (2026-09-25).**
+   Help text, the comment at `_ADAPTIVE_TRIGGER`, `rnaseq/map.py`'s dnaio docstring and its
+   `--chunk-size` sweep all now carry the round-27 numbers instead of the fixture's. Nothing
+   about the default changed -- `--adaptive` stays off -- and the reason is now in the help
+   text a user actually reads: the junction movement is **one-directional** (89 of 93 rows go
+   to EMPTY) and **91 of 93 sit above the trigger**, so it is not a tuning problem. What
+   follows is the original entry, kept for the measurement:
+
+   Two
    documentation defects of the class `CLAUDE.md` doc-invariant 1 is about — a number that was true
    and stopped being true. (a) `--adaptive` is **1.84× on bulk map wall and 3.04× on CPU**
    (16.34 → 8.90 s, 198.20 → 65.13 s, 1,033 → 771 MB on 660 k pairs) with the read set preserved
@@ -131,6 +139,29 @@ what is left of the junction-recall gap. Evidence and method:
    `arda resolve-ties`. ⚠ Done means: swept as a margin on **all four geometries** (IGH 5'RACE,
    IGH/IGK/IGL bulk) *and* on TCR, where it must be a near-no-op; and costed in **clonotype
    counts**, not only per-read recall, because a wider `v_call` changes the clonotype key.
+   ✅ **Shipped 2026-09-25: the coverage floor is documented**, in `docs/usage.rst`
+   ("What an IG V call means when the read is short") — both span tables, why position beats
+   length, why SHM does not order it, and why no threshold ships. It is the one IG finding a user
+   can act on today, and `v_sequence_start`/`v_germline_start` are already AIRR columns arda
+   writes, so they can filter on the span themselves.
+   ✅ **The second-patient check is finished (SPX8151, `SRR5233637`/`SRR5233638`).** It is a second
+   PATIENT, not a second geometry, and it replicates the only thing it was asked to: `v_gene` recall
+   is **monotonic in V germline span on all six arms** (two samples x IGH/IGK/IGL) —
+
+   | locus | SRR5233637 | SRR5233638 | < 60 nt | 60–90 | 90–120 |
+   |---|---:|---:|---:|---:|---:|
+   | IGH | .9103 | .9058 | .6887 / .6763 | .8238 / .8538 | **.9649 / .9546** |
+   | IGK | .9770 | .9782 | .9137 / .9013 | .9684 / .9804 | **.9890 / .9890** |
+   | IGL | .8512 | .8793 | .4286 / .4490 | .5568 / .6449 | **.9588 / .9822** |
+
+   1,317–1,558 truth reads per locus per sample at `v_score >= 70`. The two samples agree within
+   0.5 points on IGH and IGK; IGL differs by 2.8 points on 605 reads each.
+   ✅ **And it names where the tie list CANNOT be the fix.** `truth genes/read` — how many distinct
+   V genes IgBLAST itself listed — is **1.49–1.71 on IGK** (the judge could not separate them
+   either, so a wider list is exactly right) but **1.02–1.09 on IGL**, where IgBLAST resolves a
+   single gene and arda still misses 55 % of the `< 60 nt` bin. Those are tie-BREAK errors on
+   evidence that exists, not missing evidence, and they are a separate instrument from item 6's.
+
    ⚠ Also open and **the author's call, 476 reads**: `IGHV3-52` and `IGHV3-71` have **0 scaffolds**
    in arda because `load_functional_alleles` excludes IMGT ORF/pseudogenes by design while
    IgBLAST's DB includes them — **82 of its 121 human IGHV genes**. `CLAUDE.md` ("Reference
@@ -145,7 +176,16 @@ what is left of the junction-recall gap. Evidence and method:
    positional, so adding one renumbers the locus and invalidates every precompiled index. Ask
    before changing either.
 
-7. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
+7. ✅ **`arda.dpost` consumes what `arda scenarios` writes — `arda markup --d-prior PATH`
+   (2026-09-25).** `load_d_prior(organism, path)` and `posterior_d(..., prior_path=)` take a
+   table; the CLI flag implies `--d-posterior`, because a prior nothing reads is the failure
+   mode this repo keeps hitting. ⚠ The shipped table is ALLOWED to be missing (that is what
+   `None` means for 11 of 13 pairs); a path the caller typed is a request, so it **raises**
+   rather than scoring on an empty prior. This separates *using* an estimate from *adopting*
+   one, which is what item 8 below is the decision about — and item 8 is now approachable
+   without installing anything. Original entry:
+
+   **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
    output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is
    `@lru_cache`d on the organism and reads one fixed path (`dpost.py:108-110`), so the only way to
    use a fitted table is to overwrite a file inside the installed database. `arda.hmm.model_for`

@@ -122,16 +122,20 @@ _SEGMENT_MAX_SEQS = 50
 # where the uncertain set was 4,816 reads (0.5 % of the library) costing 3.9 s against a 50 s
 # saving. No single `--max-accept` value achieves this -- its own lossless point is 1.25x.
 #
-# ⚠ OFF BY DEFAULT, because preserving the read SET is not the whole guarantee. On the real-read
-# fixture the adaptive search also changes `junction_aa` on 3 of 453 reads -- and two of them
-# scored **128 and 131**, far above the 90-bit trigger. A high score therefore does NOT certify
-# that the best alignment was found: a read can be comfortably above threshold on a scaffold that
-# is not its best, and the junction moves even though the read is kept. The bulk measurement did
-# not catch this because it compared read sets and winning targets, not junctions.
+# ⚠ OFF BY DEFAULT, because preserving the read SET is not the whole guarantee: the junction
+# moves even though the read is kept, and the bulk measurement above did not catch it because it
+# compared read sets and winning targets, not junctions.
 #
-# Any future calibration of `_ADAPTIVE_TRIGGER` has to be judged on junction identity, not on
-# read survival -- and since the counter-examples sit at 128-131 bits, a score-only trigger may
-# not be calibratable at all.
+# ⛔ Re-measured at 79x the fixture's scale -- 660 k real bulk pairs, benchmark round 27 -- and the
+# fixture UNDERSTATED it. Do not requote "3 of 453 reads": `--adaptive` is **1.84x wall and 3.04x
+# CPU** there (16.34 -> 8.90 s, 198.20 -> 65.13 s, 1,033 -> 771 MB) with the read set preserved
+# exactly, and it moves `junction` on **93 of 35,795 rows** -- ONE-DIRECTIONAL: **89 to EMPTY, 4
+# the other way**, a net **-85** against the 3,856 reads carrying one. **91 of the 93 sit at
+# 90-150 bits**, i.e. ABOVE `_ADAPTIVE_TRIGGER`, so raising the trigger does not reach them.
+#
+# Any future calibration has to be judged on junction identity, not on read survival -- and with
+# the counter-examples sitting above the trigger on two libraries three orders of magnitude apart
+# in size, a score-only trigger is taken as uncalibratable rather than untuned.
 _MAX_ACCEPT = 40
 _ADAPTIVE_TRIGGER = 90.0
 
