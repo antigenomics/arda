@@ -130,6 +130,7 @@ arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.sta
 arda qc batch  -d out/ -o out/batch --samples sheet.tsv   # every sample's QC as one table
 arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-contained page
 arda scenarios -i clones.tsv -o d_prior.tsv   # EM over recombination scenarios -> a generative model
+arda shm-model -i mapped.airr.tsv -o shm.tsv --locus IGH   # P(substitution | 5-mer context, region)
 
 arda genotype     -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB   # which V alleles this donor has
 arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # widen only where it helps
