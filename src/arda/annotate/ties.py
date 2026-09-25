@@ -202,7 +202,7 @@ def rank_ties(calls: list[str], scores: list[float] | None = None,
 
 
 def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...] = ("v", "j"),
-                 rank: bool = True, echo=None) -> dict:
+                 rank: bool = True, loci: tuple[str, ...] = (), echo=None) -> dict:
     """Add tie lists to an AIRR TSV's ``v_call``/``j_call``, then rank them library-wide.
 
     Two passes over one file, which is why this is a separate step rather than something ``map``
@@ -212,6 +212,16 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
     library-wide. Nothing is added or removed by the second pass, so a consumer taking the first
     element gets a better answer and one reading the whole field still sees every germline the read
     could not rule out.
+
+    ``loci`` restricts widening to the named loci (``("IGK", "IGL")``); every other row is copied
+    through untouched. Empty means every locus, which is what this always did. **Whether widening
+    helps is a property of the LOCUS, not of the tool** -- see the benchmark repo's round 32 for
+    the measurement, and the CLI help for the short version.
+
+    Raises:
+        ValueError: if ``loci`` is given and the file has no ``locus`` column. Widening everything
+            because the filter could not be applied is the silent failure this parameter exists to
+            avoid.
     """
     import polars as pl
 
@@ -220,6 +230,15 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
 
     df = read_airr(path)          # one AIRR reader, one dialect (see its docstring)
     report = {"rows": df.height, "expanded": {}, "reranked": {}}
+
+    allow = {x.strip().upper() for x in loci if x.strip()} or None
+    if allow is not None and "locus" not in df.columns:
+        raise ValueError(
+            f"--loci {','.join(sorted(allow))} was given but {path} has no `locus` column; "
+            "widening every row because the filter cannot be applied is exactly the silent "
+            "failure this parameter exists to avoid")
+    if allow is not None:
+        report["loci"] = sorted(allow)
 
     for seg in segments:
         call_col, gs, ge = f"{seg}_call", f"{seg}_germline_start", f"{seg}_germline_end"
@@ -245,7 +264,13 @@ def resolve_airr(path, out, *, organism: str = "human", segments: tuple[str, ...
         res = TieResolver(germ)
         calls = df[call_col].to_list()
         starts, ends = df[gs].to_list(), df[ge].to_list()
-        widened = [res.expand(c or "", a, b) for c, a, b in zip(calls, starts, ends)]
+        if allow is None:
+            widened = [res.expand(c or "", a, b) for c, a, b in zip(calls, starts, ends)]
+        else:
+            row_locus = df["locus"].to_list()
+            widened = [res.expand(c or "", a, b) if (lc or "").strip().upper() in allow
+                       else (c or "")
+                       for c, a, b, lc in zip(calls, starts, ends, row_locus)]
         report["expanded"][seg] = sum(1 for a, b in zip(calls, widened) if (a or "") != b)
         if rank:
             scores = (df["mmseqs2_score"].to_list() if "mmseqs2_score" in df.columns else None)

@@ -150,13 +150,37 @@ what is left of the junction-recall gap. Evidence and method:
    win on IGH 5'RACE (precision .92585 → .97693 for −0.69 pt recall) and a clear loss on bulk
    IGH / IGK / IGL (−3.24 / −6.22 / −2.39 points of recall for essentially no precision). A
    shipped constant would be wrong more often than right, which is why this repo ships none.
-   **Wanted instead: widen the V tie list by bit-score margin when the evidence is thin.** arda
-   already emits one (61,638 reads get 1 gene, 10,266 get 2, 24,836 get 3) and the misses are
-   reads whose list does not contain the truth gene *at all*, so the instrument is admitting the
-   ambiguity the read really has rather than refusing the call — and it reuses
-   `arda resolve-ties`. ⚠ Done means: swept as a margin on **all four geometries** (IGH 5'RACE,
-   IGH/IGK/IGL bulk) *and* on TCR, where it must be a near-no-op; and costed in **clonotype
-   counts**, not only per-read recall, because a wider `v_call` changes the clonotype key.
+   ✅ **The widening instrument is SWEPT and the answer is per-LOCUS (round 32, 2026-09-25).**
+   arda already ships the widening — `arda resolve-ties`, off by default — so the sweep needed no
+   new mechanism, just a scorer that prices the cost. Eleven arms, five geometries, three loci,
+   two receptors, against an `arda igblast` truth. **Exact `v_gene`-SET agreement**:
+
+   | arm | locus | truth genes/read | exact before | exact after | Δ |
+   |---|---|---:|---:|---:|---:|
+   | `SRR5233639` / `SRR5233640` bulk | **IGK** | 1.60 / 1.62 | .5707 / .5558 | **.9373 / .9308** | **+36.7 / +37.5** |
+   | `SRR5233639` / `SRR5233640` bulk | **IGL** | 1.09 | .8586 / .8577 | **.9137 / .9115** | **+5.5 / +5.4** |
+   | `SRR5233641` amplicon | **TRB** | 1.08 | .9299 | **.9694** | **+4.0** |
+   | six IGH arms (bulk, 5'RACE x3, multiplex) | IGH | 1.12–1.64 | .8255–.9755 | .6860–.9608 | **−0.6 to −14.9** |
+
+   ⚠ **Intersection recall rises on ALL ELEVEN arms**, IGH included. Reading recall without the
+   exact-set number would have shipped a 10-point IGH regression as a 5-point IGH win; that is
+   what `scripts/vcall_widening_cost.py` exists for.
+   ✅ **The mechanism is predictive, not empirical.** The deciding quantity is the ambiguity
+   DEFICIT — IgBLAST's genes/read minus arda's, before widening. **arda's IGK call is 0.42
+   genes/read too NARROW** (1.18 against 1.60), and closing that gap is the whole 37-point win.
+   **arda's IGH call is already as wide as IgBLAST's** (deficit 0.00–0.07 on every arm, 1.589
+   against 1.64 on 5'RACE), so there is nothing to recover and each arm pays the overshoot — up to
+   +0.40 genes/read against a 0.06 deficit on bulk IGH. A user can run that check without a truth
+   file: compare `genes/read` before and after.
+   ✅ **Shipped: `arda resolve-ties --loci IGK,IGL`.** Verified on one mixed bulk library, one
+   command: IGH byte-identical to untouched (exact .8255, 108 clonotypes), IGK and IGL taking the
+   full win. ⚠ The cost is `solo` — the share of IGK reads naming exactly one gene falls
+   .8195 → .3883 — which is the honest statement of what an IGK read supports and why this stays
+   an opt-in command, not a default. Clonotype cost: **+2 on IGK, +3 of 23,559 on TRB, ZERO on
+   IGL**. Evidence: `results/round32`.
+   ⛔ **Do not re-propose a bit-score MARGIN for this.** The instrument that was wanted is
+   measured; what it recovers is an IGK-specific narrowness, and a margin would be a second
+   mechanism for the same job.
    ✅ **Shipped 2026-09-25: the coverage floor is documented**, in `docs/usage.rst`
    ("What an IG V call means when the read is short") — both span tables, why position beats
    length, why SHM does not order it, and why no threshold ships. It is the one IG finding a user

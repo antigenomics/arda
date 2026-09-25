@@ -87,6 +87,36 @@ it is a rounding error; on IGH it is the library. Nothing about the default chan
 that the two regimes are not comparable, and `ROADMAP.md` item 4 no longer says the IGH leg is
 outstanding.
 
+### Added: `arda resolve-ties --loci` — because whether widening helps is a property of the LOCUS
+
+`arda resolve-ties` widens `v_call` to every germline the read's alignment cannot rule out. Swept
+now across eleven arms, five geometries, three loci and two receptors against an `arda igblast`
+truth, and the result splits cleanly by locus. Exact `v_gene`-SET agreement:
+
+| locus | arms | exact before | exact after | change |
+|---|---|---|---|---|
+| **IGK** | 2 bulk | .5707 / .5558 | **.9373 / .9308** | **+36.7 / +37.5 pt** |
+| **IGL** | 2 bulk | .8586 / .8577 | **.9137 / .9115** | **+5.5 / +5.4 pt** |
+| **TRB** | 1 amplicon | .9299 | **.9694** | **+4.0 pt** |
+| IGH | 6 (bulk, 5'RACE, multiplex) | .8255–.9755 | .6860–.9608 | **−0.6 to −14.9 pt** |
+
+`--loci IGK,IGL` widens only the named loci and copies every other row through untouched, so one
+command on a mixed library gets the win on IGK/IGL and leaves IGH byte-identical.
+
+The mechanism is predictive rather than empirical: the deciding quantity is the ambiguity
+**deficit**, IgBLAST's genes/read minus arda's. arda's IGK call is **0.42 genes/read too narrow**
+(1.18 against 1.60) and closing that is the whole win; arda's IGH call is already as wide as
+IgBLAST's (deficit 0.00–0.07 everywhere), so each IGH arm only pays the overshoot. That check
+needs no truth file — compare `genes/read` before and after.
+
+⚠ Intersection recall rises on **all eleven** arms, IGH included; only the exact-set number shows
+the IGH regression. ⚠ The cost is `solo`: the share of IGK reads naming exactly one gene falls
+.8195 → .3883. That is what an IGK read actually supports, and it is why this stays an opt-in
+command rather than a default.
+
+Never: a `--loci` that cannot be applied — no `locus` column in the file — **raises** rather than
+widening every row, which would be indistinguishable from success.
+
 ### Added: `arda igblast --receptor ig|tr|both`
 
 `igblast_reads` has always taken `groups=("IG",)` / `("TR",)`; the CLI never offered it, so every
