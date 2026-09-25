@@ -5,6 +5,23 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## 2.29.0
 
+### Fixed: a V/J call naming a FAMILY with one functional gene now resolves
+
+`resolve_allele` climbed three rungs -- exact, `gene*01`, first allele of the gene -- and then gave
+up. None of them reaches a call that names a **family** whose genes all carry a suffix: nothing is
+named `TRBV20`, only `TRBV20-1`, so `markup_cdr3` returned `FailedBadSegment` and dropped the V end
+entirely. Measured on VDJdb, the largest corpus of curated human TCR calls there is: **6,291 human
+beta chains** carry such a call (`TRBV20` 1,839, `TRBV3` 1,039, `TRBV24` 291, `TRBV29` 70) and the
+germline places their CDR3s without a single edit once the call resolves.
+
+Never: **the new rung refuses rather than guesses.** The family must hold **exactly one functional
+gene**. That is the whole of the difference for `TRBV3`, whose family carries `TRBV3-1` (F) and
+`TRBV3-2` (P) -- a pseudogene cannot be the V of an expressed receptor, so the call is not
+ambiguous. Where several functional genes share a family (`TRBV6` has five, `TRBV12` four) there is
+nothing to resolve and the caller still gets `""`. ⚠ VDJdb's own ladder takes the lowest-numbered
+gene in that case, which is how `TRAV6-7-DV9` ends up marked up as `TRAV6-1*01`; this does **not**
+copy that. The prefix is `f"{gene}-"`, not `gene`, so `TRBV2` cannot resolve through `TRBV20-1`.
+
 ### Added: `arda scenarios --shm-model` — a hypermutated V tail stops being read as N-region
 
 `scenarios.lattice` bounded the templated V length with an **exact** common prefix, so on IGH one
