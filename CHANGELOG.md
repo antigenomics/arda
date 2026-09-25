@@ -5,6 +5,53 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Added: `arda scenarios --shm-model` — a hypermutated V tail stops being read as N-region
+
+`scenarios.lattice` bounded the templated V length with an **exact** common prefix, so on IGH one
+substitution in the V tail forced the rest of that tail to be explained as insertion -- and `delV`
+and `insVD` are exactly the two distributions the estimator fits. With a table from
+`arda shm-model` those positions are priced instead: `Π(1 − μ)` over matches, `μ/3` over
+mismatches.
+
+✅ **The exact-match bound is the `μ = 0` case of that emission, not a separate rule.** With every
+rate 0 a mismatch costs 0, so no templated length past the common prefix survives -- which is what
+`_common_prefix` computes. A test compares term weights between the two paths.
+
+Measured on 26,619 real IGH junctions, with the model fitted on a **different donor's** library:
+
+| parameter | exact | with `--shm-model` | change |
+|---|---:|---:|---:|
+| `delV` mean | 4.148 | **2.708** | **−1.440** |
+| `delV` P(no deletion) | .1426 | **.2388** | +.0962 |
+| `insVD` mean | 12.065 | **10.972** | **−1.093** |
+| `insDJ` mean | 12.342 | 12.144 | −0.198 |
+| `delJ` mean | 12.247 | 12.253 | **+0.006** |
+
+**The exact bound was charging 1.44 nt of V germline per IGH rearrangement to deletion**, and
+`delV`'s mode moves from 1 to 0. ✅ `delJ` at +0.006 against `delV` at −1.440 is the result's own
+control: the model is applied to the V side only -- it is fitted on `v_mutations` and has no J
+rates -- so the parameters it cannot reach did not move.
+
+On the D posterior, judged by arda's independent nucleotide D caller on 10,849 junctions at
+`d_support <= 0.05`: .7885 → .7898, **+15 genes net**, concentrated in the most mutated bin
+(+0.0040) and −0.0019 on unmutated reads. The mean templated V read as N-region falls
+**2.672 → 1.877 bases**. Cost: **+4.8 %** wall on a 3-iteration fit.
+
+Never: **`shm=None` is the default and byte-identical** -- TR, unmutated IG and every shipped
+caller are untouched.
+
+⛔ **Never compare the two arms' log-likelihoods.** They are likelihoods under different models;
+the SHM arm carries an emission term per templated base that the exact arm does not have.
+
+### Fixed: a tie-group `v_call` found no germline
+
+`shmmodel.germline_map` keyed a scaffold's `v_call` verbatim, but that may be a comma-joined
+**group** -- `IGHV3-23*01` lives inside `IGHV3-23*01,IGHV3-23D*01`. A lookup by single allele
+therefore found nothing, silently: it cost the estimator reads, and it made the first SHM-aware
+lattice score exactly like the exact one, which looked like a clean null result rather than a
+missing key. Every member is now keyed as well as the group string (325 human IGH keys become
+349).
+
 ### Added: `arda shm-model` — where a mutation is EXPECTED, fitted from arda's own output
 
 `arda.shm` reports where a read differs from its germline. This fits the other half:

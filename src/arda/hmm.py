@@ -22,6 +22,11 @@ no nucleotides, where the D is often invisible in the translated junction and th
 constraint plus an aa match is all there is. This module needs nucleotides. They are two
 different inputs, and both ship.
 
+``shm`` threads an :class:`arda.shmmodel.ShmModel` into the same recursion: without one the
+templated V length is bounded by an exact common prefix, with one it is priced by the model, so a
+hypermutated V tail stops being read as N-region. Default ``None``, which is what every shipped
+caller passes and is byte-identical to the behaviour before it existed.
+
 Never: **do not re-run the two negatives the roadmap already records.** (i) Re-ranking nucleotide
 D candidates by a scenario likelihood changes nothing -- 98.9 -> 97.8 % gene accuracy on IGH,
 94.2 -> 94.5 % on huTRB, flat elsewhere, because with 10-18 matched nt the alignment term is
@@ -104,13 +109,13 @@ def _load_into(model: _Model, path, organism: str) -> None:
 
 
 def log_likelihood(junction_nt: str, v_call: str, j_call: str, model: _Model,
-                   species: str = "human") -> float:
+                   species: str = "human", shm=None) -> float:
     """``log P(junction | V, J)``, marginalised over every scenario. ``-inf`` if unscoreable.
 
     Marginal, not the best path. A junction explainable many mediocre ways is more probable than
     one explainable a single slightly-better way, and a Viterbi score cannot say so.
     """
-    built = lattice(junction_nt, v_call, j_call, model, species)
+    built = lattice(junction_nt, v_call, j_call, model, species, shm)
     if built is None:
         return float("-inf")
     z = sum(t[0] for t in built[2])
@@ -118,14 +123,14 @@ def log_likelihood(junction_nt: str, v_call: str, j_call: str, model: _Model,
 
 
 def posterior_d(junction_nt: str, v_call: str, j_call: str, model: _Model,
-                species: str = "human") -> DPosterior:
+                species: str = "human", shm=None) -> DPosterior:
     """``P(D | junction, V, J)``, summing over trimming, insertions and placement.
 
     Never: this sums over scenarios rather than taking the best one. A D that fits many
     placements passably is better supported than one that fits a single placement well, and the
     trimming/insertion nuisance parameters are exactly what has to be integrated out to see that.
     """
-    built = lattice(junction_nt, v_call, j_call, model, species)
+    built = lattice(junction_nt, v_call, j_call, model, species, shm)
     if built is None:
         return DPosterior("", {}, float("-inf"), 0)
     g, _L, terms, _left, _right = built
@@ -140,14 +145,14 @@ def posterior_d(junction_nt: str, v_call: str, j_call: str, model: _Model,
 
 
 def best_scenario(junction_nt: str, v_call: str, j_call: str, model: _Model,
-                  species: str = "human") -> Scenario | None:
+                  species: str = "human", shm=None) -> Scenario | None:
     """The single most probable scenario -- the Viterbi path, for reading, not for counting.
 
     Never: this is NOT what the estimator counts, and ``project/design-scenarios.md`` says why.
     One reading carries weight 1 and the rest 0, which biases trimming short and insertions
     shorter. It is here because a human inspecting one junction wants one answer.
     """
-    built = lattice(junction_nt, v_call, j_call, model, species)
+    built = lattice(junction_nt, v_call, j_call, model, species, shm)
     if built is None:
         return None
     g, L, terms, left, right = built

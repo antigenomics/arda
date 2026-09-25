@@ -115,6 +115,36 @@ Limits
 * **Exact matching, so unmutated receptors.** A hypermutated IGH junction breaks the premise that
   germline segments appear verbatim. TR is the intended input; IG works where SHM has not reached
   the junction.
+* **A hypermutated IG library wants** ``--shm-model``. The templated V length is bounded by an
+  **exact** match against the germline, so on IGH one substitution in the V tail forces the rest
+  of that tail to be read as N-region — and ``delV`` and ``insVD`` are exactly the distributions
+  being fitted. Pass a table from :doc:`arda shm-model <shm>` and those positions are priced
+  instead. Measured on 26,619 real IGH junctions with the model fitted on a **different donor**:
+
+  .. list-table::
+     :header-rows: 1
+
+     * - parameter
+       - exact
+       - with ``--shm-model``
+     * - ``delV`` mean
+       - 4.148
+       - **2.708**
+     * - ``delV`` P(no deletion)
+       - .1426
+       - **.2388**
+     * - ``insVD`` mean
+       - 12.065
+       - **10.972**
+     * - ``delJ`` mean
+       - 12.247
+       - 12.253
+
+  i.e. the exact bound was charging **1.44 nt of V germline per rearrangement** to deletion and
+  1.09 nt to V-side insertion. ``delJ`` does not move because the model is applied to the V side
+  only — it is fitted on ``v_mutations`` and has no J rates. Leave the flag off for TR and for
+  unmutated IG, where it costs ~5 % wall and changes nothing.
+
 * **Generating a prior is not adopting one.** ``database/vdj/<org>/d_prior.tsv`` is unchanged;
   swapping in an estimate is a measurement and a release decision, not a side effect of running
   this. To *use* one without adopting it, pass the path — ``arda markup --d-prior PATH``, or

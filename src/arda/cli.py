@@ -822,6 +822,13 @@ def scenarios_cmd(
              "into the output header."),
     max_del: int = typer.Option(
         24, "--max-del", help="Largest germline deletion considered, per side."),
+    shm_model: Optional[Path] = typer.Option(
+        None, "--shm-model",
+        help="A table from `arda shm-model`. On a hypermutated IG library the exact-match bound "
+             "on the templated V charges every substitution in the V tail to `delV` and `insVD` "
+             "-- the two distributions being fitted. With a model those positions are priced "
+             "instead: measured on 10,849 real IGH junctions, the mean templated V read as "
+             "N-region falls 2.672 -> 1.877 bases. Leave it off for TR and unmutated IG."),
 ) -> None:
     """Estimate a recombination model from nucleotide junctions (EM over scenarios).
 
@@ -854,13 +861,23 @@ def scenarios_cmd(
     if not records:
         raise typer.BadParameter(f"{input} has no usable (junction, v_call, j_call) rows")
 
+    shm = None
+    if shm_model is not None:
+        from .shmmodel import load_model
+
+        if not shm_model.exists():
+            raise typer.BadParameter(f"SHM model table not found: {shm_model}")
+        shm = load_model(shm_model)
+        log.info("scenarios: SHM model %s -- %d contexts, scale %.4f",
+                 shm_model, len(shm.context), shm.scale)
     stats = estimate(records, organism=organism, iterations=iterations, max_del=max_del,
-                     echo=lambda m: log.info(m))
+                     echo=lambda m: log.info(m), shm=shm)
     rows = stats.rows()
     with open(output, "w") as fh:
         fh.write(f"# arda scenarios: organism={organism} records={stats.records} "
                  f"skipped={stats.skipped} iterations={iterations} "
-                 f"weight={'duplicate_count' if has_count else 'rows'}\n")
+                 f"weight={'duplicate_count' if has_count else 'rows'} "
+                 f"shm={shm_model if shm_model else 'none'}\n")
         fh.write("\t".join(PRIOR_COLUMNS) + "\n")
         for locus, kind, key, value in rows:
             fh.write(f"{locus}\t{kind}\t{key}\t{value:.8g}\n")
