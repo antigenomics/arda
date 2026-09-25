@@ -139,6 +139,19 @@ recombination** from nucleotide junctions — trimming and insertion distributio
 over recombination scenarios. `arda.dpost` currently marginalises a model borrowed from OLGA;
 this is how arda estimates its own, and the output is the same long table, drop-in.
 
+`arda shm-model -i mapped.airr.tsv -o shm.tsv --locus IGH` fits the other half of that picture:
+**where a mutation is expected**, as `P(substitution | 5-mer germline context, region)`. It reads
+what every mode already writes under the default `--shm framework` and takes under a second on a
+bulk library.
+
+⛔ **Not a per-allele-per-position table**, and the measurement is why. Across two donors a
+per-allele-per-position profile transfers at Pearson **r .26–.56** against **r .74–.79** for 5-mer
+context; within one donor the positional table repeats at r ≈ .99, because it is a portrait of
+that donor's expanded clones rather than a property of the allele. AID's own WRCY/RGYW motifs
+carry **4.66–5.00×** the rate of every other covered position in all four libraries measured.
+⚠ The fitted **scale** is the sample's, not the model's — two donors differ **1.6×** in overall
+rate with the same shape — so it is written as provenance and a consumer rescales.
+
 Never: a scenario is **not identifiable from sequence** — 4,346 tuples reproduce one real human
 TRB junction exactly — so the counts are expected counts summed over scenarios, never one MAP
 reading. And an insertion costs its own sequence (`0.25^len`), not just its length: without that,
@@ -210,6 +223,7 @@ arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # ...o
 arda genotype -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB          # which V alleles this donor carries
 arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv  # ...and apply one
 arda scenarios -i clones.tsv -o d_prior.tsv                     # EM over the recombination scenario set
+arda shm-model -i mapped.airr.tsv -o shm.tsv --locus IGH        # where hypermutation is EXPECTED (5-mer context)
 arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 20 --partition cpu
 arda igblast -i reads.fastq -o truth.airr.tsv                   # gold-standard IgBLAST (all loci)
 arda export-ref --kind segments --locus TRB --format fasta      # the reference, out of the CLI

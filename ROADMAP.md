@@ -280,11 +280,46 @@ what is left of the junction-recall gap. Evidence and method:
    estimate off the data, not a re-tuned constant. ⚠ Whatever it becomes, it is not a QC threshold
    and must not turn into one.
 
-10. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
-   HMM cannot be extended to IGH without one (it would explain mutated germline as N-region and do
-   *worse* than exact-match anchors, which at least fail safely), and `_map_d`'s amino-acid path
-   searches the three translated D frames as independent database entries, tripling `n`, when the
-   prior over `insVD` already induces a prior over frame. Biggest item here by some margin.
+10. ✅ **The SHM model is fitted and shipped as `arda shm-model` — on CONTEXT, not on
+   per-allele position (2026-09-25).** `src/arda/shmmodel.py`, `project/design-shm.md`,
+   `docs/shm.rst`; evidence in benchmark `results/round33`.
+
+   ⛔ **The parameterisation this entry asked for was measured and REFUSED — do not re-propose a
+   per-allele-per-position table.** Four bulk IGH libraries, two donors, on arda's own round-30
+   annotation with no new alignment work:
+
+   | object | within one donor | between donors |
+   |---|---:|---:|
+   | per-allele per-position profile | r .8578 – .9897 | **r .2557 – .5601** |
+   | pooled positional profile | r .9708 / .9599 | r .5994 – .6224 |
+   | **5-mer context** | r .9718 / .9785 | **r .7424 – .7854** |
+
+   Inside one donor a positional table repeats at r ≈ .99 because the same expanded clones carry
+   the same mutations at the same positions — `IGHV3-23*05` transfers at .9301 within SPX6730 and
+   at .2557–.5601 between donors, with no change of method. ⚠ **And context is the only one of the
+   two that reaches the positions the consumer needs**: the junction model wants
+   `P(observed nt | V germline)` for the V tail *inside* the junction, which is exactly what
+   `arda.shm` scopes out as unidentifiable. A position there has no clean data ever; a 5-mer takes
+   its rate from every allele that carries it in framework sequence.
+
+   ✅ **Two parameter families, both earned.** AID's WRCY/RGYW motifs carry **4.66× / 5.00× /
+   4.77× / 4.69×** the rate of every other covered position across the four libraries, on an
+   overall rate that itself moves 1.6× between the donors. And context does not exhaust the
+   CDR:FWR contrast — fitting contexts on one donor and predicting the other's per-region counts
+   leaves FWR1 **0.630 / 0.626** and CDR2 **1.389 / 1.291**, i.e. 4.65× raw becomes a 2.2×
+   residual that reproduces between people who share no clones. The shipped estimator, run on the
+   two donors independently, gives FWR1 **×0.683 against ×0.675**.
+   ⚠ **The scale is the SAMPLE's, not the model's** (.031 against .050, same shape), so it is
+   written as provenance and never applied.
+
+   **Open — S2, which is this entry's original consumer.** `scenarios.lattice` bounds the
+   templated V length with `_common_prefix`, an exact match, so a substitution in the templated
+   tail truncates it and the remainder is explained as insertion. The change is to score a
+   templated stretch by `Π(1 − μ)` over matches and `μ/3` over mismatches; ⚠ **done means
+   measured** — D-call accuracy and IGH junction recall must not move against round 28 — not
+   written. Still open and unrelated to SHM: `_map_d`'s amino-acid path searches the three
+   translated D frames as independent database entries, tripling `n`, when the prior over `insVD`
+   already induces a prior over frame.
 
 11. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
    `arda resolve-ties --genotype` applies an allele set (`v_call_genotyped`, `v_call` untouched,

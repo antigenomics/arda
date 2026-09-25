@@ -268,6 +268,48 @@ Two more cautions when consuming this:
 * Count over **clonotypes, never reads**, when inferring a donor's germline variants from apparent
   mutations. One expanded clone otherwise makes its own SHM look germline.
 
+Fitting a model of where mutation is expected
+---------------------------------------------
+
+Everything above says *where a read differs*. ``arda shm-model`` turns a pile of those reports
+into ``P(substitution | germline context, region)`` — a 5-mer context table, a per-region
+multiplier, and the sample's own overall rate:
+
+.. code-block:: bash
+
+   arda shm-model -i mapped.airr.tsv -o shm.tsv --locus IGH
+
+It reads exactly what ``map`` / ``amplicon`` / ``rnaseq`` already write under the default
+``--shm framework``, and takes under a second on a bulk library (4,661 observations, 0.76 s).
+The output is one ``#`` provenance line, then ``kind`` / ``key`` / ``value`` rows.
+
+**Why context and a region multiplier, and not a per-allele-per-position table.** Measured on
+four bulk IGH libraries from two donors, a per-allele-per-position profile transfers between
+donors at Pearson **r .26–.56**, against **r .74–.79** for 5-mer context. Inside one donor the
+positional table repeats at r ≈ .99 — it is a portrait of that donor's expanded clones, which is
+also why it must not be read as a property of the allele. The region term is earned separately:
+context carries about half the CDR-over-FWR contrast (4.65× raw, 2.2× residual) and the leftover
+reproduces across donors, with the shipped estimator giving FWR1 **×0.683 and ×0.675** on the two.
+
+.. important::
+
+   The **scale** is the sample's, not the model's. Two donors measured here differ **1.6×** in
+   overall substitution rate (.031 against .050) with the same shape, so the fitted rate is
+   written as provenance and a consumer rescales to the library in front of it.
+
+Two properties worth knowing before reading the table:
+
+* A region with **no observed substitution is omitted**, never given a multiplier of 0 — zero
+  would read as "a substitution here is impossible" and silently zero every probability in that
+  region. An omitted region means "no evidence", i.e. the context term alone.
+* The denominator is capped at ``v_anchor_nt``, because the numerator is framework-scoped. An
+  uncapped count divides scoped mutations by unscoped coverage and understates the rate by
+  however far the read runs into the junction.
+
+Nothing in the annotation path reads this model yet, exactly as ``arda scenarios`` shipped before
+``arda markup --d-prior`` existed to consume it. Fitting a model and adopting one are separate
+decisions; ``project/design-shm.md`` records what the consumers need next.
+
 See also
 --------
 

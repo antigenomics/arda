@@ -3,6 +3,61 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Added: `arda shm-model` — where a mutation is EXPECTED, fitted from arda's own output
+
+`arda.shm` reports where a read differs from its germline. This fits the other half:
+`P(substitution | 5-mer germline context, region)`, which is what a probabilistic reading of a
+mutated IG sequence needs and what the V → N1 → D → N2 → J model in `arda.scenarios` lacks before
+it can be pointed at IGH. It reads what every mode already writes under the default
+`--shm framework` -- 0.76 s on 4,661 observations -- and writes a `kind`/`key`/`value` table under
+one `#` provenance line.
+
+⛔ **`ROADMAP.md` item 10 asked for a per-allele-per-POSITION model. It was measured and refused.**
+Four bulk IGH libraries, two donors (benchmark `results/round33`):
+
+| object | within one donor | between donors |
+|---|---:|---:|
+| per-allele per-position profile | r .8578 – .9897 | **r .2557 – .5601** |
+| pooled positional profile | r .9708 / .9599 | r .5994 – .6224 |
+| **5-mer context** | r .9718 / .9785 | **r .7424 – .7854** |
+
+Inside one donor a positional table repeats at r ≈ .99 because the same expanded clones carry the
+same mutations at the same positions -- it is a portrait of that donor's clonal history, not a
+property of the allele. ⚠ Context is also the only one of the two that reaches the positions the
+consumer needs: the junction model wants `P(observed nt | V germline)` for the V tail **inside**
+the junction, which is exactly what `arda.shm` scopes out as unidentifiable. A position there has
+no clean data ever; a 5-mer takes its rate from every allele carrying it in framework sequence.
+
+✅ **Both parameter families are earned.** AID's WRCY/RGYW motifs carry **4.66× / 5.00× / 4.77× /
+4.69×** the rate of every other covered position across the four libraries, on an overall rate
+that itself moves 1.6× between donors. And context does not exhaust the CDR:FWR contrast: fitting
+contexts on one donor and predicting the other's per-region counts leaves FWR1 **0.630 / 0.626**
+and CDR2 **1.389 / 1.291** -- 4.65× raw becomes a 2.2× residual that reproduces between people who
+share no clones. Run independently on the two donors the shipped estimator gives FWR1 **×0.683
+against ×0.675**.
+
+Never: the fitted **scale** is the sample's, not the model's (.031 against .050 with the same
+shape), so it is written as provenance and never applied -- a consumer rescales to the library in
+front of it.
+
+Never: **a region with no observed substitution is OMITTED, never given a multiplier of 0.** Zero
+does not read as "thin evidence here", it reads as "a substitution in FWR1 is impossible", and
+every probability in that region would silently go to zero.
+
+Never: **the denominator is capped at `v_anchor_nt`.** `v_mutations` is framework-scoped, so
+counting every covered position divides a scoped numerator by an unscoped denominator and
+understates the rate by however far the read runs past Cys104.
+
+Never: **a tie list is dropped, not resolved**, and `--weight unique` is the default -- a bulk read
+carries no junction, so there is no clonotype key to collapse on and counting reads lets one
+expanded clone vote thousands of times.
+
+Nothing in the annotation path reads the model yet, exactly as `arda scenarios` shipped before
+`arda markup --d-prior` existed to consume it. `project/design-shm.md` records what S2 (the
+junction model) and S3 (novel-allele discovery) each need, and that **done means measured**.
+
 ## 2.28.0
 
 ### Changed (BREAKING): the integrations are nf-core/airrflow's, not arda's own

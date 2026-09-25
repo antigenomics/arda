@@ -869,6 +869,73 @@ def scenarios_cmd(
     typer.echo(str(output))
 
 
+@app.command("shm-model")
+def shm_model_cmd(
+    input: Path = typer.Option(
+        ..., "--input", "-i",
+        help="Mapped AIRR TSV (`map`, `amplicon`, `rnaseq`). Needs `v_mutations`, "
+             "`v_germline_start`/`_end` and `v_anchor_nt`, i.e. the default `--shm framework`."),
+    output: Path = typer.Option(
+        ..., "--output", "-o",
+        help="Model TSV: one `#` provenance line, then `kind/key/value` rows for the "
+             "`scale`, every `context` and every `region`."),
+    organism: str = typer.Option("human", help="Reference organism."),
+    locus: str = typer.Option(
+        "IGH", "--locus", help="Locus to fit. SHM is an IG property -- a TR fit measures allele "
+                               "mismatch in the templated framework, not hypermutation."),
+    k: int = typer.Option(
+        5, "--k", help="Context width in nt, odd so the scored position is its centre. 5 is what "
+                       "benchmark round 33 measured transferring between donors (r .74-.79)."),
+    min_context: int = typer.Option(
+        50, "--min-context",
+        help="A context seen fewer times than this falls back to the sample's overall rate "
+             "rather than to a ratio over single digits."),
+    weight: str = typer.Option(
+        "unique", "--weight",
+        help="`unique` (default) counts a distinct (call, span, mutation set) once; `reads` "
+             "counts every row. A bulk read carries no junction, so there is no clonotype key "
+             "to collapse on and one expanded clone would otherwise vote once per read."),
+) -> None:
+    """Fit a somatic-hypermutation model from arda's own mutation calls.
+
+    `P(substitution | germline context, region)` -- a 5-mer context table, a per-region
+    multiplier, and the sample's overall rate recorded as provenance.
+
+    Never: the roadmap asked for a per-allele-per-POSITION table and the measurement refused it.
+    Between two donors such a table transfers at r .26-.56 against context's .74-.79, because
+    within one donor it is a portrait of that donor's expanded clones (r .99). Context is also
+    the only one of the two that reaches the V tail INSIDE the junction, which is where the
+    junction model needs it and where a position has no estimable rate at all. Evidence:
+    `results/round33` in the benchmark repo.
+
+    Never: nothing in the annotation path reads this yet, exactly as `arda scenarios` shipped
+    before `arda markup --d-prior` existed. Fitting a model and adopting one are separate.
+    """
+    from .shmmodel import estimate, read_airr, write_table
+
+    if weight not in ("unique", "reads"):
+        raise typer.BadParameter("--weight must be `unique` or `reads`")
+    if k % 2 == 0:
+        raise typer.BadParameter(f"--k must be odd so the scored position is the centre: {k}")
+    try:
+        rows = read_airr(input, locus=locus, weight=weight)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if not rows:
+        raise typer.BadParameter(
+            f"{input} has no usable {locus} rows -- a row needs a single-allele `v_call`, a "
+            "germline span and `v_anchor_nt`")
+    model = estimate(rows, organism=organism, locus=locus, k=k, min_context=min_context)
+    write_table(model, output)
+    log.info("shm-model: %d observations, %d substitutions in %d covered nt "
+             "(rate %.4f) -> %d contexts, %d regions",
+             model.observations, model.substitutions, model.covered, model.scale,
+             len(model.context), len(model.region))
+    for name, value in model.region.items():
+        log.info("shm-model: %s x%.3f", name, value)
+    typer.echo(str(output))
+
+
 @app.command("stats")
 def stats_cmd(
     output: Path = typer.Option(..., "--output", "-o", help="QC TSV ('-' for stdout)."),
