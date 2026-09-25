@@ -103,19 +103,38 @@ what is left of the junction-recall gap. Evidence and method:
    because the dnaio port that comment motivated made its own premise false. `map.py:333`'s chunk
    sweep is stale for the same reason: 1 chunk vs 4 is **16.48 vs 16.34 s**, byte-identical output.
 
-6. ⛔ **IGH `v_gene` is the largest named accuracy gap in the project, and it is not the
-   junction.** On human IGH 5'RACE (99,494 truth reads at `v_score >= 70`, benchmark round 29):
-   `v_gene` recall **.9004** and precision **.9179**, against **.9867 / .9996** on the TRA
-   amplicon. ~10 % of reads where arda's V gene disagrees with IgBLAST — **seven times the
-   junction gap** — and not a coverage artifact (.9995 on that library). Somatic hypermutation is
-   the obvious suspect: arda maps to germline V·J scaffolds and a hypermutated V is further from
-   every germline. ⚠ That is a hypothesis, not a measurement — nothing yet separates SHM load from
-   IGHV's 4.33 alleles/gene or from IgBLAST's own uncertainty on a mutated V. ⛔ And the round-29
-   library **cannot settle it**: its reads were selected by arda, so a V-call comparison on it has
-   no clean denominator even though a within-arm A/B does. Done means: measured against an IgBLAST
-   truth on `SRR5233637-40` (bulk melanoma RNA-seq, B-cell-rich, staged locally, and the round-26
-   harness runs on it unchanged), **stratified by `v_identity`** so the SHM hypothesis is answered
-   rather than assumed.
+6. **IG accuracy: the gap is READ COVERAGE, the one instrument left is a wider V tie list.**
+   ⛔ **Round 29's "IGH `v_gene` .9004, seven times the junction gap" is WITHDRAWN**, and so is
+   the somatic-hypermutation suspicion it raised. Measured on two bulk libraries arda did not
+   select (benchmark round 30): stratified by IgBLAST's own `v_identity` the deficit is
+   **non-monotonic** — `>= 99 %` (unmutated) .9425, **`97–99 %` .7518 (worst)**, `92–95 %` .9697
+   (best). Stratified by how much V germline the read covers it is monotonic and steep:
+   **`< 60 nt` .1170, `>= 200 nt` .9896** — and .9896 *is* the TRA amplicon's .9867. 5.9 % of
+   reads produce ~56 % of every V miss. The top confusion `IGHV1-69 → IGHV1-18` is **4,745 of
+   ~9,080 misses**, and on those reads IgBLAST aligns germline **242–296 = 55 nt of the V's 3'
+   end**: a 5'RACE read runs C → J → V, so the bases separating one IGHV from another are not in
+   the read, and IgBLAST — which lists 1.64 V genes per read itself — is making a different
+   tie-break on the same missing evidence. `skills/arda/references/genotype.md` already measured
+   the threshold on TCR: TRAV ~175 nt from the 3' end, TRBV ~150.
+   ✅ **Corrected: arda's IG V-gene accuracy is .93–.98 on bulk and .9896 when the read carries
+   >= 200 nt of V.** Replicated on `SRR5233639`/`SRR5233640`, IGH/IGK/IGL, the two samples within
+   0.5 points.
+   ⛔ **A V-call evidence gate was priced and REJECTED — do not re-propose it without new
+   evidence.** Dropping a call that starts at germline `>= 150` and spans `< 60` nt is a 7.6 : 1
+   win on IGH 5'RACE (precision .92585 → .97693 for −0.69 pt recall) and a clear loss on bulk
+   IGH / IGK / IGL (−3.24 / −6.22 / −2.39 points of recall for essentially no precision). A
+   shipped constant would be wrong more often than right, which is why this repo ships none.
+   **Wanted instead: widen the V tie list by bit-score margin when the evidence is thin.** arda
+   already emits one (61,638 reads get 1 gene, 10,266 get 2, 24,836 get 3) and the misses are
+   reads whose list does not contain the truth gene *at all*, so the instrument is admitting the
+   ambiguity the read really has rather than refusing the call — and it reuses
+   `arda resolve-ties`. ⚠ Done means: swept as a margin on **all four geometries** (IGH 5'RACE,
+   IGH/IGK/IGL bulk) *and* on TCR, where it must be a near-no-op; and costed in **clonotype
+   counts**, not only per-read recall, because a wider `v_call` changes the clonotype key.
+   ⚠ Also open and **the author's call, 476 reads**: `IGHV3-52` and `IGHV3-71` have **0 scaffolds**
+   in arda because `load_functional_alleles` excludes IMGT ORF/pseudogenes by design while
+   IgBLAST's DB includes them (arda ships **82 human IGHV genes**). Admitting ORFs to the
+   *scaffold* set is a different decision from admitting them to the *call vocabulary*. Ask first.
 
 7. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
    output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is

@@ -430,16 +430,21 @@ still exposes them individually for A/B work.
   and DEAD**: at the true offset the called V's germline matches 0 bases on 1,040 of 1,369.
   ⚠ To score this gate at all you must disable it -- a refusal emits nothing. See
   `results/round28/run_ungated.py`.
-- ⛔ **The biggest accuracy gap is IGH `v_gene`, and it was found by testing IG at all**
-  (benchmark round 29, 2026-09-25). On human IGH 5'RACE: `v_gene` recall **.9004**, precision
-  **.9179** -- against **.9867 / .9996** on the TRA amplicon. ~10 % of reads where arda's V call
-  disagrees with IgBLAST, **seven times the junction gap** this project spent rounds 26-28 on, and
-  NOT coverage (.9995 there). SHM is the suspect and is unproven. `ROADMAP.md` item 6.
-  ⚠ **The IG failure mode is not the TCR one.** Pure 5' over-extensions are 98.1 % of TRA's wrong
-  junctions and only **33.3 %** of IGH's; the rest are base-level disagreements an anchor gate
-  cannot see. So the Cys104 work has ~0.2 pp left on IGH and something else has 6.7.
-  ✅ The round-28 constant itself HOLDS on IG and is worth far more there: +1,027 correct
-  junctions vs +37 (TRA) and +107 (TRB), and **744 distinct IGH clonotypes recovered**.
+- ⛔ **IG V-gene accuracy is a READ-COVERAGE property, and the SHM story is dead**
+  (benchmark round 30, 2026-09-25; it withdraws round 29's headline). Stratified by IgBLAST's
+  `v_identity` the deficit is NON-MONOTONIC -- unmutated .9425, **97-99 % .7518 (worst)**,
+  92-95 % .9697 (best). Stratified by V germline span it is monotonic and steep: **<60 nt .1170,
+  >=200 nt .9896**, and .9896 IS the TRA amplicon's .9867. The top confusion
+  `IGHV1-69 -> IGHV1-18` is 4,745 of ~9,080 misses, on reads where IgBLAST aligns germline
+  **242-296 = 55 nt of the V's 3' end** -- a 5'RACE read runs C->J->V, so the separating bases are
+  NOT IN THE READ. IgBLAST lists 1.64 V genes/read itself: a different tie-break on the same
+  missing evidence, not a better one. ✅ **arda's IG V-gene accuracy is .93-.98 on bulk and .9896
+  when the read carries >=200 nt of V.** Position beats length: a short 5' alignment identifies the
+  gene, a short 3' one does not (IGHV diverges in FR1/CDR1/CDR2, conserved in FR3 near Cys104).
+  ⛔ **A V-call evidence gate was measured and REJECTED** -- a 7.6:1 win on IGH 5'RACE
+  (.92585 -> .97693) and a loss on bulk IGH/IGK/IGL (-3.24/-6.22/-2.39 pt recall for no
+  precision). `ROADMAP.md` item 6 carries what to try instead (a bit-score margin on the V TIE
+  LIST, not a refusal).
 - ⛔ **Two performance comments in this repo are STALE -- do not trust or propagate them**
   (benchmark round 27, 2026-09-24). `rnaseq/map.py:479` says reading is *"65 % of a bulk run"*; it
   is **0.73 s of map's 16.19 s = 4.5 %** -- dnaio, the port that comment motivated, made its own
