@@ -20,6 +20,7 @@ counts along parent pointers, so there are no cycles.
 from __future__ import annotations
 
 import json
+import logging
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -69,6 +70,7 @@ CLONOTYPE_KEYS = ("full", "junction")
 #: there than on TR — measure per library before quoting a cost.
 CALL_LEVELS = ("allele", "gene")
 
+logger = logging.getLogger(__name__)
 _DNA = frozenset("ACGT")
 
 
@@ -213,6 +215,12 @@ class CorrectReport:
     rescued_reads: int = 0
     orphan_clonotypes: int = 0
     orphan_reads: int = 0
+    #: The substitution rate the run actually used, and -- under `--error-rate auto` -- what it
+    #: was measured from. Never omitted under `auto`: a resolved parameter that is not written
+    #: down makes the run unreproducible, and "it was measured" is not a number.
+    error_rate: float = 0.0
+    error_rate_source: str = "given"      # `given` | `measured` | `fallback`
+    error_rate_parents: int = 0
     # See `_res.Stage`: peak is the WHOLE-PROCESS high-water mark as of this stage's end
     # (monotone -- getrusage offers no per-stage reset), gain is this stage's contribution.
     wall_seconds: float = 0.0
@@ -223,6 +231,76 @@ class CorrectReport:
         d = self.__dict__.copy()
         d["collapse_fraction"] = self.collapsed / self.clonotypes_in if self.clonotypes_in else 0.0
         return d
+
+
+def estimate_error_rate(junctions: list[str], counts: list[int], v: list[str], j: list[str],
+                        *, require_vj: bool = True, min_parent: int = 100
+                        ) -> tuple[float | None, dict]:
+    """The per-base substitution rate implied by the library's OWN 1-substitution error cloud.
+
+    ``--error-rate`` is a per-library property masquerading as a constant: the default 1e-3 is
+    "assume Phred 30", and a library that ran hotter or colder than that is corrected against a
+    number measured on someone else's instrument. This measures it instead.
+
+    **The estimator matches the model's own semantics.** :func:`_parents` uses
+    ``p_sub = error_rate * L`` as the expected fraction of a parent's reads appearing as *one*
+    1-substitution child -- which, summed over the ``3L`` possible neighbours, is the TOTAL
+    1-substitution error mass. So the matching estimate is total cloud mass over parent mass,
+    divided by the junction length:
+
+    ``error_rate = (sum of 1-sub child reads) / (sum of parent reads) / mean junction length``
+
+    Only clonotypes at ``min_parent`` reads or more act as parents, because a ratio taken over a
+    handful of reads is not a rate. Children must be strictly less abundant than the parent, so
+    the direction of the pair is defined rather than assumed.
+
+    ⚠ **The cloud is not pure, and the estimate is therefore an UPPER bound.** A real low-frequency
+    variant sitting one substitution from an abundant parent contributes to the numerator exactly
+    as an error does -- on the MIGEC spike-in library the published V1 is 1,094 reads against a
+    parent of 293,327, about a tenth of that parent's error mass. Nothing here can separate them;
+    that is what the quality gate (``--ec-mode accurate``) exists for, and why this returns a
+    number rather than a decision.
+
+    Returns ``(rate, report)``; ``rate`` is ``None`` when no clonotype reaches ``min_parent``,
+    which the caller must surface rather than silently substituting a default.
+    """
+    report: dict = {"parents": 0, "parent_reads": 0, "child_reads": 0, "min_parent": min_parent}
+    safe = [i for i, s in enumerate(junctions)
+            if s and set(s) <= _DNA and counts[i] >= min_parent]
+    if not safe:
+        return None, report
+    usable = [i for i, s in enumerate(junctions) if s and set(s) <= _DNA]
+    index = seqtree.Index.build([junctions[i] for i in usable], alphabet="nt")
+    params = seqtree.SearchParams(max_subs=1, max_ins=0, max_dels=0, max_total_edits=1,
+                                  engine="seqtm")
+    parent_reads = child_reads = 0
+    lengths: list[int] = []
+    for pi in safe:
+        mass = 0
+        for hit in index.search(junctions[pi], params):
+            ci = usable[hit.ref_id]
+            if ci == pi or hit.n_subs == 0 or counts[ci] >= counts[pi]:
+                continue
+            if require_vj and (v[ci] != v[pi] or j[ci] != j[pi]):
+                continue
+            mass += counts[ci]
+        parent_reads += counts[pi]
+        child_reads += mass
+        lengths.append(len(junctions[pi]))
+        report["parents"] += 1
+    if not parent_reads or not lengths:
+        return None, report
+    mean_len = sum(lengths) / len(lengths)
+    report["parent_reads"] = parent_reads
+    report["child_reads"] = child_reads
+    report["mean_junction_len"] = round(mean_len, 1)
+    rate = (child_reads / parent_reads) / mean_len
+    # The model needs `0 < p_err < 1` for counts to increase along parent pointers; an estimate of
+    # exactly 0 (a library with no observed cloud at all) is outside its domain, not inside it.
+    if rate <= 0.0:
+        return None, report
+    report["estimated"] = rate
+    return rate, report
 
 
 def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str],
@@ -978,7 +1056,7 @@ def correct_airr(
     d_max_evalue: float | None = None,
     max_subs: int = 3,
     max_indel: int = 0,
-    error_rate: float = 0.001,
+    error_rate: float | None = 0.001,
     indel_rate: float = 0.001,
     require_vj: bool = True,
     error_method: str | None = None,
@@ -1085,6 +1163,10 @@ def correct_airr(
     for name, val in (("error_rate", error_rate), ("indel_rate", indel_rate)):
         # p_err < 1 keeps counts strictly increasing along parent pointers (no cycles); p_err == 0
         # would make a single mismatch collapse anything, p_err >= 1 never collapses.
+        # `error_rate=None` means "measure it from this library" and is resolved below, once the
+        # clonotype table exists -- it cannot be checked before there is anything to measure.
+        if val is None and name == "error_rate":
+            continue
         if not 0.0 < val < 1.0:
             raise ValueError(f"{name} must be in (0, 1), got {val}")
     if error_method not in ("simple", "binom", "betabinom"):
@@ -1170,6 +1252,35 @@ def correct_airr(
                                  for loc, n in zip(df["locus"].to_list(), df["junction"].to_list())]),
         )
 
+    # `error_rate=None` means "measure it from this library". It is resolved HERE, before the
+    # quality gate, because the gate reads it too -- resolving it later would leave the gate
+    # running on a different number from the abundance model, which is the sort of split nobody
+    # would find by reading the output.
+    estimate_report: dict | None = None
+    if error_rate is None:
+        aggregated = (df.filter((pl.col("junction") != "") & (pl.col("v_call") != "")
+                                & (pl.col("j_call") != ""))
+                        .group_by(["junction", "v_call", "j_call"]).len())
+        estimated, estimate_report = estimate_error_rate(
+            aggregated["junction"].to_list(), aggregated["len"].to_list(),
+            aggregated["v_call"].to_list(), aggregated["j_call"].to_list(),
+            require_vj=require_vj)
+        if estimated is None:
+            # Never: fall back LOUDLY. A library too shallow to measure is a normal outcome (three
+            # bulk RNA-seq arms in benchmark round 35 hit it), and silently substituting the
+            # default would report a measured rate that was never measured.
+            error_rate = 0.001
+            logger.warning("correct: --error-rate auto could not measure this library "
+                        "(no clonotype reaches %d reads); falling back to %.1e",
+                        (estimate_report or {}).get("min_parent", 0), error_rate)
+        else:
+            error_rate = estimated
+            logger.info("correct: --error-rate auto = %.3e from %d parents "
+                     "(%d parent reads, %d cloud reads, mean junction %.1f nt)",
+                     error_rate, estimate_report["parents"], estimate_report["parent_reads"],
+                     estimate_report["child_reads"], estimate_report["mean_junction_len"])
+        estimate_report = dict(estimate_report or {}, resolved=error_rate)
+
     n_low_q = n_clono_low_q = 0
     moved_sid: dict[str, tuple[str, str, str, str]] = {}
     emptied_keys: dict[tuple[str, str, str, str], tuple[str, str, str, str]] = {}
@@ -1220,7 +1331,12 @@ def correct_airr(
                            reads_from_assembly=n_assembled,
                            reads_incomplete=n_incomplete,
                            reads_low_quality=n_low_q,
-                           clonotypes_low_quality=n_clono_low_q)
+                           clonotypes_low_quality=n_clono_low_q,
+                           error_rate=error_rate,
+                           error_rate_source=("given" if estimate_report is None
+                                              else ("measured" if estimate_report.get("estimated")
+                                                    else "fallback")),
+                           error_rate_parents=(estimate_report or {}).get("parents", 0))
     parent = _parents(junctions, span_counts, v, j, max_subs=max_subs, max_indel=max_indel,
                       error_rate=error_rate, indel_rate=indel_rate, require_vj=require_vj)
     if error_method != "simple":

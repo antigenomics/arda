@@ -272,13 +272,38 @@ what is left of the junction-recall gap. Evidence and method:
    registry carries **3,616 M. musculus library rows**, which is where mouse IGH and mouse TRD
    would come from.
 
-9. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
-   `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,
-   and `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a
-   defect — no abundance method separates signal-to-noise ~1, which is why UMI consensus exists —
-   but one constant cannot serve both regimes. Wanted: a per-library calibration *rule*, or an
-   estimate off the data, not a re-tuned constant. ⚠ Whatever it becomes, it is not a QC threshold
-   and must not turn into one.
+9. ✅ **`--error-rate auto` measures the rate from the library's own error cloud (2026-09-25).**
+   The candidate this entry named — the observed error-cloud abundance ratio — is implemented as
+   `arda.rnaseq.correct.estimate_error_rate` and exposed as `--error-rate auto`. It matches the
+   model's own semantics: `p_sub = error_rate * L` is the TOTAL 1-substitution error mass, so the
+   estimate is cloud reads over parent reads over mean junction length. Evidence: benchmark
+   `results/round35`.
+
+   | library | parents | estimate | vs the `1e-3` default |
+   |---|---:|---:|---:|
+   | TRA amplicon | 41 | **3.948e-4** | **0.39×** |
+   | TRB amplicon | 33 | **5.865e-4** | **0.59×** |
+   | MIGEC IGH | 79 | 1.546e-3 | 1.55× |
+   | IGH 5'RACE | 105 | 3.503e-3 | 3.50× |
+   | IGH / IGK / IGL bulk | 0 | **refused** | — |
+
+   **An 8.9× spread across four libraries against one shipped constant**, with both TCR amplicons
+   BELOW it — the default over-collapses there. ⚠ On IG the 1-substitution cloud carries real
+   hypermutation, so those two are upper bounds. ✅ The three bulk arms return **no number**: the
+   estimator refuses below its depth floor and the caller falls back loudly, because a default
+   wearing a measurement's clothes is worse than a default.
+
+   ⛔ **It does not rescue the MIGEC spike-ins and never could — this CONFIRMS the entry's own
+   premise.** On that library it measures 1.164e-3, essentially the default, and erases both
+   published variants exactly as the default does. V2 is less abundant than the worst
+   2-substitution PCR error, so no abundance threshold separates them and no calibration of one
+   can. **Error removal and variant preservation are different objectives**; the second needs the
+   quality gate (`--ec-mode accurate`: MIGEC at `1e-5` + `Q30` keeps 3/3 published, round 22), not
+   a different `error_rate`. That is the rule this entry asked for, and it is now in
+   `docs/error_correction.rst`.
+   ⚠ It is **not** a QC threshold: it is a fitted parameter of the correction model, reported in
+   the run's own JSON (`error_rate`, `error_rate_source`, `error_rate_parents`) so a run stays
+   reproducible.
 
 10. ✅ **The SHM model is fitted and shipped as `arda shm-model` — on CONTEXT, not on
    per-allele position (2026-09-25).** `src/arda/shmmodel.py`, `project/design-shm.md`,

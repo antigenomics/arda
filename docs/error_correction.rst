@@ -58,6 +58,60 @@ familiar vdjtools threshold of ~1/20 is calibrated for a 45 nt (15 aa) junction;
 ``error_rate = 0.001`` reproduces exactly that there (``0.001 * 45 ≈ 1/22``) and scales
 correctly for junctions that are shorter or longer, which a flat 1/20 does not.
 
+Measuring the rate instead of assuming it
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``0.001`` is "assume Phred 30", and that is a property of the run, not of the method.
+``--error-rate auto`` measures it from the library's own 1-substitution error cloud — cloud reads
+over parent reads over mean junction length, which inverts the same ``p_sub = error_rate * L``
+the model applies:
+
+.. code-block:: bash
+
+   arda correct -i mapped.airr.tsv -o clones.tsv --error-rate auto
+
+Measured across four real libraries, the implied rate spans **8.9×**:
+
+.. list-table::
+   :header-rows: 1
+
+   * - library
+     - estimate
+     - vs the ``1e-3`` default
+   * - TRA amplicon
+     - **3.948e-4**
+     - **0.39×**
+   * - TRB amplicon
+     - **5.865e-4**
+     - **0.59×**
+   * - MIGEC IGH
+     - 1.546e-3
+     - 1.55×
+   * - IGH 5'RACE
+     - 3.503e-3
+     - 3.50×
+
+Both TCR amplicons sit **below** the default, so the shipped rate over-collapses there: on the TRA
+amplicon it absorbs 87 clonotypes against 21 at the measured rate, with reads conserved either way.
+
+.. important::
+
+   ``auto`` optimises **error removal**, not variant preservation, and the two are different
+   objectives. On the MIGEC spike-in library it measures 1.164e-3 — essentially the default — and
+   erases both published variants, because V2 is less abundant than the worst 2-substitution PCR
+   error and **no abundance threshold can separate them**. To keep a variant that low, use the
+   quality gate — ``--ec-mode accurate``, below — which is a different measurement rather than a
+   better threshold.
+
+Two properties worth knowing:
+
+* On IG the 1-substitution cloud carries real **hypermutation** as well as error, so ``auto`` is
+  an upper bound there.
+* A library with no clonotype deep enough to give a ratio gets **no number**: the estimator
+  returns nothing and the run falls back to the default with a warning. The resolved value and its
+  provenance are written into the run's JSON as ``error_rate``, ``error_rate_source``
+  (``given`` / ``measured`` / ``fallback``) and ``error_rate_parents``.
+
 A multi-base indel costs ``p_ind ** len``, so a 3–9 bp in-frame indel — the somatic
 hypermutation signature — is vanishingly unlikely as an instrument error and survives as a real
 clonotype, while a 1 bp indel collapses. That asymmetry is deliberate and is why the indel term

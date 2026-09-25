@@ -3,6 +3,44 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Added: `arda correct --error-rate auto` — measure the rate instead of assuming Phred 30
+
+`--error-rate` is a per-library property that shipped as a constant: `1e-3` is "assume Phred 30",
+and a library that ran hotter or colder is corrected against a number measured on someone else's
+instrument. `auto` measures it from the library's own 1-substitution error cloud, matching the
+model's own semantics -- `p_sub = error_rate * L` is the TOTAL 1-substitution error mass, so the
+estimate is cloud reads over parent reads over mean junction length.
+
+Measured on four real libraries (benchmark `results/round35`):
+
+| library | parents | estimate | vs `1e-3` |
+|---|---:|---:|---:|
+| TRA amplicon | 41 | **3.948e-4** | **0.39x** |
+| TRB amplicon | 33 | **5.865e-4** | **0.59x** |
+| MIGEC IGH | 79 | 1.546e-3 | 1.55x |
+| IGH 5'RACE | 105 | 3.503e-3 | 3.50x |
+
+**An 8.9x spread against one shipped constant**, with both TCR amplicons BELOW it -- the default
+over-collapses there. On the TRA amplicon end to end: 87 clonotypes collapsed at the default
+against **21** at the measured rate, reads conserved either way (41,262).
+
+Never: **a library too shallow to measure gets no number.** Three bulk RNA-seq arms have no
+clonotype at 50 reads; the estimator returns `None` and the run falls back to the default with a
+WARNING, because a default wearing a measurement's clothes is worse than a default.
+
+Never: **the resolved rate is written into the report** (`error_rate`, `error_rate_source` =
+`given`|`measured`|`fallback`, `error_rate_parents`). A parameter that was measured and not
+recorded makes the run unreproducible.
+
+⚠ **`auto` is an upper bound on IG**, where the 1-substitution cloud carries real hypermutation,
+and ⛔ **it does not rescue a variant buried under the error cloud** -- on the MIGEC spike-in
+library it measures 1.164e-3 and erases both published variants, exactly as the default does. That
+is not a regression: V2 is less abundant than the worst 2-substitution PCR error, so no abundance
+threshold separates them. Error removal and variant preservation are different objectives and the
+second one needs `--ec-mode accurate`.
+
 ## 2.29.0
 
 ### Fixed: a V/J call naming a FAMILY with one functional gene now resolves
