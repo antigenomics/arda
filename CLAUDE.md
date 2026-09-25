@@ -37,7 +37,7 @@ from it, so it loads on demand.
 **Never: `conda run -n arda …` does NOT work on this Mac.** Use the binary directly:
 
 ```sh
-/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.28.0
+/opt/homebrew/anaconda3/envs/arda/bin/arda --version     # 2.29.0
 COLUMNS=200 /opt/homebrew/anaconda3/envs/arda/bin/arda map --help
 ```
 
