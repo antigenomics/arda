@@ -673,9 +673,15 @@ def rnaseq_correct(
         0, help="Max indel bases searched (default 0). 1-2 bp indel errors are frameshifts already "
                 "dropped by --complete-only, so this only helps with --all-junctions; multi-bp SHM "
                 "indels are kept regardless."),
-    error_rate: float = typer.Option(
-        0.001, help="Per-BASE substitution error rate (~Phred 30). Length-scaled: the per-sub "
-                    "collapse prob is error_rate*junction_len, ~1/20 at a 45 nt (15 aa) junction."),
+    error_rate: str = typer.Option(
+        "0.001", help="Per-BASE substitution error rate (~Phred 30), or `auto` to MEASURE it from "
+                      "this library's own 1-substitution error cloud. Length-scaled: the per-sub "
+                      "collapse prob is error_rate*junction_len, ~1/20 at a 45 nt (15 aa) "
+                      "junction. The default is a constant for a per-library property -- measured "
+                      "across four real libraries it runs 3.9e-4 to 3.5e-3, an 8.9x spread around "
+                      "the 1e-3 default, with both TCR amplicons BELOW it (0.39x, 0.59x). ⚠ On IG "
+                      "the cloud carries real hypermutation too, so `auto` is an upper bound "
+                      "there; it refuses and falls back loudly when no clonotype is deep enough."),
     indel_rate: float = typer.Option(
         0.001, help="Per-BASE indel error rate (length-scaled). Multi-bp (SHM) indels are kept."),
     require_vj: bool = typer.Option(
@@ -749,7 +755,8 @@ def rnaseq_correct(
     from .rnaseq.correct import correct_airr
 
     rep = correct_airr(input, output, organism=organism, map_d=map_d,
-                       d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel, error_rate=error_rate,
+                       d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel,
+                       error_rate=_error_rate(error_rate),
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        ec_mode=ec_mode, min_junction_q=min_junction_q,
                        clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
@@ -884,6 +891,21 @@ def scenarios_cmd(
     log.info("scenarios: %d records (%d skipped) -> %d rows over %d loci",
              stats.records, stats.skipped, len(rows), len({r[0] for r in rows}))
     typer.echo(str(output))
+
+
+def _error_rate(value: str) -> float | None:
+    """`auto` -> None (measure it from the library); anything else must parse as a rate.
+
+    Never: a value that is neither `auto` nor a number is REFUSED rather than falling back to the
+    default -- a silent fallback is indistinguishable from a measured run.
+    """
+    if value.strip().lower() == "auto":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        raise typer.BadParameter(
+            f"--error-rate must be a number or `auto`, got {value!r}") from None
 
 
 @app.command("shm-model")
