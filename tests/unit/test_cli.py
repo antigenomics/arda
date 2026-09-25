@@ -288,3 +288,43 @@ def test_markup_d_prior_refuses_a_path_that_is_not_there(tmp_path):
     result = runner.invoke(app, ["markup", "-i", str(records), "-o", str(tmp_path / "o.tsv"),
                                  "--d-prior", str(tmp_path / "absent.tsv")])
     assert result.exit_code != 0
+
+
+# --- `arda igblast --receptor` ----------------------------------------------------------------
+# `igblast_reads` has always taken `groups=("TR",)/("IG",)`; the CLI just never offered it, so
+# every truth build paid a full IgBLAST pass over both receptor types even on a library whose
+# receptor was known. These pin the WIRING and the refusal, not IgBLAST itself.
+
+@pytest.mark.parametrize("flag,expected", [("both", None), ("ig", ("IG",)), ("tr", ("TR",)),
+                                           ("IG", ("IG",)), (" Tr ", ("TR",))])
+def test_igblast_receptor_selects_the_group_and_both_stays_the_default(
+        monkeypatch, tmp_path, flag, expected):
+    seen = {}
+
+    def fake(query, out, **kw):
+        seen.update(kw)
+        Path(out).write_text("sequence_id\n")
+        return Path(out)
+
+    import arda.refbuild.gold as gold
+    monkeypatch.setattr(gold, "igblast_reads", fake)
+    q = tmp_path / "q.fa"
+    q.write_text(">r\nACGT\n")
+    result = runner.invoke(app, ["igblast", "-i", str(q), "-o", str(tmp_path / "o.tsv"),
+                                 "--receptor", flag])
+    assert result.exit_code == 0, result.output
+    assert seen["groups"] == expected
+
+
+def test_igblast_receptor_refuses_a_name_that_is_not_a_receptor_type(monkeypatch, tmp_path):
+    """Never: a silent fallback to `both` would look like a 2x-slower success."""
+    called = []
+
+    import arda.refbuild.gold as gold
+    monkeypatch.setattr(gold, "igblast_reads", lambda *a, **k: called.append(k))
+    q = tmp_path / "q.fa"
+    q.write_text(">r\nACGT\n")
+    result = runner.invoke(app, ["igblast", "-i", str(q), "-o", str(tmp_path / "o.tsv"),
+                                 "--receptor", "igh"])
+    assert result.exit_code != 0
+    assert not called

@@ -67,6 +67,15 @@ Never: the shipped table is **allowed** to be missing -- that is what `None` mea
 the caller typed is a request, so a `--d-prior` that is not there **raises** instead of silently
 scoring on an empty prior.
 
+### Added: `arda igblast --receptor ig|tr|both`
+
+`igblast_reads` has always taken `groups=("IG",)` / `("TR",)`; the CLI never offered it, so every
+truth build ran a full IgBLAST pass over **both** receptor types even on a library whose receptor
+was known. `both` stays the default -- for a truth file the locus is what is being measured, and a
+read is kept from whichever type scores higher -- but naming the receptor now skips a whole pass
+over every read. A name that is not a receptor type is refused rather than falling back to `both`,
+because a silent fallback looks exactly like a 2x-slower success.
+
 ### Changed: `--adaptive` is re-priced off a real library, not the 453-read fixture
 
 `--adaptive`'s own help text (and the comment at `_ADAPTIVE_TRIGGER`) quoted "3 of 453 reads" from

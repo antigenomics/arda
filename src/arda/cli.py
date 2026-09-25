@@ -480,12 +480,23 @@ def igblast_cmd(
     output: Path = typer.Option(..., "--output", "-o", help="Merged AIRR TSV (gold standard)."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="igblast threads (0 = all cores)."),
+    receptor: str = typer.Option(
+        "both", "--receptor",
+        help="Which receptor type(s) to align against: `both` (default), `ig` or `tr`. Both is "
+             "the right default for a truth file -- the locus is what is being measured, and a "
+             "read is kept from whichever type scores higher. On a library whose receptor is "
+             "KNOWN, naming it skips a whole IgBLAST pass over every read and roughly halves the "
+             "run."),
 ) -> None:
     """Gold-standard AIRR alignment with IgBLAST across all annotatable loci."""
     import os
     from .refbuild.gold import igblast_reads
 
-    igblast_reads(input, output, organism=organism,
+    groups = {"both": None, "ig": ("IG",), "tr": ("TR",)}.get(receptor.strip().lower(), ...)
+    if groups is ...:
+        raise typer.BadParameter("--receptor must be one of: both, ig, tr", param_hint="--receptor")
+
+    igblast_reads(input, output, organism=organism, groups=groups,
                   num_threads=threads or (os.cpu_count() or 1))
     typer.echo(f"[arda] igblast AIRR -> {output}")
 

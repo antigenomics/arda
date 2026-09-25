@@ -117,7 +117,21 @@ Limits
   the junction.
 * **Generating a prior is not adopting one.** ``database/vdj/<org>/d_prior.tsv`` is unchanged;
   swapping in an estimate is a measurement and a release decision, not a side effect of running
-  this.
+  this. To *use* one without adopting it, pass the path — ``arda markup --d-prior PATH``, or
+  :func:`arda.dpost.posterior_d` with ``prior_path=`` and :func:`arda.dpost.load_d_prior` with a
+  second argument, which is the same knob :func:`arda.hmm.model_for` already takes as ``prior=``.
+  Nothing in the installed database is touched, and this is the only way to reach the **11 of the
+  13 shipped (organism, D-locus) pairs that have no prior at all** — OLGA has no model for them,
+  so ``posterior_d`` correctly returns ``None`` until a fitted table is handed to it.
+
+  .. code-block:: sh
+
+     arda scenarios -i clones.tsv -o fitted.tsv --organism mouse
+     arda markup -i records.tsv -o marked.tsv --d-prior fitted.tsv   # implies --d-posterior
+
+  ⚠ The shipped table is *allowed* to be missing — that is what ``None`` means — but a path you
+  typed is a request, so a ``--d-prior`` that is not there raises rather than silently scoring on
+  an empty prior.
 * **The insertion composition is uniform** (0.25/base) rather than a fitted first-order Markov
   chain. The per-base cost is what breaks the degeneracy; composition is a refinement.
 
