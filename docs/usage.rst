@@ -753,7 +753,9 @@ From Python, the same annotation path:
 Each record is a dict keyed by the AIRR fields above.
 
 ``arda igblast -i reads.fastq -o truth.airr.tsv`` runs IgBLAST across all loci as a gold-standard
-reference for benchmarking.
+reference for benchmarking. ``--receptor ig`` or ``tr`` skips a whole pass over every read on a
+library whose receptor type is known; the default ``both`` runs both passes and keeps whichever
+scores higher, which is what a truth file for an unknown library wants.
 
 Junction markup and repair
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -723,7 +723,9 @@ discarded.** `arda rnaseq` / `arda amplicon` do all three in one call and wire i
   the true expression estimate — with **`consensus_count`** for distinct fragments.
 
 `arda igblast -i reads.fastq -o truth.airr.tsv` runs IgBLAST across all loci as a gold-standard
-reference for benchmarking (see the `arda-benchmark` project).
+reference for benchmarking (see the `arda-benchmark` project). `--receptor ig` or `tr` skips a
+whole pass over every read when the library's receptor type is known; the default `both` runs
+both and keeps whichever scores higher.
 
 ### Error correction: `--error-rate` is a per-library calibration
 

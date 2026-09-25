@@ -136,6 +136,7 @@ arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # wide
 arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv
 
 arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
+arda igblast    -i reads.fastq -o truth.airr.tsv --receptor ig   # known receptor: skip the TR pass
 arda export-ref --kind segments --locus TRB --format fasta
 arda build-db    --organism all             # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for the local mmseqs
