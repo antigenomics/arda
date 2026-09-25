@@ -77,7 +77,25 @@ what is left of the junction-recall gap. Evidence and method:
    +0/+26). Recovering that class needs the CDR3 start located without V-germline evidence, which
    is a mechanism arda does not have today.
 
-4. **Amplicon Stage-3 assembly costs 29 % of wall to rescue 12 reads.** `arda amplicon` against
+4. ⛔ **ANSWERED on IGH, and the answer is the opposite of the TCR result** (round 31,
+   2026-09-25). On a real human IGH multiplex V-primer amplicon (ngsik `BCR_Multiplex`, 100,000
+   pairs, 251 nt, 3 reps, medians, idle machine) Stage-3 assembly is not rescuing a handful of
+   clonotypes — **it is producing all of them**. Neither mate spans V into J on its own: R1
+   stops at the V's 3' end and R2 never reaches the J, so the per-fragment AIRR carries a
+   `junction` on **170 of 98,282 rows (0.2 %)** and the assembled contigs carry one on
+   **24,655 of 24,655 (100 %)**. Measured cost and yield:
+
+   | arm | wall (s) | CPU (s) | clonotypes | AIRR rows |
+   |---|---:|---:|---:|---:|
+   | `arda amplicon` | 255.64 | 1,635.91 | **13,040** | 196,502 |
+   | `--no-assemble` | **169.07** | **1,212.22** | 108 | 196,502 |
+
+   Assembly costs **1.51x wall and 1.35x CPU** and buys **12,932 of 13,040 clonotypes
+   (99.2 %)** — against 0.025 % on a TRA amplicon and 0.013 % on TRB. ⛔ **`--no-assemble` must never become an amplicon preset.**
+   On TCR it costs a rounding error; on IGH it costs the library. The original entry, which is
+   what it is answering:
+
+   **Amplicon Stage-3 assembly costs 29 % of wall to rescue 12 reads.** `arda amplicon` against
    `--no-assemble` on a 100 k TRA amplicon, 3 reps, medians: **13.46 → 9.38 s wall (1.43×)**,
    30.05 → 22.93 s CPU, for **5 clonotypes of 19,841 (0.025 %)** and +3 reads. The reason is
    structural — the mode exists for reads that span V into J, so **89.4 % of its mapped reads

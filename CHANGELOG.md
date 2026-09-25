@@ -67,6 +67,26 @@ Never: the shipped table is **allowed** to be missing -- that is what `None` mea
 the caller typed is a request, so a `--d-prior` that is not there **raises** instead of silently
 scoring on an empty prior.
 
+### Documented: on IG, `--no-assemble` is an amplicon knob, never a preset
+
+`arda amplicon --no-assemble` has been measured twice on TCR and rejected as a preset change both
+times, on a structural reason: the mode exists for reads that span V into J, so ~89 % of its mapped
+reads already carry a complete junction and assembly has nothing to build. It cost 5 clonotypes of
+19,841 on a TRA amplicon and 3 of 22,589 on TRB.
+
+Measured now on a real human IGH multiplex V-primer amplicon (100,000 pairs, 251 nt, 3 reps,
+medians, idle machine), where neither mate spans V into J on its own:
+
+| arm | wall (s) | CPU (s) | clonotypes |
+|---|---:|---:|---:|
+| `arda amplicon` | 255.64 | 1,635.91 | **13,040** |
+| `--no-assemble` | **169.07** | **1,212.22** | 108 |
+
+Assembly costs 1.51x wall and 1.35x CPU and buys **12,932 of 13,040 clonotypes (99.2 %)**. On TCR
+it is a rounding error; on IGH it is the library. Nothing about the default changed -- the point is
+that the two regimes are not comparable, and `ROADMAP.md` item 4 no longer says the IGH leg is
+outstanding.
+
 ### Added: `arda igblast --receptor ig|tr|both`
 
 `igblast_reads` has always taken `groups=("IG",)` / `("TR",)`; the CLI never offered it, so every
