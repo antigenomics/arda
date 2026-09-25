@@ -129,12 +129,24 @@ def load_d_prior(organism: str, path: Path | None = None) -> dict[str, DPrior]:
             return {}
     raw: dict[str, dict] = {}
     with open(path) as fh:
-        next(fh, None)
+        # Never: skip comments and the header BY WHAT THEY ARE, not by position. This used to be a
+        # bare `next(fh)` -- drop line 1, assume it was the header -- and `arda scenarios` writes a
+        # `# arda scenarios: organism=... records=...` provenance line ABOVE its header. So the
+        # header survived into the loop and `float("value")` raised, on the one file
+        # `docs/scenarios.rst` calls "a drop-in for the shipped file". It was a drop-in by column
+        # layout and by nothing else: unreachable before 2.28 only because there was no way to
+        # point `load_d_prior` at a generated table, and copying one into the installed database
+        # would have hit exactly this.
         for line in fh:
-            parts = line.rstrip("\n").split("\t")
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
             if len(parts) != 4:
                 continue
             locus, kind, key, value = parts
+            if kind == "kind":                       # the header, wherever it sits
+                continue
             raw.setdefault(locus, {}).setdefault(kind, {})[key] = float(value)
 
     out: dict[str, DPrior] = {}

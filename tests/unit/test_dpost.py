@@ -186,3 +186,33 @@ def test_a_fitted_table_can_move_the_call_off_the_shipped_answer(tmp_path):
                        prior_path=only_d2)
     assert post is not None
     assert set(post.by_gene) == {"TRBD2"}, "the shipped human table leaves both genes live"
+
+
+def test_a_table_arda_scenarios_wrote_is_actually_readable(tmp_path):
+    """Never: `docs/scenarios.rst` calls that output "a drop-in for the shipped file".
+
+    It was a drop-in by column layout and by nothing else. `arda scenarios` writes a
+    `# arda scenarios: organism=... records=...` provenance line ABOVE its header, and
+    `load_d_prior` skipped line 1 BY POSITION -- so the header survived into the parse loop and
+    `float("value")` raised on the one file the docs point at. Unreachable before `--d-prior`
+    only because there was no way to point the loader at a generated table; copying one into the
+    installed database would have hit exactly this.
+    """
+    generated = _toy_trb_prior(tmp_path).read_text().splitlines()
+    assert generated[0].startswith("locus\t"), "the fixture writes a bare header"
+    scenarios_shaped = tmp_path / "scenarios_shaped.tsv"
+    scenarios_shaped.write_text(
+        "# arda scenarios: organism=human records=45536 skipped=2 iterations=5 weight=rows\n"
+        + "\n".join(generated) + "\n")
+
+    post = posterior_d("CASSLGMSEPRWETQYF", "TRBV11-1*01", "TRBJ2-5*01", "rhesus_monkey",
+                       prior_path=scenarios_shaped)
+    assert post is not None, "a comment line must not make the table unreadable"
+    assert set(post.by_gene) == {"TRBD1", "TRBD2"}
+
+
+def test_blank_lines_and_a_trailing_comment_are_skipped_too(tmp_path):
+    rows = _toy_trb_prior(tmp_path).read_text().rstrip("\n").splitlines()
+    messy = tmp_path / "messy.tsv"
+    messy.write_text("# header comment\n\n" + "\n".join(rows) + "\n\n# trailing note\n")
+    assert load_d_prior("rhesus_monkey", messy)["TRB"].beta == pytest.approx(1.25)

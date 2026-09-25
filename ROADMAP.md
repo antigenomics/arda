@@ -247,11 +247,30 @@ what is left of the junction-recall gap. Evidence and method:
    | rat | IGH | — |
    | rhesus_monkey | IGH, TRB, TRD | — |
 
-   `load_d_prior` returns `{}` for a missing organism and `posterior_d` then returns `None`
-   (`dpost.py:197-199`), so `arda markup` silently has no D posterior for three of five organisms.
-   `arda scenarios` fits exactly this table from real junctions, so the blocker is **a cohort per
-   (organism, locus)**, not code. Do human and mouse first, where the benchmark repo already has
-   the data, and A/B the fitted table against the OLGA-derived one before adopting either.
+   `load_d_prior` returns `{}` for a missing organism and `posterior_d` then returns `None`, so
+   `arda markup` silently has no D posterior for three of five organisms. `arda scenarios` fits
+   exactly this table from real junctions, so the blocker is **a cohort per (organism, locus)**,
+   not code.
+   ✅ **The A/B this entry asks for is DONE on human TRB, the only locus with both tables
+   (2026-09-25).** 45,536 records fitted in 5 EM iterations (log-likelihood −1,057,744.6 →
+   −976,796.3), judged against arda's own **nucleotide** D call at E ≤ 0.05 — independent of both
+   priors — on 5,570 distinct clonotypes:
+
+   | prior | agreement | TRBJ2 only | confident | confident agreement |
+   |---|---:|---:|---:|---:|
+   | shipped (OLGA) | .9339 | .9043 | .4736 | .9996 |
+   | fitted (`arda scenarios`) | **.9363** | **.9076** | **.4876** | .9996 |
+
+   Read the **TRBJ2** column: on TRBJ1 both the posterior and the nucleotide caller enforce the
+   same TRBD2 × TRBJ1 prohibition, so agreement there is guaranteed rather than earned.
+   ⚠ **The fit is in-sample** — same library — so +0.33 points is an upper bound. What it
+   establishes is that a fitted table is **usable and not worse**, and that the path now works end
+   to end. ⛔ **It also found a real defect**: `arda scenarios` writes a `#` provenance line above
+   its header and `load_d_prior` skipped line 1 by POSITION, so the one file `docs/scenarios.rst`
+   calls a drop-in raised on read. Fixed.
+   **Still open, and it is DATA**: a cohort for the 11 pairs with no table at all. `aldan3`'s ngsik
+   registry carries **3,616 M. musculus library rows**, which is where mouse IGH and mouse TRD
+   would come from.
 
 9. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
    `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,

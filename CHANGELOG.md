@@ -87,6 +87,33 @@ it is a rounding error; on IGH it is the library. Nothing about the default chan
 that the two regimes are not comparable, and `ROADMAP.md` item 4 no longer says the IGH leg is
 outstanding.
 
+### Fixed: a table `arda scenarios` wrote could not be read back
+
+`docs/scenarios.rst` calls that output "a drop-in for the shipped
+`database/vdj/<org>/d_prior.tsv`". It was a drop-in by **column layout and nothing else**:
+`arda scenarios` writes a `# arda scenarios: organism=... records=...` provenance line **above**
+its header, and `load_d_prior` skipped line 1 *by position* -- so the header survived into the
+parse loop and `float("value")` raised on the one file the docs point at.
+
+Comments, blank lines and the header are now skipped by **what they are**, not by where they sit.
+Unreachable before `--d-prior` only because there was no way to point the loader at a generated
+table; copying one into the installed database would have hit exactly this.
+
+Found by running the A/B `ROADMAP.md` item 8 asks for -- human TRB, the only locus with both a
+fitted and an OLGA-derived table, judged against arda's own nucleotide D call (E <= 0.05) on 5,570
+distinct clonotypes:
+
+| prior | agreement | TRBJ2 only | confident | confident agreement |
+|---|---:|---:|---:|---:|
+| shipped (OLGA) | .9339 | .9043 | .4736 | .9996 |
+| fitted (`arda scenarios`) | **.9363** | **.9076** | **.4876** | .9996 |
+
+The TRBJ2 column is the one that is earned: on TRBJ1 both the posterior and the nucleotide caller
+enforce the same TRBD2 x TRBJ1 prohibition, so agreement there is guaranteed. ⚠ The fit is
+**in-sample** -- same library -- so +0.33 points is an upper bound. What it establishes is that a
+fitted table is usable and **not worse**, which is what item 8 needed before anything is adopted.
+Nothing shipped in `database/` changed.
+
 ### Added: `arda resolve-ties --loci` — because whether widening helps is a property of the LOCUS
 
 `arda resolve-ties` widens `v_call` to every germline the read's alignment cannot rule out. Swept
