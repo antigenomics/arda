@@ -227,6 +227,42 @@ which column names the repertoire, and picking one silently splits or merges a s
   tried, and failed in CI -- reporting `--organism`, `--out-dir` and `--threads` as missing from
   `arda amplicon`. `COLUMNS` is for a human reading `--help` in a shell, not for a test.
 
+## Never: on a C-anchored amplicon, map the PAIR — one mate silently loses every junction
+
+⛔ Benchmark round 31, on a real multiplex V-primer IGH amplicon (251 nt paired, ngsik
+`BCR_Multiplex`): `arda map --r1` **alone** returns `j_call` and `c_call` on 98 % of reads,
+`v_call` on **1.9 %**, and `junction` on **40 of 49,036 rows** -- at **exit 0, "98.07 % of reads
+mapped", correct locus, correct J, correct isotype**. Nothing in the report moves. ⚠ **The regime
+rule does not save you here**: the amplicon preset gives 951 `v_call`s where `--prefilter` gives
+951, i.e. the same 1.9 %, 7x faster (15.3 s against 111.2 s).
+
+The cause is the shipped reference's geometry, and it is worth knowing before anyone calls it a
+bug. Counted on `database/vdj/human`: **15,069 V·J scaffolds, of which 0 carry any constant
+region** (`vj_end` == the full length on every one), and **345 J+C scaffolds** with
+`j_sequence_start = 1` -- no V at all -- carrying a median **150 nt of C**. A read that runs
+C -> J -> V and reaches ~80 nt into the constant region therefore scores **244 bits on a J+C
+scaffold against 241 on its own V·J scaffold**, and the J+C target has no V to report. The
+partition is exact: 48,156 rows with a `c_call` and no `v_call`, 891 with a `v_call` and no
+`c_call`, **0 with both, 0 with neither**. Trimming only the constant region off the same reads
+moves `v_gene` recall **.0265 -> .8775** and junctions **40 -> 40,005**.
+
+⚠ `mapper.py`'s J->C contest is working as DESIGNED here -- "bit score decides, exactly as the
+one-pass does" -- and its comment records what breaks if it does not: forcing the V·J choice
+fabricated `junction_aa` on 3 of 453 real reads and destroyed their `c_call`. **Do not "fix" the
+arbitration without measuring that class again.** The rule is calibrated for reads whose constant
+overlap is short; a 251 nt C-anchored amplicon read is the regime where it is not.
+
+✅ **And the shipped pipeline already handles it**: `arda amplicon --r1 --r2` annotates each mate
+and Stage 3 bridges them -- **24,655 contigs from the same 50,000 pairs, 100 % carrying `v_call`,
+`j_call`, `c_call`, `junction` and `junction_aa`**. This is a USAGE trap, not a defect, and the
+reason it is written here is that the failure is silent.
+
+⛔ **Which also settles `ROADMAP.md` item 4 for IGH, in the opposite direction from TCR.** On a TRA
+amplicon Stage-3 assembly rescues 5 clonotypes of 19,841 and on TRB 3 of 22,589, because ~89 % of
+an amplicon's mapped reads already span V into J. On this IGH library **the per-fragment AIRR
+carries a junction on 170 of 98,282 rows (0.2 %) and every one of the 24,655 clonotypes comes from
+assembly** -- neither mate spans V into J on its own. `--no-assemble` must never become a preset.
+
 ## The regime rule — name the config, always
 
 The two speed levers do **not** compose, and each is a loss in the other's regime:

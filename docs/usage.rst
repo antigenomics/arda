@@ -451,6 +451,27 @@ everywhere. 100 nt reads cannot reach the 120 nt-and-above bins, which is why bu
    ``v_sequence_start`` / ``v_sequence_end`` and ``v_germline_start`` / ``v_germline_end`` are
    AIRR columns arda already writes on every row.
 
+.. important::
+
+   **Map the pair, not one mate — especially on a C-anchored amplicon.** On a multiplex V-primer
+   IGH amplicon (251 nt paired), mapping **R1 alone** returns ``j_call`` and ``c_call`` on 98 % of
+   reads and ``v_call`` on **1.9 %**, with ``junction`` on **40 of 49,036 rows** — and it exits 0
+   reporting 98.07 % of reads mapped. The cause is the reference's geometry, not the library: a
+   V·J scaffold carries **no constant region**, so a read that runs C → J → V and reaches ~80 nt
+   into the constant region scores **244 bits on a J+C scaffold against 241 on its own V·J
+   scaffold**, and the J+C target has no V to report. Trimming the constant region off the same
+   reads moves ``v_gene`` recall from **.0265 to .8775** and junctions from 40 to 40,005.
+
+   ``arda amplicon --r1 --r2`` is the answer and needs no flag: it annotates each mate and Stage 3
+   bridges them. On those same 50,000 pairs that is **24,655 contigs, 100 % of which carry**
+   ``v_call``, ``j_call``, ``c_call``, ``junction`` **and** ``junction_aa``.
+
+Four independent arms — two IGH libraries (a multiplex V-primer amplicon and a 5'RACE), each read
+from both ends — put ``v_gene`` recall on the ``>= 200 nt`` bin at **.9891 / .9935 / .9923 / .9930**,
+against the .9896 above and the TRA amplicon's .9867. ⛔ And the protocol name is not the risk
+factor: the *same* 5'RACE protocol scores **.1170** on a short read and **.9645** at 251 nt. What
+matters is how much V the read carries and from which end.
+
 Allele-level separation needs considerably more than gene-level identification does — IGHV needs a
 median **230 nt** from the 3' end to separate a gene's alleles, against 175 for TRAV and 150 for
 TRBV. See :doc:`genotype` for that table and what it means for ``arda genotype``.
