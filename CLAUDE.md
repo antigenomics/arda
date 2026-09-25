@@ -227,6 +227,42 @@ which column names the repertoire, and picking one silently splits or merges a s
   tried, and failed in CI -- reporting `--organism`, `--out-dir` and `--threads` as missing from
   `arda amplicon`. `COLUMNS` is for a human reading `--help` in a shell, not for a test.
 
+## Never: on a C-anchored amplicon, map the PAIR — one mate silently loses every junction
+
+⛔ Benchmark round 31, on a real multiplex V-primer IGH amplicon (251 nt paired, ngsik
+`BCR_Multiplex`): `arda map --r1` **alone** returns `j_call` and `c_call` on 98 % of reads,
+`v_call` on **1.9 %**, and `junction` on **40 of 49,036 rows** -- at **exit 0, "98.07 % of reads
+mapped", correct locus, correct J, correct isotype**. Nothing in the report moves. ⚠ **The regime
+rule does not save you here**: the amplicon preset gives 951 `v_call`s where `--prefilter` gives
+951, i.e. the same 1.9 %, 7x faster (15.3 s against 111.2 s).
+
+The cause is the shipped reference's geometry, and it is worth knowing before anyone calls it a
+bug. Counted on `database/vdj/human`: **15,069 V·J scaffolds, of which 0 carry any constant
+region** (`vj_end` == the full length on every one), and **345 J+C scaffolds** with
+`j_sequence_start = 1` -- no V at all -- carrying a median **150 nt of C**. A read that runs
+C -> J -> V and reaches ~80 nt into the constant region therefore scores **244 bits on a J+C
+scaffold against 241 on its own V·J scaffold**, and the J+C target has no V to report. The
+partition is exact: 48,156 rows with a `c_call` and no `v_call`, 891 with a `v_call` and no
+`c_call`, **0 with both, 0 with neither**. Trimming only the constant region off the same reads
+moves `v_gene` recall **.0265 -> .8775** and junctions **40 -> 40,005**.
+
+⚠ `mapper.py`'s J->C contest is working as DESIGNED here -- "bit score decides, exactly as the
+one-pass does" -- and its comment records what breaks if it does not: forcing the V·J choice
+fabricated `junction_aa` on 3 of 453 real reads and destroyed their `c_call`. **Do not "fix" the
+arbitration without measuring that class again.** The rule is calibrated for reads whose constant
+overlap is short; a 251 nt C-anchored amplicon read is the regime where it is not.
+
+✅ **And the shipped pipeline already handles it**: `arda amplicon --r1 --r2` annotates each mate
+and Stage 3 bridges them -- **24,655 contigs from the same 50,000 pairs, 100 % carrying `v_call`,
+`j_call`, `c_call`, `junction` and `junction_aa`**. This is a USAGE trap, not a defect, and the
+reason it is written here is that the failure is silent.
+
+⛔ **Which also settles `ROADMAP.md` item 4 for IGH, in the opposite direction from TCR.** On a TRA
+amplicon Stage-3 assembly rescues 5 clonotypes of 19,841 and on TRB 3 of 22,589, because ~89 % of
+an amplicon's mapped reads already span V into J. On this IGH library **the per-fragment AIRR
+carries a junction on 170 of 98,282 rows (0.2 %) and every one of the 24,655 clonotypes comes from
+assembly** -- neither mate spans V into J on its own. `--no-assemble` must never become a preset.
+
 ## The regime rule — name the config, always
 
 The two speed levers do **not** compose, and each is a loss in the other's regime:
@@ -244,6 +280,48 @@ tuning flags (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilt
 `--indel-rescue`) are off by default. Since 2.16.0 they are not loose flags on a mode: the mode
 NAME picks the preset (`_MODE_SPEED` in `cli.py`), `--exact` turns every one off, and `arda map`
 still exposes them individually for A/B work.
+
+## Reference vocabulary — three checks before a gene joins or leaves
+
+`refbuild.imgt.load_functional_alleles` excludes IMGT ORFs and pseudogenes, so arda ships **82 of
+the 121 human IGHV genes IgBLAST's germline DB carries**. That gap is not automatically a defect
+and not automatically fine: a read from an excluded gene does not vanish, it gets called as the
+nearest gene that IS present. Round 30 found `IGHV3-52 -> IGHV3-7` (394 reads) and
+`IGHV3-71 -> IGHV3-49` (82) exactly that way.
+
+⛔ **Never add or drop a gene on the strength of a confusion table alone.** Run all three checks
+and record the answers in `SOURCES.md`, so the next person does not re-derive them:
+
+1. **Literature — is the gene functionally attested in real repertoires?** Invoke the `citations`
+   skill and retrieve the record; never cite from memory. Worked example: IGHV3-53/3-66 are a
+   *public antibody* pair repeatedly induced by SARS-CoV-2 infection and vaccination, explicitly
+   contrasted with IGHV1-69 — Kuwata et al., *EBioMedicine* 2024;110:105439,
+   https://pubmed.ncbi.nlm.nih.gov/39488016/, doi:10.1016/j.ebiom.2024.105439. A gene with that
+   kind of attestation is load-bearing however IMGT classifies it.
+2. **Expression — is the locus actually transcribed, in the right tissue?** GTEx by Ensembl id.
+   Worked example: **IGHV3-71 is an IG V *pseudogene*** (`ENSG00000254056`, HGNC:5621) **and is
+   still transcribed where B cells are** — spleen 3.45 TPM, minor salivary gland 2.39, transverse
+   colon 1.33, terminal ileum 1.30, EBV-transformed lymphocytes 0.378, and essentially zero in ~35
+   of 54 tissues. ⚠ "Pseudogene" is a statement about the protein, not about whether reads exist.
+3. **The TIED-HIT test — would admitting it add information, or only ambiguity?** Compare the
+   candidate to every gene already present, 3'-anchored over the shared length, and take the best:
+
+   | pair | 3' identity | reading |
+   |---|---:|---|
+   | `IGHV3-23` / `IGHV3-23D` | **1.0000** | a true tie — no read can ever separate them |
+   | `IGHV3-30` / `IGHV3-30-3` | **1.0000** | a true tie |
+   | `IGHV3-53` / `IGHV3-66` | 0.9898 | near-tie; expect a two-gene call, not a winner |
+   | `IGHV3-71` / `IGHV3-49` | **0.9172** | separable — its absence is a real miscall |
+   | `IGHV3-52` / `IGHV3-7` | **0.9088** | separable — same |
+   | `IGHV1-69` / `IGHV1-18` | 0.9054 | separable, so THAT confusion is not homology (round 30: it is a 55 nt read span) |
+
+   **>= ~0.99 means admitting the gene buys a longer tie list and nothing else.** **<= ~0.95 means
+   reads from it are being actively mis-assigned today.** Between the two, say which and why.
+
+⚠ The scaffold set and the **call vocabulary** are separate decisions. A gene can be worth naming
+(so a read is attributed to the germline it came from) without being worth a V·J scaffold cross
+product — scaffold ids are positional, so adding one renumbers the locus and invalidates every
+precompiled index. Decide them one at a time, and **ask before changing either**.
 
 ## QC: the line, and the two rules that hold it
 
@@ -430,6 +508,21 @@ still exposes them individually for A/B work.
   and DEAD**: at the true offset the called V's germline matches 0 bases on 1,040 of 1,369.
   ⚠ To score this gate at all you must disable it -- a refusal emits nothing. See
   `results/round28/run_ungated.py`.
+- ⛔ **IG V-gene accuracy is a READ-COVERAGE property, and the SHM story is dead**
+  (benchmark round 30, 2026-09-25; it withdraws round 29's headline). Stratified by IgBLAST's
+  `v_identity` the deficit is NON-MONOTONIC -- unmutated .9425, **97-99 % .7518 (worst)**,
+  92-95 % .9697 (best). Stratified by V germline span it is monotonic and steep: **<60 nt .1170,
+  >=200 nt .9896**, and .9896 IS the TRA amplicon's .9867. The top confusion
+  `IGHV1-69 -> IGHV1-18` is 4,745 of ~9,080 misses, on reads where IgBLAST aligns germline
+  **242-296 = 55 nt of the V's 3' end** -- a 5'RACE read runs C->J->V, so the separating bases are
+  NOT IN THE READ. IgBLAST lists 1.64 V genes/read itself: a different tie-break on the same
+  missing evidence, not a better one. ✅ **arda's IG V-gene accuracy is .93-.98 on bulk and .9896
+  when the read carries >=200 nt of V.** Position beats length: a short 5' alignment identifies the
+  gene, a short 3' one does not (IGHV diverges in FR1/CDR1/CDR2, conserved in FR3 near Cys104).
+  ⛔ **A V-call evidence gate was measured and REJECTED** -- a 7.6:1 win on IGH 5'RACE
+  (.92585 -> .97693) and a loss on bulk IGH/IGK/IGL (-3.24/-6.22/-2.39 pt recall for no
+  precision). `ROADMAP.md` item 6 carries what to try instead (a bit-score margin on the V TIE
+  LIST, not a refusal).
 - ⛔ **Two performance comments in this repo are STALE -- do not trust or propagate them**
   (benchmark round 27, 2026-09-24). `rnaseq/map.py:479` says reading is *"65 % of a bulk run"*; it
   is **0.73 s of map's 16.19 s = 4.5 %** -- dnaio, the port that comment motivated, made its own

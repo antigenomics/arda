@@ -57,3 +57,49 @@ off-target transcripts, non-overlapping mates, and reads landing in J→C rather
 
 ⚠ These reads are from a **public** BioProject and may be redistributed. Do not extend this
 fixture with private tumour reads or with anything under `data_bio/`.
+
+## Human IGHV gene vocabulary — what arda carries, and the evidence behind it (2026-09-25)
+
+arda ships **82 human IGHV genes**; IgBLAST's germline DB (`data/blastdb/Homo_sapiens/_all_IG_V`,
+472 IGHV alleles across **121** genes, IMGT-derived) carries 39 more.
+`refbuild.imgt.load_functional_alleles` excludes IMGT ORFs and pseudogenes by design, which is the
+whole difference. Provenance of the gap: **derived** (computed from the two gene sets), not
+measured.
+
+A read from an excluded gene is not dropped — it is called as the nearest gene that is present.
+Measured on human IGH (benchmark round 30): `IGHV3-52 -> IGHV3-7` 394 reads, `IGHV3-71 ->
+IGHV3-49` 82 reads.
+
+`CLAUDE.md` ("Reference vocabulary — three checks before a gene joins or leaves") is the rule.
+The evidence gathered so far, so it is not re-derived:
+
+| gene | IMGT/HGNC class | transcribed? (GTEx) | nearest present gene, 3' identity | reading |
+|---|---|---|---|---|
+| `IGHV3-71` | **IG V pseudogene**, `ENSG00000254056`, HGNC:5621 | **yes, lymphoid-restricted** — spleen 3.45 TPM, minor salivary gland 2.39, transverse colon 1.33, terminal ileum 1.30, EBV-transformed lymphocytes 0.378; ~0 in ~35 of 54 tissues | `IGHV3-49`, **0.9172** | separable, and being mis-assigned today |
+| `IGHV3-52` | ORF/pseudogene-adjacent | not yet checked | `IGHV3-7`, **0.9088** | separable, same |
+
+Reference genes that are **already present and genuinely untieable** — listed so nobody reads a
+confusion between them as a defect:
+
+| pair | 3' identity |
+|---|---:|
+| `IGHV3-23` / `IGHV3-23D` | **1.0000** |
+| `IGHV3-30` / `IGHV3-30-3` | **1.0000** |
+| `IGHV3-53` / `IGHV3-66` | 0.9898 |
+
+Literature anchor for the IGHV3-53/3-66 pair (retrieved via the `citations` skill, PubMed; not
+from memory): Kuwata T, Kaku Y, Biswas S, et al. *Induction of IGHV3-53 public antibodies with
+broadly neutralising activity against SARS-CoV-2 including Omicron subvariants in a Delta
+breakthrough infection case.* EBioMedicine. 2024;110:105439.
+PMID [39488016](https://pubmed.ncbi.nlm.nih.gov/39488016/) · PMC11565539 ·
+doi:[10.1016/j.ebiom.2024.105439](https://doi.org/10.1016/j.ebiom.2024.105439).
+
+**Re-derive the gene sets:**
+```sh
+./bin/blastdbcmd -db data/blastdb/Homo_sapiens/_all_IG_V -entry all -outfmt "%a|%s" \
+  | awk -F'|' '$1 ~ /^IGHV/' | sed 's/\*.*//' | sort -u | wc -l     # 121
+cut -f3 database/vdj/human/combinations.tsv | tr ',' '\n' \
+  | grep '^IGHV' | sed 's/\*.*//' | sort -u | wc -l                 # 82
+```
+GTEx: `https://gtexportal.org/api/v2/reference/gene?geneId=<ENSG id>` and
+`.../api/v2/expression/medianGeneExpression?gencodeId=<ENSG id>.<ver>`.

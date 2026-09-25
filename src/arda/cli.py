@@ -339,6 +339,12 @@ def markup(
         False, "--d-posterior",
         help="Also infer the D gene and its position from the junction length prior "
              "and the amino-acid match (human IGH/TRB/TRD, mouse TRB)."),
+    d_prior: Path = typer.Option(
+        None, "--d-prior",
+        help="Score the D posterior against this prior table instead of the shipped "
+             "`database/vdj/<org>/d_prior.tsv` -- e.g. one `arda scenarios` fitted. Implies "
+             "`--d-posterior`. Using an estimate is not adopting one: nothing in the installed "
+             "database is touched."),
     report: Path = typer.Option(
         None, "--report", help="Write a human-readable fix log here ('-' for stdout)."),
     show_ok: bool = typer.Option(
@@ -361,10 +367,10 @@ def markup(
                              sequence_id=id_col or None, organism=organism or None,
                              max_replace=max_replace)
     out = to_frame(records)
-    if d_posterior:
+    if d_posterior or d_prior is not None:
         from .dpost import posterior_d
 
-        posts = [posterior_d(r.cdr3_repaired, r.v_call, r.j_call, r.species)
+        posts = [posterior_d(r.cdr3_repaired, r.v_call, r.j_call, r.species, d_prior)
                  for r in records]
         out = out.with_columns([
             pl.Series("d_call", [p.d_call if p else "" for p in posts]),
@@ -474,12 +480,23 @@ def igblast_cmd(
     output: Path = typer.Option(..., "--output", "-o", help="Merged AIRR TSV (gold standard)."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="igblast threads (0 = all cores)."),
+    receptor: str = typer.Option(
+        "both", "--receptor",
+        help="Which receptor type(s) to align against: `both` (default), `ig` or `tr`. Both is "
+             "the right default for a truth file -- the locus is what is being measured, and a "
+             "read is kept from whichever type scores higher. On a library whose receptor is "
+             "KNOWN, naming it skips a whole IgBLAST pass over every read and roughly halves the "
+             "run."),
 ) -> None:
     """Gold-standard AIRR alignment with IgBLAST across all annotatable loci."""
     import os
     from .refbuild.gold import igblast_reads
 
-    igblast_reads(input, output, organism=organism,
+    groups = {"both": None, "ig": ("IG",), "tr": ("TR",)}.get(receptor.strip().lower(), ...)
+    if groups is ...:
+        raise typer.BadParameter("--receptor must be one of: both, ig, tr", param_hint="--receptor")
+
+    igblast_reads(input, output, organism=organism, groups=groups,
                   num_threads=threads or (os.cpu_count() or 1))
     typer.echo(f"[arda] igblast AIRR -> {output}")
 
@@ -587,10 +604,14 @@ def rnaseq_map(
              "whose capped best score is under 90 bits. Attacks the align term, which is what is "
              "left once --prefilter has removed the scan term: on a 0.78%-receptor bulk library "
              "the search is 7.35s of a 12.25s map. Measured 2.17x on 1M bulk reads with zero "
-             "reads lost. ⚠ Read survival is NOT the whole guarantee: on the real-read fixture it "
-             "also moves junction_aa on 3 of 453 reads, two of them scoring 128 and 131 — far "
-             "above the trigger — so a high score does not certify the best alignment was found. "
-             "Opt in only where a junction-level difference is acceptable."),
+             "reads lost; 1.84x wall and 3.04x CPU (16.34->8.90s, 198.20->65.13s, 1,033->771 MB) "
+             "on 660k real bulk pairs. ⚠ Read survival is NOT the whole guarantee: on those same "
+             "660k pairs it moves `junction` on 93 of 35,795 rows and the movement is "
+             "ONE-DIRECTIONAL — 89 to empty, 4 the other way, a net -85 against the 3,856 reads "
+             "carrying one — and 91 of the 93 score 90-150 bits, ABOVE the 90-bit trigger. A high "
+             "score does not certify the best alignment was found, and at 79x the fixture's scale "
+             "the score-only trigger is confirmed uncalibratable. Opt in only where losing "
+             "junctions is acceptable."),
     junction_quality: bool = typer.Option(
         False, "--junction-quality/--no-junction-quality",
         help="Also emit a `junction_quality` column: the read's Phred+33 string over exactly the "

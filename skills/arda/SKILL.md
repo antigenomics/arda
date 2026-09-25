@@ -207,7 +207,14 @@ pipeline and `build-db` / `build-index`.
   What *is* checkable: the junction's outer bounds, the gene calls, and whether arda invented a
   junction it has no anchor for.
 - `posterior_d` returns `None` for organisms with no shipped generative model (rat, rabbit,
-  rhesus) and for VJ loci. That is deliberate — do not substitute a human proxy.
+  rhesus) and for VJ loci. That is deliberate — do not substitute a human proxy. To score one of
+  those pairs, fit a table with `arda scenarios` and pass it: `posterior_d(..., prior_path=)` /
+  `arda markup --d-prior PATH`. Nothing in the installed database is touched.
+- **An IG `v_call` is only as good as the V germline the read covers**: `v_gene` recall is
+  **.1170 under 60 nt and .9896 at 200 nt or more**, and .9896 is the TRA amplicon's .9867 — no
+  IG-specific deficit at that coverage. Position beats length (IGHV diverges in FR1/CDR1/CDR2,
+  conserved near Cys104). No threshold ships; filter `v_germline_start`/`v_germline_end` yourself.
+  Tables and the rejected gate: `docs/usage.rst`.
 - aa input returns region `*_aa` directly with no frame bridging, so `stop_codon` and
   `vj_in_frame` stay empty — but `productive` and the D columns *are* populated.
 - `map_d=True` on synthetic or partial input with no real junction simply finds no D. Harmless;

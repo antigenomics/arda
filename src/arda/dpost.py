@@ -58,6 +58,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 
 from . import _markup
 from .annotate.reference import _load_d_germlines
@@ -105,11 +106,27 @@ class DPosterior:
 
 
 @lru_cache(maxsize=8)
-def load_d_prior(organism: str) -> dict[str, DPrior]:
-    """``{locus: DPrior}``; empty when the organism has no shipped model."""
-    path = vdj_dir(organism) / "d_prior.tsv"
-    if not path.exists():
-        return {}
+def load_d_prior(organism: str, path: Path | None = None) -> dict[str, DPrior]:
+    """``{locus: DPrior}``; empty when the organism has no shipped model.
+
+    ``path`` reads a table written by :mod:`arda.scenarios` instead of the shipped one --
+    ``arda markup --d-prior``. Never: *using* an estimate is not *adopting* it. Without this the
+    only way to score against a fitted table was to overwrite a file inside the installed
+    database, which changes every later run on the machine and leaves no record that it happened.
+
+    A caller-supplied ``path`` that does not exist RAISES. The shipped one is allowed to be
+    absent -- 11 of the 13 (organism, D-locus) pairs have no table and ``posterior_d`` returns
+    ``None`` for them -- but a path the user typed is a request, and answering it with an empty
+    prior would silently fall back to no D posterior at all.
+    """
+    if path is not None:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"D prior table not found: {path}")
+    else:
+        path = vdj_dir(organism) / "d_prior.tsv"
+        if not path.exists():
+            return {}
     raw: dict[str, dict] = {}
     with open(path) as fh:
         next(fh, None)
@@ -186,16 +203,20 @@ def _logsumexp(xs: list[float]) -> float:
 
 
 def posterior_d(junction_aa: str, v_call: str, j_call: str,
-                species: str = "human") -> DPosterior | None:
+                species: str = "human", prior_path: Path | None = None) -> DPosterior | None:
     """Posterior over the D gene (and its position) for an amino-acid junction.
 
     ``junction_aa`` is junction space (Cys104 .. Phe/Trp118, both included), as in
     :mod:`arda.cdr3fix`. Returns ``None`` when the locus has no D, no shipped model, or
     the junction cannot be marked up.
+
+    ``prior_path`` scores against a table :mod:`arda.scenarios` fitted rather than the shipped
+    one; see :func:`load_d_prior`. It is the same knob ``arda.hmm.model_for`` already takes as
+    ``prior=``, so the two readings of the model agree about where their numbers come from.
     """
     organism = resolve_species(species)
     locus = resolve_locus(v_call, j_call)
-    prior = load_d_prior(organism).get(locus)
+    prior = load_d_prior(organism, prior_path).get(locus)
     if prior is None:
         return None
 

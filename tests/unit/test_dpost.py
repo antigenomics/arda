@@ -108,3 +108,81 @@ def test_an_empty_middle_is_prior_only_and_says_so():
     assert igh.n_middle_nt == 0 and igh.support_aa == 0
     assert not igh.confident, "35 D genes, no constraint: an empty middle proves nothing"
     assert igh.entropy > 1.0
+
+
+# --- `--d-prior`: scoring against a fitted table without adopting it ---------------------------
+# `arda scenarios` fits exactly the table `load_d_prior` reads, and `docs/scenarios.rst` calls its
+# output a drop-in for the shipped file -- which it was by FORMAT only. `load_d_prior` was
+# `@lru_cache`d on the organism alone and read one fixed path, so the only way to use a fitted
+# table was to overwrite a file inside the installed database: a change that silently alters every
+# later run on the machine. These pin the separation between *using* an estimate and *adopting* one.
+
+def _toy_trb_prior(tmp_path):
+    """A flat, hand-made TRB prior -- enough support to place a real junction's middle.
+
+    Deliberately uninformative: both D genes at 0.5 and every length equally likely, so anything
+    these tests observe comes from the table being READ, never from it being well fitted.
+    """
+    rows = ["locus\tkind\tkey\tvalue"]
+    for i in range(16):
+        rows.append(f"TRB\tinsVD\t{i}\t{1 / 16:.6f}")
+        rows.append(f"TRB\tinsDJ\t{i}\t{1 / 16:.6f}")
+    for allele in ("TRBD1*01", "TRBD2*01"):
+        for n in range(1, 13):
+            rows.append(f"TRB\tdlen\t{allele}:{n}\t{1 / 12:.6f}")
+        rows.append(f"TRB\td_marginal\t{allele}\t0.5")
+    rows.append("TRB\tbeta\tbeta\t1.25")
+    path = tmp_path / "fitted.tsv"
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+def test_a_supplied_table_gives_a_posterior_to_an_organism_that_ships_none(tmp_path):
+    """11 of the 13 shipped (organism, D-locus) pairs have no prior, and rhesus TRB is one.
+
+    That is the whole point of the parameter: `arda scenarios` can fit a table from a real
+    cohort for a locus OLGA never modelled, and until now there was nowhere to put it.
+    """
+    args = ("CASSLGMSEPRWETQYF", "TRBV11-1*01", "TRBJ2-5*01", "rhesus_monkey")
+    assert posterior_d(*args) is None, "no shipped rhesus model: still nothing by default"
+
+    post = posterior_d(*args, prior_path=_toy_trb_prior(tmp_path))
+    assert post is not None
+    assert post.locus == "TRB"
+    assert set(post.by_gene) == {"TRBD1", "TRBD2"}
+    assert sum(post.by_gene.values()) == pytest.approx(1.0)
+
+
+def test_the_shipped_database_is_not_touched_by_reading_one(tmp_path):
+    """Using an estimate is not adopting it: the default answer must be unchanged afterwards."""
+    before = posterior_d(*HUMAN_TRB, "human")
+    posterior_d("CASSLGMSEPRWETQYF", "TRBV11-1*01", "TRBJ2-5*01", "rhesus_monkey",
+                prior_path=_toy_trb_prior(tmp_path))
+    after = posterior_d(*HUMAN_TRB, "human")
+    assert after is not None and before is not None
+    assert after.by_gene == before.by_gene
+    assert sorted(load_d_prior("rhesus_monkey")) == []
+
+
+def test_a_path_that_does_not_exist_raises_rather_than_scoring_on_nothing(tmp_path):
+    """Never: the shipped table is ALLOWED to be missing; a path the user typed is not.
+
+    `load_d_prior` returns `{}` for an organism with no model and `posterior_d` then returns
+    `None` -- correct, and indistinguishable from "your table was not found", which is why a
+    caller-supplied path has to raise instead.
+    """
+    with pytest.raises(FileNotFoundError, match="D prior table not found"):
+        load_d_prior("human", tmp_path / "never_written.tsv")
+
+
+def test_a_fitted_table_can_move_the_call_off_the_shipped_answer(tmp_path):
+    """The table is the model. Drop a D gene from it and the posterior must follow."""
+    rows = [ln for ln in _toy_trb_prior(tmp_path).read_text().splitlines()
+            if "TRBD1*01" not in ln]
+    only_d2 = tmp_path / "only_d2.tsv"
+    only_d2.write_text("\n".join(rows) + "\n")
+
+    post = posterior_d("CASSLAPGATSYEQYF", "TRBV5-1*01", "TRBJ2-7*01", "human",
+                       prior_path=only_d2)
+    assert post is not None
+    assert set(post.by_gene) == {"TRBD2"}, "the shipped human table leaves both genes live"

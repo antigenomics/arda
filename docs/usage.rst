@@ -308,6 +308,174 @@ comparator. arda's is **.9868 resolved** and .9461 by exact string.
 Junction correctness is discussed in :ref:`what a junction disagreement means`, which also says
 which kinds of disagreement are *not* errors.
 
+.. _ig-coverage-floor:
+
+What an IG V call means when the read is short
+----------------------------------------------
+
+A ``v_call`` is only as good as the V germline the read actually covers, and on IG that is the
+single largest thing separating a usable call from an unusable one. This is a property of the
+library, not of the caller: no tool can name a gene from bases that are not in the read.
+
+Measured against an ``arda igblast`` truth (``v_score >= 70``) on an IGH 5'RACE library,
+98,639 truth reads, stratified by how much V germline the **truth** alignment covers:
+
+.. list-table:: ``v_gene`` recall by V germline span, human IGH 5'RACE (98,639 truth reads)
+   :header-rows: 1
+   :widths: 28 18 14 20
+
+   * - V germline span
+     - truth reads
+     - share
+     - ``v_gene`` recall
+   * - < 60 nt
+     - 5,802
+     - 5.9 %
+     - **.1170**
+   * - 60–90 nt
+     - 978
+     - 1.0 %
+     - .6748
+   * - 90–120 nt
+     - 4,224
+     - 4.3 %
+     - .5727
+   * - 120–160 nt
+     - 1,845
+     - 1.9 %
+     - .9507
+   * - 160–200 nt
+     - 33,903
+     - 34.4 %
+     - .9647
+   * - >= 200 nt
+     - 51,887
+     - 52.6 %
+     - **.9896**
+
+**At 200 nt or more of V germline arda scores .9896, which is the TRA amplicon's .9867** — there is
+no IG-specific accuracy deficit at that coverage. The 5.9 % of reads carrying under 60 nt produce
+about 56 % of every V miss on the library.
+
+.. important::
+
+   **Position beats length.** A short **5'** alignment identifies the gene; a short **3'** one does
+   not. IGHV genes diverge in FR1/CDR1/CDR2 and are conserved through FR3 near Cys104, so 55 nt
+   taken from the 3' end carries almost none of what separates one gene from another. In the same
+   ``< 60 nt`` bin, recall is **.1170** on a 5'RACE library (5,714 of its 5,802 short alignments
+   start at germline position 200–249, because a 5'RACE read runs C → J → V) against **.8472** on a
+   bulk RNA-seq library of the same locus, where only 216 short alignments start that far in.
+
+   The largest single confusion on the 5'RACE library, ``IGHV1-69`` called as ``IGHV1-18``, is
+   **4,745 of roughly 9,080 misses**, on reads where IgBLAST aligns germline positions **242–296 —
+   55 nt of the V's 3' end**. The two genes are only 0.9054 identical, i.e. genuinely separable, so
+   this is missing evidence rather than homology. IgBLAST lists **1.64 V genes per read** on that
+   library itself: its answer there is a different tie-break on the same missing evidence, not a
+   better one.
+
+On bulk RNA-seq, where reads land across the V rather than at its 3' end, the same measurement over
+two libraries and three loci (``SRR5233639`` / ``SRR5233640``, 660,000 read pairs each, 100 nt):
+
+.. list-table:: ``v_gene`` recall by V germline span, human IG bulk RNA-seq
+   :header-rows: 1
+   :widths: 10 12 16 12 12 12 12
+
+   * - locus
+     - sample
+     - truth reads
+     - all
+     - < 60 nt
+     - 60–90 nt
+     - 90–120 nt
+   * - IGH
+     - 639
+     - 5,458
+     - .9331
+     - .8472
+     - .8592
+     - **.9661**
+   * - IGH
+     - 640
+     - 5,104
+     - .9373
+     - .8426
+     - .8789
+     - **.9689**
+   * - IGK
+     - 639
+     - 4,534
+     - .9828
+     - .9587
+     - .9805
+     - **.9879**
+   * - IGK
+     - 640
+     - 4,190
+     - .9802
+     - .9492
+     - .9690
+     - **.9897**
+   * - IGL
+     - 639
+     - 3,142
+     - .9494
+     - .6966
+     - .8932
+     - **.9938**
+   * - IGL
+     - 640
+     - 2,942
+     - .9470
+     - .6630
+     - .9149
+     - **.9903**
+
+Monotonic in span for every locus and both samples, and the two samples agree within 0.5 points
+everywhere. 100 nt reads cannot reach the 120 nt-and-above bins, which is why bulk tops out around
+.97–.99 rather than at the .9896 the long bin reaches.
+
+.. note::
+
+   **Somatic hypermutation does not order this, and arda does not gate on it.** Stratified by
+   IgBLAST's own ``v_identity`` on the same 98,639 IGH reads the deficit is *non-monotonic* —
+   ``>= 99 %`` (essentially unmutated) **.9425**, ``97–99 %`` **.7518** (the worst bin), ``92–95 %``
+   **.9697** (the best). Mutation load is not what makes an IG V call hard here; read geometry is.
+
+.. note::
+
+   **arda ships no threshold on this and will not.** Dropping a V call whose alignment starts at
+   germline position >= 150 and spans < 60 nt was measured: on IGH 5'RACE it is a 7.6 : 1 win
+   (``v_gene`` precision .92585 → .97693 for −0.69 points of recall), and on bulk it is a clear
+   loss — **−3.24** points of IGH recall, **−6.22** IGK, **−2.39** IGL, for essentially no
+   precision. One constant would be wrong more often than right. The span is yours to filter on:
+   ``v_sequence_start`` / ``v_sequence_end`` and ``v_germline_start`` / ``v_germline_end`` are
+   AIRR columns arda already writes on every row.
+
+.. important::
+
+   **Map the pair, not one mate — especially on a C-anchored amplicon.** On a multiplex V-primer
+   IGH amplicon (251 nt paired), mapping **R1 alone** returns ``j_call`` and ``c_call`` on 98 % of
+   reads and ``v_call`` on **1.9 %**, with ``junction`` on **40 of 49,036 rows** — and it exits 0
+   reporting 98.07 % of reads mapped. The cause is the reference's geometry, not the library: a
+   V·J scaffold carries **no constant region**, so a read that runs C → J → V and reaches ~80 nt
+   into the constant region scores **244 bits on a J+C scaffold against 241 on its own V·J
+   scaffold**, and the J+C target has no V to report. Trimming the constant region off the same
+   reads moves ``v_gene`` recall from **.0265 to .8775** and junctions from 40 to 40,005.
+
+   ``arda amplicon --r1 --r2`` is the answer and needs no flag: it annotates each mate and Stage 3
+   bridges them. On those same 50,000 pairs that is **24,655 contigs, 100 % of which carry**
+   ``v_call``, ``j_call``, ``c_call``, ``junction`` **and** ``junction_aa``.
+
+Four independent arms — two IGH libraries (a multiplex V-primer amplicon and a 5'RACE), each read
+from both ends — put ``v_gene`` recall on the ``>= 200 nt`` bin at **.9891 / .9935 / .9923 / .9930**,
+against the .9896 above and the TRA amplicon's .9867. ⛔ And the protocol name is not the risk
+factor: the *same* 5'RACE protocol scores **.1170** on a short read and **.9645** at 251 nt. What
+matters is how much V the read carries and from which end.
+
+Allele-level separation needs considerably more than gene-level identification does — IGHV needs a
+median **230 nt** from the 3' end to separate a gene's alleles, against 175 for TRAV and 150 for
+TRBV. See :doc:`genotype` for that table and what it means for ``arda genotype``.
+
 .. _usage-singlecell:
 
 Single cell

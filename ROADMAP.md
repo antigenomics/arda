@@ -77,7 +77,25 @@ what is left of the junction-recall gap. Evidence and method:
    +0/+26). Recovering that class needs the CDR3 start located without V-germline evidence, which
    is a mechanism arda does not have today.
 
-4. **Amplicon Stage-3 assembly costs 29 % of wall to rescue 12 reads.** `arda amplicon` against
+4. ⛔ **ANSWERED on IGH, and the answer is the opposite of the TCR result** (round 31,
+   2026-09-25). On a real human IGH multiplex V-primer amplicon (ngsik `BCR_Multiplex`, 100,000
+   pairs, 251 nt, 3 reps, medians, idle machine) Stage-3 assembly is not rescuing a handful of
+   clonotypes — **it is producing all of them**. Neither mate spans V into J on its own: R1
+   stops at the V's 3' end and R2 never reaches the J, so the per-fragment AIRR carries a
+   `junction` on **170 of 98,282 rows (0.2 %)** and the assembled contigs carry one on
+   **24,655 of 24,655 (100 %)**. Measured cost and yield:
+
+   | arm | wall (s) | CPU (s) | clonotypes | AIRR rows |
+   |---|---:|---:|---:|---:|
+   | `arda amplicon` | 255.64 | 1,635.91 | **13,040** | 196,502 |
+   | `--no-assemble` | **169.07** | **1,212.22** | 108 | 196,502 |
+
+   Assembly costs **1.51x wall and 1.35x CPU** and buys **12,932 of 13,040 clonotypes
+   (99.2 %)** — against 0.025 % on a TRA amplicon and 0.013 % on TRB. ⛔ **`--no-assemble` must never become an amplicon preset.**
+   On TCR it costs a rounding error; on IGH it costs the library. The original entry, which is
+   what it is answering:
+
+   **Amplicon Stage-3 assembly costs 29 % of wall to rescue 12 reads.** `arda amplicon` against
    `--no-assemble` on a 100 k TRA amplicon, 3 reps, medians: **13.46 → 9.38 s wall (1.43×)**,
    30.05 → 22.93 s CPU, for **5 clonotypes of 19,841 (0.025 %)** and +3 reads. The reason is
    structural — the mode exists for reads that span V into J, so **89.4 % of its mapped reads
@@ -91,7 +109,15 @@ what is left of the junction-recall gap. Evidence and method:
    aldan3. Done means that A/B runs first; until then `--no-assemble` is a documented option, not
    a preset change.
 
-5. **Re-price `--adaptive` in its own help text, and delete the stale read-path claim.** Two
+5. ✅ **`--adaptive` is re-priced and the two stale read-path claims are gone (2026-09-25).**
+   Help text, the comment at `_ADAPTIVE_TRIGGER`, `rnaseq/map.py`'s dnaio docstring and its
+   `--chunk-size` sweep all now carry the round-27 numbers instead of the fixture's. Nothing
+   about the default changed -- `--adaptive` stays off -- and the reason is now in the help
+   text a user actually reads: the junction movement is **one-directional** (89 of 93 rows go
+   to EMPTY) and **91 of 93 sit above the trigger**, so it is not a tuning problem. What
+   follows is the original entry, kept for the measurement:
+
+   Two
    documentation defects of the class `CLAUDE.md` doc-invariant 1 is about — a number that was true
    and stopped being true. (a) `--adaptive` is **1.84× on bulk map wall and 3.04× on CPU**
    (16.34 → 8.90 s, 198.20 → 65.13 s, 1,033 → 771 MB on 660 k pairs) with the read set preserved
@@ -103,7 +129,81 @@ what is left of the junction-recall gap. Evidence and method:
    because the dnaio port that comment motivated made its own premise false. `map.py:333`'s chunk
    sweep is stale for the same reason: 1 chunk vs 4 is **16.48 vs 16.34 s**, byte-identical output.
 
-6. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
+6. **IG accuracy: the gap is READ COVERAGE, the one instrument left is a wider V tie list.**
+   ⛔ **Round 29's "IGH `v_gene` .9004, seven times the junction gap" is WITHDRAWN**, and so is
+   the somatic-hypermutation suspicion it raised. Measured on two bulk libraries arda did not
+   select (benchmark round 30): stratified by IgBLAST's own `v_identity` the deficit is
+   **non-monotonic** — `>= 99 %` (unmutated) .9425, **`97–99 %` .7518 (worst)**, `92–95 %` .9697
+   (best). Stratified by how much V germline the read covers it is monotonic and steep:
+   **`< 60 nt` .1170, `>= 200 nt` .9896** — and .9896 *is* the TRA amplicon's .9867. 5.9 % of
+   reads produce ~56 % of every V miss. The top confusion `IGHV1-69 → IGHV1-18` is **4,745 of
+   ~9,080 misses**, and on those reads IgBLAST aligns germline **242–296 = 55 nt of the V's 3'
+   end**: a 5'RACE read runs C → J → V, so the bases separating one IGHV from another are not in
+   the read, and IgBLAST — which lists 1.64 V genes per read itself — is making a different
+   tie-break on the same missing evidence. `skills/arda/references/genotype.md` already measured
+   the threshold on TCR: TRAV ~175 nt from the 3' end, TRBV ~150.
+   ✅ **Corrected: arda's IG V-gene accuracy is .93–.98 on bulk and .9896 when the read carries
+   >= 200 nt of V.** Replicated on `SRR5233639`/`SRR5233640`, IGH/IGK/IGL, the two samples within
+   0.5 points.
+   ⛔ **A V-call evidence gate was priced and REJECTED — do not re-propose it without new
+   evidence.** Dropping a call that starts at germline `>= 150` and spans `< 60` nt is a 7.6 : 1
+   win on IGH 5'RACE (precision .92585 → .97693 for −0.69 pt recall) and a clear loss on bulk
+   IGH / IGK / IGL (−3.24 / −6.22 / −2.39 points of recall for essentially no precision). A
+   shipped constant would be wrong more often than right, which is why this repo ships none.
+   **Wanted instead: widen the V tie list by bit-score margin when the evidence is thin.** arda
+   already emits one (61,638 reads get 1 gene, 10,266 get 2, 24,836 get 3) and the misses are
+   reads whose list does not contain the truth gene *at all*, so the instrument is admitting the
+   ambiguity the read really has rather than refusing the call — and it reuses
+   `arda resolve-ties`. ⚠ Done means: swept as a margin on **all four geometries** (IGH 5'RACE,
+   IGH/IGK/IGL bulk) *and* on TCR, where it must be a near-no-op; and costed in **clonotype
+   counts**, not only per-read recall, because a wider `v_call` changes the clonotype key.
+   ✅ **Shipped 2026-09-25: the coverage floor is documented**, in `docs/usage.rst`
+   ("What an IG V call means when the read is short") — both span tables, why position beats
+   length, why SHM does not order it, and why no threshold ships. It is the one IG finding a user
+   can act on today, and `v_sequence_start`/`v_germline_start` are already AIRR columns arda
+   writes, so they can filter on the span themselves.
+   ✅ **The second-patient check is finished (SPX8151, `SRR5233637`/`SRR5233638`).** It is a second
+   PATIENT, not a second geometry, and it replicates the only thing it was asked to: `v_gene` recall
+   is **monotonic in V germline span on all six arms** (two samples x IGH/IGK/IGL) —
+
+   | locus | SRR5233637 | SRR5233638 | < 60 nt | 60–90 | 90–120 |
+   |---|---:|---:|---:|---:|---:|
+   | IGH | .9103 | .9058 | .6887 / .6763 | .8238 / .8538 | **.9649 / .9546** |
+   | IGK | .9770 | .9782 | .9137 / .9013 | .9684 / .9804 | **.9890 / .9890** |
+   | IGL | .8512 | .8793 | .4286 / .4490 | .5568 / .6449 | **.9588 / .9822** |
+
+   1,317–1,558 truth reads per locus per sample at `v_score >= 70`. The two samples agree within
+   0.5 points on IGH and IGK; IGL differs by 2.8 points on 605 reads each.
+   ✅ **And it names where the tie list CANNOT be the fix.** `truth genes/read` — how many distinct
+   V genes IgBLAST itself listed — is **1.49–1.71 on IGK** (the judge could not separate them
+   either, so a wider list is exactly right) but **1.02–1.09 on IGL**, where IgBLAST resolves a
+   single gene and arda still misses 55 % of the `< 60 nt` bin. Those are tie-BREAK errors on
+   evidence that exists, not missing evidence, and they are a separate instrument from item 6's.
+
+   ⚠ Also open and **the author's call, 476 reads**: `IGHV3-52` and `IGHV3-71` have **0 scaffolds**
+   in arda because `load_functional_alleles` excludes IMGT ORF/pseudogenes by design while
+   IgBLAST's DB includes them — **82 of its 121 human IGHV genes**. `CLAUDE.md` ("Reference
+   vocabulary — three checks before a gene joins or leaves") is now the rule for deciding this,
+   and `SOURCES.md` carries the evidence already gathered: **IGHV3-71 is a pseudogene
+   (`ENSG00000254056`) that GTEx nonetheless shows transcribed wherever B cells are** (spleen
+   3.45 TPM, ileum 1.30, EBV-lymphocytes 0.378, ~0 in ~35 of 54 tissues), and it sits at
+   **0.9172** 3' identity to `IGHV3-49` — **separable, so those reads are being mis-assigned
+   today, not merely tied**. Contrast `IGHV3-23`/`IGHV3-23D` and `IGHV3-30`/`IGHV3-30-3` at
+   **1.0000**, where no read can ever separate them and a longer tie list is all that is on offer.
+   ⚠ The *scaffold* set and the *call vocabulary* are separate decisions — scaffold ids are
+   positional, so adding one renumbers the locus and invalidates every precompiled index. Ask
+   before changing either.
+
+7. ✅ **`arda.dpost` consumes what `arda scenarios` writes — `arda markup --d-prior PATH`
+   (2026-09-25).** `load_d_prior(organism, path)` and `posterior_d(..., prior_path=)` take a
+   table; the CLI flag implies `--d-posterior`, because a prior nothing reads is the failure
+   mode this repo keeps hitting. ⚠ The shipped table is ALLOWED to be missing (that is what
+   `None` means for 11 of 13 pairs); a path the caller typed is a request, so it **raises**
+   rather than scoring on an empty prior. This separates *using* an estimate from *adopting*
+   one, which is what item 8 below is the decision about — and item 8 is now approachable
+   without installing anything. Original entry:
+
+   **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
    output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is
    `@lru_cache`d on the organism and reads one fixed path (`dpost.py:108-110`), so the only way to
    use a fitted table is to overwrite a file inside the installed database. `arda.hmm.model_for`
@@ -111,7 +211,7 @@ what is left of the junction-recall gap. Evidence and method:
    `posterior_d` and expose it as `arda markup --d-prior PATH`. Small, and it separates *using* an
    estimate from *adopting* one — which is the decision the entry below is about.
 
-7. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
+8. **11 of the 13 shipped (organism, D-locus) pairs have no `d_prior.tsv` at all.** Not a
    regression: OLGA has no model for them, which is the whole reason the table is derived rather
    than measured. Verified coverage —
 
@@ -129,7 +229,7 @@ what is left of the junction-recall gap. Evidence and method:
    (organism, locus)**, not code. Do human and mouse first, where the benchmark repo already has
    the data, and A/B the fitted table against the OLGA-derived one before adopting either.
 
-8. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
+9. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
    `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,
    and `1e-4` kept both while removing 72 % of real PCR errors on an independent cloud. Not a
    defect — no abundance method separates signal-to-noise ~1, which is why UMI consensus exists —
@@ -137,13 +237,13 @@ what is left of the junction-recall gap. Evidence and method:
    estimate off the data, not a re-tuned constant. ⚠ Whatever it becomes, it is not a QC threshold
    and must not turn into one.
 
-9. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
+10. **A per-allele-per-position SHM model**, which two separate entries below are waiting on: the
    HMM cannot be extended to IGH without one (it would explain mutated germline as N-region and do
    *worse* than exact-match anchors, which at least fail safely), and `_map_d`'s amino-acid path
    searches the three translated D frames as independent database entries, tripling `n`, when the
    prior over `insVD` already induces a prior over frame. Biggest item here by some margin.
 
-10. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
+11. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
    `arda resolve-ties --genotype` applies an allele set (`v_call_genotyped`, `v_call` untouched,
    no re-alignment and no reference rebuild) and `arda genotype` infers one. `stats.py`'s
    `allele_candidate` is untouched and stays *"a shortlist to look at, never a call"* — the
@@ -171,7 +271,7 @@ what is left of the junction-recall gap. Evidence and method:
    rule can be judged on a library that cannot separate the alleles in the first place.
 
    Also open, and deliberately not in this cut: **novel-allele discovery** (needs the per-position
-   SHM model of item 9 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
+   SHM model of item 10 for IGH; TIgGER's y-intercept regression needs mutated reads, which TCR
    does not supply), **J-gene genotyping** (J targets are 38–69 nt and the framework-scoped span
    sits right on `TieResolver.MIN_SPAN`; measure before adding), and any **per-donor reference
    rebuild** — scaffold ids are positional, `build-db` needs IgBLAST, and the mmseqs freshness
