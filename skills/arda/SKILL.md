@@ -132,6 +132,7 @@ arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-conta
 arda scenarios -i clones.tsv -o d_prior.tsv   # EM over recombination scenarios -> a generative model
 
 arda genotype     -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB   # which V alleles this donor has
+arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # widen only where it helps
 arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv
 
 arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
@@ -210,6 +211,11 @@ pipeline and `build-db` / `build-index`.
   rhesus) and for VJ loci. That is deliberate — do not substitute a human proxy. To score one of
   those pairs, fit a table with `arda scenarios` and pass it: `posterior_d(..., prior_path=)` /
   `arda markup --d-prior PATH`. Nothing in the installed database is touched.
+- **`resolve-ties` helps on IGK/IGL/TRB and HURTS on IGH.** Exact `v_gene`-set agreement with
+  IgBLAST: IGK **.5707 -> .9373**, IGL .8586 -> .9137, TRB .9299 -> .9694 -- IGH .8255 -> .7238.
+  arda's IGK call is 0.42 genes/read too NARROW (1.18 vs 1.60); its IGH call already matches
+  IgBLAST's width, so IGH only pays the overshoot. Use `--loci IGK,IGL`. ⚠ Intersection recall
+  rises on every locus including IGH -- score the EXACT set, not the intersection.
 - **An IG `v_call` is only as good as the V germline the read covers**: `v_gene` recall is
   **.1170 under 60 nt and .9896 at 200 nt or more**, and .9896 is the TRA amplicon's .9867 — no
   IG-specific deficit at that coverage. Position beats length (IGHV diverges in FR1/CDR1/CDR2,

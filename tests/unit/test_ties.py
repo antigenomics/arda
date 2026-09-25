@@ -282,3 +282,74 @@ def test_expand_is_unchanged_by_the_refactor():
     assert r.expand("GENEA*01,GENEZ*99", 1, 35) == "GENEA*01,GENEZ*99,GENEB*01"
     for gs, ge in ((None, 35), ("", ""), (0, 35), (35, 1), ("x", "y")):
         assert r.expand("GENEA*01", gs, ge) == "GENEA*01"
+
+
+# --- `--loci`: widening helps on some loci and hurts on others ---------------------------------
+# Measured against an IgBLAST truth on two bulk libraries (benchmark round 32), exact `v_gene` SET
+# agreement moves IGK .5707 -> .9373 and .5558 -> .9308, IGL .8586 -> .9137 and .8577 -> .9115,
+# TRB .9299 -> .9694 -- and IGH .8255 -> .7238 and .8313 -> .7344, a clear loss on every IGH arm
+# measured. So the useful control is per LOCUS, and a mixed library is the normal case.
+
+@pytest.mark.skipif(not _reference_available(), reason="no committed reference")
+def test_loci_widens_only_the_named_loci(tmp_path):
+    src = tmp_path / "in.tsv"
+    pl.DataFrame({
+        "sequence_id": ["igl1", "igl2", "igh1"],
+        "locus": ["IGL", "IGL", "IGH"],
+        "v_call": ["IGLV2-23*01", "IGLV2-14*01", "IGLV2-23*01"],
+        "v_germline_start": ["1", "1", "1"],
+        "v_germline_end": ["70", "70", "70"],
+        "mmseqs2_score": ["100", "100", "100"],
+    }).write_csv(src, separator="\t", quote_style="never")
+    out = tmp_path / "out.tsv"
+    rep = resolve_airr(src, out, organism="human", segments=("v",), loci=("IGL",))
+    got = {r["sequence_id"]: r["v_call"] for r in
+           pl.read_csv(out, separator="\t", infer_schema_length=0).to_dicts()}
+    assert "IGLV2-14" in got["igl1"] and "IGLV2-23" in got["igl1"]
+    # The IGH row carries the SAME call and the same span, so only the locus filter can be what
+    # leaves it alone.
+    assert got["igh1"] == "IGLV2-23*01"
+    assert rep["expanded"]["v"] == 2 and rep["loci"] == ["IGL"]
+
+
+@pytest.mark.skipif(not _reference_available(), reason="no committed reference")
+def test_loci_is_case_and_space_insensitive(tmp_path):
+    src = tmp_path / "in.tsv"
+    pl.DataFrame({
+        "sequence_id": ["r1"], "locus": ["IGL"], "v_call": ["IGLV2-23*01"],
+        "v_germline_start": ["1"], "v_germline_end": ["70"], "mmseqs2_score": ["100"],
+    }).write_csv(src, separator="\t", quote_style="never")
+    out = tmp_path / "out.tsv"
+    rep = resolve_airr(src, out, organism="human", segments=("v",), loci=(" igl ",))
+    assert rep["expanded"]["v"] == 1
+
+
+def test_loci_without_a_locus_column_raises_rather_than_widening_everything(tmp_path):
+    """Never: a filter that cannot be applied must not fall back to applying nothing.
+
+    Silently widening every row would look exactly like success and would be the IGH regression
+    the caller asked to avoid.
+    """
+    src = tmp_path / "in.tsv"
+    pl.DataFrame({
+        "sequence_id": ["r1"], "v_call": ["IGLV2-23*01"],
+        "v_germline_start": ["1"], "v_germline_end": ["70"],
+    }).write_csv(src, separator="\t", quote_style="never")
+    with pytest.raises(ValueError, match="no `locus` column"):
+        resolve_airr(src, tmp_path / "out.tsv", organism="human", segments=("v",),
+                     loci=("IGK", "IGL"))
+
+
+@pytest.mark.skipif(not _reference_available(), reason="no committed reference")
+def test_no_loci_is_every_locus_exactly_as_before(tmp_path):
+    src = tmp_path / "in.tsv"
+    pl.DataFrame({
+        "sequence_id": ["igl1", "igh1"],
+        "locus": ["IGL", "IGH"],
+        "v_call": ["IGLV2-23*01", "IGLV2-23*01"],
+        "v_germline_start": ["1", "1"], "v_germline_end": ["70", "70"],
+        "mmseqs2_score": ["100", "100"],
+    }).write_csv(src, separator="\t", quote_style="never")
+    out = tmp_path / "out.tsv"
+    rep = resolve_airr(src, out, organism="human", segments=("v",))
+    assert rep["expanded"]["v"] == 2 and "loci" not in rep

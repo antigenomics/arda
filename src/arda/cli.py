@@ -1631,6 +1631,14 @@ def resolve_ties_cmd(
     organism: str = typer.Option("human", "--organism"),
     segments: str = typer.Option("v,j", "--segments",
                                  help="Which calls to widen (comma-joined): v, j."),
+    loci: str = typer.Option(
+        "", "--loci",
+        help="Widen only these loci (comma-joined, e.g. `IGK,IGL`); every other row is copied "
+             "through untouched. Default: every locus. WHETHER WIDENING HELPS IS A PROPERTY OF "
+             "THE LOCUS. Measured against an IgBLAST truth on two bulk libraries, exact `v_gene` "
+             "set agreement moves IGK .5707->.9373 and .5558->.9308, IGL .8586->.9137 and "
+             ".8577->.9115, TRB .9299->.9694 -- and IGH .8255->.7238 and .8313->.7344, i.e. a "
+             "clear loss. Benchmark round 32."),
     rank: bool = typer.Option(True, "--rank/--no-rank",
                               help="Second pass: put the allele the WHOLE LIBRARY supports first."),
     genotype: Path = typer.Option(None, "--genotype",
@@ -1660,7 +1668,8 @@ def resolve_ties_cmd(
     from .annotate.ties import resolve_airr
 
     segs = tuple(x.strip() for x in segments.split(",") if x.strip())
-    rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank)
+    loci_t = tuple(x.strip() for x in loci.split(",") if x.strip())
+    rep = resolve_airr(input, output, organism=organism, segments=segs, rank=rank, loci=loci_t)
     log.info("resolve-ties: %d rows", rep["rows"])
     if genotype is not None:
         from .genotype import read_genotype, restrict_airr

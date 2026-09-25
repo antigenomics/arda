@@ -206,6 +206,7 @@ arda annotate -i reads.fastq -o out.airr.tsv --strand forward   # plus-strand on
 arda annotate -i reads.fastq -o out.airr.tsv --d-max-evalue 0.01  # the strict D band
 arda markup -i junctions.tsv -o marked.tsv --report -           # mark up + repair bare (CDR3aa, V, J) records
 arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv        # every germline the read cannot rule out
+arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # ...on the loci where it helps
 arda genotype -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB          # which V alleles this donor carries
 arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv  # ...and apply one
 arda scenarios -i clones.tsv -o d_prior.tsv                     # EM over the recombination scenario set
@@ -337,6 +338,42 @@ pipeline in ~6 s. See [`CHANGELOG.md`](CHANGELOG.md) for what changed per releas
 Input may be FASTA or FASTQ, plain or gzipped. Nucleotide input is searched on **both strands**
 by default (reverse-complement reads are re-oriented and flagged `rev_comp=T`); a single search
 annotates a mixed bulk RNA-seq file across all loci.
+
+## Widening the V call: `arda resolve-ties`, and the loci where it helps
+
+A read aligned over `[germline_start, germline_end]` is explained exactly as well by any germline
+carrying that same stretch, so naming one gene is a claim the data does not support.
+`arda resolve-ties` widens `v_call`/`j_call` to every germline the alignment cannot rule out. It
+adds no alignment — the tie is a string comparison against the reference over the span already
+aligned — and it is **off by default**, because it changes `v_call` on every library.
+
+⚠ **Whether it helps is a property of the locus.** Measured against an `arda igblast` truth
+(`v_score >= 70`) on eleven arms across five geometries, scored on **exact `v_gene`-set
+agreement** rather than intersection:
+
+| locus | arms | exact before | exact after | change |
+|---|---|---|---|---|
+| **IGK** | 2 bulk | .5707 / .5558 | **.9373 / .9308** | **+36.7 / +37.5 points** |
+| **IGL** | 2 bulk | .8586 / .8577 | **.9137 / .9115** | **+5.5 / +5.4 points** |
+| **TRB** | 1 amplicon | .9299 | **.9694** | **+4.0 points** |
+| IGH | 6 (bulk, 5'RACE, multiplex) | .8255–.9755 | .6860–.9608 | **−0.6 to −14.9 points** |
+
+So `--loci IGK,IGL` widens only those loci and copies every other row through untouched: one
+command on a mixed library gets the win where it exists and leaves IGH byte-identical.
+
+The reason is mechanical rather than mysterious. The deciding quantity is the **ambiguity
+deficit** — IgBLAST's genes per read minus arda's, before widening. **arda's IGK call is 0.42
+genes/read too narrow** (1.18 against IgBLAST's 1.60), and closing that gap *is* the 37-point win.
+**arda's IGH call is already as wide as IgBLAST's** (deficit 0.00–0.07 on every arm, 1.589 against
+1.64 on a 5'RACE library), so there is nothing to recover and each arm only pays the overshoot.
+**You can check this without a truth file**: compare mean genes per `v_call` before and after, and
+if it moves far more than a few hundredths, the rule is overshooting on that locus.
+
+⚠ The cost is that fewer reads name a single gene: on IGK the share falls **.8195 → .3883**. That
+is the honest statement of what an IGK read supports, and it is why this is an opt-in command
+rather than a default. Clonotype cost is +2 of 362 on IGK, +3 of 23,559 on TRB, and **zero** on
+IGL. ⚠ Intersection recall rises on *all eleven* arms including IGH — only the exact-set number
+shows the IGH regression.
 
 ## Personalized germline: `arda genotype`, `resolve-ties --genotype`
 

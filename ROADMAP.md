@@ -150,13 +150,37 @@ what is left of the junction-recall gap. Evidence and method:
    win on IGH 5'RACE (precision .92585 → .97693 for −0.69 pt recall) and a clear loss on bulk
    IGH / IGK / IGL (−3.24 / −6.22 / −2.39 points of recall for essentially no precision). A
    shipped constant would be wrong more often than right, which is why this repo ships none.
-   **Wanted instead: widen the V tie list by bit-score margin when the evidence is thin.** arda
-   already emits one (61,638 reads get 1 gene, 10,266 get 2, 24,836 get 3) and the misses are
-   reads whose list does not contain the truth gene *at all*, so the instrument is admitting the
-   ambiguity the read really has rather than refusing the call — and it reuses
-   `arda resolve-ties`. ⚠ Done means: swept as a margin on **all four geometries** (IGH 5'RACE,
-   IGH/IGK/IGL bulk) *and* on TCR, where it must be a near-no-op; and costed in **clonotype
-   counts**, not only per-read recall, because a wider `v_call` changes the clonotype key.
+   ✅ **The widening instrument is SWEPT and the answer is per-LOCUS (round 32, 2026-09-25).**
+   arda already ships the widening — `arda resolve-ties`, off by default — so the sweep needed no
+   new mechanism, just a scorer that prices the cost. Eleven arms, five geometries, three loci,
+   two receptors, against an `arda igblast` truth. **Exact `v_gene`-SET agreement**:
+
+   | arm | locus | truth genes/read | exact before | exact after | Δ |
+   |---|---|---:|---:|---:|---:|
+   | `SRR5233639` / `SRR5233640` bulk | **IGK** | 1.60 / 1.62 | .5707 / .5558 | **.9373 / .9308** | **+36.7 / +37.5** |
+   | `SRR5233639` / `SRR5233640` bulk | **IGL** | 1.09 | .8586 / .8577 | **.9137 / .9115** | **+5.5 / +5.4** |
+   | `SRR5233641` amplicon | **TRB** | 1.08 | .9299 | **.9694** | **+4.0** |
+   | six IGH arms (bulk, 5'RACE x3, multiplex) | IGH | 1.12–1.64 | .8255–.9755 | .6860–.9608 | **−0.6 to −14.9** |
+
+   ⚠ **Intersection recall rises on ALL ELEVEN arms**, IGH included. Reading recall without the
+   exact-set number would have shipped a 10-point IGH regression as a 5-point IGH win; that is
+   what `scripts/vcall_widening_cost.py` exists for.
+   ✅ **The mechanism is predictive, not empirical.** The deciding quantity is the ambiguity
+   DEFICIT — IgBLAST's genes/read minus arda's, before widening. **arda's IGK call is 0.42
+   genes/read too NARROW** (1.18 against 1.60), and closing that gap is the whole 37-point win.
+   **arda's IGH call is already as wide as IgBLAST's** (deficit 0.00–0.07 on every arm, 1.589
+   against 1.64 on 5'RACE), so there is nothing to recover and each arm pays the overshoot — up to
+   +0.40 genes/read against a 0.06 deficit on bulk IGH. A user can run that check without a truth
+   file: compare `genes/read` before and after.
+   ✅ **Shipped: `arda resolve-ties --loci IGK,IGL`.** Verified on one mixed bulk library, one
+   command: IGH byte-identical to untouched (exact .8255, 108 clonotypes), IGK and IGL taking the
+   full win. ⚠ The cost is `solo` — the share of IGK reads naming exactly one gene falls
+   .8195 → .3883 — which is the honest statement of what an IGK read supports and why this stays
+   an opt-in command, not a default. Clonotype cost: **+2 on IGK, +3 of 23,559 on TRB, ZERO on
+   IGL**. Evidence: `results/round32`.
+   ⛔ **Do not re-propose a bit-score MARGIN for this.** The instrument that was wanted is
+   measured; what it recovers is an IGK-specific narrowness, and a margin would be a second
+   mechanism for the same job.
    ✅ **Shipped 2026-09-25: the coverage floor is documented**, in `docs/usage.rst`
    ("What an IG V call means when the read is short") — both span tables, why position beats
    length, why SHM does not order it, and why no threshold ships. It is the one IG finding a user
@@ -223,11 +247,30 @@ what is left of the junction-recall gap. Evidence and method:
    | rat | IGH | — |
    | rhesus_monkey | IGH, TRB, TRD | — |
 
-   `load_d_prior` returns `{}` for a missing organism and `posterior_d` then returns `None`
-   (`dpost.py:197-199`), so `arda markup` silently has no D posterior for three of five organisms.
-   `arda scenarios` fits exactly this table from real junctions, so the blocker is **a cohort per
-   (organism, locus)**, not code. Do human and mouse first, where the benchmark repo already has
-   the data, and A/B the fitted table against the OLGA-derived one before adopting either.
+   `load_d_prior` returns `{}` for a missing organism and `posterior_d` then returns `None`, so
+   `arda markup` silently has no D posterior for three of five organisms. `arda scenarios` fits
+   exactly this table from real junctions, so the blocker is **a cohort per (organism, locus)**,
+   not code.
+   ✅ **The A/B this entry asks for is DONE on human TRB, the only locus with both tables
+   (2026-09-25).** 45,536 records fitted in 5 EM iterations (log-likelihood −1,057,744.6 →
+   −976,796.3), judged against arda's own **nucleotide** D call at E ≤ 0.05 — independent of both
+   priors — on 5,570 distinct clonotypes:
+
+   | prior | agreement | TRBJ2 only | confident | confident agreement |
+   |---|---:|---:|---:|---:|
+   | shipped (OLGA) | .9339 | .9043 | .4736 | .9996 |
+   | fitted (`arda scenarios`) | **.9363** | **.9076** | **.4876** | .9996 |
+
+   Read the **TRBJ2** column: on TRBJ1 both the posterior and the nucleotide caller enforce the
+   same TRBD2 × TRBJ1 prohibition, so agreement there is guaranteed rather than earned.
+   ⚠ **The fit is in-sample** — same library — so +0.33 points is an upper bound. What it
+   establishes is that a fitted table is **usable and not worse**, and that the path now works end
+   to end. ⛔ **It also found a real defect**: `arda scenarios` writes a `#` provenance line above
+   its header and `load_d_prior` skipped line 1 by POSITION, so the one file `docs/scenarios.rst`
+   calls a drop-in raised on read. Fixed.
+   **Still open, and it is DATA**: a cohort for the 11 pairs with no table at all. `aldan3`'s ngsik
+   registry carries **3,616 M. musculus library rows**, which is where mouse IGH and mouse TRD
+   would come from.
 
 9. **`--error-rate`'s single default is wrong for variant preservation.** At the default `1e-3`,
    `rnaseq correct` erases both published MIGEC spike-in variants; `1e-5` recovers both exactly,

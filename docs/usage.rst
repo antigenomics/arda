@@ -472,6 +472,72 @@ against the .9896 above and the TRA amplicon's .9867. ⛔ And the protocol name 
 factor: the *same* 5'RACE protocol scores **.1170** on a short read and **.9645** at 251 nt. What
 matters is how much V the read carries and from which end.
 
+.. _resolve-ties-loci:
+
+Widening the V call, and the loci where that helps
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``arda resolve-ties`` widens ``v_call`` to every germline the read's alignment cannot rule out. It
+is off by default and it is **not** uniformly good: measured against an ``arda igblast`` truth on
+eleven arms across five geometries, scored on **exact** ``v_gene``-set agreement rather than
+intersection —
+
+.. list-table:: exact ``v_gene``-set agreement with IgBLAST, before and after ``resolve-ties``
+   :header-rows: 1
+   :widths: 12 30 18 18 22
+
+   * - locus
+     - arms
+     - before
+     - after
+     - change
+   * - **IGK**
+     - 2 bulk
+     - .5707 / .5558
+     - **.9373 / .9308**
+     - **+36.7 / +37.5 pt**
+   * - **IGL**
+     - 2 bulk
+     - .8586 / .8577
+     - **.9137 / .9115**
+     - **+5.5 / +5.4 pt**
+   * - **TRB**
+     - 1 amplicon
+     - .9299
+     - **.9694**
+     - **+4.0 pt**
+   * - IGH
+     - 6 (bulk, 5'RACE, multiplex)
+     - .8255–.9755
+     - .6860–.9608
+     - **−0.6 to −14.9 pt**
+
+.. code-block:: sh
+
+   arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL
+
+``--loci`` widens only the named loci and copies every other row through untouched, so one command
+on a mixed library takes the win on IGK and IGL and leaves IGH byte-identical to the input.
+
+The reason is mechanical. The deciding quantity is the **ambiguity deficit** — IgBLAST's genes per
+read minus arda's, *before* widening. arda's IGK call is **0.42 genes/read too narrow** (1.18
+against 1.60) and closing that gap is the whole 37-point win; arda's IGH call is already as wide as
+IgBLAST's (deficit 0.00–0.07 on every arm, 1.589 against 1.64 on 5'RACE), so there is nothing to
+recover and each IGH arm only pays the overshoot. **You can check this on your own library with no
+truth file**: compare the mean number of genes per ``v_call`` before and after, and if it moves far
+more than a few hundredths the rule is overshooting on that locus.
+
+.. warning::
+
+   Two things this trades away. **Fewer reads name a single gene** — on IGK the share falls
+   ``.8195 → .3883``, which is the honest statement of what an IGK read supports and why this stays
+   an opt-in command. And **intersection recall rises on all eleven arms, IGH included**, so a
+   scorer that only asks "does arda's list contain the truth gene" reports the 10-point IGH
+   regression as a 5-point IGH win.
+
+   Clonotype cost, since ``v_call`` is part of the clonotype key: **+2 of 362 on IGK, +3 of 23,559
+   on TRB, and zero on IGL**.
+
 Allele-level separation needs considerably more than gene-level identification does — IGHV needs a
 median **230 nt** from the 3' end to separate a gene's alleles, against 175 for TRAV and 150 for
 TRBV. See :doc:`genotype` for that table and what it means for ``arda genotype``.
