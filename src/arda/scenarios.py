@@ -119,6 +119,53 @@ def _common_suffix(a: str, b: str) -> int:
     return n
 
 
+@lru_cache(maxsize=8)
+def _v_full_germlines(organism: str) -> dict[str, str]:
+    """``{v_call: full V germline nt}``, for SHM scoring only.
+
+    ``Germlines.v_nt`` is the V germline **from Cys104 onward** -- the part inside the junction.
+    An SHM rate is a function of the 5-mer AROUND a position, and the two bases before Cys104 are
+    not in that string, so scoring the tail needs the full germline and where the tail starts in
+    it. The caller derives that offset by suffix match, which also validates the pairing.
+
+    Verified on the shipped human IGH reference: the junction-space germline is an exact suffix of
+    the full one on **313 of 314** alleles. The exception is ``IGHV1-45*01``, whose anchor germline
+    carries an ``N``; an allele that fails the suffix test falls back to the exact-match bound and
+    scores exactly as it does today.
+    """
+    from .shmmodel import germline_map
+
+    return {allele: full for allele, (full, _spans) in germline_map(organism).items()}
+
+
+def _emission(junction: str, germline: str, shm, full: str, offset: int, suffix: bool
+              ) -> list[float]:
+    """``e[t]`` = ``P(the t observed bases | they are templated)``, cumulative in ``t``.
+
+    Each templated position costs ``1 - mu`` when it matches the germline and ``mu / 3`` when it
+    does not, with ``mu`` from the SHM model at that position's own germline context.
+
+    ⚠ **The exact-match bound this replaces is the mu = 0 case of it**: with no model a mismatch
+    costs 0, so ``e[t]`` is 1 up to the common prefix and 0 after, which is precisely
+    ``_common_prefix``. Nothing about the recursion changes; a length that used to be forbidden
+    now carries a price instead.
+    """
+    out = [1.0]
+    acc = 1.0
+    n = min(len(germline), len(junction))
+    for i in range(n):
+        if suffix:
+            obs, ref, pos = junction[-1 - i], germline[-1 - i], len(full) - i
+        else:
+            obs, ref, pos = junction[i], germline[i], offset + i + 1
+        mu = shm.rate(full, pos)
+        acc *= (1.0 - mu) if obs == ref else (mu / 3.0)
+        out.append(acc)
+        if acc <= 0.0:
+            break
+    return out
+
+
 def _d_placements(junction: str, d_germlines) -> list[tuple[str, int, int, int, int]]:
     """Every ``(allele, start, length, del_dl, del_dr)`` a D germline can occupy exactly.
 
@@ -323,7 +370,7 @@ def _side(p_len: list[float], p_ins: list[float], span: int, max_side: int
 
 
 def lattice(junction_nt: str, v_call: str, j_call: str, model: _Model,
-            species: str = "human"):
+            species: str = "human", shm=None):
     """``(g, L, terms, left, right)`` for one junction, or ``None``.
 
     **This is the forward-backward pass.** ``terms`` is every state of the semi-Markov chain
@@ -334,6 +381,14 @@ def lattice(junction_nt: str, v_call: str, j_call: str, model: _Model,
 
     :mod:`arda.hmm` is this function read as inference and :func:`accumulate` is it read as an
     E-step. They are the same recursion, which is why there is one implementation.
+
+    ``shm`` is an optional :class:`arda.shmmodel.ShmModel`. Without one the templated V length is
+    bounded by the **exact** common prefix, which is right for TR and unmutated IG and is what
+    every shipped caller still gets, byte for byte. With one, a longer templated V is allowed and
+    priced: each position costs ``1 - mu`` where it matches and ``mu / 3`` where it does not, so a
+    hypermutated V tail stops having to be read as N-region. ⚠ **V side only** -- the model is
+    fitted on ``v_mutations`` and has no J rates, and inventing them by reusing V's would be a
+    parameter nothing measured.
     """
     g = germlines_for(v_call, j_call, species)
     junction = (junction_nt or "").strip().upper()
@@ -342,11 +397,23 @@ def lattice(junction_nt: str, v_call: str, j_call: str, model: _Model,
     locus, L = g.locus, len(junction)
     v_max = _common_prefix(junction, g.v_nt)
     j_max = _common_suffix(junction, g.j_nt)
+    # With an SHM model the V bound is the germline itself rather than the exact prefix, and the
+    # positions past the prefix are PRICED instead of forbidden. `emit` stays None otherwise, so
+    # a caller that passes no model walks exactly the lattice it walked before.
+    emit = None
+    if shm is not None:
+        full = _v_full_germlines(resolve_species(species)).get(g.v_allele, "")
+        if full.endswith(g.v_nt):
+            v_max = min(len(g.v_nt), L)
+            emit = _emission(junction, g.v_nt, shm, full, len(full) - len(g.v_nt), suffix=False)
+            v_max = min(v_max, len(emit) - 1)
     # `del_*_of` is indexed by DELETION; `_side` wants an index of TEMPLATED LENGTH. Templated
     # `t` means `len(germline) - t` deleted, and `max_del` caps the deletion -- so short templated
     # lengths are what the cap removes, not long ones.
     pv = _templated(model.del_v_of(locus, g.v_allele, len(g.v_nt)), len(g.v_nt),
                     v_max, model.max_del)
+    if emit is not None:
+        pv = [w * emit[t] for t, w in enumerate(pv)]
     pj = _templated(model.del_j_of(locus, g.j_allele, len(g.j_nt)), len(g.j_nt),
                     j_max, model.max_del)
     v_cap, j_cap = len(pv) - 1, len(pj) - 1
@@ -392,9 +459,16 @@ def lattice(junction_nt: str, v_call: str, j_call: str, model: _Model,
 
 
 def accumulate(junction_nt: str, v_call: str, j_call: str, model: _Model,
-               stats: SufficientStats, weight: float = 1.0, species: str = "human") -> bool:
-    """Add one record's expected counts. Returns ``False`` when it could not be read."""
-    built = lattice(junction_nt, v_call, j_call, model, species)
+               stats: SufficientStats, weight: float = 1.0, species: str = "human",
+               shm=None) -> bool:
+    """Add one record's expected counts. Returns ``False`` when it could not be read.
+
+    ``shm`` is the E-step's half of :func:`lattice`'s parameter: with a model, a hypermutated V
+    tail is priced rather than forbidden, so its bases stop being counted as trimming and
+    insertion. That is the bias this is here to remove -- on real IGH the mean templated V read as
+    N-region falls **2.672 -> 1.877 bases** (benchmark round 34).
+    """
+    built = lattice(junction_nt, v_call, j_call, model, species, shm)
     if built is None:
         return False
     g, L, terms, left, right = built
@@ -490,7 +564,7 @@ def enumerate_scenarios(junction_nt: str, v_call: str, j_call: str,
 
 
 def estimate(records, *, organism: str = "human", iterations: int = 5,
-             max_del: int = 24, echo=None) -> SufficientStats:
+             max_del: int = 24, echo=None, shm=None) -> SufficientStats:
     """EM over ``(junction_nt, v_call, j_call, weight)`` records; returns the final counts.
 
     Never: **weighted by the model, never by 1/n over the ambiguity set.** Uniform weighting is
@@ -501,6 +575,11 @@ def estimate(records, *, organism: str = "human", iterations: int = 5,
 
     Never: **each record contributes 1.0 in total, not one count per scenario.** A junction with
     400 admissible readings must not outvote one with 3.
+
+    ``shm`` is an :class:`arda.shmmodel.ShmModel`. Without one the templated V length is bounded
+    by an exact prefix, which on a hypermutated IG library charges every substitution in the V
+    tail to ``delV`` and ``insVD`` -- exactly the two distributions being fitted. It is ``None``
+    by default, so TR and unmutated IG fit as they always have.
     """
     records = list(records)
     model = _Model(organism, max_del=max_del)
@@ -508,7 +587,7 @@ def estimate(records, *, organism: str = "human", iterations: int = 5,
     for it in range(max(1, iterations)):
         stats = SufficientStats(counts={})
         for junction, v_call, j_call, weight in records:
-            if not accumulate(junction, v_call, j_call, model, stats, weight, organism):
+            if not accumulate(junction, v_call, j_call, model, stats, weight, organism, shm):
                 stats.skipped += 1
         if echo:
             echo(f"scenarios: iteration {it + 1}/{iterations} -- {stats.records} records, "

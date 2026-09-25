@@ -57,7 +57,7 @@ binary.
 ## Build, test, lint, docs
 
 ```sh
-python -m pytest tests/unit tests/synthetic tests/realworld -q    # 1,239 tests, the CI gate
+python -m pytest tests/unit tests/synthetic tests/realworld -q    # 1,248 tests, the CI gate
 ruff check src/                                                    # PINNED to 0.15.9 in CI
 make -C docs html                                                  # -W --keep-going; zero warnings required
 env RUN_BENCHMARK=1 ARDA_MMSEQS=$(which mmseqs) python -m pytest tests/benchmark -q

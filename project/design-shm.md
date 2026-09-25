@@ -100,18 +100,49 @@ Never: **the loader skips comments, blanks and the header by WHAT THEY ARE, not 
 above the header. `tests/unit/test_shmmodel.py` pins it with a file that has a comment above the
 header, a second comment lower down, a repeated header mid-file and a malformed row.
 
-## S2 — the junction model reads it (not started)
+## S2 — the junction model reads it (shipped)
 
-`scenarios.lattice` bounds the templated V length with `_common_prefix(junction, v_nt)`, an
-**exact** match. Under SHM a substitution in the templated tail truncates that bound and the
-remainder is explained as insertion. The roadmap's own note says the failure is *safe* — it
-widens the interior and never clips the D — which is why this is an upgrade, not a bug fix.
+`lattice(..., shm=model)`, `accumulate(..., shm=)`, `estimate(..., shm=)` and
+`arda scenarios --shm-model`. A templated stretch is scored by `Π (1 − μ)` over matches and
+`μ / 3` over mismatches, with `μ` from `ShmModel.rate`.
 
-The change is to score a templated stretch by `Π (1 − μ)` over matches and `μ · 1/3` over
-mismatches, with `μ` from `ShmModel.rate(germline, pos)` and no region term (the tail belongs to
-no V region). ⚠ **Done means measured, not written**: the existing D-call accuracy and junction
-recall on IGH must not move against round 28's numbers, and the two negatives the roadmap already
-records must not be re-run.
+✅ **The exact-match bound is the `μ = 0` case of the emission, not a separate rule.** With every
+rate 0 a mismatch costs 0, so no templated length past the common prefix survives — which is
+exactly what `_common_prefix` computes. `tests/unit/test_shm_lattice.py` compares term weights
+between the two paths and pins it.
+
+Never: **`shm=None` is the default and is byte-identical**, so TR, unmutated IG and every shipped
+caller are untouched.
+
+Never: **V side only.** The model is fitted on `v_mutations` and has no J rates; reusing V's for
+J would be a parameter nothing measured. That restriction is also what makes the result's
+specificity readable — see below.
+
+**Measured (benchmark `results/round34`), 26,619 real IGH junctions, with the model fitted on a
+different donor's library:**
+
+| parameter | exact | SHM | change |
+|---|---:|---:|---:|
+| `delV` mean | 4.148 | **2.708** | **−1.440** |
+| `delV` P(0) | .1426 | **.2388** | +.0962 |
+| `insVD` mean | 12.065 | **10.972** | **−1.093** |
+| `insDJ` mean | 12.342 | 12.144 | −0.198 |
+| `delJ` mean | 12.247 | 12.253 | **+0.006** |
+
+**The exact bound was charging 1.44 nt of V germline per IGH rearrangement to deletion and 1.09 nt
+to V-side insertion**, and the mode of `delV` moves from 1 to 0. ✅ `delJ` moving +0.006 against
+`delV` −1.440 is the result's own control: the V-side parameters the change can reach moved, the
+J-side ones it cannot did not.
+
+On the D posterior, judged by arda's independent nucleotide D caller (10,849 junctions at
+`d_support <= 0.05`), agreement is .7885 → .7898 — **+15 genes net**, concentrated in the most
+mutated bin (+0.0040) and −0.0019 on unmutated reads. Small, and pointing the right way; the
+mean templated V read as N-region falls 2.672 → 1.877 bases. Cost: **+4.8 % wall** on a
+3-iteration fit.
+
+⛔ **Never compare the two arms' log-likelihoods.** They are likelihoods under different models —
+the SHM arm carries an emission term per templated base. Within an arm the EM sequence is
+meaningful; across arms it is not a number at all.
 
 ## S3 — novel-allele discovery (not started)
 

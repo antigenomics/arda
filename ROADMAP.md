@@ -312,14 +312,36 @@ what is left of the junction-recall gap. Evidence and method:
    ⚠ **The scale is the SAMPLE's, not the model's** (.031 against .050, same shape), so it is
    written as provenance and never applied.
 
-   **Open — S2, which is this entry's original consumer.** `scenarios.lattice` bounds the
-   templated V length with `_common_prefix`, an exact match, so a substitution in the templated
-   tail truncates it and the remainder is explained as insertion. The change is to score a
-   templated stretch by `Π(1 − μ)` over matches and `μ/3` over mismatches; ⚠ **done means
-   measured** — D-call accuracy and IGH junction recall must not move against round 28 — not
-   written. Still open and unrelated to SHM: `_map_d`'s amino-acid path searches the three
-   translated D frames as independent database entries, tripling `n`, when the prior over `insVD`
-   already induces a prior over frame.
+   ✅ **S2 shipped: the junction model reads it (`arda scenarios --shm-model`).**
+   `lattice(..., shm=)`, `accumulate`, `estimate` and the CLI flag. A templated stretch is scored
+   by `Π(1 − μ)` over matches and `μ/3` over mismatches. ✅ **The exact-match bound turns out to
+   be the `μ = 0` case of that emission**, not a separate rule — with every rate 0 no templated
+   length past the common prefix survives, which is what `_common_prefix` computes, and a test
+   compares term weights between the two paths. `shm=None` is the default and byte-identical.
+
+   Measured on 26,619 real IGH junctions with the model fitted on a **different donor's** library
+   (round 34):
+
+   | parameter | exact | SHM | change |
+   |---|---:|---:|---:|
+   | `delV` mean | 4.148 | **2.708** | **−1.440** |
+   | `delV` P(0) | .1426 | **.2388** | +.0962 |
+   | `insVD` mean | 12.065 | **10.972** | **−1.093** |
+   | `insDJ` mean | 12.342 | 12.144 | −0.198 |
+   | `delJ` mean | 12.247 | 12.253 | **+0.006** |
+
+   **The exact bound was charging 1.44 nt of V germline per IGH rearrangement to deletion** and
+   1.09 nt to V-side insertion; `delV`'s mode moves from 1 to 0. ✅ The specificity is the
+   result's own control — the model is applied to the V side only, so `delJ` at +0.006 against
+   `delV` at −1.440 says the change reached what it should and nothing else. D posterior against
+   arda's independent nucleotide caller: .7885 → .7898 on 10,849 junctions, **+15 genes net**,
+   concentrated in the most mutated bin (+0.0040) and −0.0019 on unmutated. Cost +4.8 % wall.
+   ⛔ **Never compare the two arms' log-likelihoods** — different models, the SHM arm carries an
+   emission term per templated base.
+
+   **Still open, and unrelated to SHM**: `_map_d`'s amino-acid path searches the three translated
+   D frames as independent database entries, tripling `n`, when the prior over `insVD` already
+   induces a prior over frame.
 
 11. **Personalized germline — the consumer side shipped, the inference needs a confidence model.**
    `arda resolve-ties --genotype` applies an allele set (`v_call_genotyped`, `v_call` untouched,

@@ -124,6 +124,14 @@ def germline_map(organism: str = "human", locus: str = "") -> dict[str, tuple[st
     A scaffold is ``V + N-pad + J``, so a V region's scaffold coordinates ARE its germline
     coordinates and ``v_sequence_end`` is where the V germline stops. One entry per ``v_call``:
     every scaffold of a V carries the same V markup, so the first one answers for all of them.
+
+    ⚠ **A scaffold's ``v_call`` may be a comma-joined GROUP**, and every member is keyed
+    separately as well as the group string. ``refbuild.combinations`` collapses alleles whose
+    assembled ``V + pad + J`` is identical -- so they are identical over the V by construction --
+    and 11 of the 325 human IGH keys are such groups covering 338 member alleles. Keying only the
+    group string loses every lookup by a single allele: ``IGHV3-23*01`` lives inside
+    ``IGHV3-23*01,IGHV3-23D*01`` and would silently have no germline, in the estimator and in
+    :func:`arda.scenarios.lattice` alike.
     """
     from .refexport import _read_fasta          # the same dict[id, seq] reader export-ref uses
 
@@ -141,7 +149,9 @@ def germline_map(organism: str = "human", locus: str = "") -> dict[str, tuple[st
         spans = [(name, entry.starts[i], entry.ends[i])
                  for i, name in enumerate(V_REGIONS)
                  if entry.starts[i] > 0 and 0 < entry.ends[i] <= entry.v_sequence_end]
-        out[entry.v_call] = (seq[:entry.v_sequence_end], spans)
+        value = (seq[:entry.v_sequence_end], spans)
+        for key in (entry.v_call, *entry.v_call.split(",")):
+            out.setdefault(key, value)
     return out
 
 
