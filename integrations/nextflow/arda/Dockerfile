@@ -4,9 +4,9 @@
 # Build it, push it wherever you deploy from, then point the module's `container` directive (or a
 # `withName` override in your nextflow.config) at the pushed tag:
 #
-#   docker build -t arda-mapper:2.27.0 integrations/nextflow/arda
-#   docker tag  arda-mapper:2.27.0 <your-registry>/arda-mapper:2.27.0
-#   docker push <your-registry>/arda-mapper:2.27.0
+#   docker build -t arda-mapper:2.28.0 integrations/nextflow/arda
+#   docker tag  arda-mapper:2.28.0 <your-registry>/arda-mapper:2.28.0
+#   docker push <your-registry>/arda-mapper:2.28.0
 #
 FROM mambaorg/micromamba:1.5.8
 COPY --chown=$MAMBA_USER:$MAMBA_USER environment.yml /tmp/environment.yml

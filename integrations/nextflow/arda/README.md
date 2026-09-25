@@ -8,7 +8,7 @@ germline scaffold with FR1–4 / CDR1–3 markup — then maps reads onto it wit
 the markup through the alignment in C++. So there is no per-run germline database to stage:
 `--reference_igblast`, `--reference_fasta` and `--fetch_germlines` are not consulted.
 
-Pinned to **arda 2.27.0** (`environment.yml`, the `container` tag, the `Dockerfile`).
+Pinned to **arda 2.28.0** (`environment.yml`, the `container` tag, the `Dockerfile`).
 `tests/unit/test_nextflow_integration.py` asserts all four against `arda.__version__`.
 
 ---
@@ -115,12 +115,12 @@ passthrough.
   point the module at the tag:
 
   ```bash
-  docker build -t arda-mapper:2.27.0 integrations/nextflow/arda
-  docker tag  arda-mapper:2.27.0 <your-registry>/arda-mapper:2.27.0
-  docker push <your-registry>/arda-mapper:2.27.0
+  docker build -t arda-mapper:2.28.0 integrations/nextflow/arda
+  docker tag  arda-mapper:2.28.0 <your-registry>/arda-mapper:2.28.0
+  docker push <your-registry>/arda-mapper:2.28.0
   ```
 
-  then `withName: 'ARDA_ASSIGN' { container = '<your-registry>/arda-mapper:2.27.0' }`.
+  then `withName: 'ARDA_ASSIGN' { container = '<your-registry>/arda-mapper:2.28.0' }`.
 
 ---
 
