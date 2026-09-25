@@ -133,8 +133,17 @@ what is left of the junction-recall gap. Evidence and method:
    counts**, not only per-read recall, because a wider `v_call` changes the clonotype key.
    ⚠ Also open and **the author's call, 476 reads**: `IGHV3-52` and `IGHV3-71` have **0 scaffolds**
    in arda because `load_functional_alleles` excludes IMGT ORF/pseudogenes by design while
-   IgBLAST's DB includes them (arda ships **82 human IGHV genes**). Admitting ORFs to the
-   *scaffold* set is a different decision from admitting them to the *call vocabulary*. Ask first.
+   IgBLAST's DB includes them — **82 of its 121 human IGHV genes**. `CLAUDE.md` ("Reference
+   vocabulary — three checks before a gene joins or leaves") is now the rule for deciding this,
+   and `SOURCES.md` carries the evidence already gathered: **IGHV3-71 is a pseudogene
+   (`ENSG00000254056`) that GTEx nonetheless shows transcribed wherever B cells are** (spleen
+   3.45 TPM, ileum 1.30, EBV-lymphocytes 0.378, ~0 in ~35 of 54 tissues), and it sits at
+   **0.9172** 3' identity to `IGHV3-49` — **separable, so those reads are being mis-assigned
+   today, not merely tied**. Contrast `IGHV3-23`/`IGHV3-23D` and `IGHV3-30`/`IGHV3-30-3` at
+   **1.0000**, where no read can ever separate them and a longer tie list is all that is on offer.
+   ⚠ The *scaffold* set and the *call vocabulary* are separate decisions — scaffold ids are
+   positional, so adding one renumbers the locus and invalidates every precompiled index. Ask
+   before changing either.
 
 7. **`arda.dpost` cannot consume what `arda scenarios` writes.** `docs/scenarios.rst` calls the
    output a drop-in for `d_prior.tsv`, and it is — by *format*. But `dpost.load_d_prior` is

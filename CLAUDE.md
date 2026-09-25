@@ -245,6 +245,48 @@ tuning flags (`--two-pass`, `--fast-segments`, `--v-only-on-segment`, `--prefilt
 NAME picks the preset (`_MODE_SPEED` in `cli.py`), `--exact` turns every one off, and `arda map`
 still exposes them individually for A/B work.
 
+## Reference vocabulary — three checks before a gene joins or leaves
+
+`refbuild.imgt.load_functional_alleles` excludes IMGT ORFs and pseudogenes, so arda ships **82 of
+the 121 human IGHV genes IgBLAST's germline DB carries**. That gap is not automatically a defect
+and not automatically fine: a read from an excluded gene does not vanish, it gets called as the
+nearest gene that IS present. Round 30 found `IGHV3-52 -> IGHV3-7` (394 reads) and
+`IGHV3-71 -> IGHV3-49` (82) exactly that way.
+
+⛔ **Never add or drop a gene on the strength of a confusion table alone.** Run all three checks
+and record the answers in `SOURCES.md`, so the next person does not re-derive them:
+
+1. **Literature — is the gene functionally attested in real repertoires?** Invoke the `citations`
+   skill and retrieve the record; never cite from memory. Worked example: IGHV3-53/3-66 are a
+   *public antibody* pair repeatedly induced by SARS-CoV-2 infection and vaccination, explicitly
+   contrasted with IGHV1-69 — Kuwata et al., *EBioMedicine* 2024;110:105439,
+   https://pubmed.ncbi.nlm.nih.gov/39488016/, doi:10.1016/j.ebiom.2024.105439. A gene with that
+   kind of attestation is load-bearing however IMGT classifies it.
+2. **Expression — is the locus actually transcribed, in the right tissue?** GTEx by Ensembl id.
+   Worked example: **IGHV3-71 is an IG V *pseudogene*** (`ENSG00000254056`, HGNC:5621) **and is
+   still transcribed where B cells are** — spleen 3.45 TPM, minor salivary gland 2.39, transverse
+   colon 1.33, terminal ileum 1.30, EBV-transformed lymphocytes 0.378, and essentially zero in ~35
+   of 54 tissues. ⚠ "Pseudogene" is a statement about the protein, not about whether reads exist.
+3. **The TIED-HIT test — would admitting it add information, or only ambiguity?** Compare the
+   candidate to every gene already present, 3'-anchored over the shared length, and take the best:
+
+   | pair | 3' identity | reading |
+   |---|---:|---|
+   | `IGHV3-23` / `IGHV3-23D` | **1.0000** | a true tie — no read can ever separate them |
+   | `IGHV3-30` / `IGHV3-30-3` | **1.0000** | a true tie |
+   | `IGHV3-53` / `IGHV3-66` | 0.9898 | near-tie; expect a two-gene call, not a winner |
+   | `IGHV3-71` / `IGHV3-49` | **0.9172** | separable — its absence is a real miscall |
+   | `IGHV3-52` / `IGHV3-7` | **0.9088** | separable — same |
+   | `IGHV1-69` / `IGHV1-18` | 0.9054 | separable, so THAT confusion is not homology (round 30: it is a 55 nt read span) |
+
+   **>= ~0.99 means admitting the gene buys a longer tie list and nothing else.** **<= ~0.95 means
+   reads from it are being actively mis-assigned today.** Between the two, say which and why.
+
+⚠ The scaffold set and the **call vocabulary** are separate decisions. A gene can be worth naming
+(so a read is attributed to the germline it came from) without being worth a V·J scaffold cross
+product — scaffold ids are positional, so adding one renumbers the locus and invalidates every
+precompiled index. Decide them one at a time, and **ask before changing either**.
+
 ## QC: the line, and the two rules that hold it
 
 - **Never: arda's QC answers "did this run work, and is this sample like its batch" — never "what
