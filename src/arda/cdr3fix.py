@@ -337,13 +337,27 @@ def resolve_locus(v_call: str, j_call: str = "") -> str:
 
 
 def resolve_allele(call: str, segment: str, anchors: dict) -> str:
-    """VDJdb's ``get_closest_id`` ladder: exact -> ``gene*01`` -> first allele of the gene.
+    """Exact -> ``gene*01`` -> first allele of the gene -> the family's one functional gene.
 
-    VDJdb has a ``family*01`` rung between the last two. It is dead: for a dashless gene
-    (``TRBV9``) the family *is* the gene, so the rung above already fired; for a dashed one
-    (``IGHV3-23``) it would need an allele literally named ``IGHV3*01``, which IMGT does not
-    mint. Measured over all five shipped organisms it is reachable for **0** genes, so it is
-    not carried here. The rung below it is live: ``IGLV3-4`` -> ``IGLV3-4*02``.
+    VDJdb has a ``family*01`` rung in the middle of its ``get_closest_id`` ladder. That literal
+    rung is dead: for a dashless gene (``TRBV9``) the family *is* the gene, so the rung above
+    already fired; for a dashed one (``IGHV3-23``) it would need an allele literally named
+    ``IGHV3*01``, which IMGT does not mint. Measured over all five shipped organisms it is
+    reachable for **0** genes.
+
+    What VDJdb's ladder does reach, and this one did not, is a call naming a **family** whose genes
+    all carry a suffix: ``TRBV20`` for ``TRBV20-1``, ``TRBV24`` for ``TRBV24-1``. Nothing named
+    ``TRBV20`` exists, so every earlier rung misses and the segment fails outright -- 6,291 human
+    beta chains of VDJdb, whose CDR3s the germline places without a single edit once the call
+    resolves.
+
+    The last rung fills that, and it refuses rather than guesses: the family must contain **exactly
+    one functional gene**. Functionality is the whole of the difference between refusing and
+    answering for ``TRBV3``, whose family holds ``TRBV3-1`` (F) and ``TRBV3-2`` (P) -- a
+    pseudogene cannot be the V of an expressed receptor, so the call is not ambiguous. Where
+    several functional genes share the family (``TRBV6`` has five) there is nothing to resolve and
+    the caller gets ``""``; VDJdb's ladder would have taken the lowest-numbered one, which is how
+    ``TRAV6-7-DV9`` ends up marked up as ``TRAV6-1*01``.
 
     Returns ``""`` when nothing resolves.
     """
@@ -358,6 +372,17 @@ def resolve_allele(call: str, segment: str, anchors: dict) -> str:
     for (seg, allele) in anchors:
         if seg == segment and allele.split("*")[0] == gene:
             return allele
+
+    prefix = f"{gene}-"
+    family = {
+        allele.split("*")[0]
+        for (seg, allele), anchor in anchors.items()
+        if seg == segment
+        and anchor.functionality == "F"
+        and allele.split("*")[0].startswith(prefix)
+    }
+    if len(family) == 1:
+        return resolve_allele(family.pop(), segment, anchors)
     return ""
 
 

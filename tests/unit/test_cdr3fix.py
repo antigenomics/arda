@@ -117,6 +117,31 @@ def test_resolve_allele_gene_level_fallback(anchors):
     assert resolve_allele("NOSUCHV", "V", anchors) == ""
 
 
+def test_resolve_allele_family_with_one_functional_gene(anchors):
+    """A call naming a family whose genes all carry a suffix: nothing is named `TRBV20`, so every
+    earlier rung misses and the segment used to fail outright."""
+    assert resolve_allele("TRBV20", "V", anchors) == "TRBV20-1*01"
+    assert resolve_allele("TRBV24", "V", anchors) == "TRBV24-1*01"
+
+
+def test_resolve_allele_family_ignores_a_non_functional_sibling(anchors):
+    """`TRBV3-1` is functional and `TRBV3-2` is a pseudogene, so the family is not ambiguous: a
+    pseudogene cannot be the V of an expressed receptor."""
+    assert resolve_allele("TRBV3", "V", anchors) == "TRBV3-1*01"
+
+
+def test_resolve_allele_refuses_an_ambiguous_family(anchors):
+    """`TRBV6` has five functional genes. VDJdb's ladder takes the lowest-numbered one, which is how
+    `TRAV6-7-DV9` gets marked up as `TRAV6-1*01`; this refuses instead."""
+    assert resolve_allele("TRBV6", "V", anchors) == ""
+    assert resolve_allele("TRBV12", "V", anchors) == ""
+
+
+def test_resolve_allele_family_does_not_match_a_longer_number(anchors):
+    """`TRBV2` must not resolve through `TRBV20-1`: the prefix is `TRBV2-`, not `TRBV2`."""
+    assert resolve_allele("TRBV2", "V", anchors) == "TRBV2*01"
+
+
 # --------------------------------------------------------------------------
 # Markup + repair — the three motivating cases
 # --------------------------------------------------------------------------

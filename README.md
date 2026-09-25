@@ -152,6 +152,14 @@ carry **4.66–5.00×** the rate of every other covered position in all four lib
 ⚠ The fitted **scale** is the sample's, not the model's — two donors differ **1.6×** in overall
 rate with the same shape — so it is written as provenance and a consumer rescales.
 
+`arda scenarios --shm-model shm.tsv` is what reads it. The templated V length was bounded by an
+**exact** match, so on IGH one substitution in the V tail forced the rest of that tail to be
+explained as insertion — and `delV` and `insVD` are the distributions being fitted. Measured on
+26,619 real IGH junctions with the model fitted on a **different donor**: `delV` mean
+**4.148 → 2.708** (its mode 1 → 0), `insVD` **12.065 → 10.972**, and `delJ` **12.247 → 12.253**,
+which does not move because the model reaches the V side only. Leave the flag off for TR and
+unmutated IG, where it costs ~5 % wall and changes nothing.
+
 Never: a scenario is **not identifiable from sequence** — 4,346 tuples reproduce one real human
 TRB junction exactly — so the counts are expected counts summed over scenarios, never one MAP
 reading. And an insertion costs its own sequence (`0.25^len`), not just its length: without that,

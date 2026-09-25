@@ -29,7 +29,7 @@ process ARDA_ASSIGN {
     // process in the pipeline, which silently builds a different arda *and* a different aligner
     // than this module was validated with. Override it under `withName: 'ARDA_ASSIGN' { ... }`.
     conda "${moduleDir}/environment.yml"
-    container "arda-mapper:2.28.0"
+    container "arda-mapper:2.29.0"
 
     input:
     tuple val(meta), path(reads)
