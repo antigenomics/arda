@@ -3,7 +3,7 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.30.0 - 2026-09-27
 
 ### Fixed: the V/J boundary no longer credits germline for residues that paid nothing
 
