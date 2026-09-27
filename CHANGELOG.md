@@ -3,6 +3,15 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.30.1 - 2026-09-27
+
+Everything in 2.30.0 below, plus the version carried into the four pins the 2.30.0 commit
+missed: `src/arda/__init__.py`'s `__version__`, the Nextflow `environment.yml` conda pin, the
+`container` tag in `main.nf`, and the module `Dockerfile` with its README.
+`test_the_two_version_literals_agree` and `test_every_version_pin_tracks_the_package` both exist
+for this and both failed on master, so **2.30.0 was never published** - this is the first release
+of the boundary fix to reach PyPI. The `v2.30.0` tag stays where it is as the record.
+
 ## 2.30.0 - 2026-09-27
 
 ### Fixed: the V/J boundary no longer credits germline for residues that paid nothing
