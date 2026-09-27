@@ -403,6 +403,69 @@ what is left of the junction-recall gap. Evidence and method:
    contract records no allele-set identity.
 
 
+12. **Amino-acid V/J mapping is calibrated for nucleotides, and the boundary fix is only the first
+   of the two things that needed it.** `cdr3fix` is the only entry point where the query is amino
+   acids, and it borrows the nucleotide scoring: `_align`'s `_MATCH, _MISMATCH, _GAP = 1, -1, -2`
+   plus a `max((s[i][j], j, -i))` tie-break that prefers consuming more query on a score tie. On
+   nucleotides one substitution inside a 30 nt germline run is ordinary sequencing error and the
+   calibration is right. On amino acids a single coincidental match pays for a mismatch exactly, so
+   the aligner extends the germline past the point where the germline stopped explaining anything.
+
+   ✅ **Shipped in 2.30.0 (issue #132): the two-extent split.** `_errors` and `_repair` keep the
+   full aligned extent, so a repairable substitution deep in the germline is still repaired;
+   `v_end` / `j_start` come from `_supported`, the earliest argmax of the running score, which is
+   where germline evidence actually stops. No test was modified and none broke (1,213 passed).
+   Measured against external nucleotide truth on the 8,334 VDJdb human TRB records whose
+   `(species, cdr3, v, j)` key appears exactly once in `isalgo/airr_control`
+   (`human.trb.ntvj.vdjtools.tsv.gz`, V/J-annotated nucleotide junctions; `j.start` converted as
+   `ceil(nt/3)`, `v.end` as `floor(nt/3)`):
+
+   | engine | `j.start` exact | over-extended by >= 2 residues |
+   |---|---:|---:|
+   | VDJdb's shipped k-mer scanner | 7,987 | 0 |
+   | arda 2.29.0 | 8,041 | 138 |
+   | arda 2.30.0 | **8,164** | **1** |
+
+   All 136 over-extensions the fix removed are one shape: the J germline's leading `S` matching a
+   junction residue by coincidence and paying for the next mismatch (`'SP'`, `'SS'`, `'SG'`).
+
+   **What is left, and what would make it done.** 170 records are still off by one residue in both
+   directions, which is what a substitution-matrix score would separate and a +-1 score cannot: an
+   `I`/`L` or `S`/`T` match at the boundary is evidence, an `I`/`W` match is not. Done means a
+   BLOSUM62-derived `_MATCH_AA` / `_MISMATCH_AA` pair used only when the query is amino acids,
+   measured on the same 8,334 records, with no regression on the nucleotide suite and no change to
+   any `_errors` / `_repair` decision.
+
+   **Two neighbouring defects the same measurement exposed, both arda's to fix.**
+
+   - **D mapping ignores the locus geometry.** `TRBD2` lies downstream of the whole TRBJ1 cluster,
+     so a rearrangement cannot use `TRBD2` with a `TRBJ1-x` gene. `dmap` / `dpost` will call it
+     anyway: on the 8,098 records where a D is callable, applying the constraint moves agreement
+     with the nucleotide reference from 71.9 % to **78.8 %** and retracts 241 impossible calls of
+     arda's own. The constraint belongs in the D candidate set, not in the caller. ⚠ The control
+     itself violates it on 648 of 8,098 records (8.0 %), so the constraint cannot be validated by
+     agreement alone - it has to be asserted from the locus.
+   - **A substitution is reported where a sibling allele explains the junction exactly.** Across
+     all of VDJdb, 2,507 fix sides carry a substitution *and* have at least one alternative allele
+     of the same gene in the reference; on **658** of them another allele of that same gene explains
+     the junction with no edit at all (328 human V, 235 human J, 95 murine), dominated by
+     `TRAJ24*01` where `*02`/`*03` fit cleanly. Done means `markup_cdr3` trying the gene's other
+     alleles before it reports an edit, and naming the allele it switched to in the fix record so a
+     curator can see the re-assignment rather than a repair. This is `antigenomics/vdjdb-db#327`
+     rediscovered from sequence fit alone.
+
+   **The enumeration side belongs in `vdjtools` / `seqtree`, not here.** arda's answer is a greedy
+   ML boundary: one alignment, one `v_end`, one `j_start`. Many junctions have several
+   near-equally-probable boundaries and nothing in `cdr3fix` can say so. `vdjtools.model.native`
+   already enumerates nucleotide scenarios (`best_aa_scenarios` marginalises over them); what is
+   missing is the amino-acid enumeration proper - every plausible `(v_end, j_start, d_allele, d5
+   deletion, d3 deletion)` combination consistent with an aa junction, with a probability on each.
+   Measured on 25,000 real clonotypes, enumeration is not a replacement for the aligner
+   (`best_aa_scenarios` 59.8 % exact / 90.3 % within one residue, 642 declines, 7.6 s against
+   arda 2.30.0's 73.3 % / 97.7 %, 0 declines, 0.6 s), so the two are complements: alignment gives
+   the point estimate, enumeration gives the alternatives, the D geometry and a way to constrain the
+   greedy choice toward germline where an N-region match is coincidental.
+
 - [ ] **Single-cell.** Staged plan in **`project/design-singlecell.md`**; that document is
       authoritative and this entry is the index.
 
