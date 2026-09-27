@@ -5,6 +5,43 @@ Notable changes per release. Earlier releases are described by their git tags
 
 ## Unreleased
 
+### Fixed: the V/J boundary no longer credits germline for residues that paid nothing
+
+`cdr3fix` placed the boundary about two residues too far into the junction on a measurable fraction
+of amino-acid junctions. `_align` chooses the best-scoring cell and, on a tie, preferred consuming
+**more** query. A tie means the extra residues contributed nothing, so crediting them to the segment
+is attribution without evidence.
+
+Scoring is calibrated for nucleotides, where one substitution is a plausible read error and
+`_MISMATCH = -1` against `_MATCH = 1` is right. In amino-acid space a substitution is a much stronger
+claim, so a single coincidental match pays for a mismatch exactly and the alignment walks through the
+N region. `CAGSGVSRDTQYF` against `TRBJ2-3*01` (`STDTQYF`) is the case: `SRDTQYF` scores 6 matches
+minus 1 mismatch, tying `DTQYF`'s 5 matches, and nucleotide-level markup of that clonotype puts the
+boundary at `DTQYF`.
+
+The fix separates two questions that shared one answer. `_errors` and `_repair` keep the full aligned
+extent, because a substitution one residue short of the end is a typo worth reporting. `v_end` and
+`j_start` now come from `_supported`, which stops at the **first** position where the running score
+reaches its maximum: past that point the alignment is only breaking even. A repair still earns the
+full extent, because a repaired residue is one the germline explains.
+
+Measured against the observed nucleotide markup of real repertoires (`VEnd`/`JStart` established with
+the nucleotides present, arda seeing only amino acids and the V/J calls):
+
+| | `v.end` exact | within 1 | `j.start` exact | within 1 | boundary out by >=2 |
+|---|---|---|---|---|---|
+| 2.29.0, 25,000 human TRB | 72.6% | 98.7% | 95.9% | 97.7% | 566 on `j.start` |
+| this change | 73.3% | 99.3% | 97.7% | 99.5% | 10 on `j.start` |
+
+On 8,334 VDJdb human TRB records that also appear in that data, `j.start` goes from 8,041 exact to
+8,164, overtaking the k-mer scanner VDJdb currently ships (7,987) while declining nothing where that
+scanner declines two.
+
+Nothing else moves: across 25,536 real clonotypes, `vFixType`, `jFixType`, `good` and the repaired
+CDR3 differ on **zero** records, and throughput is unchanged. The full suite passes unmodified,
+including `test_deep_substitution_is_reported_but_not_repaired`, which is the test that separating
+the two extents exists to keep.
+
 ### Added: `arda correct --error-rate auto` — measure the rate instead of assuming Phred 30
 
 `--error-rate` is a per-library property that shipped as a constant: `1e-3` is "assume Phred 30",
