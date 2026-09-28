@@ -106,17 +106,31 @@ _MAX_TRIM = 3
 # `applied=False`) -- the caller asked where the V/J mismatch is -- but never applied.
 _MAX_REPLACE = 1
 
-# VDJdb fix types, with its rank order (worst wins when several apply).
+# VDJdb fix types, with its rank order (worst wins when several apply). `TruncatedGermline` is
+# arda's own, and sorts below every ordinary success: the boundary is real but it is a LOWER
+# BOUND, read off a germline record IMGT ships incomplete (see `_MIN_TRUNCATED_AA`).
 _RANK = {
     "NoFixNeeded": 0,
     "FixTrim": 1,
     "FixAdd": 2,
     "FixReplace": 3,
-    "FailedBadSegment": 4,
-    "FailedReplace": 5,
-    "FailedNoAlignment": 6,
+    "TruncatedGermline": 4,
+    "FailedBadSegment": 5,
+    "FailedReplace": 6,
+    "FailedNoAlignment": 7,
 }
-_GOOD = {"NoFixNeeded", "FixTrim", "FixAdd", "FixReplace"}
+_GOOD = {"NoFixNeeded", "FixTrim", "FixAdd", "FixReplace", "TruncatedGermline"}
+
+# A `status = truncated` anchor is a germline record that stops inside the anchor region, so its
+# `templated_aa` is short but correct as far as it goes. Place a boundary from one only when it
+# carries at least this many residues.
+#
+# 3 is where the prefix starts to mean something. Over the 1,101 human V anchors of 2 residues or
+# more, `CA` alone is 657 of them (59.7 %), so a 2-residue match is a coincidence rather than
+# evidence; at 3 residues there are 62 distinct prefixes and the most common, `CAR`, is 283 of 989
+# (28.6 %). This admits 38 of the 63 truncated human V anchors and 43 of the 53 mouse ones, and
+# leaves the rest declining as `FailedBadSegment` -- which is the right answer for `C` and `CA`.
+_MIN_TRUNCATED_AA = 3
 
 MARKUP_COLUMNS = [
     "cdr3", "cdr3_repaired", "v_call", "j_call", "locus", "species",
@@ -136,7 +150,7 @@ class Anchor:
     segment: str          # "V" | "J"
     templated_aa: str     # V: starts at Cys104. J: ends at [FW]118.
     functionality: str
-    status: str           # "ok" | "no_anchor"
+    status: str           # "ok" | "truncated" | "no_anchor"
     source: str           # "ndm" | "aux" | "motif" | "no_anchor"
     anchor_nt: int = -1   # 0-based offset of the anchor codon in the germline
     partial_nt: int = 0   # V: dangling 3' nt; J: dangling 5' nt (mid-codon)
@@ -605,6 +619,22 @@ def _fix_type(errs: list[Cdr3Error], aligned: bool) -> str:
     return "FixTrim"
 
 
+def _placeable(anchor: Anchor | None) -> bool:
+    """Can this anchor place a junction boundary at all?
+
+    ``status == "ok"`` always can. ``truncated`` can when it still carries
+    ``_MIN_TRUNCATED_AA`` residues: IMGT ships those allele records as partial sequences that
+    stop inside the anchor region, so the templated run is SHORT but correct as far as it goes,
+    and refusing it throws away a boundary that is present. ``no_anchor`` never can.
+    """
+    if anchor is None or not anchor.templated_aa:
+        return False
+    if anchor.status == "ok":
+        return True
+    return (anchor.status == "truncated"
+            and len(anchor.templated_aa) >= _MIN_TRUNCATED_AA)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -636,7 +666,7 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
 
     repaired = cdr3
     # ---- V side: anchored at Cys104 (index 0), free gap toward the N region.
-    if v_anchor is None or v_anchor.status != "ok" or not v_anchor.templated_aa:
+    if not _placeable(v_anchor):
         rec.v_fix, rec.v_end = "FailedBadSegment", -1
     else:
         g = v_anchor.templated_aa
@@ -664,9 +694,14 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
         else:
             errs = _reported_only(errs)      # a Failed* side repairs nothing
         rec.errors.extend(errs)
+        # Said LAST, so the repair above ran under its own fix type. The boundary is a lower
+        # bound -- the germline record stops early, so residues past it are unattributed rather
+        # than known non-templated -- and the caller has to be able to see that.
+        if v_anchor.status == "truncated" and rec.v_fix in _GOOD:
+            rec.v_fix = "TruncatedGermline"
 
     # ---- J side: anchored at [FW]118 (last index), free gap toward the N region.
-    if j_anchor is None or j_anchor.status != "ok" or not j_anchor.templated_aa:
+    if not _placeable(j_anchor):
         rec.j_fix, rec.j_start = "FailedBadSegment", -1
     else:
         g = j_anchor.templated_aa[::-1]
@@ -688,6 +723,8 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
         else:
             errs = _reported_only(errs)      # a Failed* side repairs nothing
         rec.errors.extend(errs)
+        if j_anchor.status == "truncated" and rec.j_fix in _GOOD:
+            rec.j_fix = "TruncatedGermline"
 
     rec.cdr3_repaired = repaired
     rec.errors.sort(key=lambda e: (e.side, e.pos))

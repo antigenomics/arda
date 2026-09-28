@@ -274,3 +274,106 @@ def test_the_conflict_resolution_prefers_ok_then_the_longer_germline():
     src = inspect.getsource(cdr3fix.load_anchors)
     assert 'a.status == "ok"' in src
     assert "len(a.germline_nt)" in src
+
+
+# --------------------------------------------------------------------------
+# Truncated anchors (issue #135)
+# --------------------------------------------------------------------------
+
+# Seven junctions whose V/J boundary is known from OUTSIDE arda: `isalgo/airr_control`'s
+# `human.trb.ntvj` observed each `(junction_aa, V gene, J gene)` with nucleotides present, and
+# every observation agreed on `VEnd`. All seven carry a V allele IMGT ships truncated, so before
+# this rule arda declined every one of them with `v_end = -1`.
+TRUNCATED_ANCHOR_TRUTH = [
+    ("CASSLAGGSYEQYF", "TRBV11-2*02", "TRBJ2-7*01", 4),
+    ("CASSLAGTGELFF", "TRBV11-2*02", "TRBJ2-2*01", 5),
+    ("CASSLASGQETQYF", "TRBV5-1*02", "TRBJ2-5*01", 5),
+    ("CASSLGTSSYEQYF", "TRBV11-2*02", "TRBJ2-7*01", 5),
+    ("CASSLMRSSYNEQFF", "TRBV11-2*02", "TRBJ2-1*01", 5),
+    ("CASSLPPDTQYF", "TRBV11-2*02", "TRBJ2-3*01", 4),
+    ("CASSLQGETQYF", "TRBV11-2*02", "TRBJ2-5*01", 5),
+]
+
+
+@pytest.mark.parametrize("allele,sibling,templated", [
+    ("TRBV11-2*02", "TRBV11-2*01", "CASS"),
+    ("TRBV5-1*02", "TRBV5-1*01", "CAS"),
+])
+def test_a_truncated_anchor_places_a_boundary_instead_of_declining(anchors, allele, sibling,
+                                                                  templated):
+    """IMGT ships these allele records short, but what they do carry is germline and usable.
+
+    The sibling allele of the same gene has a full anchor, so the two used to answer the same
+    junction differently: `*01` a boundary, `*02` a refusal. Both answer now, and the fix type
+    says which kind of answer it is.
+    """
+    assert anchors[("V", allele)].status == "truncated"
+    assert anchors[("V", allele)].templated_aa == templated
+
+    m = markup_cdr3("CASSLQGETQYF", allele, "TRBJ2-5*01", HS)
+    assert m.v_fix == "TruncatedGermline"      # not NoFixNeeded, and not FailedBadSegment
+    assert m.v_end == len(templated)
+    assert m.good                              # still a usable record, not a failure
+
+    full = markup_cdr3("CASSLQGETQYF", sibling, "TRBJ2-5*01", HS)
+    assert full.v_fix == "NoFixNeeded"         # the ok-anchor sibling is unchanged
+    assert m.j_start == full.j_start           # the J side never declined and must not move
+
+
+@pytest.mark.parametrize("cdr3,v,j,truth_v_end", TRUNCATED_ANCHOR_TRUTH)
+def test_the_boundary_from_a_truncated_anchor_is_a_lower_bound_on_the_truth(cdr3, v, j,
+                                                                           truth_v_end):
+    """Never past the nucleotide truth, because a short germline can only under-claim.
+
+    A truncated record stops early, so residues beyond its end are *unattributed* rather than
+    known non-templated. Reporting the boundary it does support is therefore safe in one
+    direction only, and that is the direction pinned here.
+    """
+    m = markup_cdr3(cdr3, v, j, HS)
+    assert m.v_end > 0, f"{v} on {cdr3} still declines"
+    assert m.v_fix == "TruncatedGermline"
+    assert m.v_end <= truth_v_end, f"{v} on {cdr3}: {m.v_end} over-claims past truth {truth_v_end}"
+    assert truth_v_end - m.v_end <= 2
+
+
+@pytest.mark.parametrize("allele,templated", [
+    ("TRAV20*03", "C"),
+    ("TRAV20*04", "CA"),
+    ("TRAV26-1*03", "CI"),
+])
+def test_an_anchor_too_short_to_carry_information_still_declines(anchors, allele, templated):
+    """`C` and `CA` are not evidence.
+
+    Of the 1,101 human V anchors of two residues or more, `CA` alone is 657 -- so a two-residue
+    match places a boundary by coincidence. Three is the threshold, and below it
+    `FailedBadSegment` keeps its old meaning.
+    """
+    assert anchors[("V", allele)].templated_aa == templated
+    m = markup_cdr3("CAVRDSNYQLIW", allele, "TRAJ33*01", HS)
+    assert m.v_fix == "FailedBadSegment"
+    assert m.v_end == -1
+
+
+def test_the_threshold_is_a_rule_over_the_whole_anchor_table(anchors):
+    """Pinned across every allele, so a reference rebuild cannot quietly move the line."""
+    from arda.cdr3fix import _MIN_TRUNCATED_AA, _placeable
+
+    truncated = [a for (seg, _), a in anchors.items() if seg == "V" and a.status == "truncated"]
+    assert truncated, "expected truncated V anchors in the human table"
+    for a in truncated:
+        assert _placeable(a) == (len(a.templated_aa) >= _MIN_TRUNCATED_AA)
+    # The counts on the shipped reference, so a rebuild that moves them is worth seeing rather
+    # than absorbing. These are per ALLELE: `cdr3_anchors.tsv` carries 63 truncated human V rows
+    # over 61 distinct alleles, and `load_anchors` collapses the duplicates (see
+    # `test_the_conflict_resolution_prefers_ok_then_the_longer_germline`).
+    assert len(truncated) == 61
+    assert sum(_placeable(a) for a in truncated) == 37
+
+
+def test_truncated_germline_is_a_success_that_ranks_below_every_ordinary_one():
+    """It must not drop a record out of `good`, and must not outrank a real fix."""
+    from arda.cdr3fix import _GOOD, _RANK
+
+    assert "TruncatedGermline" in _GOOD
+    assert _RANK["TruncatedGermline"] > _RANK["FixReplace"]
+    assert _RANK["TruncatedGermline"] < _RANK["FailedBadSegment"]

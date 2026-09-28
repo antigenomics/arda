@@ -39,6 +39,13 @@ Repair is deliberately conservative and its two decisions are separate:
   and close with Phe/Trp118, it is refused and the submission returned untouched. So `good`
   implies canonical. An allele with no derivable anchor gives `FailedBadSegment` — flagged,
   never guessed.
+- **`TruncatedGermline` is a boundary, not a failure.** IMGT ships some allele records stopping
+  inside the anchor region, so their templated run is short but correct as far as it goes (38 of
+  63 truncated human V anchors, 43 of 53 mouse). Those place a boundary and carry this fix type,
+  which counts as `good` and sorts below every ordinary success: `v_end` from one is a **lower
+  bound**, because residues past the record's end are unattributed rather than known
+  non-templated. Under 3 templated residues it stays `FailedBadSegment` — `CA` alone is 657 of
+  1,101 human V anchors, so a two-residue match is coincidence.
 
 `posterior_d` infers the D gene *and where it sits* from the junction's nucleotide length,
 which pins `insVD + |D surviving| + insDJ`. Shipped for human IGH/TRB/TRD and mouse TRB only
