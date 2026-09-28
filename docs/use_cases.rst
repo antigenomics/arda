@@ -120,8 +120,8 @@ Two things decide whether a rare real variant survives:
 
 ``--error-rate``
    At the shipped ``1e-3`` the abundance model erases both published MIGEC spike-in variants. At
-   ``1e-5`` both are recovered exactly. Never: This is a **per-library calibration**, not a default
-   change: the right value depends on the library's error-cloud abundance ratio.
+   ``1e-5`` both are recovered exactly. Treat this as a **per-library calibration** rather than a
+   default to change: the right value depends on the library's error-cloud abundance ratio.
 ``--ec-mode accurate``
    Adds a Phred gate on the base that discriminates a clonotype from its parent — evidence the
    abundance model does not have. A real low-frequency variant is a *good read of a rare molecule*:

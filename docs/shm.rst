@@ -53,58 +53,62 @@ reads of a real bulk IG library (66,526 V mismatches, zero disagreements). What 
 
    Use ``v_mutations`` / ``j_mutations`` in preference to the alignment strings.
 
-.. note::
+Why the junction is excluded
+----------------------------
 
-   **✅ FIXED IN 2.16.0 — and this is the retraction of a guarantee this page once printed.** Until
-   2.14.0 this page claimed the N-pad is not a segment, so a junction position "cannot enter the
-   list by any code path". That was false. The pad *is* excluded, but the **V germline's 3' tail
-   and the J germline's 5' head lie inside the junction**, and mutations were scoped by segment
-   (``t <= t_vend``, ``[t_jstart, t_vjend]``), not by the junction boundary — so exonuclease
-   chew-back and non-templated N/P bases were emitted as substitutions against a germline that does
-   not template them.
+Scoping SHM to the framework is not a convenience. The V germline's 3' tail and the J germline's
+5' head both lie **inside** the junction, so counting mutations by segment boundary rather than by
+the junction boundary reports exonuclease chew-back and non-templated N/P bases as substitutions
+against a germline that does not template them.
 
-   What it cost, measured on a **TRA amplicon** (SRR5233636, 500,000 reads) — T-cell receptors do
-   **not** somatically hypermutate, so every entry there was spurious by construction:
+The size of that effect was measured on a TRA amplicon (SRR5233636, 500,000 reads). T-cell
+receptors do not somatically hypermutate, so every entry on that library is spurious by
+construction:
 
-   * **1.046 V and 1.658 J "mutations" per read**;
-   * **86.2 % of J entries sat at J germline position <= 10**, i.e. the 5' head, inside the
-     junction;
-   * splitting the reported load by the frequency of each ``(allele, position, alt)`` across reads
-     carrying that allele: **13.0 % of J entries below frequency 0.01** (sequencing error),
-     **80.8 % between 0.01 and 0.5** (junction diversity), **6.2 % at 0.5 or above** (a genuinely
-     wrong *allele* call). ⚠ **Frequency alone does not separate those populations — frequency AND
-     position against the anchor does**: the high-frequency ones are junction-internal too
-     (``TRAV8-6*01`` positions 281/282 at 0.88 against its anchor at 270; ``TRAJ8*01`` position 1
-     at 0.67 against 26), i.e. allele differences in the *templated* V/J tail.
+* **1.046 V and 1.658 J "mutations" per read** under segment scoping;
+* **86.2 % of the J entries sat at J germline position ≤ 10** — the 5' head, inside the junction;
+* splitting the load by the frequency of each ``(allele, position, alt)`` across reads carrying
+  that allele: 13.0 % of J entries below frequency 0.01 (sequencing error), 80.8 % between 0.01 and
+  0.5 (junction diversity), 6.2 % at 0.5 or above (a genuinely wrong *allele* call).
 
-   Since 2.16.0 ``v_mutations``, ``j_mutations`` and ``v_identity`` are scoped to the **framework**
-   using the per-read germline anchors, in every mode. ⚠ **This moves every SHM number arda has
-   ever published.** ``--shm both`` also emits the old junction-inclusive values as
-   ``v_identity_full`` / ``v_mutations_full`` / ``j_mutations_full``, which is what you need to
-   reproduce a figure made before the fix; ``--shm off`` emits no SHM fields at all.
+Frequency alone does not separate those three populations; frequency **and** position relative to
+the anchor does. The high-frequency entries are junction-internal too — ``TRAV8-6*01`` positions
+281/282 at 0.88 against its anchor at 270, ``TRAJ8*01`` position 1 at 0.67 against 26 — that is,
+allele differences in the templated V/J tail rather than mutation.
 
-   ⚠ A read whose called allele has **no usable anchor** is left *unscoped* rather than emptied —
-   arda does not know where that germline's junction starts, and saying so beats guessing. The raw
-   anchors still ship, so the scoping stays checkable rather than merely trusted.
+Since 2.16.0 ``v_mutations``, ``j_mutations`` and ``v_identity`` are scoped to the framework using
+the per-read germline anchors, in every mode.
 
-Recounting a table written before the fix
-------------------------------------------
+.. important::
+
+   The scoping change moves every SHM figure arda produced before 2.16.0. To reproduce one, use
+   ``--shm both``, which also emits the junction-inclusive values as ``v_identity_full``,
+   ``v_mutations_full`` and ``j_mutations_full``. ``--shm off`` emits no SHM fields at all.
+
+A read whose called allele has no usable anchor is left **unscoped** rather than emptied: arda does
+not know where that germline's junction starts, and saying so is better than guessing. The raw
+anchors ship in the output, so the scoping stays checkable rather than merely trusted.
+
+IGH, IGK and IGL are where SHM is real. The scoping runs on every locus anyway, because the effect
+is not IG-specific — it was measured on TRA. On the TR loci the entries that survive are allele
+mismatches in the templated framework, not hypermutation.
+
+Rescoping a table written before 2.16.0
+---------------------------------------
 
 ``arda shm`` rescopes an existing AIRR TSV. It needs **no reference and no re-map** — the anchors
-and the alignment strings are already in the file (they have shipped since 2.14.0):
+and the alignment strings are already in the file, and have shipped since 2.14.0:
 
 .. code-block:: bash
 
    arda shm -i mapped.airr.tsv -o rescoped.airr.tsv              # framework (default)
    arda shm -i mapped.airr.tsv -o both.airr.tsv --mode both      # + the old values as *_full
 
-Never: On a file older than 2.14.0 — no ``v_anchor_nt`` column — this **raises**. It does not copy the
-input through with a success message; a command that reports success over an unchanged file is a
-failure mode arda has already shipped once.
+.. note::
 
-⚠ IGH/IGK/IGL are where SHM is real. The scoping runs on every locus anyway, because the defect was
-never IG-specific — it was measured on TRA. On the TR loci the entries that survive are allele
-mismatches in the templated framework, not hypermutation.
+   On a file older than 2.14.0, which has no ``v_anchor_nt`` column, this **raises**. It does not
+   copy the input through with a success message — a command that reports success over an unchanged
+   file is worse than one that fails.
 
 Recomputing what you actually want
 -----------------------------------
@@ -168,10 +172,11 @@ emitted **before** 2.16.0; the one beside it is what it emits now:
      - 78
      - 5
 
-Never: The first two rows are **TR** loci, where somatic hypermutation does not occur — so
-the old ``v_identity`` of 0.8723 for ``TRBV28*02`` was measuring junction diversity outright. The
-bias was worst when the aligned span is mostly junction: that record covers 47 nt of germline, only
-30 of it framework. The IG rows move much less, because their alignments are mostly framework.
+The first two rows are TR loci, where somatic hypermutation does not occur, so the
+junction-inclusive ``v_identity`` of 0.8723 for ``TRBV28*02`` was measuring junction diversity
+outright. The bias is worst where the aligned span is mostly junction: that record covers 47 nt of
+germline, only 30 of it framework. The IG rows move much less, because their alignments are mostly
+framework.
 
 .. important::
 
@@ -297,7 +302,7 @@ reproduces across donors, with the shipped estimator giving FWR1 **×0.683 and �
    overall substitution rate (.031 against .050) with the same shape, so the fitted rate is
    written as provenance and a consumer rescales to the library in front of it.
 
-Two properties worth knowing before reading the table:
+Two properties of the table:
 
 * A region with **no observed substitution is omitted**, never given a multiplier of 0 — zero
   would read as "a substitution here is impossible" and silently zero every probability in that

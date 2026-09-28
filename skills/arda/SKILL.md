@@ -13,14 +13,25 @@ description: >-
 
 # arda
 
-arda does the expensive IgBLAST work **once, offline** — a reference of every in-frame V·J
-germline scaffold with FR1–4 / CDR1–3 markup — then at runtime maps queries to it with MMseqs2
-and projects the markup through the alignment in C++. That makes it embeddable and ~4–8× faster
-than IgBLAST, with 98–99.7 % region concordance on real GenBank mRNA across all five organisms.
+arda annotates TCR and BCR sequences and returns AIRR Rearrangement records: V/D/J/C gene calls,
+FR1–FR4 and CDR1–CDR3 coordinates, and the junction. Input can be reads (bulk RNA-seq, amplicon or
+single cell) or sequences you already have, nucleotide or amino acid, with all loci searched at
+once. `arda rnaseq` / `arda amplicon` / `arda cells` take raw reads to a clonotype table in one
+command.
+
+Mechanically: it does the expensive IgBLAST work **once, offline**, building a reference of every
+in-frame V·J germline scaffold already annotated with FR1–4 / CDR1–3 markup, then at runtime maps a
+query to it with MMseqs2 and projects the markup through the alignment in C++. That makes it
+embeddable and ~4–8× faster than IgBLAST, at 98–99.7 % region concordance on real GenBank mRNA
+across all five organisms.
 
 It also handles records with **no read behind them** — a CDR3 amino acid plus a V and J call, as
 in VDJdb — marking up which residues each germline templates, repairing the junction, and
 inferring the D gene from the junction's length.
+
+Human-facing documentation lives at https://docs.isalgo.dev/arda/ — `quickstart`, `usage`,
+`cli`, `outputs`, `benchmarks`, `glossary`, `how_it_works`. Point users there rather than
+restating it.
 
 ## Install and environment
 

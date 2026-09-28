@@ -47,6 +47,8 @@ call, and write four files:
 
 ``arda cells`` starts one step later — see :ref:`single cell <usage-singlecell>` below.
 
+.. _usage-speed-levers:
+
 .. warning::
 
    **The two speed configurations do not compose, and neither half is optional.** This is why
@@ -86,35 +88,8 @@ Bulk RNA-seq
 runs, so the FASTA write and the DB build are skipped along with the search. It costs ~0.5 % of
 real reads — concentrated in J→C and hypermutated IGH — which is why it is off by default.
 
-Measured on 100 k bulk RNA-seq reads:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 28 18 18 18
-
-   * - tool
-     - wall (s)
-     - CPU (s)
-     - peak RSS (MB)
-   * - arda
-     - 2.51
-     - 5.40
-     - 234
-   * - MiXCR 4.7.0
-     - 4.54
-     - 31.80
-     - 3,022
-   * - TRUST4
-     - **1.91**
-     - **4.36**
-     - **192**
-
-.. note::
-
-   TRUST4's row is **not the same stage of work**. It measures candidate *extraction* — which
-   reads look receptor-derived — while arda's and MiXCR's rows measure a per-read AIRR
-   Rearrangement record with gene calls and a junction. TRUST4 does that annotation later, on
-   ~1,000 assembled contigs rather than per read. Quote the row only with that caveat attached.
+What the mode costs against MiXCR and TRUST4, end to end on a 660,000-pair bulk library, is under
+`How it compares`_ below and in full in :doc:`benchmarks`.
 
 Amplicon / RepSeq
 -----------------
@@ -137,173 +112,48 @@ Amplicon / RepSeq
    ``assemble`` just built are silently discarded — the clonotypes whose CDR3 no single read
    spans never reach the table. ``arda rnaseq`` / ``arda amplicon`` wire this up for you.
 
-⛔ **A stage comparison is not a benchmark.** The legs below run **end to end and emit
-clonotypes**; each tool gets its best-fitting preset and nothing else. One job, six legs
-alternating, three reps, medians. 8 threads; arda 2.27.0, MiXCR 4.7.0, TRUST4. TRUST4's rows
-count only its **complete** CDR3s, so the last two columns mean the same thing in every row.
+How it compares
+~~~~~~~~~~~~~~~
 
-TRA amplicon, 100,000 reads:
+Against MiXCR and TRUST4, end to end to a clonotype table, each tool on its best-fitting preset:
 
-.. list-table::
-   :header-rows: 1
-   :widths: 26 13 13 15 16 17
+* **TRA amplicon, 100,000 reads.** MiXCR is 1.84× faster on wall clock — that is its regime. arda
+  reaches the same point on 1.41× less CPU and 3.16× less RSS, and returns the most clonotypes
+  (19,841) over the most reads (43,503). TRUST4 is 5.1× slower than arda here.
+* **Bulk RNA-seq, 660,000 pairs.** arda returns +27.8 % clonotypes and +97.9 % reads assigned
+  against MiXCR, at 1.38× MiXCR's wall clock and 2.76× less RSS. TRUST4 is 1.61× faster on wall at
+  4.0× less CPU, reaching 87.7 % of arda's clonotypes.
+* **IGH RepSeq, 100,000 pairs, 32 threads.** The amplicon configuration is 4.15× and 4.71× faster
+  than arda's own one-pass default on two libraries, at roughly 2.7× less memory.
 
-   * - pipeline
-     - wall (s)
-     - CPU (s)
-     - peak RSS (MB)
-     - clonotypes
-     - reads in clonotypes
-   * - MiXCR ``generic-amplicon``
-     - **7.82**
-     - 42.91
-     - 3,052
-     - 19,697
-     - 42,712
-   * - **arda** ``amplicon``
-     - 14.40
-     - **30.49**
-     - 965
-     - **19,841**
-     - **43,503**
-   * - TRUST4
-     - 73.77
-     - 117.96
-     - **490**
-     - 18,559
-     - 37,688
-
-MiXCR is **1.84× faster on wall** in its own regime; arda gets there on **1.41× less CPU** and
-**3.16× less RSS**, and returns the most clonotypes over the most reads. TRUST4 is 5.1× slower
-than arda here.
-
-Bulk RNA-seq, 660,000 pairs (``SRR5233639``):
-
-.. list-table::
-   :header-rows: 1
-   :widths: 26 13 13 15 16 17
-
-   * - pipeline
-     - wall (s)
-     - CPU (s)
-     - peak RSS (MB)
-     - clonotypes
-     - reads in clonotypes
-   * - TRUST4
-     - **13.68**
-     - **54.53**
-     - **460**
-     - 1,941
-     - 6,247
-   * - **arda** ``rnaseq``
-     - 21.95
-     - 219.68
-     - 1,033
-     - **2,213**
-     - **8,484**
-   * - MiXCR ``rna-seq``
-     - 30.23
-     - 233.11
-     - 2,849
-     - 1,732
-     - 4,288
-
-On the regime arda exists for it returns **+27.8 % clonotypes and +97.9 % reads assigned** against
-MiXCR (+14.0 % / +35.8 % against TRUST4), at 1.38× MiXCR's wall and 2.76× less RSS. ⚠ TRUST4 is
-genuinely 1.61× faster on wall at 4.0× less CPU on this arm, reaching 87.7 % of arda's clonotypes
-and 73.6 % of its assigned reads.
-
-On real IGH RepSeq at 32 threads (aldan3, 100 k pairs), against arda's own shipped one-pass
-default:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 26 18 18 18 20
-
-   * - dataset
-     - default (s)
-     - amplicon cfg (s)
-     - default RSS (MB)
-     - amplicon cfg RSS (MB)
-   * - IGH_repertoire
-     - 316.44
-     - **76.25**
-     - 4,018
-     - **1,479**
-   * - IGH_naive
-     - 305.32
-     - **64.86**
-     - 3,736
-     - **1,363**
-
-4.15× and 4.71× respectively, at roughly a third of the memory.
+Full tables, with the method, repetition spread and what each comparison is and is not entitled to
+claim: :doc:`benchmarks`.
 
 Accuracy in the amplicon configuration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Against an IgBLAST truth on the same 100 k-read TRA amplicon, arda 2.27.0 and MiXCR 4.7.0 at its
-best amplicon preset, scored per read from one truth file in one job.
+Against an IgBLAST truth on the same 100,000-read TRA amplicon, scored per read from one truth
+file in one job, arda and MiXCR at its best amplicon preset:
 
-.. important::
+* **arda recalls more V genes over the whole library** — ``v_gene`` recall .9867 against .9660 —
+  because MiXCR emits nothing at all for 1,530 of the 48,033 truth reads and arda for 3.
+* **On the reads it emits, MiXCR is the more accurate caller**: ``v_gene`` recall .9977 and exact
+  junction recall .9778 on the common subset, against arda's .9869 and .9533.
+* **arda's V calls are the more precise of the two under either denominator** — .9996 against
+  .9977 — because it declines rather than guessing.
 
-   **Print the coverage before the rates.** A per-tool inner join gives each tool its own
-   denominator — a truth read the tool emitted no row for vanishes instead of counting as a miss.
-   Of the 48,033 truth reads at ``v_score >= 70``, **arda emits a row for 48,030 (99.99 %) and
-   MiXCR for 46,503 (96.81 %)**, so both denominators are reported below.
+Two habits make this kind of comparison meaningful, and both are worth adopting in your own.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 16 16 16
+**Print the coverage before the rates.** A per-tool inner join gives each tool its own
+denominator, so a truth read the tool emitted no row for vanishes instead of counting as a miss.
 
-   * - metric
-     - arda, all truth
-     - MiXCR, all truth
-     - arda / MiXCR, common
-   * - ``v_gene`` recall
-     - **.9867**
-     - .9660
-     - .9869 / **.9977**
-   * - ``v_gene`` precision
-     - **.9996**
-     - .9977
-     - **.9997** / .9977
-   * - ``j_gene`` recall
-     - **.9892**
-     - **.9892**
-     - .9959 / **.9996**
-   * - ``j_gene`` precision
-     - .9953
-     - **.9996**
-     - .9979 / **.9996**
-   * - ``junction`` recall (nt, exact)
-     - .9473
-     - **.9708**
-     - .9533 / **.9778**
+**Score alleles as tie lists, not as exact strings.** IgBLAST and arda both report an ambiguous
+allele call as a comma-joined set (``TRAV8-4*01,TRAV8-4*04,TRAV8-4*05``); an exact-string
+comparison marks a correct-but-ambiguous call wrong. Across 25 datasets the median ``v_allele``
+score is .8328 scored exactly against .9763 scored as tie-list membership — the same output, a
+14-point difference in the scorer.
 
-The two views say different and equally true things. **On the reads it emits MiXCR is the more
-accurate caller**; **over the whole library arda recalls more V genes** (.9867 vs .9660), because
-MiXCR emits nothing at all for 1,530 truth reads against arda's 3. arda's V calls are the more
-precise of the two under either denominator — it declines rather than guessing. Of the 46,787
-truth junctions arda emits one for **94.81 % at .99919 precision among emitted**, MiXCR for
-97.09 % at .99989; the 5.19 % arda declines are reads that *have* an anchor pair and lost the
-projection.
-
-MiXCR emits ``*00`` for every allele, i.e. it makes no allele call, so there is no ``v_allele``
-comparator. arda's is **.9868 resolved** and .9461 by exact string.
-
-.. note::
-
-   These five arda figures are **unchanged from 2.11.1**, fifteen releases back — ``v_gene``
-   recall .9867, precision .9996, ``j_gene`` recall .9892, precision .9953 and junction precision
-   among emitted .99919 all reproduce to every published digit.
-
-.. note::
-
-   **Score alleles as tie lists, not as exact strings.** IgBLAST and arda both report ambiguous
-   allele calls as comma-joined sets (``TRAV8-4*01,TRAV8-4*04,TRAV8-4*05``); an exact-string
-   comparison marks a correct-but-ambiguous call wrong. Across 25 cluster datasets the median
-   ``v_allele`` score is **.8328** scored exactly against **.9763** scored as tie-list
-   membership — the same output, a 14-point difference in the scorer.
+Both denominators, every metric and the allele-comparator caveat: :doc:`benchmarks`.
 
 Junction correctness is discussed in :ref:`what a junction disagreement means`, which also says
 which kinds of disagreement are *not* errors.
@@ -317,160 +167,57 @@ A ``v_call`` is only as good as the V germline the read actually covers, and on 
 single largest thing separating a usable call from an unusable one. This is a property of the
 library, not of the caller: no tool can name a gene from bases that are not in the read.
 
-Measured against an ``arda igblast`` truth (``v_score >= 70``) on an IGH 5'RACE library,
-98,639 truth reads, stratified by how much V germline the **truth** alignment covers:
+Measured against an ``arda igblast`` truth on an IGH 5'RACE library of 98,639 truth reads,
+``v_gene`` recall rises monotonically with the V germline span the read covers, from **.1170 below
+60 nt to .9896 at 200 nt or more** — and .9896 is the TRA amplicon's .9867, so there is no
+IG-specific accuracy deficit at that coverage. The 5.9 % of reads carrying under 60 nt produce
+about 56 % of every V miss. The full stratification, on 5'RACE and on two bulk libraries across
+three loci, is in :doc:`benchmarks`.
 
-.. list-table:: ``v_gene`` recall by V germline span, human IGH 5'RACE (98,639 truth reads)
-   :header-rows: 1
-   :widths: 28 18 14 20
-
-   * - V germline span
-     - truth reads
-     - share
-     - ``v_gene`` recall
-   * - < 60 nt
-     - 5,802
-     - 5.9 %
-     - **.1170**
-   * - 60–90 nt
-     - 978
-     - 1.0 %
-     - .6748
-   * - 90–120 nt
-     - 4,224
-     - 4.3 %
-     - .5727
-   * - 120–160 nt
-     - 1,845
-     - 1.9 %
-     - .9507
-   * - 160–200 nt
-     - 33,903
-     - 34.4 %
-     - .9647
-   * - >= 200 nt
-     - 51,887
-     - 52.6 %
-     - **.9896**
-
-**At 200 nt or more of V germline arda scores .9896, which is the TRA amplicon's .9867** — there is
-no IG-specific accuracy deficit at that coverage. The 5.9 % of reads carrying under 60 nt produce
-about 56 % of every V miss on the library.
+Three things follow for how you read a call.
 
 .. important::
 
    **Position beats length.** A short **5'** alignment identifies the gene; a short **3'** one does
    not. IGHV genes diverge in FR1/CDR1/CDR2 and are conserved through FR3 near Cys104, so 55 nt
-   taken from the 3' end carries almost none of what separates one gene from another. In the same
-   ``< 60 nt`` bin, recall is **.1170** on a 5'RACE library (5,714 of its 5,802 short alignments
-   start at germline position 200–249, because a 5'RACE read runs C → J → V) against **.8472** on a
-   bulk RNA-seq library of the same locus, where only 216 short alignments start that far in.
+   taken from the 3' end carries almost none of what separates one gene from another. The same
+   ``< 60 nt`` bin scores **.1170** on a 5'RACE library, whose reads run C → J → V, against
+   **.8472** on a bulk RNA-seq library of the same locus.
 
-   The largest single confusion on the 5'RACE library, ``IGHV1-69`` called as ``IGHV1-18``, is
-   **4,745 of roughly 9,080 misses**, on reads where IgBLAST aligns germline positions **242–296 —
-   55 nt of the V's 3' end**. The two genes are only 0.9054 identical, i.e. genuinely separable, so
-   this is missing evidence rather than homology. IgBLAST lists **1.64 V genes per read** on that
-   library itself: its answer there is a different tie-break on the same missing evidence, not a
-   better one.
-
-On bulk RNA-seq, where reads land across the V rather than at its 3' end, the same measurement over
-two libraries and three loci (``SRR5233639`` / ``SRR5233640``, 660,000 read pairs each, 100 nt):
-
-.. list-table:: ``v_gene`` recall by V germline span, human IG bulk RNA-seq
-   :header-rows: 1
-   :widths: 10 12 16 12 12 12 12
-
-   * - locus
-     - sample
-     - truth reads
-     - all
-     - < 60 nt
-     - 60–90 nt
-     - 90–120 nt
-   * - IGH
-     - 639
-     - 5,458
-     - .9331
-     - .8472
-     - .8592
-     - **.9661**
-   * - IGH
-     - 640
-     - 5,104
-     - .9373
-     - .8426
-     - .8789
-     - **.9689**
-   * - IGK
-     - 639
-     - 4,534
-     - .9828
-     - .9587
-     - .9805
-     - **.9879**
-   * - IGK
-     - 640
-     - 4,190
-     - .9802
-     - .9492
-     - .9690
-     - **.9897**
-   * - IGL
-     - 639
-     - 3,142
-     - .9494
-     - .6966
-     - .8932
-     - **.9938**
-   * - IGL
-     - 640
-     - 2,942
-     - .9470
-     - .6630
-     - .9149
-     - **.9903**
-
-Monotonic in span for every locus and both samples, and the two samples agree within 0.5 points
-everywhere. 100 nt reads cannot reach the 120 nt-and-above bins, which is why bulk tops out around
-.97–.99 rather than at the .9896 the long bin reaches.
+   The protocol name is not the risk factor either: the same 5'RACE protocol scores .1170 on a short
+   read and .9645 at 251 nt.
 
 .. note::
 
-   **Somatic hypermutation does not order this, and arda does not gate on it.** Stratified by
-   IgBLAST's own ``v_identity`` on the same 98,639 IGH reads the deficit is *non-monotonic* —
-   ``>= 99 %`` (essentially unmutated) **.9425**, ``97–99 %`` **.7518** (the worst bin), ``92–95 %``
-   **.9697** (the best). Mutation load is not what makes an IG V call hard here; read geometry is.
+   **Somatic hypermutation does not order this.** Stratified by IgBLAST's own ``v_identity`` on the
+   same 98,639 IGH reads the deficit is *non-monotonic* — essentially unmutated reads score .9425,
+   the 97–99 % bin **.7518** (the worst of six), and the 92–95 % bin **.9697** (the best). Mutation
+   load is not what makes an IG V call hard here; read geometry is.
 
-.. note::
+**arda ships no threshold on this, and the span is yours to filter on.** Dropping a V call whose
+alignment starts at germline position ≥ 150 and spans < 60 nt was measured: on IGH 5'RACE it is a
+7.6 : 1 win (``v_gene`` precision .92585 → .97693 for −0.69 points of recall), and on bulk it is a
+clear loss — −3.24 points of IGH recall, −6.22 IGK, −2.39 IGL, for essentially no precision. One
+constant would be wrong more often than right. ``v_sequence_start`` / ``v_sequence_end`` and
+``v_germline_start`` / ``v_germline_end`` are written on every row for you to gate on yourself.
 
-   **arda ships no threshold on this and will not.** Dropping a V call whose alignment starts at
-   germline position >= 150 and spans < 60 nt was measured: on IGH 5'RACE it is a 7.6 : 1 win
-   (``v_gene`` precision .92585 → .97693 for −0.69 points of recall), and on bulk it is a clear
-   loss — **−3.24** points of IGH recall, **−6.22** IGK, **−2.39** IGL, for essentially no
-   precision. One constant would be wrong more often than right. The span is yours to filter on:
-   ``v_sequence_start`` / ``v_sequence_end`` and ``v_germline_start`` / ``v_germline_end`` are
-   AIRR columns arda already writes on every row.
-
-.. important::
+.. warning::
 
    **Map the pair, not one mate — especially on a C-anchored amplicon.** On a multiplex V-primer
    IGH amplicon (251 nt paired), mapping **R1 alone** returns ``j_call`` and ``c_call`` on 98 % of
-   reads and ``v_call`` on **1.9 %**, with ``junction`` on **40 of 49,036 rows** — and it exits 0
-   reporting 98.07 % of reads mapped. The cause is the reference's geometry, not the library: a
-   V·J scaffold carries **no constant region**, so a read that runs C → J → V and reaches ~80 nt
-   into the constant region scores **244 bits on a J+C scaffold against 241 on its own V·J
-   scaffold**, and the J+C target has no V to report. Trimming the constant region off the same
-   reads moves ``v_gene`` recall from **.0265 to .8775** and junctions from 40 to 40,005.
+   reads and ``v_call`` on **1.9 %**, with ``junction`` on **40 of 49,036 rows** — while exiting 0
+   and reporting 98.07 % of reads mapped. Nothing in the report moves.
+
+   The cause is reference geometry rather than the library. A V·J scaffold carries no constant
+   region, so a read that runs C → J → V and reaches ~80 nt into the constant region scores 244 bits
+   on a :term:`J+C scaffold` against 241 on its own V·J scaffold — and the J+C target has no V to
+   report. Trimming the constant region off the same reads moves ``v_gene`` recall from .0265 to
+   .8775 and junctions from 40 to 40,005.
 
    ``arda amplicon --r1 --r2`` is the answer and needs no flag: it annotates each mate and Stage 3
    bridges them. On those same 50,000 pairs that is **24,655 contigs, 100 % of which carry**
-   ``v_call``, ``j_call``, ``c_call``, ``junction`` **and** ``junction_aa``.
-
-Four independent arms — two IGH libraries (a multiplex V-primer amplicon and a 5'RACE), each read
-from both ends — put ``v_gene`` recall on the ``>= 200 nt`` bin at **.9891 / .9935 / .9923 / .9930**,
-against the .9896 above and the TRA amplicon's .9867. ⛔ And the protocol name is not the risk
-factor: the *same* 5'RACE protocol scores **.1170** on a short read and **.9645** at 251 nt. What
-matters is how much V the read carries and from which end.
+   ``v_call``, ``j_call``, ``c_call``, ``junction`` **and** ``junction_aa``. This is why
+   ``--no-assemble`` is not a preset on any mode.
 
 .. _resolve-ties-loci:
 
@@ -530,8 +277,8 @@ more than a few hundredths the rule is overshooting on that locus.
 .. warning::
 
    Two things this trades away. **Fewer reads name a single gene** — on IGK the share falls
-   ``.8195 → .3883``, which is the honest statement of what an IGK read supports and why this stays
-   an opt-in command. And **intersection recall rises on all eleven arms, IGH included**, so a
+   ``.8195 → .3883``, which is exactly what an IGK read supports, and why this stays an opt-in
+   command. And **intersection recall rises on all eleven arms, IGH included**, so a
    scorer that only asks "does arda's list contain the truth gene" reports the 10-point IGH
    regression as a 5-point IGH win.
 
@@ -634,13 +381,17 @@ the coordinate frame a lineage or selection-pressure tool needs, so two reads of
 directly comparable and the germline is the root. A read with none is empty; the counterpart
 ``v_identity`` is the same information as a fraction.
 
-Never: The V and J germline-aligned regions only, **by construction**. A mismatch inside the junction is
-not attributable to a germline: V(D)J recombination trims the segment ends and inserts non-templated
-N/P bases, so the V-end / NDN / J-start partition frequently is not identifiable from the sequence.
-arda aligns to a ``V + N-pad + J [+ C]`` scaffold, and the pad is not a segment — an NDN position has
-no germline coordinate to be recorded under. Diffing ``sequence_alignment`` against
-``germline_alignment`` by hand does **not** give you this: on a real bulk IG library 20.1 % of the
-mismatches that diff finds lie in the pad or the constant region.
+.. note::
+
+   **The list covers the V and J germline-aligned regions only.** A mismatch inside the junction is
+   not attributable to a germline: V(D)J recombination trims the segment ends and inserts
+   non-templated N/P bases, so the V-end / NDN / J-start partition is frequently not identifiable
+   from the sequence. arda aligns to a ``V + N-pad + J [+ C]`` scaffold, and the pad is not a
+   segment — an NDN position has no germline coordinate to be recorded under.
+
+   Diffing ``sequence_alignment`` against ``germline_alignment`` by hand does **not** reproduce this
+   list: on a real bulk IG library, 20.1 % of the mismatches that diff finds lie in the pad or the
+   constant region.
 
 Substitutions only; an indel is in the CIGAR as ``I``/``D``. Germline coordinates after an indel are
 still correct. Positions are on the coding strand, so for ``rev_comp = T`` a read-side lookup (a
@@ -672,9 +423,12 @@ in the same order. A novel allele, somatic hypermutation and a base miscall are 
 the mutation list; the recurrence separates the first from the second and the Phred separates both
 from the third. ``arda stats`` reads it to score its ``allele_candidate`` shortlist.
 
-Never: The two quality columns use **different encodings**: ``junction_quality`` is raw Phred+33
-characters (it lines up byte-for-byte with ``junction``), and ``v_mutation_quality`` is comma-joined
-integers. Both are refused with ``--reconstruct``. See :doc:`qc`.
+.. warning::
+
+   **The two quality columns use different encodings.** ``junction_quality`` is raw Phred+33
+   characters, so it lines up byte for byte with ``junction``; ``v_mutation_quality`` is comma-joined
+   integers. Reading one as the other gives plausible numbers off by 33. Both are refused with
+   ``--reconstruct``. See :doc:`qc`.
 
 Finishing a truncated junction from the germline
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -689,10 +443,10 @@ germline-**templated**. The V side has no counterpart — a read short at the 5'
 the V germline does not template either, which is why ``v_anchor_prefix`` refuses rather than
 extrapolates.
 
-**Never: The added bases are imputed, not observed.** Every completed row carries the count in
-``junction_completed_nt``, so a consumer filters or weights on that column instead of trusting the
-junction; an empty value means the junction is entirely observed, which is what every junction is
-unless the flag is passed. Off by default (``0``).
+**The added bases are imputed, not observed.** Every completed row carries the count in
+``junction_completed_nt``, so a consumer can filter or weight on that column rather than trusting
+the junction blindly. An empty value means the junction is entirely observed — which is what every
+junction is unless the flag is passed. Off by default (``0``).
 
 Measured (arda 2.17.0, human, ``--complete-junctions 40``):
 
@@ -716,12 +470,16 @@ No junction that was already observed moves in either arm. 246 of the 247 bulk c
 [FW]118; the one that does not is ``TRBJ2-7*02``, whose anchor codon really is not [FW] — the same
 allele biology as ``TRAJ35*01``'s Cys anchor, and read from ``anchor_nt`` rather than from a motif.
 
-⚠ **Two caveats, both measured.** On IG the imputed span can hide the SHM the read would have
-shown, biasing a completed junction's 3' end toward germline — and IG is where the yield is (175 of
-the 247 bulk completions are IGH). And a read whose alignment stops more than a partial codon short
-of its own 3' end is **refused**: on the TRA amplicon 236 of 266 candidates run from the V straight
-into ``TRAC`` with no J at all, while the aligner still names a J off a few coincidental bases.
-Completing those would have manufactured one junction per chimera.
+.. warning::
+
+   Two caveats, both measured. On IG the imputed span can hide the somatic hypermutation the read
+   would have shown, biasing a completed junction's 3' end toward germline — and IG is where the
+   yield is, with 175 of the 247 bulk completions on IGH.
+
+   And a read whose alignment stops more than a partial codon short of its own 3' end is **refused**:
+   on the TRA amplicon, 236 of 266 candidates run from the V straight into ``TRAC`` with no J at all
+   while the aligner still names a J off a few coincidental bases. Completing those would have
+   manufactured one junction per chimera.
 
 Sequences that were never reads
 -------------------------------
@@ -756,6 +514,28 @@ Each record is a dict keyed by the AIRR fields above.
 reference for benchmarking. ``--receptor ig`` or ``tr`` skips a whole pass over every read on a
 library whose receptor type is known; the default ``both`` runs both passes and keeps whichever
 scores higher, which is what a truth file for an unknown library wants.
+
+Bare germline segments
+~~~~~~~~~~~~~~~~~~~~~~
+
+There is no coverage filter, so a **V-only** or **J-only** query maps to its scaffold and only the
+regions inside the query's coverage come back: a bare V yields ``fwr1`` through ``fwr3``, a bare J
+yields ``fwr4``. That makes the annotator usable as a way to pull per-allele FR/CDR subsequences out
+of the germline:
+
+.. code-block:: python
+
+   from arda.annotate.mapper import annotate_records
+
+   recs = annotate_records(
+       [("TRBV9*01", v_germline_nt), ("TRBJ2-7*01", j_germline_nt)],
+       organism="human", seqtype="nt", strand="forward", map_d=False,
+   )
+
+mirpy uses exactly this to bake per-allele FR/CDR subsequences into its gene library; see
+``tests/synthetic/test_germline_segments.py``. :doc:`arda export-ref <reference_export>` is the CLI
+equivalent, and is usually the better route when you want the whole reference rather than a handful
+of alleles.
 
 Junction markup and repair
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

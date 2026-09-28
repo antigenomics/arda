@@ -1,6 +1,24 @@
 API reference
 =============
 
+arda is usable as a library as well as a CLI. The single entry point most callers need is
+:func:`arda.annotate_sequences`, which takes sequences and returns AIRR record dicts with no
+subprocess and no temporary files:
+
+.. code-block:: python
+
+   import arda
+
+   records = arda.annotate_sequences(
+       ["GACGTGCAG...", ("clone7", "CAGGTG...")],   # strings or (id, sequence) pairs
+       seqtype="nt",          # "nt" or "aa"
+       organism="human",      # human | mouse | rat | rabbit | rhesus_monkey
+       map_d=True,            # D segments for VDJ loci; works on amino-acid input too
+   )
+
+The fields each record carries are documented in :doc:`outputs`. The modules below are the rest of
+the public surface, grouped as the package is.
+
 Library entry point
 -------------------
 
