@@ -3,6 +3,44 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## Unreleased
+
+### Fixed: a truncated anchor now places the boundary it supports (#135)
+
+`cdr3fix` declined `v_end` on every allele whose anchor carries `status = truncated`, returning
+`FailedBadSegment` and `-1`. IMGT ships those allele records as partial sequences that stop inside
+the anchor region, so the templated run is **short but correct as far as it goes** -- and refusing
+it threw away a boundary that was present. Two alleles of one gene answered the same junction
+differently:
+
+```
+CASSLQGETQYF / TRBJ2-5*01
+  TRBV11-2*01 -> NoFixNeeded       v_end 5
+  TRBV11-2*02 -> FailedBadSegment  v_end -1     <- CASS, four residues of real germline
+```
+
+An anchor of **3 or more** templated residues now places a boundary and reports it under a new
+fix type, `TruncatedGermline`. It counts as `good`, and ranks below every ordinary success:
+`v_end` from one is a **lower bound**, because residues past the record's end are unattributed
+rather than known non-templated. Measured against `isalgo/airr_control`'s nucleotide truth on the
+seven affected junctions with an unambiguous external boundary, the new value never over-claims
+and lands within two residues on all seven.
+
+Below 3 residues nothing changes: `FailedBadSegment` keeps its meaning of "not in the reference,
+or too short to place anything". 3 is where the prefix starts to carry information -- of the 1,101
+human V anchors with two residues or more, `CA` alone is **657 (59.7 %)**, while at three there are
+62 distinct prefixes and the most common is 283 of 989. The rule admits **38 of the 63 truncated
+human V anchors and 43 of 53 mouse**, and applies to the J side on the same terms (mouse has 2
+truncated J anchors; human has none).
+
+Downstream, on the 114,117 distinct human TRB keys in the `vdjdb-db` corpus, this addresses the
+**851 keys** declined by arda and mapped by VDJdb's legacy scanner because of a `*02`/`*03`/`*04`/
+`*07` truncated anchor -- 802 of them `TRBV11-2*02` alone. The family-name declines are a separate
+population and are unchanged.
+
+No allele with `status = ok` or `no_anchor` moves, and the committed `examples/` markup artifacts
+reproduce byte-for-byte.
+
 ## 2.30.1 - 2026-09-27
 
 Everything in 2.30.0 below, plus the version carried into the four pins the 2.30.0 commit
