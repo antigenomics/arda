@@ -176,8 +176,8 @@ arda was handed is in exactly one bucket or in ``mapped_reads``:
      - the k-mer screen rejected the read before MMseqs2 saw it (``--prefilter`` only). Near 1.0
        on a library that should have receptor content means the screen is eating it.
    * - ``no_hit``
-     - MMseqs2 returned nothing. The honest "this is not a receptor read" — and, in bulk, most
-       of the library. Unexpectedly high across a whole batch: check ``--organism``.
+     - MMseqs2 returned nothing: the read is not receptor-derived. In bulk that is most of the
+       library. Unexpectedly high across a whole batch: check ``--organism``.
    * - ``hit_not_in_reference``
      - a read hit a target the loaded reference does not carry. This is an index/reference
        mismatch, not biology; rebuild with ``arda build-index``.

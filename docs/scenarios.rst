@@ -47,8 +47,8 @@ same key grammar, so it is a **drop-in** for it.
      - ``<allele>:<n>``
      - P(germline nt deleted | allele) — **new**, nothing shipped these
 
-A scenario is not identifiable, and that is the whole design
-------------------------------------------------------------
+A scenario is not identifiable from sequence
+--------------------------------------------
 
 Given a junction and its V/J calls, a *scenario* is the tuple that reproduces it exactly:
 
@@ -159,9 +159,9 @@ Limits
      arda scenarios -i clones.tsv -o fitted.tsv --organism mouse
      arda markup -i records.tsv -o marked.tsv --d-prior fitted.tsv   # implies --d-posterior
 
-  ⚠ The shipped table is *allowed* to be missing — that is what ``None`` means — but a path you
-  typed is a request, so a ``--d-prior`` that is not there raises rather than silently scoring on
-  an empty prior.
+  The shipped table is *allowed* to be missing — that is what ``None`` means — but a path you typed
+  is a request, so a ``--d-prior`` pointing at a file that is not there raises rather than silently
+  scoring on an empty prior.
 * **The insertion composition is uniform** (0.25/base) rather than a fitted first-order Markov
   chain. The per-base cost is what breaks the degeneracy; composition is a refinement.
 

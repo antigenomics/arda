@@ -41,6 +41,35 @@ population and are unchanged.
 No allele with `status = ok` or `no_anchor` moves, and the committed `examples/` markup artifacts
 reproduce byte-for-byte.
 
+### Documentation rewritten around the reader
+
+The documentation was an accurate design record written in the voice of one. This release turns it
+into documentation: task-oriented, with rationale separated from instruction, and with the pages a
+new user needs first actually present.
+
+**New pages.** `quickstart` (install → run the committed fixture → read the table, every number
+that run's real output), `cli` (all 22 commands grouped by task), `outputs` (every file a run
+writes and every column in it), `glossary`, `how_it_works` (the offline reference, the runtime
+path, the C++ extensions, determinism) and `benchmarks` (every measured speed and accuracy figure,
+with its method, in one place).
+
+**README cut from 999 lines to 198.** It had become a second copy of the documentation site, so
+every fact in it had two homes and one of them went stale. It is now what a README is for: what
+arda is, install, quick start, why, and a table of links. No figure was dropped — each moved to
+the page that owns it, chiefly `benchmarks`.
+
+**Voice.** The `Never:` marker, an internal agent-instruction convention, had leaked into 6
+documentation pages and — more seriously — into 21 user-facing CLI help strings. It is gone from
+both. The ⛔/⚠/✅ severity emoji are replaced by Sphinx admonitions, and the self-referential
+postmortem passages ("the mistake this project made and had to retract") are rewritten as the
+statements of fact they were carrying.
+
+**Navigation.** Four captioned sections — Get started, Guides, Reference, Background — instead of
+the previous flat-ish grouping, with the landing page rebuilt around what a reader wants to do
+next. `usage` no longer duplicates the benchmark tables it now links to.
+
+No behaviour change: `src/arda/cli.py` edits are confined to help and docstring text.
+
 ## 2.30.1 - 2026-09-27
 
 Everything in 2.30.0 below, plus the version carried into the four pins the 2.30.0 commit
