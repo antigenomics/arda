@@ -8,7 +8,7 @@ it is a silent 2-4x slowdown:
 * ``arda amplicon``   — targeted RepSeq / 5'RACE  (``--two-pass --fast-segments --v-only-on-segment``)
 * ``arda singlecell`` — reserved; not implemented yet
 
-Never: Until 2.16.0 the only entry point was ``arda rnaseq run``, which was used for amplicon too and
+Until 2.16.0 the only entry point was ``arda rnaseq run``, which was used for amplicon too and
 exposed the regime as four loose flags. ``--two-pass`` ALONE is a LOSS on both regimes (0.762x on
 bulk, 0.87x on an IGH amplicon), so the one combination that was easy to reach was the dominated
 one. Naming the mode is the fix; ``--exact`` opts out of every speedup.
@@ -52,7 +52,7 @@ _EXACT_HELP = (
 
 _SHM_HELP = (
     "SHM scoping. `framework` (default) keeps v_identity / v_mutations / j_mutations to positions "
-    "OUTSIDE the junction, using the germline anchors arda emits per read. Never: Segment scoping "
+    "OUTSIDE the junction, using the germline anchors arda emits per read. Segment scoping "
     "alone is not junction exclusion -- the V germline's 3' tail and the J germline's 5' head are "
     "inside the junction, so chew-back and N/P bases used to enter both lists: measured on a TRA "
     "amplicon, where TCRs cannot hypermutate so every entry is spurious, 1.046 V and 1.658 J "
@@ -66,7 +66,7 @@ _COMPLETE_JUNCTION_HELP = (
     "from the called J's germline. 0 (default) emits observed junctions only. The J's 5' chew-back "
     "and the N/P additions are all UPSTREAM of the read's last aligned J base, so what is missing "
     "is germline-TEMPLATED -- unlike the V side, where a short read is missing bases nothing "
-    "templates. Never: The added bases are IMPUTED, not observed: every completed row carries the count "
+    "templates. The added bases are IMPUTED, not observed: every completed row carries the count "
     "in `junction_completed_nt`, so filter or weight on that column rather than trusting the "
     "junction. ⚠ On IG the imputed span can hide the SHM the read would have shown, biasing a "
     "completed junction's 3' end toward germline; TR does not hypermutate and has no such cost.")
@@ -87,7 +87,7 @@ _CELL_FROM_HELP = (
     "Dialects: `migec` (`<sample>.<cell>.<umi>`, parsed right to left because a migec sample id "
     "may itself contain a dot), `cellranger` (`<barcode>-1_contig_2`), `prefix` "
     "(`<barcode>_<rest>`), or `auto` to sniff them over a reservoir sample of the input. "
-    "Never: `auto` refuses rather than guessing, and a dialect is only accepted when every parsed "
+    "`auto` refuses rather than guessing, and a dialect is only accepted when every parsed "
     "barcode has the SAME LENGTH -- otherwise a bulk sample named `TCGA` parses as a one-cell "
     "library and nothing flags it.")
 
@@ -111,7 +111,7 @@ _ID_HELP = (
     "Sample id for the matching --r1, BY POSITION. Repeat the SAME id to merge those read groups "
     "into one sample: `--id A --id A --id B` over three pairs is two samples, the first from two "
     "read groups. The id becomes the output basename, so --out-prefix is not used with it. "
-    "Never: arda does NOT infer the grouping from filenames. Given "
+    "arda does NOT infer the grouping from filenames. Given "
     "`RNA-SAMPLE_ID:12:00XX919:3_1.fastq.gz` no rule can say which field is the sample, and a rule "
     "that guesses wrong splits one repertoire into four with no error anywhere -- so more than one "
     "--r1 without --id is refused, not guessed at.")
@@ -127,11 +127,11 @@ _SAMPLES_HELP = (
 _CHIMERA_HELP = (
     "Also emit `chimera_parents`: for each clonotype, two MORE ABUNDANT clonotypes of the same "
     "locus that explain it as prefix+suffix across one breakpoint -- the PCR template-switch "
-    "signature. Never: FLAG ONLY, never a filter: measured 0.40 % of clonotypes / 0.18 % of reads on "
+    "signature. FLAG ONLY, never a filter: measured 0.40 % of clonotypes / 0.18 % of reads on "
     "bulk RNA-seq (IG) against 0.01 % on a TRA amplicon, a 20x enrichment in the direction "
     "template-switch chemistry predicts but far too small to justify deleting clonotypes -- and the "
     "signature cannot separate a true chimera from two real clones sharing a prefix and a suffix. "
-    "Never: The breakpoint must sit in the NON-TEMPLATED core: a junction is V 3' tail + N/P/D + J 5' "
+    "The breakpoint must sit in the NON-TEMPLATED core: a junction is V 3' tail + N/P/D + J 5' "
     "head, both tails germline, so the same test run on the raw junction calls 52 % of clonotypes "
     "chimeric. Requires the reference (no anchors -> no flags, never a germline-driven guess).")
 
@@ -690,7 +690,7 @@ def rnaseq_correct(
     error_method: Optional[str] = typer.Option(
         None, help="simple = spanning-read counts; binom|betabinom = per-position read-depth "
                    "pileup for very low coverage. Default: whatever --ec-mode selects (simple). "
-                   "Never: binom/betabinom are ~270x slower AND more aggressive on a deep library "
+                   "binom/betabinom are ~270x slower AND more aggressive on a deep library "
                    "(MIGEC 302k reads: 0.73s/143 clonotypes vs 197s/79 and 254s/78) and "
                    "byte-identical on a monoclonal one -- neither is in a mode for that reason."),
     ec_mode: str = typer.Option(
@@ -842,7 +842,7 @@ def scenarios_cmd(
     `arda.dpost` places a D from an amino-acid junction by marginalising a generative model whose
     every number is borrowed from OLGA. This is how arda estimates its own, from its own output.
 
-    Never: a scenario is NOT identifiable from sequence -- several `(delV, insVD, delDl, delDr,
+    A scenario is NOT identifiable from sequence -- several `(delV, insVD, delDl, delDr,
     insDJ, delJ)` reproduce one junction exactly. The counts here are EXPECTED counts summed over
     scenarios, never the counts of one MAP reading, which would bias every distribution toward
     less trimming and shorter inserts. See `project/design-scenarios.md`.
@@ -896,7 +896,7 @@ def scenarios_cmd(
 def _error_rate(value: str) -> float | None:
     """`auto` -> None (measure it from the library); anything else must parse as a rate.
 
-    Never: a value that is neither `auto` nor a number is REFUSED rather than falling back to the
+    A value that is neither `auto` nor a number is REFUSED rather than falling back to the
     default -- a silent fallback is indistinguishable from a measured run.
     """
     if value.strip().lower() == "auto":
@@ -940,14 +940,14 @@ def shm_model_cmd(
     `P(substitution | germline context, region)` -- a 5-mer context table, a per-region
     multiplier, and the sample's overall rate recorded as provenance.
 
-    Never: the roadmap asked for a per-allele-per-POSITION table and the measurement refused it.
+    The roadmap asked for a per-allele-per-POSITION table and the measurement refused it.
     Between two donors such a table transfers at r .26-.56 against context's .74-.79, because
     within one donor it is a portrait of that donor's expanded clones (r .99). Context is also
     the only one of the two that reaches the V tail INSIDE the junction, which is where the
     junction model needs it and where a position has no estimable rate at all. Evidence:
     `results/round33` in the benchmark repo.
 
-    Never: nothing in the annotation path reads this yet, exactly as `arda scenarios` shipped
+    Nothing in the annotation path reads this yet, exactly as `arda scenarios` shipped
     before `arda markup --d-prior` existed. Fitting a model and adopting one are separate.
     """
     from .shmmodel import estimate, read_airr, write_table
@@ -1078,7 +1078,7 @@ def shm_cmd(
     there reads as a substitution against a germline that does not template it. arda 2.14.0
     documented a guarantee that this could not happen; it was wrong, and this is the retraction.
 
-    **Never: Needs no reference and no re-map.** ``v_anchor_nt`` / ``j_anchor_nt`` and the alignment
+    **Needs no reference and no re-map.** ``v_anchor_nt`` / ``j_anchor_nt`` and the alignment
     strings are already in the file, so a table written by arda 2.14.0 or later can be recounted in
     place. A file older than that has no anchor columns and this RAISES rather than copying the
     input through with a success message.
@@ -1124,11 +1124,11 @@ def _mode_run(mode: str, *, exact: bool, indel_rescue: bool,
               r1, r2, ids, samples_sheet, out_prefix, **kw) -> None:
     """Body shared by `arda rnaseq` and `arda amplicon`: resolve the preset, then run each sample.
 
-    Never: ONE body, not one per mode. The mode commands and `arda cluster reduce` already share
+    ONE body, not one per mode. The mode commands and `arda cluster reduce` already share
     `pipeline.finish` for the same reason: two copies drift in a parameter, and then "the modes
     only differ in their preset" is a hope rather than a property.
 
-    Never: samples run SEQUENTIALLY, each with every core. mmseqs threads internally, so N samples
+    Samples run SEQUENTIALLY, each with every core. mmseqs threads internally, so N samples
     at cores/N each is slower than N in a row and adds dispatch on top. Parallelism over samples
     belongs to the scheduler, at read-group granularity -- `arda cluster plan`, `cluster submit
     --samples`, the Nextflow module, or the Snakemake workflow.
@@ -1206,7 +1206,7 @@ def rnaseq_mode(
         help="Denoising preset; `rnaseq` is this mode's default. `fast` = the abundance model "
              "only (arda's historical behaviour). `accurate` adds --min-junction-q 20. `rnaseq` "
              "adds the quality-directed rescue kept NARROW (6 subs, 200x ratio) because bulk "
-             "RNA-seq singletons are mostly real. Never: Nothing in any mode discards a read: an "
+             "RNA-seq singletons are mostly real. Nothing in any mode discards a read: an "
              "orphan with no qualifying parent keeps its reads. The Stage-1 quality column the "
              "gates need is turned on automatically here."),
     min_junction_q: Optional[int] = typer.Option(
@@ -1294,7 +1294,7 @@ def amplicon_mode(
              "rescue searching WIDE (12 subs, 50x abundance ratio), because a real clonotype in a "
              "targeted library is deep, so a 1-read neighbour of an abundant clone is almost "
              "always error. `fast` = the abundance model only; `accurate` = + --min-junction-q 20. "
-             "Never: Nothing in any mode discards a read."),
+             "Nothing in any mode discards a read."),
     min_junction_q: Optional[int] = typer.Option(
         None, "--min-junction-q",
         help="Explicit Phred floor for the discriminating base; overrides --ec-mode's preset."),
@@ -1458,7 +1458,7 @@ def cells_cmd(
 def singlecell_mode() -> None:
     """RESERVED as a rnaseq/amplicon-style MODE — the single-cell work lives in `arda cells`.
 
-    Never: It stays reserved rather than becoming a third preset: the only sensible preset for
+    It stays reserved rather than becoming a third preset: the only sensible preset for
     fragment-shaped single-cell input is the all-False vector, which is byte-for-byte what
     `--exact` already produces on either existing mode, so the mode would differ from
     `arda rnaseq --exact` in nothing but its name. It ships when a measured speed row differs
@@ -1761,12 +1761,12 @@ def resolve_ties_cmd(
     each read to both germlines showed **59 of 60 fit identically** (identity 1.0000 over 63-70 nt).
     Neither was right; both were overconfident.
 
-    Never: This ADDS no alignment. The tie is a string comparison against the reference over the span
+    This ADDS no alignment. The tie is a string comparison against the reference over the span
     already aligned, so it costs neither the memory nor the time that keeping `top_hit` before
     `convertalis` was protecting (that collapse made the alignment TSV 2.88x smaller AND took
     allele agreement .9735 -> .9956; this does not undo it).
 
-    Never: It is a SEPARATE COMMAND, not a flag on `map`, because the ranking needs every read before it
+    It is a SEPARATE COMMAND, not a flag on `map`, because the ranking needs every read before it
     can order any of them -- two passes over one file. And it changes `v_call`/`j_call` on every
     library: a consumer that splits on `,` and takes `[0]` sees the better answer, one that treats
     the field as a single gene sees a new shape.
@@ -1809,10 +1809,10 @@ def genotype_cmd(
     two per gene. Restricting calls to the carried set removes ambiguity that was never real --
     TIgGER measured 11.2 % -> 1.5 % ambiguous assignments doing this on full-length BCR.
 
-    Never: this is a claim about the GERMLINE REFERENCE, never about the repertoire. It does not
+    This is a claim about the GERMLINE REFERENCE, never about the repertoire. It does not
     replace `stats`' `allele_candidate` scope, which stays a shortlist to look at and never a call.
 
-    Never: it re-assigns, it never re-aligns and never rebuilds a reference. Scaffold ids are
+    It re-assigns, it never re-aligns and never rebuilds a reference. Scaffold ids are
     positional, `build-db` needs IgBLAST, and the mmseqs freshness contract records no allele-set
     identity -- so a per-donor reference is three traps, and unnecessary: given the span a read
     already aligned over, the restriction is a set intersection. Apply it with

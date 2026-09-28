@@ -68,11 +68,15 @@ An allele survives unless **its own gene** was genotyped and did not name it. Ti
 span genes, so a gene-blind test empties every read whose tie list merely brushes a genotyped gene.
 
 Surviving alleles keep ``v_call``'s **own order**, so a restriction that removes nothing returns a
-byte-identical string. ⚠ That is not cosmetic: the tie list comes back sorted by name while
-``v_call`` carries the aligner's order, and emitting the sorted one made a pure reordering
-indistinguishable from a real narrowing — on a 100,000-read TRA amplicon the run report said
-**20,587 narrowed** when **20,306** of those were ``TRAV20*02,TRAV20*01`` becoming
-``TRAV20*01,TRAV20*02``. The real number was 281.
+byte-identical string.
+
+.. note::
+
+   That ordering is load-bearing rather than cosmetic. The tie list comes back sorted by name while
+   ``v_call`` carries the aligner's order, so emitting the sorted one makes a pure reordering
+   indistinguishable from a real narrowing. Measured on a 100,000-read TRA amplicon: the run report
+   read **20,587 narrowed** when 20,306 of those were ``TRAV20*02,TRAV20*01`` becoming
+   ``TRAV20*01,TRAV20*02``. The real number was 281.
 
 Any source works: an OGRDB set, a library MiXCR inferred, a list typed by hand. Every named allele
 is validated against the reference and an unknown one **raises** — 884 human V alleles are
@@ -96,9 +100,9 @@ groups them by molecule. Two things follow:
 * **Disagreement within a junction is error, not allele.** Every read of one rearrangement carries
   the same V allele by construction, so a read naming a different one is hypermutation or
   sequencing error. That is where the error rate comes from — measured on the library rather than
-  picked. ⚠ It is measured over *all* reads, not the germline-exact subset used for assignment:
-  those were selected for carrying no mismatch, so they never disagree and the estimate collapses
-  silently onto its floor (0 discordant of 77,345 reads on the amplicon below).
+  picked. It is measured over *all* reads rather than the germline-exact subset used for
+  assignment: those reads were selected for carrying no mismatch, so they never disagree and the
+  estimate would collapse onto its floor (0 discordant of 77,345 reads on the amplicon below).
 
 The call is then a **likelihood ratio between diploid genotypes**. Every single allele and every
 pair is scored by its multinomial likelihood under that error rate, and the winner is called only
@@ -155,8 +159,8 @@ inferred) and **6 genuinely inferred**, with log₁₀ Bayes factors of 223 (``T
 clonotypes), 251 (``TRBV5-6``, 846) and 11.7 (``TRBV5-8``, 39). The other 36 are refused —
 including ``TRBV10-3`` with 1,037 clonotypes, none of which can separate its alleles.
 
-That is the honest output for that library, and the refusals are the point: a full-length, 5'RACE
-or ``arda cells`` library (contig N50 536 nt) has the resolution this one does not.
+The refusals are the point. A full-length, 5'RACE or ``arda cells`` library (contig N50 536 nt) has
+the resolution this one does not.
 
 **What it looks like when a gene IS separable.** On a TRA amplicon (``SRR5233635``, 100,000 reads,
 151 nt, 21,710 clonotypes / 45,007 reads, error rate **5.53 × 10⁻⁴** — two independent libraries,
@@ -167,10 +171,10 @@ catalogued allele, and **24 are refused** ``low_support`` — TRAV needs 175 nt 
 151. The whole inference takes **1.53 s and 442 MB** on 49,748 mapped reads.
 
 **Applying that genotype narrows 281 of 47,743 rows**, contradicts 75, and leaves 47,387
-unchanged. That is the honest shape of the feature at this read length and it follows directly
-from the table above: you cannot restrict what you could not genotype, and 14 of the 20 genes that
-were called have only one allele to begin with. ⚠ The narrowing a full-length library buys is the
-11.2 % → 1.5 % TIgGER measured; it is not what a 151 nt amplicon can show.
+unchanged. That is the shape of the feature at this read length, and it follows directly from the
+table above: you cannot restrict what you could not genotype, and 14 of the 20 genes that were
+called have only one allele to begin with. The 11.2 % → 1.5 % narrowing TIgGER measured is what
+a full-length library buys; it is not what a 151 nt amplicon can show.
 
 The output has one row per carried allele, and a row with an empty ``allele`` for every gene that
 could not be called — ``locus, gene, allele, clonotypes, reads, gene_clonotypes, log10_bf, note``.
