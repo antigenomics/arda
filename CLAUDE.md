@@ -148,6 +148,12 @@ Releases go out as `release/<version>` → PR → CI green → merge → GitHub 
   unknown. Do not "fix" a V/J boundary disagreement inside a junction, and do not write a test that
   pins one. What *is* checkable: the junction's outer bounds (Cys104, [FW]118), the gene/allele
   calls, and whether arda invents a junction it has no anchor for.
+  **`boundary_nt` is not an exception to this, because it answers a different question.** Where the
+  exonuclease stopped is unidentifiable; how far the germline still MATCHES the observed nucleotides
+  is a deterministic function of those nucleotides, and it is what every aligner reports and what
+  `isalgo/airr_control` records. `boundary_nt` predicts that alignment from the amino acid, and is
+  scored against it -- never against a recombination history. Keep the two apart: the moment a test
+  pins where the germline stopped being *templated*, it is pinning the unknowable one.
 - **Never: A conserved-motif check is not an anchor.** `TRAJ35*01`'s anchor codon decodes **Cys (TGC),
   not [FW]** — it is a functional IMGT `F` gene. Read `anchor_nt` from `cdr3_anchors.tsv`; a
   `[FW]GXG` motif check silently deletes the gene.
