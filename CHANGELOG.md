@@ -3,7 +3,49 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
-## Unreleased
+## 2.31.0
+
+### Added: the germline boundary in nucleotides (`boundary_nt`), 71.8 % -> 92.9 % on `v.end`
+
+`Cdr3Markup` now carries `v_end_nt` and `j_start_nt` beside `v_end` and `j_start`. The residue
+counts are unchanged -- `dpost` slices the non-templated middle with them, and that contract is
+what they are for.
+
+An exonuclease does not stop on a codon boundary, so the last residue a germline touches is
+usually part germline and part N region, and an alignment on the **protein** can only round that
+to a whole residue. What the protein still fixes is which nucleotides are admissible: 17 of the 20
+residues open every one of their codons with the same base. Against a germline `GGA` (Gly) an
+observed Glu can only be `GAA` or `GAG`, both of which begin with the germline's `G`, so the
+germline demonstrably reaches one nucleotide further -- and an aligner reading the observed
+sequence counts it as germline whether it was templated or an insertion reproduced it. Where a
+residue's codons disagree, they are weighed by how far each would let the germline reach: a
+templated nucleotide is free, one that matches by chance costs 1/4.
+
+Measured against `isalgo/airr_control`'s `human.trb.ntvj`, on the **8,133** VDJdb human TRB
+junctions whose boundary every control observation agrees on (the control's `VEnd`/`JStart` are a
+maximal nucleotide alignment, which reproduces to 93.5 % V / 98.8 % J against our own `*01`
+germline, the residual being allele polymorphism):
+
+| quantity | 2.30.1 | this | 
+|---|---:|---:|
+| `v.end`, VDJdb residue convention `(nt + 1) // 3`, exact | 5,839 (71.79 %) | **7,556 (92.91 %)** |
+| `j.start`, VDJdb residue convention `ceil(nt / 3)`, exact | 7,968 (97.97 %) | 7,968 (97.97 %) |
+| V boundary in nucleotides, exact | 2,355 (28.96 %) | **6,538 (80.39 %)** |
+| J boundary in nucleotides, exact | 2,462 (30.27 %) | **6,057 (74.47 %)** |
+
+This is `antigenomics/vdjtools#182`, where VDJdb's legacy k-mer scanner measured **71.8 %** on the
+same set -- the same number, because both answer in whole residues.
+
+`j.start` cannot move and does not: VDJdb defines it as the first **fully** J-templated residue,
+which is the same residue whether the germline reaches one or two nucleotides into the one before
+it. The nucleotide answer moves a great deal, and is the one to read.
+
+**The two sides are limited by different things.** The V residue count is right on 83.99 % of
+records and the extension on **95.71 %** of those, so V is bounded by the protein alignment -- the
+remainder is a synonymous codon inside the templated run, which breaks the nucleotide match while
+leaving the amino-acid match intact, and no amount of protein evidence can see it. The J residue
+count is right on 97.97 % and the extension on **76.02 %**, because the nucleotide a J boundary
+turns on is the codon's third, the one position the genetic code leaves free.
 
 ### Fixed: a truncated anchor now places the boundary it supports (#135)
 

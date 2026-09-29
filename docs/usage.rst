@@ -551,12 +551,19 @@ the submitted junction disagrees with them, and how far the disagreement extends
 
 Coordinates are **junction space** throughout (Cys104 … Phe/Trp118, both anchors included) —
 the convention VDJdb's ``cdr3`` column uses, which is *not* arda's ``cdr3`` field. Output adds
-``v_end``/``j_start``, a per-error list (substitution / insertion / deletion, with position and
-extent), a VDJdb-compatible ``cdr3fix`` JSON blob, and a repaired ``cdr3_repaired``. Repair is
+``v_end``/``j_start`` in residues and ``v_end_nt``/``j_start_nt`` in nucleotides, a per-error
+list (substitution / insertion / deletion, with position and extent), a VDJdb-compatible
+``cdr3fix`` JSON blob, and a repaired ``cdr3_repaired``. Repair is
 deliberately conservative: only anchor-adjacent edits are *applied* (``--max-replace``), while
 errors deeper in the junction are reported and left alone — on 102,990 VDJdb records this
 reproduces VDJdb's own repair on 96.4 % of the records it marks as needing one, and rewrites
 nothing it should not.
+
+**Read the boundary in nucleotides.** A germline run ends wherever the exonuclease stopped,
+which is not a codon boundary, so the residue counts round it — ``v_end`` is exact on 71.8 % of
+junctions with external nucleotide truth against ``v_end_nt``'s 92.9 % under the same VDJdb
+residue convention (:func:`arda.cdr3fix.boundary_nt` carries the whole measurement). The residue
+counts keep their meaning and their callers; they are simply the coarser answer.
 
 ``--d-posterior`` adds a D-gene call inferred from the junction *length* — the nucleotide length
 pins ``insVD + |D surviving| + insDJ``, so the D can be placed to a median 1–3 nt even when the
