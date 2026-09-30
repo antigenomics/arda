@@ -3,6 +3,22 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.34.0
+
+**New — a blank V or J call is proposed from the junction instead of refused.** A submission is
+allowed to leave one side out, and a blank is not a reason to refuse the record: the locus comes
+from the side that *is* named, and the junction is evidence about the missing one. The new
+`Cdr3Markup.proposed` (and the `proposed` column) says which side was never curated — a different
+fact from `allele`, which means the submission named a different allele of the same gene.
+
+Over VDJdb's 192,726 distinct curation keys, 3,130 leave a side blank (644 no V, 2,947 no J); 2,532
+now get a segment, 2,504 of them `good` with both boundaries placed. The 598 that stay refused name
+neither side, so there is no locus to propose within.
+
+An **unresolvable** call is still refused: `TRBVnope*01` keeps its `FailedBadSegment`, because a
+submission that names something wrong has a defect a curator must see, where one that names nothing
+has a gap the junction can fill.
+
 ## 2.33.0
 
 **Breaking — `arda.dpost` moved to vdjtools.** A posterior over the D gene is a

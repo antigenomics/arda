@@ -417,3 +417,47 @@ def test_the_alts_reach_the_frame():
     out = markup_batch(pl.DataFrame({"cdr3": ["CAISGEFGSGA"], "v": ["TRBV10-1"],
                                      "j": ["TRBJ2-6"], "species": [HS]}))
     assert out["v_alts"][0].split(",") == ["TRBV10-3*01", "TRBV10-3*02", "TRBV10-3*03"]
+
+
+# --------------------------------------------------------------------------- a call the submission omitted
+def test_a_blank_call_is_proposed_from_the_junction_not_refused():
+    """A submission may leave one side blank, and a blank is not a reason to refuse the record.
+
+    3,130 of VDJdb's 192,726 distinct curation keys do exactly this (644 with no V, 2,947 with no
+    J), and every one used to come back `FailedBadSegment` with no boundary and no repair — which is
+    why the consumer had to carry its own segment proposer. The locus comes from the side that IS
+    named, so a proposal is always within the right locus, and `proposed` says which side was never
+    curated. That is a different fact from `allele`, which means the submission named a different
+    allele of the same gene.
+    """
+    m = markup_cdr3("CASSLAPGATNEKLFF", "", "TRBJ2-1*01", HS)
+    assert m.proposed == ("V",) and m.v_call.startswith("TRBV")
+    assert m.good and m.v_end >= 0 and m.j_start >= 0
+    assert "allele" in m.v_flags
+
+    j = markup_cdr3("CASSLAPGATNEKLFF", "TRBV9*01", "", HS)
+    assert j.proposed == ("J",) and j.j_call == "TRBJ1-4*01"
+    assert j.good and j.j_start >= 0
+
+
+def test_an_unresolvable_call_is_still_refused_rather_than_replaced():
+    """ABSENT and WRONG are different. A submission naming `TRBVnope*01` has a defect a curator has
+    to see; proposing for it too would hide the defect inside the feature."""
+    m = markup_cdr3("CASSLAPGATNEKLFF", "TRBVnope*01", "TRBJ1-4*01", HS)
+    assert m.proposed == () and m.v_call == "" and m.v_fix == "FailedBadSegment" and not m.good
+
+
+def test_both_calls_blank_stays_refused():
+    """With neither side named there is no locus, so there is nothing to propose within."""
+    m = markup_cdr3("CASSLAPGATNEKLFF", "", "", HS)
+    assert m.proposed == () and not m.good
+
+
+def test_proposed_reaches_the_frame():
+    import polars as pl
+    from arda.cdr3fix import MARKUP_COLUMNS, markup_batch
+
+    assert "proposed" in MARKUP_COLUMNS
+    out = markup_batch(pl.DataFrame({"cdr3": ["CASSLAPGATNEKLFF"], "v": [""],
+                                     "j": ["TRBJ2-1*01"], "species": [HS]}))
+    assert out["proposed"][0] == "V"

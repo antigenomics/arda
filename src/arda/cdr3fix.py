@@ -206,7 +206,7 @@ _MIN_TRUNCATED_AA = 3
 MARKUP_COLUMNS = [
     "cdr3", "cdr3_repaired", "v_call", "j_call", "locus", "species",
     "v_end", "j_start", "v_end_nt", "j_start_nt", "v_fix", "j_fix",
-    "v_flags", "j_flags", "v_alts", "j_alts", "v_canonical", "j_canonical",
+    "v_flags", "j_flags", "v_alts", "j_alts", "proposed", "v_canonical", "j_canonical",
     "good", "fix_needed", "n_errors", "errors", "cdr3fix",
 ]
 
@@ -290,6 +290,11 @@ class Cdr3Markup:
     #: ``vdjtools.model.infer_nt_batch``, which scores a LIST per row and can separate them.
     v_alts: tuple[str, ...] = ()
     j_alts: tuple[str, ...] = ()
+    #: Sides whose call the SUBMISSION did not give and this proposed from the junction alone --
+    #: ``("V",)``, ``("J",)`` or both. A consumer deciding whether to trust a call needs to know it
+    #: was never curated, which is a different fact from `allele` (the submission named a different
+    #: allele of the same locus).
+    proposed: tuple[str, ...] = ()
     errors: list[Cdr3Error] = field(default_factory=list)
     sequence_id: str = ""
 
@@ -1148,16 +1153,25 @@ def _best_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     # unanchored hits re-called that record off a coincidence. The same requirement is why a
     # junction cut INSIDE its germline (`start_in_segment > 0`, a `FixAdd`) is left with the call it
     # was submitted with: there is no anchored hit to compare, so there is nothing to compare.
-    if not called or (segment, called) not in anchors:
-        return "", ()
-    if anchors[(segment, called)].status != "ok":
-        return "", ()                        # a partial reference record cannot lose a length contest
-    t = anchors[(segment, called)].templated_aa
-    h = scan(t[::-1] if segment == "J" else t, cdr3)
-    if h is None or h.start_in_segment != 0:
-        return "", ()
-    seg_t = t[::-1] if segment == "J" else t
-    base = anchor_depth(seg_t, cdr3, h.start_in_cdr3)
+    #
+    # ⚠ With NO submitted call this proposes one instead of comparing: there is nothing to beat and
+    # no curator's choice to protect, so the whole locus competes from the junction's own start and
+    # `min_gain` becomes the floor on the evidence required to name a segment at all. A submission
+    # is allowed to leave one side blank, and a blank is not a reason to refuse the record.
+    if called:
+        if (segment, called) not in anchors:
+            return "", ()
+        if anchors[(segment, called)].status != "ok":
+            return "", ()                    # a partial record cannot lose a length contest
+        t = anchors[(segment, called)].templated_aa
+        seg_t = t[::-1] if segment == "J" else t
+        h = scan(seg_t, cdr3)
+        if h is None or h.start_in_segment != 0:
+            return "", ()
+        off = h.start_in_cdr3
+        base = anchor_depth(seg_t, cdr3, off)
+    else:
+        seg_t, off, base = "", 0, 0
     floor = base + min_gain
     # ⛔ If the submitted call already explains the junction's anchor residue, no candidate that
     # breaks it may displace it, however much more it explains behind. Otherwise the deeper allele
@@ -1165,10 +1179,10 @@ def _best_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     # `CAARLGNNYKLIW` is a clean TRAJ33 junction (`DSNYQLIW`, terminal W and all) that TRAJ12
     # outscored, whereupon its W became an F. The reverse case is untouched -- `CASSKRGGYEQYV` on
     # TRBJ2-7*01 (`SYEQYF`) does NOT explain its anchor, so *02 (`SYEQYV`) is free to take it.
-    keep_anchor = bool(seg_t) and seg_t[0] == cdr3[h.start_in_cdr3:h.start_in_cdr3 + 1]
+    keep_anchor = bool(seg_t) and seg_t[0] == cdr3[off:off + 1]
     # The offset-1 index is only a valid prefilter when the margin needs depth >= 2, which every
     # shipped setting does; a caller asking for less gets the full scan.
-    q1 = cdr3[h.start_in_cdr3 + 1:h.start_in_cdr3 + 2]
+    q1 = cdr3[off + 1:off + 2]
     if organism and floor >= 2 and q1:
         cands = _cached_candidate_index(organism, segment, locus).get(q1, ())
     elif organism:
@@ -1187,7 +1201,6 @@ def _best_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     # It is also what makes re-calling every record affordable: one `anchor_depth` per candidate,
     # which is a walk of at most the run's length, instead of a `scan` -- two `_extend` sweeps and
     # a C++ alignment. That was 1.4 M `_extend` calls over 20,000 records, 36 % of the markup.
-    off = h.start_in_cdr3
     q_at = cdr3[off:off + 1]
     best, best_score = "", -1
     tied: list[str] = []
@@ -1391,6 +1404,33 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
     v_sub, j_sub = _leading_call(v_call), _leading_call(j_call)
     v_id = resolve_allele(v_sub, "V", anchors, organism)
     j_id = resolve_allele(j_sub, "J", anchors, organism)
+    # ⛔ A submission is allowed to leave one call BLANK, and a blank is not a reason to refuse the
+    # record: the junction itself is evidence about the missing side. Over VDJdb's corpus 3,126 of
+    # 191,103 distinct keys do exactly this -- 644 with no V, 2,943 with no J -- and every one of
+    # them used to come back `FailedBadSegment` with no boundary and no repair, which is why a
+    # consumer had to carry its own segment proposer.
+    #
+    # The locus comes from the side that IS named, so this only ever proposes within the right
+    # locus, and it proposes with `min_gain=0` because there is no submitted call to beat -- the
+    # margin exists to protect a curator's call, and here there is none. `propose` says so in the
+    # flags, distinctly from `allele` (which means the submission named a different allele).
+    for side, sub, other in (("V", v_sub, j_id), ("J", j_sub, v_id)):
+        # ⚠ ABSENT, not merely unresolvable. A submission that names `TRBVnope*01` has a defect a
+        # curator must see, and it keeps its `FailedBadSegment`; a submission that names nothing has
+        # a gap, and the junction can fill it. Proposing for both would hide the first inside the
+        # second.
+        if sub.strip() or not other:
+            continue
+        locus = resolve_locus(v_call, j_call) or anchors[(("J" if side == "V" else "V"), other)].locus
+        fwd = cdr3 if side == "V" else cdr3[::-1]
+        picked = guess_alleles(fwd, side, locus, anchors, called="", min_gain=0,
+                               organism=organism)
+        if picked:
+            if side == "V":
+                v_id, rec.v_alts = picked[0], picked
+            else:
+                j_id, rec.j_alts = picked[0], picked
+            rec.proposed = rec.proposed + (side,)
     rec.v_call, rec.j_call = v_id, j_id
     v_moved, j_moved = _allele_moved(v_sub, v_id), _allele_moved(j_sub, j_id)
     v_anchor = anchors.get(("V", v_id))
@@ -1499,6 +1539,7 @@ def to_frame(records: Iterable[Cdr3Markup]) -> pl.DataFrame:
         "v_flags": ",".join(m.v_flags), "j_flags": ",".join(m.j_flags),
         "v_canonical": m.v_canonical, "j_canonical": m.j_canonical,
         "v_alts": ",".join(m.v_alts), "j_alts": ",".join(m.j_alts),
+        "proposed": ",".join(m.proposed),
         "good": m.good, "fix_needed": m.fix_needed, "n_errors": len(m.errors),
         "errors": "; ".join(str(e) for e in m.errors),
         "cdr3fix": json.dumps(m.to_cdr3fix(), sort_keys=True),
