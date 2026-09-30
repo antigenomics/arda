@@ -32,7 +32,7 @@ CHUNK_DIRS = ("chunks", "chunks_unformatted", "chunks_with_unconventional_aa", "
 
 #: The decision columns an A/B compares. `errors` is deliberately included: a change that leaves
 #: every verdict alone but alters what it REPORTS is still a change the reader has to see.
-DECISION = ["cdr3_repaired", "v_call", "j_call", "v_end", "j_start",
+DECISION = ["cdr3_repaired", "v_call", "j_call", "locus", "proposed", "v_end", "j_start",
             "v_end_nt", "j_start_nt", "v_fix", "j_fix", "good", "n_errors", "errors"]
 
 
@@ -59,7 +59,12 @@ def read_keys(root: Path) -> pl.DataFrame:
         raise SystemExit(f"no chunk TSVs under {root}")
     return (pl.concat(frames, how="vertical_relaxed")
             .with_columns(pl.all().str.strip_chars().fill_null(""))
-            .filter((pl.col("cdr3") != "") & (pl.col("v") != "") & (pl.col("j") != ""))
+            # ⚠ A blank V or J is KEPT. Requiring both to be named made this instrument blind to
+            # the rows `cdr3fix` proposes a segment for -- 3,130 keys leave a side out and 461 name
+            # neither -- which is precisely the behaviour 2.34.0 and 2.36.0 changed. An A/B that
+            # cannot see the rows a release moves is not an A/B. Only a blank junction is dropped:
+            # there is no key without one.
+            .filter(pl.col("cdr3") != "")
             .unique(subset=["species", "cdr3", "v", "j"])
             .sort(["species", "cdr3", "v", "j"]))
 

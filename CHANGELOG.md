@@ -3,6 +3,32 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.36.0
+
+**A junction naming NEITHER V nor J now gets a locus proposed too.** 2.34.0 proposed the missing
+side from the junction, but only within the locus the *other* side named — so a record naming
+neither came back refused, with no locus, no boundary and nothing for a nucleotide stage to work
+on. There is no new rule here: every locus the organism ships now competes, scored by the same
+`anchor_depth` from each germline's own anchor, and a locus only wins by explaining residues at
+**both** ends. Both sides must name something; half an explanation is not a locus.
+
+522 of VDJdb's curated `chunks` records name neither side (461 distinct keys). All 461 now get a
+locus and **459 come back `good`**, against none before. The proposed locus agrees with the
+`cdr3.alpha` / `cdr3.beta` column the record was filed under on **457 of 461 (99.13 %)** — 318 TRB,
+139 TRA — and all four disagreements are `CACD…DKLIF`, TRDV2's own anchor and TRDJ1's own ending,
+in a schema with no delta column. `proposed` reads `V,J` on every one, so a curator can see exactly
+which record had nothing to go on.
+
+Each end must still explain its **own** anchor residue, or no locus is named: without that floor a
+junction agreeing with nothing (`QQQQQQQQQQQQ`) was handed one. Over the 461 real keys the winning
+locus clears it on every one.
+
+**`scripts/audit_cdr3fix.py` now keeps blank-side keys**, which it had been dropping. It required
+both a V and a J to be named, so the A/B instrument was blind to exactly the rows 2.34.0 and this
+release change. The corpus goes 189,596 → **192,726** keys and the digest rebases to
+`0df8541ed1060fe1`; on the 189,596 keys the old filter kept, the digest is **unchanged** at
+`2b75491b380310aa`, so nothing that already worked moved.
+
 ## 2.35.0
 
 **`arda.hmm` is no longer deprecated — it is the B-cell entry point.** 2.33.0 deprecated it on the
