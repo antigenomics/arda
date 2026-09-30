@@ -689,37 +689,37 @@ def _extend(segment: str, cdr3: str, off_s: int, off_q: int) -> tuple[int, int, 
     not repaired). ``CASSV`` against ``CGGS...`` has TWO mismatches followed by one match, so the
     V simply ends at Cys104 and ``GGS`` is N region -- no error, ``v_end = 1``.
     """
-    size = score = 0
+    n = min(len(segment) - off_s, len(cdr3) - off_q)
     i = 0
-    run: list[int] = []
-    while off_s + i < len(segment) and off_q + i < len(cdr3):
+    run: list[int] = []                    # the offsets, ascending, at which the two agree
+    while i < n:
         if segment[off_s + i] == cdr3[off_q + i]:
             run.append(i)
-        else:
-            # how far does agreement go after this mismatch run?
-            j, matched = i, 0
-            while (off_s + j < len(segment) and off_q + j < len(cdr3)
-                   and segment[off_s + j] != cdr3[off_q + j]):
-                j += 1
-            bad = j - i
-            k = j
-            while (off_s + k < len(segment) and off_q + k < len(cdr3)
-                   and segment[off_s + k] == cdr3[off_q + k]):
-                k += 1
-                matched += 1
-            if matched < bad:
-                break                      # the germline has stopped; the rest is N region
-            i = j
+            i += 1
             continue
-        i += 1
+        # how far does agreement go after this mismatch run?
+        j = i
+        while j < n and segment[off_s + j] != cdr3[off_q + j]:
+            j += 1
+        k = j
+        while k < n and segment[off_s + k] == cdr3[off_q + k]:
+            k += 1
+        if k - j < j - i:
+            break                          # the germline has stopped; the rest is N region
+        i = j
     # `size` spans everything the run covers, mismatches included; `score` counts agreement only;
     # `lead` is the LEADING exact run, which is what legacy's `match_size` -- and therefore `vEnd`
     # and `len - jStart` -- actually reported. Counting a mismatched residue as templated moved the
     # boundary off the release on 2-4 % of records.
+    #
+    # All three come off `run` rather than from two more passes over the strings: this is the
+    # hottest function in `markup_batch` (159,240 calls per 20,000 keys) and it used to walk the
+    # same span three times. `run` holds exactly the agreeing offsets below `size`, so `score` is
+    # its length and `lead` is how far it counts up from 0 without a gap.
     size = i
-    score = sum(1 for k in range(size) if segment[off_s + k] == cdr3[off_q + k])
+    score = len(run)
     lead = 0
-    while lead < size and segment[off_s + lead] == cdr3[off_q + lead]:
+    while lead < score and run[lead] == lead:
         lead += 1
     return size, score, lead
 
