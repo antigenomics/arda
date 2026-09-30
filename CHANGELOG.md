@@ -3,6 +3,20 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.34.1
+
+**Faster, with identical answers.** `_extend` — the function that walks a germline run, and the
+hottest one in `markup_batch` at 159,240 calls per 20,000 junctions — used to walk the same span
+three times. It walks it once now: **16,287 → 18,338 junction keys/s**, so VDJdb's whole 189,596-key
+corpus marks up in 10.3 s in one process. The audit digest over every one of those keys is unchanged.
+
+**Two invariants are now tests rather than accidents.** Every residue `v_end` / `j_start` credits is
+germline of the allele it names — measured at 185,636 of 185,636 V keys and 187,272 of 187,272 J keys,
+zero disagreements — and `cdr3_repaired` is a fixed point of itself. Separately, a functional V opens
+with Cys104 and a functional J closes with Phe/Trp118 on 3,129 of the 3,130 functional entries across
+all five shipped organisms; the one exception, `TRAJ35*01`, is real IMGT germline and is named in the
+test rather than repaired away.
+
 ## 2.34.0
 
 **New — a blank V or J call is proposed from the junction instead of refused.** A submission is
