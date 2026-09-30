@@ -447,10 +447,32 @@ def test_an_unresolvable_call_is_still_refused_rather_than_replaced():
     assert m.proposed == () and m.v_call == "" and m.v_fix == "FailedBadSegment" and not m.good
 
 
-def test_both_calls_blank_stays_refused():
-    """With neither side named there is no locus, so there is nothing to propose within."""
+def test_both_calls_blank_proposes_the_locus_as_well_as_the_sides():
+    """With neither side named, the LOCUS is proposed too -- every locus competes and both ends
+    must agree. 522 of VDJdb's own curated records in `chunks` name neither side, and each one used
+    to come back refused with no locus, no boundary and no junction downstream.
+
+    The chain the record was filed under is the check: `annotate_junctions` agrees with VDJdb's own
+    `cdr3.alpha`/`cdr3.beta` column on **457 of 461** distinct such keys (99.13 %), and all four
+    disagreements are `CACD...DKLIF` -- TRDV2's own anchor and TRDJ1's own ending, in a schema with
+    no delta column.
+    """
     m = markup_cdr3("CASSLAPGATNEKLFF", "", "", HS)
-    assert m.proposed == () and not m.good
+    assert m.proposed == ("V", "J")
+    assert m.locus == "TRB" and m.good
+    assert m.v_call.startswith("TRBV") and m.j_call.startswith("TRBJ")
+
+
+def test_a_junction_no_locus_explains_at_both_ends_stays_refused():
+    """Both ends must name something: half an explanation is not a locus."""
+    m = markup_cdr3("QQQQQQQQQQQQ", "", "", HS)
+    assert m.locus == "" and m.proposed == () and not m.good
+
+
+def test_the_proposed_locus_does_not_depend_on_set_order():
+    """Ties break by locus name, so the same junction gives the same locus every call."""
+    seen = {markup_cdr3("CAAHYGNKLVF", "", "", HS).locus for _ in range(5)}
+    assert seen == {"TRA"}
 
 
 def test_proposed_reaches_the_frame():

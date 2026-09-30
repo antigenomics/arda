@@ -1232,6 +1232,56 @@ def _best_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     return ("" if best == called else best), tuple(tied)
 
 
+@lru_cache(maxsize=8)
+def _loci(organism: str) -> tuple[str, ...]:
+    """Every locus this organism ships anchors for, in a fixed order."""
+    return tuple(sorted({a.locus for a in load_anchors(organism).values() if a.locus}))
+
+
+def _propose_locus(cdr3: str, anchors: dict, organism: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """Locus, V candidates and J candidates for a junction that names NEITHER side.
+
+    ⚠ This is the one-blank-side rule applied once more, not a new one. With one side named the
+    locus comes from it and only that locus competes; with neither named there is no locus either,
+    so every locus the organism ships competes and the junction picks. The evidence is the same
+    quantity in both cases -- :func:`anchor_depth` from the germline's OWN anchor -- and a locus
+    only wins by explaining residues at BOTH ends, which is what keeps a TRA junction out of TRD
+    (the V genes are shared, the J genes are not).
+
+    Both sides must name something: half an explanation is not a locus. Ties break by locus name,
+    so the answer does not depend on set order. Returns ``("", (), ())`` when nothing explains
+    both ends -- a record naming neither side and matching no locus stays refused.
+    """
+    rev = cdr3[::-1]
+    best: tuple[int, str] = (0, "")
+    picked: tuple[tuple[str, ...], tuple[str, ...]] = ((), ())
+    for locus in _loci(organism):
+        v = guess_alleles(cdr3, "V", locus, anchors, called="", min_gain=0, organism=organism)
+        if not v:
+            continue
+        j = guess_alleles(rev, "J", locus, anchors, called="", min_gain=0, organism=organism)
+        if not j:
+            continue
+        va, ja = anchors.get(("V", v[0])), anchors.get(("J", j[0]))
+        if va is None or ja is None:
+            continue
+        dv = anchor_depth(va.templated_aa, cdr3)
+        dj = anchor_depth(ja.templated_aa[::-1], rev)
+        # ⛔ Each end must explain its OWN anchor residue -- Cys104 at one, Phe/Trp118 at the other.
+        # `min_gain=0` is right for a side with no submitted call to beat, but here it is also
+        # choosing the LOCUS, and with no floor at all a junction agreeing with nothing still named
+        # one: `QQQQQQQQQQQQ` reached depth 0 on both ends of every locus and was handed TRA. Over
+        # the 461 real VDJdb keys the winning locus explains at least 1 residue at both ends on
+        # every one of them (16 at depth 1, 200 at 4, 156 at 5), so this refuses the junk without
+        # costing a record.
+        if min(dv, dj) < 1:
+            continue
+        depth = dv + dj
+        if depth > best[0] or (depth == best[0] and best[1] and locus < best[1]):
+            best, picked = (depth, locus), (v, j)
+    return best[1], picked[0], picked[1]
+
+
 def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
                  called: str = "", min_gain: int = 1, organism: str = "") -> str:
     """The single best allele, or ``""`` when nothing beats the submitted call. See
@@ -1404,22 +1454,32 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
     v_sub, j_sub = _leading_call(v_call), _leading_call(j_call)
     v_id = resolve_allele(v_sub, "V", anchors, organism)
     j_id = resolve_allele(j_sub, "J", anchors, organism)
-    # ⛔ A submission is allowed to leave one call BLANK, and a blank is not a reason to refuse the
-    # record: the junction itself is evidence about the missing side. Over VDJdb's corpus 3,126 of
-    # 191,103 distinct keys do exactly this -- 644 with no V, 2,943 with no J -- and every one of
+    # ⛔ A submission is allowed to leave a call BLANK, and a blank is not a reason to refuse the
+    # record: the junction itself is evidence about the missing side. 3,130 of VDJdb's 192,726
+    # distinct keys do exactly this -- 2,669 name ONE side and 461 name NEITHER -- and every one of
     # them used to come back `FailedBadSegment` with no boundary and no repair, which is why a
     # consumer had to carry its own segment proposer.
     #
-    # The locus comes from the side that IS named, so this only ever proposes within the right
-    # locus, and it proposes with `min_gain=0` because there is no submitted call to beat -- the
-    # margin exists to protect a curator's call, and here there is none. `propose` says so in the
-    # flags, distinctly from `allele` (which means the submission named a different allele).
+    # Both branches propose with `min_gain=0`, because there is no submitted call to beat: the
+    # margin exists to protect a curator's choice, and here there is none. `proposed` says which
+    # side it was, distinctly from `allele` (which means the submission named a DIFFERENT allele of
+    # the same gene).
+    #
+    # ⚠ NEITHER side named is still a gap, not a defect. With one side named the locus comes from
+    # it; with neither there is no locus either, so `_propose_locus` proposes that too and every
+    # locus competes. It runs first so the one-sided branch below never re-does its work.
+    if not v_sub.strip() and not j_sub.strip() and not v_id and not j_id:
+        loc, v_picked, j_picked = _propose_locus(cdr3, anchors, organism)
+        if loc:
+            rec.locus = loc
+            v_id, rec.v_alts, j_id, rec.j_alts = v_picked[0], v_picked, j_picked[0], j_picked
+            rec.proposed = ("V", "J")
     for side, sub, other in (("V", v_sub, j_id), ("J", j_sub, v_id)):
         # ⚠ ABSENT, not merely unresolvable. A submission that names `TRBVnope*01` has a defect a
         # curator must see, and it keeps its `FailedBadSegment`; a submission that names nothing has
         # a gap, and the junction can fill it. Proposing for both would hide the first inside the
         # second.
-        if sub.strip() or not other:
+        if sub.strip() or not other or side in rec.proposed:
             continue
         locus = resolve_locus(v_call, j_call) or anchors[(("J" if side == "V" else "V"), other)].locus
         fwd = cdr3 if side == "V" else cdr3[::-1]

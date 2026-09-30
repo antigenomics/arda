@@ -16,8 +16,9 @@ translation, and D-segment mapping including D-D fusions on IGH and TRD.
 
 **Junction repair** (`arda markup`, `arda.cdr3fix`). For a bare `(junction_aa, V, J, species)`
 record: confirm or re-call the V and J, repair the junction against the germline it names, and place
-the V/J boundary in residues and in nucleotides. The repair policy is deliberately conservative —
-see the 2.33.0 entry in `CHANGELOG.md`.
+the V/J boundary in residues and in nucleotides. A side the record leaves blank is proposed from the
+junction rather than refused — and where it names neither side, the locus is proposed too. The
+repair policy is deliberately conservative — see the 2.33.0 entry in `CHANGELOG.md`.
 
 **Scale.** Streaming, bounded-memory FASTQ I/O; multi-file samples (read groups); sharding across a
 cluster via SLURM, Nextflow and Snakemake.
