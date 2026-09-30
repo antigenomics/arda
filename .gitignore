@@ -247,3 +247,11 @@ __marimo__/
 # mmseqs indexes (see scripts/pack_reference.sh).
 database/vdj/*/segments.fasta
 database/vdj/*/segments.markup.tsv
+
+# Working notes: internal by design, and kept out of the published tree. The detailed changelog and
+# roadmap live beside their slim public counterparts -- `CHANGELOG.md` and `ROADMAP.md` are what a
+# USER reads, `*_local.md` is what a maintainer does.
+/CLAUDE.md
+/SOURCES.md
+/CHANGELOG_local.md
+/ROADMAP_local.md

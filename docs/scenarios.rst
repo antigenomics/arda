@@ -200,7 +200,7 @@ estimated on one cohort can score another.
    This does **not** replace the D posterior (``vdjtools.model.posterior_d``), and it does not
    gate anything. That one answers the *amino-acid* question — a record with no nucleotides, where the D is often invisible in
    the translated junction. Different input, both ship. Nothing in the annotation path calls
-   ``arda.hmm``: two measured negatives (recorded in ``ROADMAP.md``) say that re-ranking
+   ``arda.hmm`` (deprecated in 2.33.0): two measured negatives say that re-ranking
    nucleotide D candidates by a scenario likelihood changes nothing, and that replacing the
    E-value gate with a Bayes factor would need a *per-locus* shipped threshold.
 

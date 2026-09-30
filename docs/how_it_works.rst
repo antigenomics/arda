@@ -101,7 +101,7 @@ For human, arda ships:
 
 Only in-frame combinations are kept, and IMGT ORFs and pseudogenes are excluded, so arda's call
 vocabulary is narrower than IgBLAST's germline database. What that costs, and the three checks
-applied before a gene is added or removed, is recorded in ``SOURCES.md``.
+applied before a gene is added or removed, is recorded with the reference build.
 
 J+C scaffolds
 ~~~~~~~~~~~~~

@@ -27,7 +27,7 @@ an organism. Requires IgBLAST (fetched into `bin/` by `setup.sh`).
    - `d_prior.tsv` — generative-model summaries read by `arda.scenarios.load_prior_table`,
      `arda.hmm` and `vdjtools.model.posterior_d` (`insVD`/`insDJ`
      insert lengths, surviving-D length, `P(D | J)`). **Derived, not measured**; shipped
-     only for the (organism, locus) pairs with a published model. See `SOURCES.md` and
+     only for the (organism, locus) pairs with a published model. See the data-provenance notes and
      `scripts/build_d_priors.py`.
    - `loci_manifest.tsv` — per-locus reference coverage, one row per defined locus
    - `build.log`
