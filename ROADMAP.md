@@ -19,6 +19,29 @@ scenario set; `arda.hmm`, the same model read as inference).
 
 ## TODO
 
+### Open loops after 2.33.0 — 2026-09-30
+
+1. **`arda.hmm` is deprecated; decide removal.** Nothing consumes it (not the annotation path, not
+   another repository, not vdjtools' junction pipeline) and `vdjtools.model.infer_nt_batch` answers
+   the same question batched and in C++. Its own tests are the only callers. *Done* = removed, or a
+   consumer named. `arda.scenarios` is NOT in this loop: it fits the D prior, and the posterior that
+   prior parameterises is measured to still earn its keep (it answers 1,753 of 4,000 real human TRB
+   rearrangements that the nucleotide alignment declines, correctly on 53 %).
+2. **`database/vdj/<org>/d_prior.tsv` is a fitted model artifact in a germline reference tree.**
+   `antigenomics/arda#144` is right about that, and it stays only because `arda.hmm` and
+   `arda.scenarios` read it, so moving it now would put a second copy of a fitted table in vdjtools.
+   *Done* = it follows loop 1 into vdjtools' model bundle, or a reason it belongs here is written
+   down.
+3. **141 keys where arda edits a junction the 2026-06-03 release does not** (of 187,488;
+   35 of them already canonical). Each is an anchor substitution or an addition after a re-call,
+   which is the policy working as specified — but the class has never been read record by record.
+   *Done* = each of the 35 classified as correct-or-not by a curator. Reproduce with
+   `scripts/compare_vdjdb_release.py`.
+4. **The consumer still has to be migrated.** `antigenomics/vdjdb-db#713` +
+   `docs/builds/library-pipeline-migration.md` there. *Done* = that build's
+   `annotate/{cdr3fix,junction,dgene}.py` are gone and it calls
+   `vdjtools.model.annotate_junctions`.
+
 ### Next up — ranked, 2026-09-25
 
 Everything below this block is the full backlog, ordered by subsystem rather than by priority.
