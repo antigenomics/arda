@@ -20,9 +20,9 @@ tar czf "$OUT" -C "$ROOT/database" --exclude='vdj/*/mmseqs' --exclude='vdj/*/seg
 # first match, closing the pipe) -> a false failure; here-strings have no producer to break.
 members=$(tar tzf "$OUT")
 echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); $(grep -c . <<<"$members") members"
-# Every file a pip user needs at runtime must be in here, per organism. `arda markup`,
-# `arda.dpost` and D mapping all read these, and a missing one is a 404-shaped failure that
-# only shows up on someone else's machine.
+# Every file a pip user needs at runtime must be in here, per organism. `arda markup`, D mapping
+# and -- in the other repository -- `vdjtools.model.posterior_d` all read these, and a missing one is
+# a 404-shaped failure that only shows up on someone else's machine.
 for org in human mouse rat rabbit rhesus_monkey; do
   for f in alleles.fasta alleles.aa.fasta markup.tsv markup.aa.tsv cdr3_anchors.tsv; do
     grep -q "^vdj/$org/$f\$" <<<"$members" || { echo "ERROR: vdj/$org/$f missing"; exit 1; }
@@ -34,7 +34,9 @@ for org in human mouse rat rabbit rhesus_monkey; do
     [ "$sz" -gt 1000 ] || { echo "ERROR: vdj/$org/$f is empty ($sz B) -- was build-db run without IgBLAST?"; exit 1; }
   done
 done
-# D germlines exist only for organisms with a D locus; d_prior only where a model was published.
+# D germlines exist only for organisms with a D locus; d_prior only where a model was published. The
+# prior table is still shipped although the POSTERIOR moved to vdjtools in 2.33.0 (#144): `arda.hmm`
+# and `arda.scenarios` read it too, and vdjtools reads this copy rather than vendoring a second one.
 for org in human mouse; do
   grep -q "^vdj/$org/d_germlines.fasta\$" <<<"$members" || { echo "ERROR: vdj/$org/d_germlines.fasta missing"; exit 1; }
   grep -q "^vdj/$org/d_prior.tsv\$" <<<"$members" || { echo "ERROR: vdj/$org/d_prior.tsv missing"; exit 1; }
