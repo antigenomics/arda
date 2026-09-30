@@ -188,7 +188,7 @@ rest; on 102,990 VDJdb records it reproduces VDJdb's own repair on 96.4 % of tho
 flags. CLI: `arda markup`.
 
 `arda.annotate.dmap.map_d_junction` maps D (and D-D) into a bare nucleotide junction with
-no mmseqs pass — the anchors give the interior directly. `arda.dpost.posterior_d` infers
+no mmseqs pass — the anchors give the interior directly. `vdjtools.model.posterior_d` (arda 2.32.0 and earlier: `arda.dpost`) infers
 the D gene and its position from the junction *length*: the length pins
 `insVD + |D surviving| + insDJ`, so the D is placed to a median 1–3 nt even when the
 protein shows none of it. Priors ship in `d_prior.tsv` for human IGH/TRB/TRD and mouse

@@ -206,7 +206,7 @@ pipeline and `build-db` / `build-index`.
 
 - **`junction` is not `cdr3`.** Both conserved anchors are *in* `junction`/`junction_aa` and *out*
   of `cdr3`/`cdr3_aa`, so `cdr3_aa == junction_aa[1:-1]` always. Everything in `arda.cdr3fix` /
-  `dmap` / `dpost` works in **junction** space, matching VDJdb's `cdr3` column. Mixing the two
+  `dmap` (and vdjtools' D posterior) works in **junction** space, matching VDJdb's `cdr3` column. Mixing the two
   conventions is the most expensive mistake available here, and it corrupts Pgen, clustering and
   matching downstream.
 - **An empty `d_call` is a decision, not a gap.** The call is gated on `d_support` (E-value ≤ 0.2

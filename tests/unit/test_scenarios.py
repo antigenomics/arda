@@ -108,15 +108,14 @@ def test_insertion_base_cost_is_load_bearing(monkeypatch):
         f"free insertions must pull the mean up: {without_cost:.2f} vs {with_cost:.2f}")
 
 
-def test_output_is_a_drop_in_for_the_shipped_prior(tmp_path, monkeypatch):
-    """The point of the module: `dpost.load_d_prior` must read what this writes.
+def test_output_is_a_drop_in_for_the_shipped_prior(tmp_path):
+    """The point of the module: :func:`load_prior_table` must read back what this writes.
 
     Same long `locus/kind/key/value` shape, same key grammar (`<allele>:<n>` for `dlen`,
-    `<d>|<j>` for `d_given_j`). If this drifts, the estimate is unusable by the one consumer it
-    exists for.
+    `<d>|<j>` for `d_given_j`). Reader and writer now sit in one module, and this is the round trip
+    between them -- which is also what `vdjtools.model.load_d_prior` reads through, so a drift here
+    breaks the D posterior in the other repository.
     """
-    from arda import dpost
-
     stats = sc.estimate([(*TRB, 1.0)], organism="human", iterations=2)
     rows = [r for r in stats.rows() if r[1] in ("insVD", "insDJ", "dlen",
                                                 "d_marginal", "d_given_j")]
@@ -128,8 +127,7 @@ def test_output_is_a_drop_in_for_the_shipped_prior(tmp_path, monkeypatch):
         for locus, kind, key, value in rows:
             fh.write(f"{locus}\t{kind}\t{key}\t{value:.8g}\n")
 
-    monkeypatch.setattr(dpost, "vdj_dir", lambda *a, **k: out)
-    prior = dpost.load_d_prior("human")
+    prior = sc.load_prior_table("human", out / "d_prior.tsv")
     assert "TRB" in prior
     p = prior["TRB"]
     assert p.ins_vd and sum(p.ins_vd) == pytest.approx(1.0, rel=1e-3)

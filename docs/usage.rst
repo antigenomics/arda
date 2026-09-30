@@ -555,15 +555,122 @@ the convention VDJdb's ``cdr3`` column uses, which is *not* arda's ``cdr3`` fiel
 list (substitution / insertion / deletion, with position and extent), a VDJdb-compatible
 ``cdr3fix`` JSON blob, and a repaired ``cdr3_repaired``. Repair is
 deliberately conservative: only anchor-adjacent edits are *applied* (``--max-replace``), while
-errors deeper in the junction are reported and left alone — on 102,990 VDJdb records this
-reproduces VDJdb's own repair on 96.4 % of the records it marks as needing one, and rewrites
-nothing it should not.
+errors deeper in the junction are reported and left alone.
 
-**Read the boundary in nucleotides.** A germline run ends wherever the exonuclease stopped,
-which is not a codon boundary, so the residue counts round it — ``v_end`` is exact on 71.8 % of
-junctions with external nucleotide truth against ``v_end_nt``'s 92.9 % under the same VDJdb
-residue convention (:func:`arda.cdr3fix.boundary_nt` carries the whole measurement). The residue
-counts keep their meaning and their callers; they are simply the coarser answer.
+Since 2.32.0 the engine is a **port of VDJdb's own** ``Cdr3Fixer``: one gapless local alignment per
+side (:func:`arda._markup.d_local_align`, the same C++ the D caller uses) places the germline's
+templated run anywhere in the junction, and the outcome follows from the two offsets exactly as
+legacy's table does. Searching every offset is the point — ``CAMYLCASSLFGSPLHF`` against ``TRBV9``
+(``CASSV``) carries a spurious ``CA`` at offset 0 and the real ``CASS`` at offset 5, and only the
+longest hit anywhere finds the second.
+
+Measured against the authoritative VDJdb ``2026-06-03`` release, whose ``cdr3fix`` column carries
+the retired fixer's own ``cdr3_old`` → ``cdr3`` for every record. Coverage first, because an inner
+join gives each side its own denominator: **184,765 of arda's 189,596 distinct
+(species, junction, V, J) curation keys join (97.45 %)**.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 46 27 27
+
+   * -
+     - 2.31.0 (alignment engine)
+     - 2.32.0 (this port)
+   * - repaired junction agrees with the release
+     - 180,374 (97.6235 %)
+     - **181,892 (98.4451 %)**
+   * - ``vEnd`` agrees
+     - 98.2013 %
+     - **98.3571 %**
+   * - ``jStart`` agrees
+     - 97.8316 %
+     - **99.7242 %**
+   * - the release's own repairs reproduced
+     - 584 of 779
+     - **623 of 779**
+   * - repairs the release did *not* make
+     - 4,196
+     - **2,717**
+   * - ``good`` alongside an unrepaired disagreement
+     - 19,436
+     - **0**
+   * - throughput, one process
+     - 12,900 keys/s
+     - **20,400 keys/s**
+
+.. _markup-flags:
+
+The per-side verdict is a set of flags
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``v_flags`` and ``j_flags`` (comma-joined in the TSV) carry any combination of seven names. Counts
+are over the 189,596-key corpus above.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 58 14 14
+
+   * - flag
+     - meaning
+     - V
+     - J
+   * - ``ok``
+     - the junction agrees with this side's germline; nothing was done
+     - 174,426
+     - 172,909
+   * - ``allele``
+     - markup used an allele the submission did not name
+     - 6,334
+     - 1,545
+   * - ``sub``
+     - residue(s) substituted to germline
+     - 1,466
+     - 1,598
+   * - ``add``
+     - residue(s) restored from germline
+     - 6
+     - 304
+   * - ``trim``
+     - residue(s) removed — framework sitting outside the junction
+     - 47
+     - 197
+   * - ``shallow``
+     - agrees, but on the conserved anchor alone — the call is uncorroborated
+     - 1,425
+     - 579
+   * - ``impossible``
+     - no usable segment, no alignment, **or** a disagreement the rules decline to repair
+     - 7,109
+     - 13,279
+
+``good`` is exactly "neither side ``impossible``, and both anchors present" — read it off the flags.
+``v_fix``/``j_fix`` keep VDJdb's worst-wins names so the ``cdr3fix`` JSON stays key-for-key
+comparable, but one label cannot express a side that repaired one edit and declined another. That is
+not cosmetic: inspecting only the *applied* edits made a declined repair indistinguishable from
+agreement, so ``CAISGEFGSGA`` reported ``V sub@2 I>S d=2`` and still returned ``NoFixNeeded`` and
+``good``, as did 19,436 keys.
+
+A contradicted call changes the allele, not the sequence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Before any substitution is kept, :func:`arda.cdr3fix.guess_allele` asks whether a different allele
+of the locus explains the submitted residues *as they stand*. If one does, the call is re-assigned
+and the junction is left alone — the ``allele`` flag records it.
+
+This is legacy's ``guess_id`` rebuilt on the same scan, and it exists because the alternative
+corrupts data. Of the anchor-adjacent substitutions 2.31.0 wrote into an **already-canonical**
+junction, **74.7 % were records whose own 3' end matched a different J allele better than the called
+one — against 1.1 % of untouched records**, a 68× enrichment. ``CASSLRGAATDTQYF`` is the shape of
+it: a clean ``TRBJ2-3`` junction called ``TRBJ2-1``, which 2.31.0 rewrote to ``CASSLRGAATDTQFF``, a
+string no germline supports. It is now re-called to ``TRBJ2-3``, unchanged.
+
+``shallow`` is a caveat and keeps ``good``: the germline contributed only its conserved anchor, so
+the call has no corroboration in the junction. It is deliberately *not* a refusal.
+``CGGSARSGELFF`` against ``TRBV9`` (``CASSV``) agrees on the Cys alone and that is the correct
+answer — the V is exonuclease-trimmed back to Cys104 and ``GGS`` is N region — while
+``CASSQQQQQQQQQF`` against ``TRBJ1-1`` agrees on the Phe alone and looks like a mis-call. No
+property of a junction separates the two, so both are flagged and both keep their boundary; filter
+on the flag if your analysis needs germline depth.
 
 ``--d-posterior`` adds a D-gene call inferred from the junction *length* — the nucleotide length
 pins ``insVD + |D surviving| + insDJ``, so the D can be placed to a median 1–3 nt even when the

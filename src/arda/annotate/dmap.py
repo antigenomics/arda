@@ -121,11 +121,23 @@ def _d_germlines(organism: str) -> dict[str, list[tuple[str, str]]]:
 
 
 def map_d_junction(junction_nt: str, v_call: str, j_call: str,
-                   species: str = "human", d_max_evalue: float | None = None) -> DCall:
+                   species: str = "human", d_max_evalue: float | None = None,
+                   v_end: int | None = None, j_start: int | None = None) -> DCall:
     """Map D (and a tandem second D) into a bare nucleotide junction.
 
     ``d_max_evalue`` overrides the shipped E-value gate on the D call(s); see
     :func:`arda.annotate.transfer._map_d`. ``None`` keeps the shipped 0.2.
+
+    ``v_end`` / ``j_start`` supply the interior to search instead of deriving it here, and a caller
+    that already knows the boundaries should pass them. ``v_end`` is the COUNT of leading junction
+    nucleotides the V templates and ``j_start`` the 0-based index of the first J-templated one --
+    :attr:`arda.cdr3fix.Cdr3Markup.v_end_nt` and ``j_start_nt`` exactly.
+
+    ⚠ Deriving them here is an exact germline prefix/suffix match against the CALLED allele, which
+    is right for a read but wrong for a junction whose nucleotides were *inferred* under a model
+    keyed on a different allele of the same gene: the prefix then breaks at the first synonymous
+    difference and the interior opens up inside the V, where a spurious D wins. `CATSIRFTDTQYF`
+    placed a TRBD2 at nucleotide 6 that way.
     """
     organism = resolve_species(species)
     junction_nt = (junction_nt or "").strip().upper()
@@ -145,9 +157,12 @@ def map_d_junction(junction_nt: str, v_call: str, j_call: str,
     if not va or not ja or va.status != "ok" or ja.status != "ok":
         return out
 
-    v_end = _common_prefix(junction_nt, va.germline_nt.upper())
-    j_len = _common_suffix(junction_nt, ja.germline_nt.upper())
-    j_start = len(junction_nt) - j_len
+    if v_end is None:
+        v_end = _common_prefix(junction_nt, va.germline_nt.upper())
+    if j_start is None:
+        j_start = len(junction_nt) - _common_suffix(junction_nt, ja.germline_nt.upper())
+    v_end = max(0, min(int(v_end), len(junction_nt)))
+    j_start = max(0, min(int(j_start), len(junction_nt)))
     if j_start - v_end < 1:
         return out                       # V and J meet or overlap: no interior to search
     out.v_sequence_end, out.j_sequence_start = v_end, j_start + 1

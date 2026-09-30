@@ -19,6 +19,29 @@ scenario set; `arda.hmm`, the same model read as inference).
 
 ## TODO
 
+### Open loops after 2.33.0 — 2026-09-30
+
+1. **`arda.hmm` is deprecated; decide removal.** Nothing consumes it (not the annotation path, not
+   another repository, not vdjtools' junction pipeline) and `vdjtools.model.infer_nt_batch` answers
+   the same question batched and in C++. Its own tests are the only callers. *Done* = removed, or a
+   consumer named. `arda.scenarios` is NOT in this loop: it fits the D prior, and the posterior that
+   prior parameterises is measured to still earn its keep (it answers 1,753 of 4,000 real human TRB
+   rearrangements that the nucleotide alignment declines, correctly on 53 %).
+2. **`database/vdj/<org>/d_prior.tsv` is a fitted model artifact in a germline reference tree.**
+   `antigenomics/arda#144` is right about that, and it stays only because `arda.hmm` and
+   `arda.scenarios` read it, so moving it now would put a second copy of a fitted table in vdjtools.
+   *Done* = it follows loop 1 into vdjtools' model bundle, or a reason it belongs here is written
+   down.
+3. **141 keys where arda edits a junction the 2026-06-03 release does not** (of 187,488;
+   35 of them already canonical). Each is an anchor substitution or an addition after a re-call,
+   which is the policy working as specified — but the class has never been read record by record.
+   *Done* = each of the 35 classified as correct-or-not by a curator. Reproduce with
+   `scripts/compare_vdjdb_release.py`.
+4. **The consumer still has to be migrated.** `antigenomics/vdjdb-db#713` +
+   `docs/builds/library-pipeline-migration.md` there. *Done* = that build's
+   `annotate/{cdr3fix,junction,dgene}.py` are gone and it calls
+   `vdjtools.model.annotate_junctions`.
+
 ### Next up — ranked, 2026-09-25
 
 Everything below this block is the full backlog, ordered by subsystem rather than by priority.
@@ -706,6 +729,17 @@ what is left of the junction-recall gap. Evidence and method:
       repairs unchanged at 0.35 %. `family*01` was dropped from the allele ladder: dead for all
       five shipped organisms. `FailedReplace` turned out to be reachable after all (three
       substitutions beside a long J anchor, `max_replace >= 3`), and is now tested.
+
+      ⚠ **Superseded by 2.32.0 (issue #141).** The alignment engine this entry describes is gone,
+      and with it `_MAX_TRIM`, `_MAX_FIX` and `_TRIM`: `cdr3fix` is now a port of VDJdb's own
+      `Cdr3Fixer`, one gapless local alignment (`_markup.d_local_align`) plus legacy's positional
+      table, with `max_replace` as the single budget. `_canonicalise` and the canonical-repair rule
+      in this entry SURVIVE and are still the reason `good` implies canonical. What does not survive
+      is the agreement claim: `good` is now deliberately stricter than VDJdb's, because a declined
+      disagreement no longer reads as a clean record. Measured against the authoritative
+      2026-06-03 release over 184,765 joined curation keys, the repaired junction agrees on
+      **98.4451 %** (2.31.0: 97.6235 %) and `jStart` on **99.7242 %** (97.8316 %). See CHANGELOG
+      2.32.0 and `skills/arda/references/bare-records.md`.
 
 - [x] **Productivity: FR4 is scanned for stops.** `productive` and `stop_codon` covered the
       V-side regions and the junction, and the junction ends AT [FW]118 -- FR4's first residue --

@@ -86,13 +86,16 @@ read to align — rather than from a sequenced fragment.
    :undoc-members:
    :show-inheritance:
 
-.. automodule:: arda.dpost
-   :members:
-   :undoc-members:
-   :show-inheritance:
+.. note::
 
-Bulk RNA-seq
-------------
+   ``arda.dpost`` was **removed in 2.33.0**. A posterior over the D gene is a
+   recombination-model question, not a germline-reference one, so it lives in vdjtools as
+   ``vdjtools.model.posterior_d`` / ``posterior_d_batch``
+   (`arda#144 <https://github.com/antigenomics/arda/issues/144>`_). The module was ported, not
+   rewritten: its answer is identical field-for-field, and it gained the batch entry point
+   `arda#142 <https://github.com/antigenomics/arda/issues/142>`_ asked for. arda still ships the
+   prior table it reads (``database/vdj/<org>/d_prior.tsv``) and still fits one
+   (:func:`arda.scenarios.estimate`).
 
 .. automodule:: arda.rnaseq.map
    :members:

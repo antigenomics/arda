@@ -55,7 +55,7 @@ library; see `tests/synthetic/test_germline_segments.py`.
   conserved anchors, the CDR3 excludes both. So `junction_aa` is two residues longer.
 - **VDJdb's `cdr3` column is arda's `junction`, not arda's `cdr3`.** It runs Cys104 →
   Phe/Trp118 with both anchors *included*. Everything in `arda.cdr3fix`,
-  `arda.annotate.dmap` and `arda.dpost` therefore works in **junction space**. Feeding an
+  `arda.annotate.dmap` (and vdjtools' D posterior) therefore works in **junction space**. Feeding an
   arda `cdr3_aa` to `markup_cdr3` (or a VDJdb `cdr3` to something expecting arda's) shifts
   every coordinate by one residue and silently corrupts Pgen, clustering and matching.
 - Out-of-frame junctions (V and J in different frames): 1–2 N bases are inserted

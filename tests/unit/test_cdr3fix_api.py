@@ -64,7 +64,10 @@ def test_format_report_counts_and_lists():
 
 def test_explain_and_error_str_are_what_the_report_prints():
     mk = markup_cdr3("CASSARSGELF", V, J, "human")
-    assert str(mk.errors[0]) == "J del@10 missing 'F' d=0"
+    # `pos` indexes the REPAIRED junction for an applied edit -- 11 is where the restored Phe118
+    # now sits. A `trim` is the exception and reports the submission, because the residues it
+    # removed are not in the output to point at.
+    assert str(mk.errors[0]) == "J del@11 missing 'F' d=0"
     assert "CASSARSGELF" in mk.explain() and "CASSARSGELFF" in mk.explain()
 
 
@@ -92,17 +95,19 @@ def test_extra_residue_at_an_anchor_is_trimmed(cdr3, side, fix):
     assert [(e.side, e.kind) for e in mk.errors if e.applied] == [(side, "ins")]
 
 
-@pytest.mark.parametrize("flank,expect", [
-    ("YF", "FixTrim"),                 # 2 flanking residues: trimmed
-    ("YFY", "FixTrim"),                # 3 == _MAX_TRIM: trimmed
-    ("YFYF", "FailedNoAlignment"),     # 4 > _MAX_TRIM: refused, never silently swallowed
-])
-def test_a_flank_is_trimmed_only_up_to_max_trim(flank, expect):
-    """Framework context before Cys104. Removing residues the germline never explained is a
-    smaller risk than inventing ones, so it gets its own, larger budget."""
+@pytest.mark.parametrize("flank", ["YF", "YFY", "YFYF", "CAMYL"])
+def test_a_flank_is_trimmed_whatever_its_length(flank):
+    """Framework context before Cys104, trimmed with no length bound -- which is legacy's rule.
+
+    There is no N region outside a conserved anchor, so residues past it are framework by
+    construction and no budget is needed to say so. The authoritative 2026-06-03 release settles
+    it: `CAMYLCASSLFGSPLHF` comes back `CASSLFGSPLHF` with `vEnd=4`, five residues removed. The
+    2.16.0 `_MAX_TRIM = 3` bound refused exactly that record, and `_canonicalise` is what actually
+    protects the anchor.
+    """
     mk = markup_cdr3(flank + "CASSLGGNEQFF", "TRBV11-1*01", "TRBJ2-1*01", "human")
-    assert mk.v_fix == expect
-    assert mk.cdr3_repaired == ("CASSLGGNEQFF" if expect == "FixTrim" else flank + "CASSLGGNEQFF")
+    assert mk.v_fix == "FixTrim"
+    assert mk.cdr3_repaired == "CASSLGGNEQFF"
 
 
 def test_a_trim_must_pay_for_itself_and_never_eats_an_anchor():
@@ -113,13 +118,21 @@ def test_a_trim_must_pay_for_itself_and_never_eats_an_anchor():
     assert mk.j_canonical
 
 
-def test_too_many_invented_residues_is_a_failed_replace():
-    """`_MAX_FIX` guards residues we never observed. Three substitutions is a wrong allele,
-    not three typos -- reachable only when `max_replace` reaches that deep."""
-    mk = markup_cdr3("CAVRDSNNNAQQQF", "TRAV1-1*01", "TRAJ31*01", "human", max_replace=3)
-    assert mk.j_fix == "FailedReplace"
-    assert mk.cdr3_repaired == "CAVRDSNNNAQQQF", "a FailedReplace writes nothing"
-    assert mk.errors and not any(e.applied for e in mk.errors)
+def test_max_replace_bounds_the_junction_side_only():
+    """`max_replace` is legacy's `max_replace_size`: junction residues standing where the anchor
+    should be. At the default 1 that is exactly the anchor residue.
+
+    2.16.0 layered a second bound (`_MAX_FIX = 2`) on invented residues, and 2.32.0 read the knob
+    as a DISTANCE FROM THE ANCHOR, which let it reach one residue inside the germline run. Neither
+    is what it means now: no rung of it rewrites anything but the first/last residue.
+    """
+    # TRAJ31 templates `NNNARLMF`; the junction ends `...AQQQF`, so three residues disagree, at
+    # distances 1, 2 and 3 from Phe118 -- all of them inside the run, all of them reported.
+    for rung in (0, 1, 2, 3, 4):
+        mk = markup_cdr3("CAVRDSNNNAQQQF", "TRAV1-1*01", "TRAJ31*01", "human", max_replace=rung)
+        assert mk.cdr3_repaired == "CAVRDSNNNAQQQF", (rung, mk.cdr3_repaired)
+        assert "mismatch" in mk.j_flags
+        assert not [e for e in mk.errors if e.applied]
 
 
 @pytest.mark.parametrize("cdr3,which", [("C", "j_fix"), ("F", "v_fix")])
@@ -130,19 +143,22 @@ def test_a_junction_with_nothing_to_align_fails_rather_than_guesses(cdr3, which)
     assert mk.cdr3_repaired == cdr3, "a failed side must not rewrite the junction"
 
 
-def test_max_replace_bounds_how_deep_a_repair_may_reach():
-    """``max_replace`` is a *distance from the anchor*, so 0 still repairs the anchor itself.
+def test_a_substitution_one_residue_in_is_never_applied():
+    """dist=0 is *at* the anchor and is repaired; dist=1 is inside the run and is not.
 
-    A substitution one residue in (dist=1) is refused at 0 and applied at 1. This is the knob
-    that keeps arda from rewriting the V/N boundary as if it were a curation error.
+    This is the whole of the rule at one position. `CXSSARSGELFF` carries an X where TRBV9 says A,
+    one residue in from Cys104 -- reported at every `max_replace`, rewritten at none -- while
+    `CASSARSGELF` is missing the terminal Phe118 itself and is repaired even at 0.
     """
     off_by_one = "CXSSARSGELFF"                       # sub at index 1, dist 1 from Cys104
-    assert markup_cdr3(off_by_one, V, J, "human", max_replace=0).cdr3_repaired == off_by_one
-    assert markup_cdr3(off_by_one, V, J, "human", max_replace=1).cdr3_repaired == CLEAN
-
-    reported = markup_cdr3(off_by_one, V, J, "human", max_replace=0)
-    assert reported.v_fix == "NoFixNeeded", "a reported-only error leaves the fix type clean"
-    assert reported.errors and not any(e.applied for e in reported.errors)
+    for rung in (0, 1, 2):
+        m = markup_cdr3(off_by_one, V, J, "human", max_replace=rung)
+        assert m.cdr3_repaired == off_by_one, rung
+        assert m.v_flags == ("mismatch",) and m.v_fix == "NoFixNeeded"
+        assert m.errors and not any(e.applied for e in m.errors)
+        # A well-formed junction whose germline disagrees inside the run stays `good`: nothing is
+        # wrong with the string, and what is questionable is a residue only a curator can settle.
+        assert m.good
 
     # dist=0 is *at* the anchor and is repaired even at max_replace=0.
     assert markup_cdr3("CASSARSGELF", V, J, "human", max_replace=0).cdr3_repaired == CLEAN

@@ -84,7 +84,11 @@ def test_the_deep_error_is_reported_and_not_repaired(marked):
     assert m.cdr3_repaired == "CASSSPLLSSDTQYF"
     deep = [e for e in m.errors if not e.applied]
     near = [e for e in m.errors if e.applied]
-    assert len(deep) == 1 and deep[0].kind == "sub" and deep[0].dist == 6
+    # dist 5, not 6: the distance is measured from the anchor AFTER the trailing G is trimmed,
+    # which is the junction the substitution actually sits in. `pos` 9 indexes the repaired
+    # 15-residue junction, where residue 9 is the reported `S`.
+    assert len(deep) == 1 and deep[0].kind == "sub" and deep[0].dist == 5
+    assert deep[0].pos == 9 and m.cdr3_repaired[9] == "S"
     assert "reported, not repaired" in str(deep[0])
     assert len(near) == 1 and near[0].kind == "ins" and near[0].dist == 0
     # only the anchor-adjacent edit reached the output

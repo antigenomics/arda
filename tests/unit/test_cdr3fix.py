@@ -154,14 +154,20 @@ def test_clean_record_matches_vdjdb_boundaries():
     assert m.errors == [] and not m.fix_needed and m.good
 
 
-def test_substitution_next_to_the_cys_is_repaired():
-    """CASS -> CCSS: substitution at index 1, adjacent to Cys104, so it is repaired."""
+def test_a_substitution_next_to_the_cys_is_reported_and_never_repaired():
+    """CASS -> CCSS: a substitution at index 1 is INSIDE the germline run, so it stands.
+
+    2.16.0-2.32.0 rewrote it to `CASSARSGELFF` on the argument that a residue one away from a fixed
+    Cys104 is a typo rather than the N region starting early. It is not decidable from one junction:
+    the alternative is an allele IMGT does not record. 2,744 rewrites of already-canonical junctions
+    the authoritative release does not ship came from this branch.
+    """
     m = markup_cdr3("CCSSARSGELFF", "TRBV9*01", "TRBJ2-2*01", HS)
-    assert m.cdr3_repaired == "CASSARSGELFF"
-    assert m.v_fix == "FixReplace"
+    assert m.cdr3_repaired == "CCSSARSGELFF"
+    assert m.v_fix == "NoFixNeeded" and m.v_flags == ("mismatch",) and m.good
     (e,) = [e for e in m.errors if e.side == "V"]
     assert (e.kind, e.pos, e.length, e.frm, e.to, e.dist, e.applied) == \
-        ("sub", 1, 1, "C", "A", 1, True)
+        ("sub", 1, 1, "C", "A", 1, False)
 
 
 def test_missing_terminal_f_is_added_never_truncated():
@@ -174,16 +180,20 @@ def test_missing_terminal_f_is_added_never_truncated():
 
 
 def test_deep_substitution_is_reported_but_not_repaired():
-    """NEKLFF -> NNKLFF: 4 residues from the anchor, so it is indistinguishable from
-    the N region starting early. Report where it is; do not rewrite the record."""
+    """NEKLFF -> NNKLFF: 4 residues from the anchor. Report where it is; never rewrite it.
+
+    The side is ``mismatch`` -- not ``ok``, because something was seen, and not ``impossible``,
+    because the junction is well formed and every residue in it is the curator's. There is no
+    setting that buys the rewrite: ``max_replace`` bounds the anchor, not the run.
+    """
     m = markup_cdr3("CASSLGGNNKLFF", "TRBV9*01", "TRBJ1-4*01", HS)
     assert m.cdr3_repaired == m.cdr3          # untouched
+    assert m.j_flags == ("mismatch",) and m.good
     assert m.j_fix == "NoFixNeeded"
     (e,) = [e for e in m.errors if e.side == "J"]
     assert (e.kind, e.pos, e.frm, e.to, e.dist, e.applied) == ("sub", 8, "N", "E", 4, False)
-    # ...but the caller can opt in.
     deep = markup_cdr3("CASSLGGNNKLFF", "TRBV9*01", "TRBJ1-4*01", HS, max_replace=4)
-    assert deep.cdr3_repaired == "CASSLGGNEKLFF" and deep.j_fix == "FixReplace"
+    assert deep.cdr3_repaired == "CASSLGGNNKLFF"
 
 
 def test_ambiguous_boundary_is_not_an_error():

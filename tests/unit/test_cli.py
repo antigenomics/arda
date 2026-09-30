@@ -5,6 +5,7 @@ already-tested pure helpers (``info``, ``cluster split-fasta``/``merge``/``submi
 the 2.16.0 mode surface: three named modes, each carrying its own speed preset.
 """
 
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -254,31 +255,19 @@ def test_cluster_submit_samples_renders_two_arrays_without_submitting(two_sample
     assert "IFS=" not in script and "cut -f3" in script   # see render_samples_submit_script
 
 
-def test_markup_d_prior_implies_the_posterior_rather_than_being_accepted_and_ignored(tmp_path):
-    """Never: a parameter accepted while doing nothing is this project's recurring failure.
+def test_markup_no_longer_accepts_the_d_posterior_flags():
+    """`--d-posterior` / `--d-prior` left with `arda.dpost` in 2.33.0 (issue #144).
 
-    `--d-prior` on its own used to be unrepresentable -- the prior columns were gated on
-    `--d-posterior` alone -- so a user who passed a table they had just fitted would get a file
-    with no D columns in it and exit 0.
+    A removed flag has to FAIL, not be accepted and ignored: the D posterior is
+    `vdjtools.model.posterior_d_batch` now, and a pipeline still passing the old flag has to find
+    out at the command line rather than in a column of nulls.
     """
-    records = tmp_path / "in.tsv"
-    records.write_text("cdr3\tv\tj\tspecies\n"
-                       "CASSLAPGATNEKLFF\tTRBV5-1*01\tTRBJ1-4*01\thuman\n")
-    prior = tmp_path / "prior.tsv"
-    rows = ["locus\tkind\tkey\tvalue"]
-    for i in range(16):
-        rows += [f"TRB\tinsVD\t{i}\t{1 / 16:.6f}", f"TRB\tinsDJ\t{i}\t{1 / 16:.6f}"]
-    for allele in ("TRBD1*01", "TRBD2*01"):
-        rows += [f"TRB\tdlen\t{allele}:{n}\t{1 / 12:.6f}" for n in range(1, 13)]
-        rows.append(f"TRB\td_marginal\t{allele}\t0.5")
-    rows.append("TRB\tbeta\tbeta\t1.25")
-    prior.write_text("\n".join(rows) + "\n")
-
-    out = tmp_path / "out.tsv"
-    result = runner.invoke(app, ["markup", "-i", str(records), "-o", str(out),
-                                 "--d-prior", str(prior)])
-    assert result.exit_code == 0, result.output
-    assert "d_call" in out.read_text().splitlines()[0]
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "in.tsv"
+        src.write_text("cdr3\tv\tj\tspecies\nCASSLAPGATNEKLFF\tTRBV5-1*01\tTRBJ1-4*01\thuman\n")
+        for flag in (["--d-posterior"], ["--d-prior", str(src)]):
+            r = runner.invoke(app, ["markup", "-i", str(src), "-o", str(Path(td) / "o.tsv"), *flag])
+            assert r.exit_code != 0, f"{flag} must be refused, got: {r.output[:200]}"
 
 
 def test_markup_d_prior_refuses_a_path_that_is_not_there(tmp_path):

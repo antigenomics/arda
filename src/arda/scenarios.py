@@ -28,7 +28,8 @@ See ``project/design-scenarios.md``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from functools import lru_cache
 
 from .cdr3fix import load_anchors, resolve_allele, resolve_locus, resolve_species
@@ -36,15 +37,103 @@ from .annotate.reference import _load_d_germlines
 from .paths import vdj_dir
 
 __all__ = ["Scenario", "Germlines", "germlines_for", "enumerate_scenarios",
-           "SufficientStats", "estimate", "accumulate", "lattice", "PRIOR_COLUMNS"]
+           "SufficientStats", "estimate", "accumulate", "lattice", "PRIOR_COLUMNS",
+           "PriorTable", "load_prior_table"]
 
 #: The long table both this module and ``dpost`` speak. Same idiom as ``stats.py``.
 PRIOR_COLUMNS = ("locus", "kind", "key", "value")
 
-#: Kinds ``dpost.load_d_prior`` actually consumes, plus the two trimming distributions nothing
+#: Kinds ``vdjtools.model.load_d_prior`` actually consumes, plus the two trimming distributions nothing
 #: consumed before because nothing produced them. ``beta`` is a fitted temperature, not a count,
 #: and is deliberately absent -- see ``project/design-scenarios.md``.
 KINDS = ("insVD", "insDJ", "dlen", "d_marginal", "d_given_j", "delV", "delJ")
+
+
+@dataclass
+class PriorTable:
+    """One locus of a prior table, as written by :func:`estimate` and by ``scripts/build_d_priors``.
+
+    The READER for the format this module writes lives here, next to the writer, so the layout has
+    exactly one parser. ``vdjtools.model.load_d_prior`` calls it -- the D *posterior* moved there in
+    arda 2.33.0 (issue #144), the table and its two arda consumers (:class:`_Model` here, and
+    :func:`arda.hmm.model_for`) did not.
+    """
+
+    ins_vd: list[float]
+    ins_dj: list[float]
+    dlen: dict[str, list[float]]                 # allele -> P(surviving nt length)
+    d_given_j: dict[str, dict[str, float]]       # j allele -> {d allele: P}
+    d_marginal: dict[str, float]
+    beta: float = 1.0
+    del_v: dict[str, list[float]] = field(default_factory=dict)
+    del_j: dict[str, list[float]] = field(default_factory=dict)
+
+
+def _dense_from(sparse: dict) -> list[float]:
+    """``{index: p}`` -> a dense list, zero-filled to the highest index present."""
+    if not sparse:
+        return []
+    out = [0.0] * (max(int(i) for i in sparse) + 1)
+    for i, p in sparse.items():
+        out[int(i)] = p
+    return out
+
+
+@lru_cache(maxsize=8)
+def load_prior_table(organism: str, path: Path | None = None) -> dict[str, PriorTable]:
+    """``{locus: PriorTable}``; empty when the organism has no shipped table.
+
+    ``path`` reads a table :func:`estimate` fitted instead of the shipped one. Never: *using* an
+    estimate is not *adopting* it, so nothing in the installed database is touched. A caller-supplied
+    path that does not exist RAISES -- the shipped one is allowed to be absent, but a path the user
+    typed is a request, and answering it with an empty table would silently fall back to no prior.
+    """
+    if path is not None:
+        path = Path(path)
+        if not path.exists():
+            raise FileNotFoundError(f"prior table not found: {path}")
+    else:
+        path = vdj_dir(organism) / "d_prior.tsv"
+        if not path.exists():
+            return {}
+    raw: dict[str, dict] = {}
+    with open(path) as fh:
+        # Never: skip comments and the header BY WHAT THEY ARE, not by position. `estimate` writes a
+        # `# arda scenarios: organism=... records=...` provenance line ABOVE its header, so a bare
+        # `next(fh)` -- drop line 1, assume it was the header -- left the header in the loop and
+        # `float("value")` raised, on the one file the docs call a drop-in for the shipped one.
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) != 4 or parts[1] == "kind":
+                continue
+            locus, kind, key, value = parts
+            raw.setdefault(locus, {}).setdefault(kind, {})[key] = float(value)
+
+    out: dict[str, PriorTable] = {}
+    for locus, k in raw.items():
+        per_allele: dict[str, dict[str, dict[int, float]]] = {}
+        for kind in ("dlen", "delV", "delJ"):
+            for key, p in k.get(kind, {}).items():
+                allele, _, idx = key.rpartition(":")
+                per_allele.setdefault(kind, {}).setdefault(allele, {})[int(idx)] = p
+        dgj: dict[str, dict[str, float]] = {}
+        for key, p in k.get("d_given_j", {}).items():
+            d_allele, _, j_allele = key.partition("|")
+            dgj.setdefault(j_allele, {})[d_allele] = p
+        out[locus] = PriorTable(
+            ins_vd=_dense_from(k.get("insVD", {})),
+            ins_dj=_dense_from(k.get("insDJ", {})),
+            dlen={a: _dense_from(v) for a, v in per_allele.get("dlen", {}).items()},
+            d_given_j=dgj,
+            d_marginal=dict(k.get("d_marginal", {})),
+            beta=float(next(iter(k.get("beta", {"": 1.0}).values()))),
+            del_v={a: _dense_from(v) for a, v in per_allele.get("delV", {}).items()},
+            del_j={a: _dense_from(v) for a, v in per_allele.get("delJ", {}).items()},
+        )
+    return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,10 +345,8 @@ class _Model:
     """The current parameters, as flat lookup tables. Initialised from the shipped prior."""
 
     def __init__(self, organism: str, max_del: int = 24, max_ins: int = 30):
-        from .dpost import load_d_prior
-
         self.max_del, self.max_ins = max_del, max_ins
-        self.prior = load_d_prior(organism)
+        self.prior = load_prior_table(organism)
         self.ins_vd: dict[str, list[float]] = {}
         self.ins_dj: dict[str, list[float]] = {}
         self.dlen: dict[str, dict[str, list[float]]] = {}

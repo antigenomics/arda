@@ -8,10 +8,11 @@ which J.
 Why it exists
 -------------
 
-:mod:`arda.dpost` places and identifies a D from an *amino-acid* junction by marginalising a
-generative model. That model ships as ``database/vdj/<org>/d_prior.tsv``, and every number in it
-is **borrowed from OLGA / vdjrearm**. This command is how arda estimates its own, from its own
-output:
+``vdjtools.model.posterior_d`` places and identifies a D from an *amino-acid* junction by
+marginalising a generative model (it was ``arda.dpost`` up to 2.32.0; see
+`arda#144 <https://github.com/antigenomics/arda/issues/144>`_). That model ships here as
+``database/vdj/<org>/d_prior.tsv``, and every number in it is **borrowed from OLGA / vdjrearm**.
+This command is how arda estimates its own, from its own output:
 
 .. code-block:: bash
 
@@ -86,7 +87,7 @@ log-likelihood is echoed per pass:
    human TRB junctions moved ``insVD`` mass onto **10–11 nt**, with the log-likelihood rising
    monotonically the whole way. With the term, the same data gives ``insVD`` peaking at **4 nt**
    and ``dlen`` for ``TRBD1*01`` peaking at **4–5 surviving nt** — which independently reproduces
-   the *"median surviving D is 5 nt for human TRB"* figure measured in :mod:`arda.dpost`.
+   the *"median surviving D is 5 nt for human TRB"* figure the D posterior was measured on.
 
 What it reads, and how it is weighted
 -------------------------------------
@@ -148,8 +149,9 @@ Limits
 * **Generating a prior is not adopting one.** ``database/vdj/<org>/d_prior.tsv`` is unchanged;
   swapping in an estimate is a measurement and a release decision, not a side effect of running
   this. To *use* one without adopting it, pass the path — ``arda markup --d-prior PATH``, or
-  :func:`arda.dpost.posterior_d` with ``prior_path=`` and :func:`arda.dpost.load_d_prior` with a
-  second argument, which is the same knob :func:`arda.hmm.model_for` already takes as ``prior=``.
+  ``vdjtools.model.posterior_d`` with ``prior_path=`` and
+  :func:`arda.scenarios.load_prior_table` with a second argument, which is the same knob
+  :func:`arda.hmm.model_for` already takes as ``prior=``.
   Nothing in the installed database is touched, and this is the only way to reach the **11 of the
   13 shipped (organism, D-locus) pairs that have no prior at all** — OLGA has no model for them,
   so ``posterior_d`` correctly returns ``None`` until a fitted table is handed to it.
@@ -157,7 +159,7 @@ Limits
   .. code-block:: sh
 
      arda scenarios -i clones.tsv -o fitted.tsv --organism mouse
-     arda markup -i records.tsv -o marked.tsv --d-prior fitted.tsv   # implies --d-posterior
+     python -c "from vdjtools.model import posterior_d_batch"        # score with prior_path=...
 
   The shipped table is *allowed* to be missing — that is what ``None`` means — but a path you typed
   is a request, so a ``--d-prior`` pointing at a file that is not there raises rather than silently
@@ -195,8 +197,8 @@ estimated on one cohort can score another.
 
 .. warning::
 
-   This does **not** replace :mod:`arda.dpost`, and it does not gate anything. ``dpost`` answers
-   the *amino-acid* question — a record with no nucleotides, where the D is often invisible in
+   This does **not** replace the D posterior (``vdjtools.model.posterior_d``), and it does not
+   gate anything. That one answers the *amino-acid* question — a record with no nucleotides, where the D is often invisible in
    the translated junction. Different input, both ship. Nothing in the annotation path calls
    ``arda.hmm``: two measured negatives (recorded in ``ROADMAP.md``) say that re-ranking
    nucleotide D candidates by a scenario likelihood changes nothing, and that replacing the
