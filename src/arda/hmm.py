@@ -17,16 +17,30 @@ after ``correct``, never per read.
 How this relates to the D posterior
 -------------------------------------
 
-It does not replace it. ``vdjtools.model.posterior_d`` (``arda.dpost`` up to 2.32.0) answers the
-**amino-acid** question -- a VDJdb-style record with
-no nucleotides, where the D is often invisible in the translated junction and the length
-constraint plus an aa match is all there is. This module needs nucleotides. They are two
-different inputs, and both ship.
+It does not replace it. ``vdjtools.model.annotate_junctions`` answers the **amino-acid** question --
+a VDJdb-style record with no nucleotides, where the D is often invisible in the translated junction
+and the model's own scenario weights plus a germline alignment are all there is. This module needs
+nucleotides. They are two different inputs, and both ship.
 
-``shm`` threads an :class:`arda.shmmodel.ShmModel` into the same recursion: without one the
-templated V length is bounded by an exact common prefix, with one it is priced by the model, so a
-hypermutated V tail stops being read as N-region. Default ``None``, which is what every shipped
-caller passes and is byte-identical to the behaviour before it existed.
+Why this module exists: B cells
+-------------------------------
+
+``shm`` threads an :class:`arda.shmmodel.ShmModel` into the same recursion, and that is the whole
+point of keeping it. Without a model the templated V length is bounded by an **exact common
+prefix**, so ONE substitution in the V tail forces the entire rest of that tail to be re-read as
+N-region -- ``tests/unit/test_shm_lattice.py`` pins it on ``IGHV3-30*18`` / ``IGHJ4*02``:
+``del_v >= len(v_nt) - 3`` without a model against ``del_v == 0`` with one. A hypermutated IGH
+junction is the normal case, not the corner case, so for B cells the exact-prefix bound is simply
+wrong and this is the entry point that fixes it.
+
+⛔ **Nothing else in either library does this.** ``vdjtools.model.infer_nt_batch`` and
+``annotate_junctions`` are a GERMLINE recombination model with no SHM term at all: handed a mutated
+V tail they price it as insertion, which is the same defect. Do not deprecate this in favour of
+them -- 2.33.0 did, and that was a T-cell reading of a B-cell module.
+
+Default ``shm=None``, which is what every T-cell caller passes and is byte-identical to the
+behaviour before the parameter existed; a zero-rate model is exactly the exact-prefix bound, which
+is also pinned.
 
 Never: **do not re-run the two negatives the roadmap already records.** (i) Re-ranking nucleotide
 D candidates by a scenario likelihood changes nothing -- 98.9 -> 97.8 % gene accuracy on IGH,
@@ -37,15 +51,18 @@ threshold -- which is a shipped constant of exactly the kind this project refuse
 reports likelihoods and posteriors; it does not gate anything, and nothing in the annotation path
 calls it.
 
-Deprecated
-----------
-⚠ **Deprecated in 2.33.0; scheduled for removal.** Nothing consumes it. It is not on the annotation
-path (two measured negatives in ``ROADMAP.md`` say re-ranking nucleotide D candidates by a scenario
-likelihood changes nothing, and that replacing the E-value gate with a Bayes factor would need a
-per-locus shipped threshold), no other repository imports it, and the question it answers -- the most
-likely nucleotide reading of a junction -- is answered faster and batched by
-``vdjtools.model.infer_nt_batch``, which is stage 2 of the junction pipeline
-(``docs/junction_pipeline.md`` there). :mod:`arda.scenarios`, which fits the model, is NOT deprecated.
+Not on the TCR annotation path, and that is not the same as unused
+------------------------------------------------------------------
+⚠ It is **not** called by ``arda map`` / ``arda markup``, and the two measured negatives above say
+why: re-ranking nucleotide D candidates by a scenario likelihood changes nothing, and replacing the
+E-value gate with a Bayes factor would need a per-locus shipped threshold. Both of those are
+statements about the **T-cell** path, where the junction is germline and an alignment already
+settles it. Neither says anything about a hypermutated one.
+
+⛔ **Deprecated in 2.33.0 and UN-deprecated in 2.35.0.** The 2.33.0 note said "nothing consumes it"
+and pointed callers at ``infer_nt_batch``; that reasoning surveyed the TCR path and missed the
+``shm=`` parameter, so it recommended a model with no SHM term as the replacement for the only
+SHM-aware one. :mod:`arda.scenarios`, which fits the model, was never deprecated either.
 """
 
 from __future__ import annotations
@@ -76,16 +93,6 @@ class DPosterior:
         return min(a for a, p in self.probabilities.items() if p == top)
 
 
-def _warn_deprecated(what: str) -> None:
-    import warnings
-
-    warnings.warn(
-        f"arda.hmm.{what} is deprecated and will be removed: nothing consumes it, and the most "
-        "likely nucleotide reading of a junction is vdjtools.model.infer_nt_batch (stage 2 of the "
-        "junction pipeline). arda.scenarios, which fits the model, stays.",
-        DeprecationWarning, stacklevel=3)
-
-
 def model_for(organism: str = "human", *, prior: str | None = None) -> _Model:
     """The parameter set to score against.
 
@@ -93,7 +100,6 @@ def model_for(organism: str = "human", *, prior: str | None = None) -> _Model:
     score another. ``None`` uses the shipped ``d_prior.tsv``, whose numbers are OLGA's, read by
     :func:`arda.scenarios.load_prior_table`.
     """
-    _warn_deprecated("model_for")
     model = _Model(organism)
     if prior is not None:
         _load_into(model, prior, organism)

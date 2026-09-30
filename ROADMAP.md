@@ -28,7 +28,10 @@ flagging, UMI counts.
 **QC.** `arda stats` per run and `arda qc` across a cohort, with a self-contained HTML dashboard.
 
 **A generative model of the rearrangement** (`arda scenarios`): EM over the recombination scenario
-set, which fits the D prior arda ships.
+set, which fits the D prior arda ships. `arda.hmm` is the same recursion read as inference — score a
+nucleotide junction, or ask which D made it. Pass `shm=` for **B cells**: without a model the
+templated V length stops at the first mismatch, so a single hypermutation in the V tail makes the
+whole tail read as N region.
 
 ## Where the boundaries are
 
@@ -40,8 +43,6 @@ you want "which D, and where" from an amino-acid junction, call
 
 ## Planned
 
-- **Retire `arda.hmm`** (deprecated in 2.33.0). Nothing consumes it and vdjtools answers the same
-  question faster.
 - **Junction recall on TRDV × TRAJ rearrangements**, the largest remaining named gap against MiXCR
   on a real amplicon: 680 truth reads of which arda currently recovers 10 %.
 - **Full AIRR productivity rules**, beyond the stop-codon and frame checks shipped today.

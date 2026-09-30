@@ -3,6 +3,24 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.35.0
+
+**`arda.hmm` is no longer deprecated — it is the B-cell entry point.** 2.33.0 deprecated it on the
+grounds that nothing consumes it and `vdjtools.model.infer_nt_batch` answers the same question
+faster. That surveyed the T-cell path and missed the `shm=` parameter.
+
+Without a somatic-hypermutation model the templated V length is bounded by an **exact common
+prefix**, so a single substitution in the V tail forces the whole rest of it to be re-read as N
+region — measured on `IGHV3-30*18` / `IGHJ4*02`, `del_v` goes from `0` with a model to
+`>= len(v_nt) - 3` without one. For a hypermutated IGH junction that is the normal case, and the
+replacement recommended in 2.33.0 has no SHM term at all, so it prices a mutated V tail as insertion
+in exactly the same way. The deprecation warning is gone and the module stays.
+
+Unchanged: `arda.hmm` is still not on the annotation path, and the two measured negatives behind that
+still stand — re-ranking nucleotide D candidates by a scenario likelihood changes nothing, and
+replacing the E-value gate with a Bayes factor would need a per-locus shipped threshold. Both are
+statements about germline TCR junctions, where an alignment already settles it.
+
 ## 2.34.1
 
 **Faster, with identical answers.** `_extend` — the function that walks a germline run, and the
@@ -63,8 +81,7 @@ which scores a list of alleles per row.
 
 **New — `map_d_junction(v_end=, j_start=)`** takes the interval to search instead of re-deriving it.
 
-**Deprecated — `arda.hmm`**, with a warning. For the most likely nucleotide reading of a junction,
-use `vdjtools.model.infer_nt_batch`.
+**Deprecated — `arda.hmm`**, with a warning. *(Reversed in 2.35.0 — see that entry.)*
 
 ## 2.31.0
 
