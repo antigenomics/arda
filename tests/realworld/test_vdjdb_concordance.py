@@ -83,36 +83,75 @@ def test_repair_reproduces_vdjdb_fix(vdjdb):
                 if r.cdr3_repaired not in (f["cdr3"], f["cdr3_old"]))
     n = len(need)
     print(f"\n[vdjdb] repair reproduced {exact}/{n} = {exact/n:.1%}; novel rewrites {third}")
-    assert exact == n, "arda reproduces VDJdb's repair on every record it flags, on this fixture"
+    # 99 of 100, and the one difference is arda being RIGHT. `CASSKRGGYEQYV` is a clean
+    # TRBJ2-7*02 junction -- that allele templates `SYEQYV`, terminal V and all -- and VDJdb
+    # rewrote the V to F (its own label: `Realign`) to force the functional *01 (`SYEQYF`).
+    # Since 2.32.0 a call the junction contradicts changes the ALLELE, not the sequence, so arda
+    # re-calls *01 -> *02 and returns the submission untouched. Lowering this to 99 is deliberate.
+    assert exact >= n - 1, "arda reproduces VDJdb's repair on all but the *02 re-call"
     # A novel rewrite -- neither the submission nor VDJdb's repair -- is data corruption.
     assert third == 0
 
 
 def test_cdr3fix_json_agrees_with_vdjdb_on_every_verdict(vdjdb):
-    """`good`, `vCanonical` and `jCanonical` are VDJdb's own booleans, and they mean the same.
+    """`vCanonical` and `jCanonical` are VDJdb's own booleans and mean exactly the same.
 
     They describe the junction *as repaired*. Reading them off the submission instead put
     `jCanonical` at odds with VDJdb on 76 of these 250 rows -- every record whose terminal
     Phe118 arda had just restored.
+
+    ``good`` is deliberately NOT asserted equal, because since 2.32.0 arda's is stricter: a
+    germline disagreement it declines to repair makes the side `impossible`, where VDJdb's fix
+    type reads `NoFixNeeded` because its largest-common-substring scanner never looked that deep.
+    What IS asserted is the direction -- arda never calls a record good that VDJdb calls bad -- so
+    the difference can only ever be arda withholding a verdict, never inventing one.
     """
     df, ref = vdjdb
     recs = markup_records(df, cdr3="cdr3_old", v="v.segm", j="j.segm", species="species")
-    for key, attr in (("good", "good"), ("vCanonical", "v_canonical"), ("jCanonical", "j_canonical")):
-        mismatch = sum(getattr(r, attr) != f[key] for r, f in zip(recs, ref))
-        assert mismatch == 0, f"{key}: {mismatch}/{len(ref)} disagree with VDJdb"
+    # ⚠ Both fields are VDJdb's LITERAL `C` / `[FW]` tests and stay that way, because the
+    # `cdr3fix` JSON means what VDJdb means by them. They can therefore disagree with arda on an
+    # allele whose anchor is neither F nor W -- `TRBJ2-7*02` templates `SYEQYV` -- and that is the
+    # field being wrong about the biology, not arda. `good` no longer reads them for that reason.
+    for key, attr in (("vCanonical", "v_canonical"), ("jCanonical", "j_canonical")):
+        bad = [f["cdr3_old"] for r, f in zip(recs, ref) if getattr(r, attr) != f[key]]
+        assert len(bad) <= 1, f"{key}: {len(bad)}/{len(ref)} disagree with VDJdb: {bad[:5]}"
+
+    optimistic = [(r, f) for r, f in zip(recs, ref) if r.good and not f["good"]]
+    assert not optimistic, \
+        f"arda called {len(optimistic)} records good that VDJdb calls bad: " \
+        f"{[f['cdr3_old'] for _, f in optimistic][:5]}"
+    stricter = sum(1 for r, f in zip(recs, ref) if f["good"] and not r.good)
+    print(f"\n[vdjdb] good: arda stricter on {stricter}/{len(ref)}, never more permissive")
+    assert stricter, "if this reaches 0, the defect-4 strictness has been lost"
 
 
 def test_a_repaired_junction_is_always_canonical(vdjdb):
-    """The rule the whole repair exists to serve, on both the submitted and fixed columns."""
+    """The rule the whole repair exists to serve, on both the submitted and fixed columns.
+
+    ⚠ Scored against the CALLED ALLELE'S OWN anchor residue, not the `[FW]` motif -- a conserved
+    motif is not an anchor. `TRBJ2-7*02` templates `SYEQYV`, so `CASSKRGGYEQYV` is canonical for it
+    and the motif test calls it broken; `TRAJ35*01`'s anchor decodes Cys. Reading the residue from
+    `cdr3_anchors.tsv` is both stricter (it pins the exact residue, not a two-letter class) and
+    correct on the alleles where the motif is wrong.
+    """
+    from arda.cdr3fix import load_anchors
     df, _ = vdjdb
+    checked = 0
     for col in ("cdr3", "cdr3_old"):
         for r in markup_records(df, cdr3=col, v="v.segm", j="j.segm", species="species"):
             if r.good:
-                assert r.cdr3_repaired.startswith("C"), (col, r.cdr3)
-                assert r.cdr3_repaired.endswith(("F", "W")), (col, r.cdr3)
+                anchors = load_anchors(r.species)        # the fixture spans organisms
+                v = anchors.get(("V", r.v_call))
+                j = anchors.get(("J", r.j_call))
+                assert v is not None and j is not None, (col, r.species, r.v_call, r.j_call)
+                v_aa, j_aa = v.templated_aa[0], j.templated_aa[-1]
+                assert r.cdr3_repaired.startswith(v_aa), (col, r.cdr3, r.v_call, v_aa)
+                assert r.cdr3_repaired.endswith(j_aa), (col, r.cdr3, r.j_call, j_aa)
+                checked += 1
             # v_end/j_start index cdr3_repaired, not the submission
             if r.v_end >= 0 and r.j_start >= 0:
                 assert 0 <= r.v_end <= r.j_start <= len(r.cdr3_repaired), (col, r.cdr3)
+    assert checked, "no good records to score"
 
 
 def test_arda_reports_mismatches_vdjdb_cannot_see(vdjdb):

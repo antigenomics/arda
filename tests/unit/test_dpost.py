@@ -85,8 +85,14 @@ def test_a_junction_the_model_cannot_explain_returns_none():
 
 
 def test_overlapping_v_and_j_templates_return_none():
-    """When the germlines explain more than the junction holds, there is no middle to place."""
-    assert posterior_d("CASSLF", "TRBV5-1*01", "TRBJ1-4*01", "human") is None
+    """When the germlines explain more than the junction holds, there is no middle to place.
+
+    A real record from VDJdb's curation corpus, where 364 of 189,596 keys overlap this way.
+    `CASSLF` on TRBV5-1/TRBJ1-4 used to be the example, and stopped overlapping in 2.32.0: the
+    ported engine credits the J its LEADING EXACT run (one residue, the Phe) instead of the
+    whole templated run, so the two boundaries now abut rather than cross.
+    """
+    assert posterior_d("CAAGNKLTF", "TRAV13-1*01", "TRAJ17*01", "human") is None
 
 
 def test_an_empty_middle_is_prior_only_and_says_so():

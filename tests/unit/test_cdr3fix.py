@@ -175,10 +175,17 @@ def test_missing_terminal_f_is_added_never_truncated():
 
 def test_deep_substitution_is_reported_but_not_repaired():
     """NEKLFF -> NNKLFF: 4 residues from the anchor, so it is indistinguishable from
-    the N region starting early. Report where it is; do not rewrite the record."""
+    the N region starting early. Report where it is; do not rewrite the record.
+
+    The junction is left alone, and the side is ``impossible`` -- NOT ``ok``. A disagreement arda
+    declines to repair is still a disagreement, and `_verdict` used to read only the APPLIED edits,
+    so this record called itself ``NoFixNeeded`` and ``good`` while reporting a substitution
+    against its own germline (issue #141 defect 4, 19,436 keys of VDJdb's corpus).
+    """
     m = markup_cdr3("CASSLGGNNKLFF", "TRBV9*01", "TRBJ1-4*01", HS)
     assert m.cdr3_repaired == m.cdr3          # untouched
-    assert m.j_fix == "NoFixNeeded"
+    assert m.j_flags == ("impossible",) and not m.good
+    assert m.j_fix == "FailedReplace"
     (e,) = [e for e in m.errors if e.side == "J"]
     assert (e.kind, e.pos, e.frm, e.to, e.dist, e.applied) == ("sub", 8, "N", "E", 4, False)
     # ...but the caller can opt in.

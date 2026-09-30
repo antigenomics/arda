@@ -3,6 +3,102 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.32.0
+
+### Changed (BREAKING): `cdr3fix` is a port of VDJdb's own `Cdr3Fixer`, not an alignment of its own
+
+Closes [#141](https://github.com/antigenomics/arda/issues/141). The 2.16.0 semi-global
+Needleman-Wunsch engine is gone. One **gapless local alignment** per side
+(`_markup.d_local_align`, the same C++ the D caller uses) places the germline's templated run
+anywhere in the junction, and legacy's positional table decides the outcome from the two offsets --
+`NoFixNeeded` / `FixTrim` / `FixAdd` / `FixReplace` / `FailedReplace`, unchanged.
+
+Searching every offset is the point. `CAMYLCASSLFGSPLHF` against `TRBV9` (`CASSV`) carries a
+spurious `CA` at offset 0 and the real `CASS` at offset 5; an engine anchored at offset 0 scored the
+first and reported the record clean, where the authoritative release trims five residues (`vEnd=4`).
+The anchored placement still wins a **tie**, because `CASSQQQQQQQQQF` on TRBJ1-1 scores 1 either way
+and taking the shifted one appended an F to a junction that already ended in one.
+
+Measured against the authoritative VDJdb `2026-06-03` release, whose `cdr3fix` column carries the
+retired fixer's own `cdr3_old` -> `cdr3` for every record. Coverage before any rate: **184,765 of
+189,596 distinct `(species, junction, V, J)` curation keys join (97.45 %)**.
+
+| | 2.31.0 | 2.32.0 |
+|---|---|---|
+| repaired junction agrees with the release | 180,374 (97.6235 %) | **181,892 (98.4451 %)** |
+| `vEnd` agrees | 98.2013 % | **98.3571 %** |
+| `jStart` agrees | 97.8316 % | **99.7242 %** |
+| the release's own repairs reproduced | 584 of 779 | **623 of 779** |
+| repairs the release did NOT make | 4,196 | **2,717** |
+| `good` beside an unrepaired disagreement | 19,436 | **0** |
+| throughput, one process | 12,900 keys/s | **20,400 keys/s** |
+
+### Added: the per-side verdict is a set of flags (`v_flags`, `j_flags`)
+
+A single worst-wins label cannot say both "I trimmed a flank" and "I found a substitution I will not
+touch", and collapsing those onto one string is how a declined repair came to read as a clean
+record: the fix type was computed from the *applied* edits alone, so `CAISGEFGSGA` reported
+`V sub@2 I>S d=2` and still returned `NoFixNeeded` and `good`. **19,436 of the 189,596 keys did
+that.** Two new columns carry any combination of seven names -- `ok`, `allele`, `sub`, `add`,
+`trim`, `shallow`, `impossible` -- and `good` is now exactly "neither side `impossible`, and both
+anchors present".
+
+`v_fix` / `j_fix` keep VDJdb's names so the `cdr3fix` JSON stays key-for-key comparable. They are a
+projection of the flags, not the answer.
+
+`shallow` is a caveat and keeps `good`: the germline contributed only its conserved anchor, so the
+call has no corroboration in the junction (1,986 keys, 1.047 %). It is deliberately **not** a
+refusal -- `CGGSARSGELFF` against `TRBV9` (`CASSV`) agrees on the Cys alone and that is the correct
+answer, the V being exonuclease-trimmed back to Cys104 with `GGS` as N region, while
+`CASSQQQQQQQQQF` on `TRBJ1-1` agrees on the Phe alone and looks like a mis-call. No property of a
+junction separates the two.
+
+### Fixed: a contradicted call now changes the ALLELE, not the sequence
+
+`guess_allele` (legacy's `guess_id`, rebuilt on the same scan) runs before any substitution is kept.
+If a different allele of the locus explains the submitted residues as they stand, the call is
+re-assigned and the junction is left untouched, with the `allele` flag recording it.
+
+Of the anchor-adjacent substitutions 2.31.0 wrote into an **already-canonical** junction, **74.7 %
+were records whose own 3' end matched a different J allele better than the called one -- against
+1.1 % of untouched records**, a 68x enrichment. `CASSLRGAATDTQYF` is a clean `TRBJ2-3` junction
+called `TRBJ2-1`, which 2.31.0 rewrote to `CASSLRGAATDTQFF`, a string no germline supports. It is
+now re-called to `TRBJ2-3`, unchanged.
+
+Legacy's own V guesser never worked: `guess_id` puts `return ""` **inside** the five-prime loop, so
+it tried one prefix length and gave up -- 3 non-empty V guesses in 4,000 sequences against 3,797
+for J, whose branch has the same statement correctly in a `for ... else`.
+
+### Fixed: a call is checked against every gene name in the vocabulary
+
+`resolve_allele`'s last rung matches the submission against the whole gene vocabulary under one
+normalisation, because every rung above searches for a name built out of `gene` and so cannot reach
+a reference gene the submission is not a prefix of. This was the largest single failure class --
+**3,067 V keys and 152 J keys that previously came back `FailedBadSegment`**: `TRAV14` (999 keys) is
+filed by IMGT as `TRAV14/DV4`, `TRAV15D-1-DV6D-1` (37) writes that slash as a dash, `TRBV19-1*01`
+(246) and `TRAJ42-1*01` (34) name a `-1` suffix IMGT does not use for those genes, `TRBJ2.1` (5) is
+VDJdb-era dot nomenclature, and `TRBV12-2+TRBV13-2` (532) is `+`-joined like a comma list.
+
+A spelling must land on **exactly one** gene or it is refused: `TRBV6` names five functional genes
+and `TRBJ2` thirteen, and breaking that tie by lowest number is how `TRAV6-7-DV9` became
+`TRAV6-1*01`. An allele IMGT does not mint (`TRBV9*99`) takes the gene's `*01`, else its lowest
+allele by `min` -- so the answer no longer depends on how `cdr3_anchors.tsv` happened to be sorted
+the day it was built.
+
+### Removed: two bounds 2.16.0 layered on top of `max_replace`
+
+`_MAX_TRIM = 3` refused framework the release trims (`CAMYLCASSLFGSPLHF` -> `CASSLFGSPLHF`, five
+residues), and `_MAX_FIX = 2` was a second knob on one decision, so the outcome depended on which
+bound happened to bite first. `max_replace` is the whole budget, and `_canonicalise` -- a repair must
+land on a junction that opens with Cys104 and closes with Phe/Trp118 -- is what protects the anchor.
+Legacy had no canonicality rule at all; keeping it is deliberate.
+
+### Added: `scripts/audit_cdr3fix.py`
+
+Row-level A/B of `cdr3fix` over a `vdjdb-db` checkout's curation chunks: one parquet of per-key
+decisions plus a decision digest, so two checkouts can be diffed rather than compared by counts.
+Nothing is cached; the key set is rebuilt from the chunk TSVs on every run.
+
 ## 2.31.0
 
 ### Added: the germline boundary in nucleotides (`boundary_nt`), 71.8 % -> 92.9 % on `v.end`

@@ -707,6 +707,17 @@ what is left of the junction-recall gap. Evidence and method:
       five shipped organisms. `FailedReplace` turned out to be reachable after all (three
       substitutions beside a long J anchor, `max_replace >= 3`), and is now tested.
 
+      ⚠ **Superseded by 2.32.0 (issue #141).** The alignment engine this entry describes is gone,
+      and with it `_MAX_TRIM`, `_MAX_FIX` and `_TRIM`: `cdr3fix` is now a port of VDJdb's own
+      `Cdr3Fixer`, one gapless local alignment (`_markup.d_local_align`) plus legacy's positional
+      table, with `max_replace` as the single budget. `_canonicalise` and the canonical-repair rule
+      in this entry SURVIVE and are still the reason `good` implies canonical. What does not survive
+      is the agreement claim: `good` is now deliberately stricter than VDJdb's, because a declined
+      disagreement no longer reads as a clean record. Measured against the authoritative
+      2026-06-03 release over 184,765 joined curation keys, the repaired junction agrees on
+      **98.4451 %** (2.31.0: 97.6235 %) and `jStart` on **99.7242 %** (97.8316 %). See CHANGELOG
+      2.32.0 and `skills/arda/references/bare-records.md`.
+
 - [x] **Productivity: FR4 is scanned for stops.** `productive` and `stop_codon` covered the
       V-side regions and the junction, and the junction ends AT [FW]118 -- FR4's first residue --
       so residues 2..n of the J were looked at by neither. Fixed; `tests/synthetic/
