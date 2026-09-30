@@ -255,3 +255,7 @@ database/vdj/*/segments.markup.tsv
 /SOURCES.md
 /CHANGELOG_local.md
 /ROADMAP_local.md
+/TODO.md
+/NOTES.md
+/STATUS.md
+/ISSUES*.md

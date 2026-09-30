@@ -78,6 +78,14 @@ Repository = "https://github.com/antigenomics/arda"
 
 [tool.scikit-build]
 wheel.packages = ["src/arda"]
+# Second line of defence for the working notes (`tests/unit/test_working_notes_stay_private.py`).
+# `.gitignore` is what actually keeps them untracked and therefore out of an sdist built from the
+# VCS listing; this is what stands between an untracked copy sitting in a working tree and a
+# published artifact. Anchored with a leading "/" so only the repository root is meant.
+sdist.exclude = [
+    "/CLAUDE.md", "/SOURCES.md", "/CHANGELOG_local.md", "/ROADMAP_local.md",
+    "/TODO.md", "/NOTES.md", "/STATUS.md", "/ISSUES.md", "/ISSUES_ext.md",
+]
 cmake.version = ">=3.18"
 build-dir = "build/{wheel_tag}"
 # Keep the editable install rebuilding the C++ ext automatically on import.
