@@ -8,8 +8,8 @@ which J.
 Why it exists
 -------------
 
-``vdjtools.model.posterior_d`` places and identifies a D from an *amino-acid* junction by
-marginalising a generative model (it was ``arda.dpost`` up to 2.32.0; see
+``vdjtools.model.annotate_junctions`` places and identifies a D from an *amino-acid* junction
+using a generative model (``arda.dpost`` did this up to 2.32.0; see
 `arda#144 <https://github.com/antigenomics/arda/issues/144>`_). That model ships here as
 ``database/vdj/<org>/d_prior.tsv``, and every number in it is **borrowed from OLGA / vdjrearm**.
 This command is how arda estimates its own, from its own output:
@@ -149,17 +149,17 @@ Limits
 * **Generating a prior is not adopting one.** ``database/vdj/<org>/d_prior.tsv`` is unchanged;
   swapping in an estimate is a measurement and a release decision, not a side effect of running
   this. To *use* one without adopting it, pass the path — ``arda markup --d-prior PATH``, or
-  ``vdjtools.model.posterior_d`` with ``prior_path=`` and
+  ``arda.hmm.model_for`` with ``prior=`` and
   :func:`arda.scenarios.load_prior_table` with a second argument, which is the same knob
   :func:`arda.hmm.model_for` already takes as ``prior=``.
   Nothing in the installed database is touched, and this is the only way to reach the **11 of the
   13 shipped (organism, D-locus) pairs that have no prior at all** — OLGA has no model for them,
-  so ``posterior_d`` correctly returns ``None`` until a fitted table is handed to it.
+  so :func:`arda.hmm.posterior_d` correctly returns ``None`` until a fitted table is handed to it.
 
   .. code-block:: sh
 
      arda scenarios -i clones.tsv -o fitted.tsv --organism mouse
-     python -c "from vdjtools.model import posterior_d_batch"        # score with prior_path=...
+     python -c "from arda.hmm import model_for; model_for('mouse', prior='fitted.tsv')"
 
   The shipped table is *allowed* to be missing — that is what ``None`` means — but a path you typed
   is a request, so a ``--d-prior`` pointing at a file that is not there raises rather than silently
@@ -197,7 +197,7 @@ estimated on one cohort can score another.
 
 .. warning::
 
-   This does **not** replace the D posterior (``vdjtools.model.posterior_d``), and it does not
+   This does **not** replace the amino-acid D call (``vdjtools.model.annotate_junctions``), and it does not
    gate anything. That one answers the *amino-acid* question — a record with no nucleotides, where the D is often invisible in
    the translated junction. Different input, both ship. Nothing in the annotation path calls
    ``arda.hmm`` (deprecated in 2.33.0): two measured negatives say that re-ranking

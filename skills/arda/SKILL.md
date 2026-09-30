@@ -220,10 +220,10 @@ pipeline and `build-db` / `build-index`.
   chew-back and N/P addition mean that partition is often not identifiable from sequence alone.
   What *is* checkable: the junction's outer bounds, the gene calls, and whether arda invented a
   junction it has no anchor for.
-- `posterior_d` returns `None` for organisms with no shipped generative model (rat, rabbit,
-  rhesus) and for VJ loci. That is deliberate — do not substitute a human proxy. To score one of
-  those pairs, fit a table with `arda scenarios` and pass it: `posterior_d(..., prior_path=)` /
-  `arda markup --d-prior PATH`. Nothing in the installed database is touched.
+- `arda.hmm.posterior_d` returns `None` for organisms with no shipped generative model (rat,
+  rabbit, rhesus) and for VJ loci. That is deliberate — do not substitute a human proxy. To score
+  one of those pairs, fit a table with `arda scenarios` and pass it to
+  `arda.hmm.model_for(prior=PATH)`. Nothing in the installed database is touched.
 - **`resolve-ties` helps on IGK/IGL/TRB and HURTS on IGH.** Exact `v_gene`-set agreement with
   IgBLAST: IGK **.5707 -> .9373**, IGL .8586 -> .9137, TRB .9299 -> .9694 -- IGH .8255 -> .7238.
   arda's IGK call is 0.42 genes/read too NARROW (1.18 vs 1.60); its IGH call already matches

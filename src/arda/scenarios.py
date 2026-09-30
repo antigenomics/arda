@@ -1,6 +1,6 @@
 """Recombination scenarios from a nucleotide junction, and the counts they imply.
 
-`arda.dpost` places a D from an amino-acid junction by marginalising a generative model, and
+``vdjtools.model.annotate_junctions`` places a D from an amino-acid junction, and
 every number in that model is borrowed from OLGA/vdjrearm and shipped as
 ``database/vdj/<org>/d_prior.tsv``. This module is how arda estimates its own: read
 ``(junction_nt, v_call, j_call)`` records, count recombination scenarios, and write a table of
@@ -43,8 +43,8 @@ __all__ = ["Scenario", "Germlines", "germlines_for", "enumerate_scenarios",
 #: The long table both this module and ``dpost`` speak. Same idiom as ``stats.py``.
 PRIOR_COLUMNS = ("locus", "kind", "key", "value")
 
-#: Kinds ``vdjtools.model.load_d_prior`` actually consumes, plus the two trimming distributions nothing
-#: consumed before because nothing produced them. ``beta`` is a fitted temperature, not a count,
+#: Kinds the two consumers read, plus the two trimming distributions nothing consumed before because
+#: nothing produced them. ``beta`` is a fitted temperature, not a count,
 #: and is deliberately absent -- see ``project/design-scenarios.md``.
 KINDS = ("insVD", "insDJ", "dlen", "d_marginal", "d_given_j", "delV", "delJ")
 
@@ -54,9 +54,10 @@ class PriorTable:
     """One locus of a prior table, as written by :func:`estimate` and by ``scripts/build_d_priors``.
 
     The READER for the format this module writes lives here, next to the writer, so the layout has
-    exactly one parser. ``vdjtools.model.load_d_prior`` calls it -- the D *posterior* moved there in
-    arda 2.33.0 (issue #144), the table and its two arda consumers (:class:`_Model` here, and
-    :func:`arda.hmm.model_for`) did not.
+    exactly one parser. Both consumers are in arda: :class:`_Model` here, and
+    :func:`arda.hmm.model_for`, which is the SHM-aware scorer B cells need. The amino-acid D
+    *posterior* that used to read it is gone from both libraries as of vdjtools 4.8.0 -- it was
+    dominated by a group-by over the model's own scenario weights, which needs no prior table.
     """
 
     ins_vd: list[float]

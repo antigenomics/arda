@@ -345,9 +345,9 @@ def markup(
     The CDR3 column is the *junction*: Cys104 through Phe/Trp118, both included --
     the convention VDJdb's `cdr3` column uses.
 
-    `--d-posterior` / `--d-prior` are gone as of 2.33.0: the D posterior is a recombination-model
-    question and lives in vdjtools (`vdjtools.model.posterior_d_batch`, issue #144). Its answer is
-    unchanged -- the module was ported, not rewritten -- and it now has a batch entry point.
+    `--d-posterior` / `--d-prior` are gone as of 2.33.0: placing a D from an amino-acid junction is
+    a recombination-model question and lives in vdjtools (`vdjtools.model.annotate_junctions`,
+    issue #144), which names the D from the model's own scenario weights and then has arda align it.
     """
     import polars as pl
 
@@ -796,7 +796,7 @@ def scenarios_cmd(
         ..., "--output", "-o",
         help="Prior TSV, the same long `locus/kind/key/value` shape as "
              "`database/vdj/<org>/d_prior.tsv` -- so it is a drop-in for the shipped file, "
-             "which `vdjtools.model.posterior_d` reads."),
+             "which `_Model` here and `arda.hmm.model_for` read."),
     organism: str = typer.Option("human", help="Reference organism."),
     iterations: int = typer.Option(
         5, "--iterations", help="EM iterations. The log-likelihood is echoed per pass; 4-5 is "
@@ -820,7 +820,7 @@ def scenarios_cmd(
 ) -> None:
     """Estimate a recombination model from nucleotide junctions (EM over scenarios).
 
-    `arda.dpost` places a D from an amino-acid junction by marginalising a generative model whose
+    `vdjtools.model.annotate_junctions` places a D from an amino-acid junction using a model whose
     every number is borrowed from OLGA. This is how arda estimates its own, from its own output.
 
     A scenario is NOT identifiable from sequence -- several `(delV, insVD, delDl, delDr,

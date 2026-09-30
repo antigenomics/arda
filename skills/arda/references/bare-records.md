@@ -11,7 +11,7 @@ residues into each end of the junction, and arda ships those per allele.
 ```python
 from arda.cdr3fix import markup_cdr3, markup_records   # markup_records: a whole polars frame
 from arda.annotate.dmap import map_d_junction          # D (+ tandem D-D) on a bare nt junction
-from vdjtools.model import posterior_d_batch           # D gene + position from junction LENGTH
+from vdjtools.model import annotate_junctions          # repaired junction + nt + D, one call
 
 mk = markup_cdr3("CAIRDDKII", "TRAV12-3*01", "TRAJ30*01", "HomoSapiens")
 mk.cdr3_repaired             # 'CAIRDDKIIF'  -- the Phe118 anchor restored
@@ -124,7 +124,7 @@ allele better than the called one — against 1.1 % of untouched records**, a 68
 so it tried one prefix length and gave up — 3 non-empty V guesses in 4,000 sequences against 3,797
 for J, whose branch has the statement correctly in a `for ... else`.
 
-`posterior_d` infers the D gene *and where it sits* from the junction's nucleotide length,
+`annotate_junctions` infers the D gene *and where it sits* from the junction,
 which pins `insVD + |D surviving| + insDJ`. Shipped for human IGH/TRB/TRD and mouse TRB only
 (the pairs with a published generative model); **every other pair returns `None` rather than
 guessing** — do not substitute a human proxy.

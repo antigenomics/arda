@@ -90,7 +90,7 @@ read to align — rather than from a sequenced fragment.
 
    ``arda.dpost`` was **removed in 2.33.0**. A posterior over the D gene is a
    recombination-model question, not a germline-reference one, so it lives in vdjtools as
-   ``vdjtools.model.posterior_d`` / ``posterior_d_batch``
+   ``vdjtools.model.annotate_junctions``
    (`arda#144 <https://github.com/antigenomics/arda/issues/144>`_). The module was ported, not
    rewritten: its answer is identical field-for-field, and it gained the batch entry point
    `arda#142 <https://github.com/antigenomics/arda/issues/142>`_ asked for. arda still ships the

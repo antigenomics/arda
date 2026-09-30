@@ -30,7 +30,7 @@ Outputs (per organism)
   :mod:`arda.cdr3fix` mark up a junction with no read behind it, and what pins the
   V..J interior for D mapping.
 * ``d_prior.tsv`` — generative-model summaries read by :func:`arda.scenarios.load_prior_table`,
-  :func:`arda.hmm.model_for` and (in the other repository) ``vdjtools.model.posterior_d``
+  :func:`arda.hmm.model_for`, the SHM-aware scorer
   (``insVD``/``insDJ`` insert lengths, surviving-D length, ``P(D | J)``). Derived, not
   measured; shipped only for the (organism, locus) pairs with a published model.
   See ``SOURCES.md`` and ``scripts/build_d_priors.py``.
