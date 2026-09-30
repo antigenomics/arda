@@ -20,18 +20,36 @@ caller), and the outcome follows from where the hit starts in each sequence -- V
     0                 0              NoFixNeeded
     0                 > 0            FixTrim    -- framework outside the junction
     > 0               0              FixAdd     -- germline the submission cut
-    > 0               <= max_replace  FixReplace -- substitute at the anchor
-    > 0               > max_replace   FailedReplace
+    > 0               <= max_replace FixReplace -- substitute at the anchor
+    > 0               > max_replace  FailedReplace
 
 Searching every offset is the point: ``CAMYLCASSLFGSPLHF`` against TRBV9 (``CASSV``) has a spurious
 ``CA`` at offset 0 and the real ``CASS`` at offset 5, and only the longest hit anywhere finds the
 second. An engine anchored at offset 0 scores the first and calls the record clean.
 
-**A contradicted call changes the allele, not the sequence** (:func:`guess_allele`). A junction whose
-anchor-side residues match a different allele of the locus better than the called one is evidence
-about the call; substituting residues to satisfy the call rewrites correct data. Measured over
-VDJdb's corpus, 74.7 % of anchor-adjacent substitutions into an already-canonical junction were that
-case, against 1.1 % of untouched records.
+**When it is not certain, flag it -- do not change it.** That is the whole policy, and it admits
+exactly four edits, in this order:
+
+1. **Re-call** the V or J, when another allele of the locus explains **2 more residues contiguously
+   from its own anchor** (:data:`_RECALL_GAIN`, :func:`anchor_depth`) and does not break an anchor
+   the submission already holds. Confirming the submitted call is as much the job as replacing it.
+2. **Trim** framework sitting past the conserved anchor of the allele that won. There is no N region
+   beyond an anchor, so those residues are not junction.
+3. **Add** back germline the submission was cut inside of, when the surviving run clears
+   ``_MIN_HIT``.
+4. **Substitute the first or last residue only**, to the anchor the winning allele encodes, on a
+   solid match.
+
+Nothing else is ever rewritten. A residue that disagrees with germline **inside** the templated run
+is reported (``mismatch``) and left exactly as submitted, because a curation error and an allele IMGT
+does not record are indistinguishable from one junction -- and rewriting them collapsed distinct
+records onto one string: ``CAAAETSYDKV{M,R,T,V}F`` on TRAJ50 are four junctions that all became
+``CAAAETSYDKVIF``. Four residues observed at one templated position is a suspect call or an
+unrecorded allele, not four independent typos.
+
+**A contradicted call changes the allele, not the sequence** (:func:`guess_allele`), which is step 1
+above. Measured over VDJdb's corpus, 74.7 % of anchor-adjacent substitutions into an
+already-canonical junction were that case, against 1.1 % of untouched records.
 
 **Repair always targets a canonical junction.** ``cdr3_repaired`` is only accepted when it opens
 with Cys104 and closes with Phe/Trp118 (``_canonicalise``); otherwise the submission is returned
@@ -94,6 +112,36 @@ __all__ = [
 # supports rather than the one submitted.
 _MIN_HIT = 2
 
+#: Extra agreeing residues another allele must show before it replaces the submitted call, per
+#: side. Re-calling is the FIRST step of the repair: confirm the submitted call or replace it, and
+#: only then measure the trim, the addition and the anchor against the allele that won.
+#:
+#: **2 is measured, not chosen.** Judged against ``isalgo/airr_control``'s nucleotide-called V/J
+#: (``human.{tra,trb}.ntvj``, junctions seen in >= 3 donors carrying one V and one J throughout),
+#: over the 3,059 human TRA and 426 human TRB VDJdb curation keys that appear there. Each cell is
+#: "share of keys whose gene agrees with the nucleotide call (calls this margin moved the wrong
+#: way)":
+#:
+#: ======  ===================  ===================  ==================  ===================
+#: gain    TRA V                TRA J                TRB V               TRB J
+#: ======  ===================  ===================  ==================  ===================
+#: none    88.17 %              99.18 %              94.13 %             98.12 %
+#: 1       90.62 % (27 broken)  99.54 % (11 broken)  96.48 % (6 broken)  99.77 % (1 broken)
+#: **2**   **89.34 % (0)**      **99.84 % (0)**      **96.48 % (0)**     **100.00 % (0)**
+#: 3       88.66 % (0)          99.80 % (0)          94.13 % (0)         99.77 % (0)
+#: 4       88.17 % (0)          99.80 % (0)          94.13 % (0)         98.83 % (0)
+#: ======  ===================  ===================  ==================  ===================
+#:
+#: 2 is the smallest margin at which NO re-call moves a call away from the nucleotide answer -- at
+#: 1 it breaks 20 calls across the four columns -- and every larger margin only leaves errors
+#: standing. Separate V and J thresholds are therefore available and, measured, not needed.
+#:
+#: What the margin counts is :func:`anchor_depth` -- contiguous agreement from the anchor, a
+#: mis-read anchor forgiven -- and not the hit's score. That function documents why each of those
+#: three words is there; measured on the same four columns, depth corrects more calls than the
+#: score does (TRA V 53 against 49, TRB V 11 against 10) and still breaks none.
+_RECALL_GAIN = {"V": 2, "J": 2}
+
 #: The per-side verdict vocabulary. A side carries a **set** of these, not one of them, because a
 #: single worst-wins label cannot say both "I trimmed a flank" and "I found a substitution I will
 #: not touch" -- and collapsing those onto one string is how a declined repair came to read as a
@@ -107,27 +155,24 @@ _MIN_HIT = 2
 #: ``sub``         residue(s) substituted to germline
 #: ``add``         residue(s) restored from germline
 #: ``trim``        residue(s) removed -- framework sitting outside the junction
+#: ``mismatch``    disagrees with germline INSIDE the templated run; reported, never rewritten
 #: ``shallow``     agrees, but below ``_MIN_HIT``: the call is uncorroborated
-#: ``impossible``  no usable segment, no alignment, or a disagreement the rules decline to fix
+#: ``impossible``  no usable segment, no alignment, or an ANCHOR the rules cannot restore
 #: ==============  ========================================================================
-FLAGS = ("ok", "allele", "sub", "add", "trim", "shallow", "impossible")
+FLAGS = ("ok", "allele", "sub", "add", "trim", "mismatch", "shallow", "impossible")
 
-# How far from the conserved anchor (Cys104 for V, [FW]118 for J) a mismatch may
-# sit and still be *repaired*. This is the crux of the whole module.
+# Junction residues standing where the anchor should be that a repair may replace with germline.
+# This is legacy's `max_replace_size`, and with the default of 1 it is exactly the anchor residue:
+# `CASSTQENTEAFL` on TRBJ1-1 (`NTEAFF`) ends in L where the germline says F, with `FAETN` agreeing
+# behind it, and one residue is replaced.
 #
-# The germline templated run is an upper bound -- V and J are exonuclease-trimmed
-# -- so a mismatch inside it is ambiguous: a curation typo, or simply the N/D
-# region starting earlier than the germline could reach. The alignment cannot tell
-# them apart, because a single mismatch only needs two flanking matches to score
-# better than stopping, and two chance matches happen ~1/400 per opportunity.
-# Repairing on that evidence rewrites real N-region residues: on 3000 VDJdb rows it
-# silently "fixed" 84 records, e.g. CASSPRRY-N-L-QFF -> ...NEQFF against TRBJ2-1
-# (`SYNEQFF`), where the L is N-region, not a typo.
+# It does NOT bound residues INSIDE the germline run -- those are never rewritten at any setting
+# (see the module docstring). 2.32.0 read it as a distance from the anchor instead, which admitted a
+# substitution one residue in and produced 2,744 rewrites of already-canonical junctions that the
+# authoritative release does not ship.
 #
-# Adjacent to the conserved anchor the ambiguity collapses: the anchor is fixed, so
-# a mismatch beside it cannot be explained away by trimming. VDJdb encodes the same
-# prior as `max_replace_size = 1`. Mismatches further in are still REPORTED (with
-# `applied=False`) -- the caller asked where the V/J mismatch is -- but never applied.
+# Raising it lets a repair drop more than one junction residue before the germline run: 224 keys of
+# VDJdb's corpus change at 2, `CAAPGAGSYQTF` on TRAJ28 among them.
 _MAX_REPLACE = 1
 
 # VDJdb fix types, with its rank order (worst wins when several apply). `TruncatedGermline` is
@@ -751,6 +796,22 @@ def _fix_side(segment: str, cdr3: str, side: str, max_replace: int,
     means, and this value feeds ``boundary_nt`` and `dpost`'s slice of the non-templated middle.
     """
     hit = scan(segment, cdr3)
+    # A junction that lost ONLY its conserved anchor is the commonest curation loss, and neither
+    # legacy nor 2.32.0 repaired it: the surviving residues agree with the germline from position 1
+    # on, so the best placement is a one-residue coincidence below `_MIN_HIT` and both engines
+    # returned `FailedNoAlignment`. `AQGLLTGGGNKLTF` on TRAV29/DV5 (`CAAS`) is the shape of it --
+    # the 2026-06-03 release ships it unrepaired and not good.
+    #
+    # Prepending the anchor is admissible exactly when doing so makes the germline agree from the
+    # anchor outward: `CAQGLLTGGGNKLTF` places at 0/0 with `CA` agreeing, which clears `_MIN_HIT`.
+    # `CALRPA` on TRAJ17 does not -- prepending its Phe still leaves a one-residue hit -- so that
+    # record stays refused, as the release has it, and no germline is invented off a coincidence.
+    added = ""
+    if segment and cdr3 and cdr3[0] != segment[0] and (hit is None or hit.score < _MIN_HIT):
+        probe = scan(segment, segment[0] + cdr3)
+        if (probe is not None and probe.start_in_segment == 0 and probe.start_in_cdr3 == 0
+                and probe.score >= _MIN_HIT):
+            added, cdr3, hit = segment[0], segment[0] + cdr3, probe
     if hit is None:
         return cdr3, ("impossible",), "FailedNoAlignment", -1, []
 
@@ -788,11 +849,19 @@ def _fix_side(segment: str, cdr3: str, side: str, max_replace: int,
     body = cdr3           # the junction with the offset edit applied, anchor-first
     flags: tuple[str, ...] = ()
     name = "NoFixNeeded"
+    if added:
+        # `cdr3` above is already the prepended junction, so the table sees a hit at 0/0 and has
+        # nothing left to do. The restored residue is germline, so -- as in every `FixAdd` -- it is
+        # not counted as templated: the boundary is measured from the residues that survived.
+        err("del", 0, 1, "", added, True)
+        flags, name = ("add",), "FixAdd"
     # Where the aligned run sits AFTER the offset edit -- in `body` and in `segment`. Each branch
     # moves the junction differently, so this cannot be assumed: reading the run at body[0:] while
     # comparing it to segment[start_in_segment:] invented mismatches and refused 100 of legacy's
     # own fixes.
     b_off, s_off = hit.start_in_cdr3, hit.start_in_segment
+    if added:
+        b_off = s_off = len(added)
     if hit.start_in_segment == 0 and hit.start_in_cdr3 > 0:
         # Framework sitting outside the junction. There is no N region beyond a conserved anchor,
         # so residues past it are always framework -- which is why legacy needed no trim budget to
@@ -816,33 +885,34 @@ def _fix_side(segment: str, cdr3: str, side: str, max_replace: int,
         b_off, s_off = hit.start_in_segment, hit.start_in_segment
     elif hit.start_in_segment > 0 and hit.start_in_cdr3 > 0:
         lead_g, lead_q = segment[:hit.start_in_segment], cdr3[:hit.start_in_cdr3]
-        # An EQUAL shift on both sides is not an indel: the germline does reach the anchor, with
-        # mismatches in between, and `d_local_align` simply will not span them (a gapless local
-        # alignment resets when the running score hits zero). So count the residues that actually
-        # DISAGREE, not the size of the shift.
+        # ⛔ Legacy's gate, and the author's rule of 2026-09-30 is the same one: what may be
+        # substituted is the ANCHOR, and `max_replace` bounds the junction side alone. With
+        # `_MAX_REPLACE = 1` that is exactly one junction residue -- the one standing where the
+        # anchor should be -- so no edit here can reach a residue inside the junction.
         #
-        # This is what keeps arda's anchor-adjacent repair, which legacy never had: `CCSSARSGELFF`
-        # against TRBV9 (`CASSV`) places on `SS` at offset 2/2, so legacy refuses it outright --
-        # but `CA` vs `CC` is ONE disagreeing residue, at distance 1 from a fixed Cys104, and
-        # `_MAX_REPLACE` is the measured statement that such a residue is a typo rather than the
-        # N region starting early. Counting the shift instead would refuse every one of them.
-        # UNEQUAL shifts are an indel, and legacy's gate there is `start_in_cdr3 <= max_replace`
-        # alone -- it never bounds how much germline it prepends. `CAADNNARLF` on TRAJ31
-        # (`NNNARLMF`) places at segment 2 / query 1: one query residue to drop, two germline
-        # residues to restore, and the release ships `CAADNNARLMF`. Bounding it by the germline
-        # side instead refused that whole class -- 100 of legacy's own fixes.
-        invented = (sum(1 for x, y in zip(lead_g, lead_q) if x != y)
-                    if hit.start_in_segment == hit.start_in_cdr3 else hit.start_in_cdr3)
+        # It does NOT bound how much germline is restored, which is why `CAADNNARLF` on TRAJ31
+        # (`NNNARLMF`) works: the hit places at segment 2 / query 1, so one junction residue is
+        # dropped and two germline residues take its place, and the release ships `CAADNNARLMF`.
+        # Bounding the germline side instead refused 100 of legacy's own fixes.
+        #
+        # Counting DISAGREEMENTS instead of the shift (2.32.0) is what admitted 2,758 substitutions
+        # the authoritative release never made: `CCSSARSGELFF` on TRBV9 (`CASSV`) places on `SS` at
+        # offset 2/2, and rewriting its position-1 C to the germline's A is a residue arda invents.
+        # A residue that disagrees one in from the anchor may be a curation error or an allele IMGT
+        # does not record, and nothing in the junction separates the two.
         if hit.score < _MIN_HIT:
             return cdr3, ("impossible",), "FailedNoAlignment", -1, []
-        if invented > max_replace:
+        if hit.start_in_cdr3 > max_replace:
             err("sub", 0, hit.start_in_cdr3, lead_q, lead_g, False)
             return cdr3, ("impossible",), "FailedReplace", -1, build(cdr3)
-        for k, (x, y) in enumerate(zip(lead_g, lead_q)):
-            if x != y:
-                err("sub", k, 1, y, x, True)
+        subs = [k for k, (x, y) in enumerate(zip(lead_g, lead_q)) if x != y]
+        for k in subs:
+            err("sub", k, 1, lead_q[k], lead_g[k], True)
         body = lead_g + cdr3[hit.start_in_cdr3:]
-        flags, name = ("sub",), "FixReplace"
+        flags = tuple(f for f, on in (("sub", bool(subs)),
+                                      ("add", len(lead_g) > len(lead_q)),
+                                      ("trim", len(lead_g) < len(lead_q))) if on)
+        name = "FixReplace"
         b_off, s_off = hit.start_in_segment, hit.start_in_segment
 
     # ---- then the residues the run covers, one at a time. `_extend` walks past the first
@@ -850,30 +920,46 @@ def _fix_side(segment: str, cdr3: str, side: str, max_replace: int,
     # can span typos: `TNEKLFF` against `...NNKLFF` covers 7 residues with one disagreeing. Only
     # those within `max_replace` of the anchor are applied (see `_MAX_REPLACE`); the rest are
     # reported, which is what makes the side `impossible` rather than clean.
-    declined = False
+    declined = False       # the ANCHOR disagrees and the rules cannot restore it
+    mismatch = False       # a disagreement inside the run: reported, left exactly as submitted
     out = list(body)
     for k in range(hit.size):
         qi, si = k + b_off, k + s_off
         if qi >= len(out) or si >= len(segment) or out[qi] == segment[si]:
             continue
-        if qi == 0 and hit.score < _MIN_HIT:
-            # The anchor itself, on a thin match: report it, do not rewrite it.
+        if qi != 0:
+            # ⛔ Author's rule, 2026-09-30: only the first/last residue is ever substituted, and
+            # only to the anchor. A residue that disagrees with germline INSIDE the templated run
+            # may be a curation error or an allele IMGT does not record -- we cannot tell, so it is
+            # reported and the submission stands. Rewriting these collapsed distinct records onto
+            # one string: `CAAAETSYDKV{M,R,T,V}F` on TRAJ50 are four junctions that all became
+            # `CAAAETSYDKVIF`, which is four residues observed at one templated position and reads
+            # as a suspect J call or an unrecorded allele, not as four independent typos.
             err("sub", qi, 1, out[qi], segment[si], False)
-            declined = True
-            continue
-        if qi <= max_replace:
+            mismatch = True
+        elif hit.score >= _MIN_HIT:
+            # The anchor itself, on a solid match: restore it. This is legacy's FixReplace and the
+            # third step of the rule -- `CASSTQENTEAFL` on TRBJ1-1 ends in L where the germline
+            # says F, with `FAETN` agreeing behind it.
             err("sub", qi, 1, out[qi], segment[si], True)
             out[qi] = segment[si]
             if "sub" not in flags:
                 flags = flags + ("sub",)
             name = "FixReplace"
         else:
+            # The anchor, on a thin match: no allele evidence, so no edit and no verdict.
             err("sub", qi, 1, out[qi], segment[si], False)
             declined = True
     body = "".join(out)
 
     if not flags:
         flags = ("ok",) if hit.score >= _MIN_HIT else ("shallow",)
+    if mismatch:
+        # NOT a refusal. The junction is well formed and every residue is the curator's; what this
+        # says is that one of them is not the germline's. `v_fix`/`j_fix` therefore keep legacy's
+        # name -- its substring scanner never saw inside the run either -- and the flag is the
+        # extra information. A consumer that wants legacy's strictness reads the flag.
+        flags = tuple(f for f in flags if f != "ok") + ("mismatch",)
     if declined:
         if name == "NoFixNeeded":
             name = "FailedReplace"
@@ -913,8 +999,80 @@ def _with_allele(flags: tuple[str, ...], moved: bool) -> tuple[str, ...]:
     return ("allele",) + tuple(f for f in flags if f != "ok")
 
 
+def anchor_depth(segment: str, cdr3: str, start_in_cdr3: int = 0) -> int:
+    """Residues the germline explains CONTIGUOUSLY from its anchor, a mis-read anchor forgiven.
+
+    This is what :data:`_RECALL_GAIN` compares, and each of its three properties is there because
+    the alternative was measured to re-call a record wrongly:
+
+    * **Contiguous**, not match-minus-mismatch. ``_extend`` walks past a mismatch the agreement
+      behind it pays for, so a score can be collected from an alternating pattern --
+      ``CASSQQQQQQQQQF`` scores 3 against ``TRBJ1-5`` (``NQPQHF``) by matching every other residue,
+      which is Q-richness, not germline evidence.
+    * **From the anchor**, so a run found deeper inside the junction does not count: ``CSAR`` is
+      ``TRBV20-1``'s run and it does sit inside ``CGGSARSGELFF``, at offset 3, where it is the N
+      region reproducing three residues by chance.
+    * **A mis-read anchor is forgiven** -- but only when something behind it agrees. Counting from
+      offset 0 alone returns 0 for ``CAAAGDNNRKLIF`` against ``TRAJ38`` (``NAGNNRKLIW``), whose
+      terminal residue is F where the germline says W, and that zero re-called a junction with six
+      agreeing residues to an allele with two. The anchor is the one residue a solid match is
+      allowed to rewrite (step three of the rule), so it cannot also be what decides the match.
+    """
+    n = min(len(segment), len(cdr3) - start_in_cdr3)
+    run = 0
+    while run < n and segment[run] == cdr3[start_in_cdr3 + run]:
+        run += 1
+    if run:
+        return run
+    run = 1
+    while run < n and segment[run] == cdr3[start_in_cdr3 + run]:
+        run += 1
+    return run if run > 1 else 0
+
+
+def _candidates(anchors: dict, segment: str, locus: str) -> tuple[tuple[str, str], ...]:
+    """``(templated run, allele)`` per DISTINCT run for one side of one locus, best allele first.
+
+    Two reductions, and re-calling every record is only affordable with both. The anchor table is
+    the whole organism -- 4,000-odd alleles across every locus -- so filtering it per record in
+    Python cost 19x the markup itself. And alleles of one locus share their anchor region heavily:
+    58 human TRAJ alleles carry 51 distinct runs, 1,000 human IGHV alleles carry 205, so scanning
+    per distinct run and mapping back is most of what is left.
+
+    Ordered ``(functional first, then by name)``, so which allele represents a run it shares is
+    fixed by the reference and not by how ``cdr3_anchors.tsv`` happened to be sorted.
+
+    ⚠ ``status == "ok"`` only. An allele IMGT ships as a partial record has a SHORT templated run
+    for a reason that is about the reference, not about the rearrangement, so it can neither win a
+    re-call nor lose one: ``TRBV5-1*02`` carries ``CAS`` where ``*01`` carries ``CASSL``, and
+    comparing their lengths would re-call every ``*02`` record to ``*01``.
+
+    ⚠ **Pseudogenes are not candidates**; ORFs are. A junction in hand came from a rearrangement
+    that produced a chain, so a pseudogene did not template it -- and a pseudogene's anchor is
+    whatever its sequence happens to decode, which `_canonicalise` then accepts: ``TRBJ2-2P``
+    (``GRLGG``) won a re-call on ``CASRPGAAGGRPELYF`` and trimmed it to ``CASRPGAAG``, canonical
+    for that pseudogene and a junction for nothing. ORFs stay because ``TRBJ2-7*02`` is one and is
+    the right answer for ``CASSKRGGYEQYV``, whose terminal V its germline templates.
+    """
+    by_run: dict[str, list[tuple[bool, str]]] = {}
+    for (seg, allele), anchor in anchors.items():
+        if seg != segment or anchor.locus != locus or anchor.status != "ok":
+            continue
+        if anchor.functionality == "P":
+            continue
+        run = anchor.templated_aa[::-1] if segment == "J" else anchor.templated_aa
+        by_run.setdefault(run, []).append((anchor.functionality != "F", allele))
+    return tuple((run, min(owners)[1]) for run, owners in by_run.items())
+
+
+@lru_cache(maxsize=64)
+def _cached_candidates(organism: str, segment: str, locus: str) -> tuple[tuple[str, str], ...]:
+    """``_candidates`` over an organism's shipped anchors; keyed on the organism, never ``id()``."""
+    return _candidates(load_anchors(organism), segment, locus)
+
+
 def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
-                 called: str = "") -> str:
+                 called: str = "", min_gain: int = 1, organism: str = "") -> str:
     """The allele of ``locus`` whose templated run best explains this junction end.
 
     ``cdr3`` is anchor-first (J reversed), as everywhere in this section.
@@ -927,17 +1085,67 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
 
     **This exists so a contradicted call changes the ALLELE, not the sequence.** A junction whose
     own anchor-side residues match a different allele better than the called one is evidence about
-    the CALL; substituting residues to satisfy the call instead rewrites correct data. Returns
-    ``""`` unless some allele beats the called one outright, so a tie leaves the call alone.
+    the CALL; substituting residues to satisfy the call instead rewrites correct data.
+
+    ``min_gain`` is how many MORE residues the winner must explain than the submitted call does
+    (:data:`_RECALL_GAIN`). Returns ``""`` when nothing clears it, so the submitted call stands
+    unless the junction argues against it by a margin -- confirming a call is as much the job as
+    replacing one.
     """
+    # ⚠ The comparison is the hit's LEADING EXACT RUN from the anchor (`_RECALL_GAIN`), and only a
+    # hit that starts at the germline's OWN ANCHOR is evidence about the call. `CSAR` is
+    # TRBV20-1's run and it does sit inside `CGGSARSGELFF` -- at offset 3, where it is the N region
+    # reproducing three residues by chance, and TRBV20-1's junction would read `CSAR...`. Scoring
+    # unanchored hits re-called that record off a coincidence. The same requirement is why a
+    # junction cut INSIDE its germline (`start_in_segment > 0`, a `FixAdd`) is left with the call it
+    # was submitted with: there is no anchored hit to compare, so there is nothing to compare.
+    if not called or (segment, called) not in anchors:
+        return ""
+    if anchors[(segment, called)].status != "ok":
+        return ""                        # a partial reference record cannot lose a length contest
+    t = anchors[(segment, called)].templated_aa
+    h = scan(t[::-1] if segment == "J" else t, cdr3)
+    if h is None or h.start_in_segment != 0:
+        return ""
+    seg_t = t[::-1] if segment == "J" else t
+    base = anchor_depth(seg_t, cdr3, h.start_in_cdr3)
+    floor = base + min_gain
+    # ⛔ If the submitted call already explains the junction's anchor residue, no candidate that
+    # breaks it may displace it, however much more it explains behind. Otherwise the deeper allele
+    # wins and step three then rewrites a junction that was canonical when it arrived:
+    # `CAARLGNNYKLIW` is a clean TRAJ33 junction (`DSNYQLIW`, terminal W and all) that TRAJ12
+    # outscored, whereupon its W became an F. The reverse case is untouched -- `CASSKRGGYEQYV` on
+    # TRBJ2-7*01 (`SYEQYF`) does NOT explain its anchor, so *02 (`SYEQYV`) is free to take it.
+    keep_anchor = bool(seg_t) and seg_t[0] == cdr3[h.start_in_cdr3:h.start_in_cdr3 + 1]
+    cands = (_cached_candidates(organism, segment, locus) if organism
+             else _candidates(anchors, segment, locus))
     best, best_score = "", -1
-    for (seg, allele), anchor in anchors.items():
-        if seg != segment or anchor.locus != locus or not anchor.templated_aa:
-            continue
-        t = anchor.templated_aa[::-1] if segment == "J" else anchor.templated_aa
+    for t, allele in cands:
+        if len(t) < base:
+            continue                     # a run cannot agree on more residues than it has
         hit = scan(t, cdr3)
-        if hit is None:
+        if hit is None or hit.start_in_segment != 0:
             continue
+        holds = t[:1] == cdr3[hit.start_in_cdr3:hit.start_in_cdr3 + 1]
+        if keep_anchor and not holds:
+            continue
+        # ⛔ And it may not place its anchor FURTHER INSIDE the junction than the call does. The
+        # trim that follows deletes everything before it, so a germline anchor found deep in the
+        # junction is not a better call, it is a coincidence with a knife: `TRBJ2-2P`'s `LRGAAG`
+        # matches `GAAG` seven residues into `CASRPGAAGGRPELYF`, and winning there trimmed the
+        # record to `CASRPGAAG`. (IMGT files that pseudogene as an ORF, so functionality does not
+        # catch it, and its anchor decodes G, so `_canonicalise` accepts the result.)
+        if hit.start_in_cdr3 > h.start_in_cdr3:
+            continue
+        depth = anchor_depth(t, cdr3, hit.start_in_cdr3)
+        # The margin is waived for a candidate that explains an anchor the call does NOT, at equal
+        # depth: it accounts for the same residues PLUS the conserved one, so it explains strictly
+        # more and asks for no edit. `CASSKRGGYEQYV` on TRBJ2-7*01 (`SYEQYF`) is that case --
+        # `YQEYS` agrees either way and only *02 (`SYEQYV`) also accounts for the terminal V, which
+        # is why VDJdb rewrote that V to an F to keep *01.
+        if depth < (base if (holds and not keep_anchor) else floor):
+            continue
+        anchor = anchors[(segment, allele)]
         # Rank on agreement AT the anchor: a hit that starts at 0 in both is the germline
         # explaining the junction from its anchor outward, which is the thing being compared.
         # ⚠ Functionality breaks a TIE and nothing more. A junction is evidence about which allele
@@ -945,21 +1153,10 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
         # still wins -- `CASSKRGGYEQYV` is a clean TRBJ2-7*02 (`SYEQYV`, ORF) junction, and VDJdb
         # rewrote its terminal V to F to force the functional *01 (`SYEQYF`). But where a
         # functional allele explains the junction just as well, it is the likelier rearrangement.
-        rank = (hit.score, -hit.start_in_segment, -hit.start_in_cdr3,
-                anchor.functionality == "F")
+        rank = (holds, depth, hit.score, -hit.start_in_cdr3, anchor.functionality == "F")
         if best_score == -1 or rank > best_score:
             best, best_score = allele, rank
-    if not best or best == called:
-        return ""
-    if called:
-        called_anchor = anchors[(segment, called)]
-        t = called_anchor.templated_aa
-        t = t[::-1] if segment == "J" else t
-        mine = scan(t, cdr3)
-        if mine is not None and (mine.score, -mine.start_in_segment, -mine.start_in_cdr3,
-                                 called_anchor.functionality == "F") >= best_score:
-            return ""
-    return best
+    return "" if best == called else best
 
 
 def _placeable(anchor: Anchor | None) -> bool:
@@ -1115,35 +1312,29 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             flags, name, templated = _with_allele(("impossible",), moved), "FailedBadSegment", -1
         else:
             fwd = repaired if side == "V" else repaired[::-1]
-            seg = anchor.templated_aa if side == "V" else anchor.templated_aa[::-1]
-            fixed, flags, name, templated, errs = _fix_side(seg, fwd, side, max_replace)
 
-            # ⛔ A call the junction CONTRADICTS is a call to RE-ASSIGN, never a sequence to
-            # rewrite. Any substitution this side applied is a residue arda invented to satisfy the
-            # germline it was handed, so before keeping it, ask whether a different allele of the
-            # locus explains the submitted residues as they stand.
+            # ⛔ STEP ONE, before any edit: does another allele of this locus explain the submitted
+            # residues better? A call the junction CONTRADICTS is a call to RE-ASSIGN, never a
+            # sequence to rewrite -- and the allele that wins is the one the trim, the addition and
+            # the anchor are all then measured against, so it has to be chosen first.
             #
             # Measured over VDJdb's corpus, 74.7 % of anchor-adjacent substitutions into an
             # ALREADY-canonical junction were records where another allele fit the submitted 3' end
             # better than the called one -- against 1.1 % of untouched records, a 68x enrichment.
             # `CASSLRGAATDTQYF` is the shape of it: a clean TRBJ2-3 junction called TRBJ2-1, which
             # 2.16.0-2.31.0 "repaired" to `CASSLRGAATDTQFF`, a string no germline supports.
-            #
-            # Only reached when a substitution actually fired, so the ~70-allele rescan is paid on
-            # the ~2 % of records that would otherwise be edited, not on every record.
-            if any(e.applied and e.kind == "sub" for e in errs):
-                better = guess_allele(fwd, side, anchor.locus, anchors,
-                                      called=v_id if side == "V" else j_id)
-                if better:
-                    anchor = anchors[(side, better)]
-                    seg = anchor.templated_aa if side == "V" else anchor.templated_aa[::-1]
-                    moved = True
-                    if side == "V":
-                        rec.v_call = v_id = better
-                    else:
-                        rec.j_call = j_id = better
-                    fixed, flags, name, templated, errs = _fix_side(
-                        seg, fwd, side, max_replace)
+            better = guess_allele(fwd, side, anchor.locus, anchors,
+                                  called=v_id if side == "V" else j_id,
+                                  min_gain=_RECALL_GAIN[side], organism=organism)
+            if better:
+                anchor = anchors[(side, better)]
+                moved = True
+                if side == "V":
+                    rec.v_call = v_id = better
+                else:
+                    rec.j_call = j_id = better
+            seg = anchor.templated_aa if side == "V" else anchor.templated_aa[::-1]
+            fixed, flags, name, templated, errs = _fix_side(seg, fwd, side, max_replace)
             flags = _with_allele(flags, moved)
             repaired = fixed if side == "V" else fixed[::-1]
             rec.errors.extend(errs)

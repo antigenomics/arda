@@ -100,11 +100,11 @@ def test_cdr3fix_json_agrees_with_vdjdb_on_every_verdict(vdjdb):
     `jCanonical` at odds with VDJdb on 76 of these 250 rows -- every record whose terminal
     Phe118 arda had just restored.
 
-    ``good`` is deliberately NOT asserted equal, because since 2.32.0 arda's is stricter: a
-    germline disagreement it declines to repair makes the side `impossible`, where VDJdb's fix
-    type reads `NoFixNeeded` because its largest-common-substring scanner never looked that deep.
-    What IS asserted is the direction -- arda never calls a record good that VDJdb calls bad -- so
-    the difference can only ever be arda withholding a verdict, never inventing one.
+    ``good`` is deliberately NOT asserted equal. What IS asserted is the direction -- arda never
+    calls a record good that VDJdb calls bad -- so any difference can only ever be arda withholding
+    a verdict, never inventing one. A germline disagreement inside the run is reported (`mismatch`)
+    and keeps `good`, because the junction is well formed and the residue is the curator's; only an
+    anchor arda cannot restore makes a side `impossible`.
     """
     df, ref = vdjdb
     recs = markup_records(df, cdr3="cdr3_old", v="v.segm", j="j.segm", species="species")
@@ -121,8 +121,10 @@ def test_cdr3fix_json_agrees_with_vdjdb_on_every_verdict(vdjdb):
         f"arda called {len(optimistic)} records good that VDJdb calls bad: " \
         f"{[f['cdr3_old'] for _, f in optimistic][:5]}"
     stricter = sum(1 for r, f in zip(recs, ref) if f["good"] and not r.good)
-    print(f"\n[vdjdb] good: arda stricter on {stricter}/{len(ref)}, never more permissive")
-    assert stricter, "if this reaches 0, the defect-4 strictness has been lost"
+    flagged = sum(1 for r in recs if "mismatch" in r.v_flags or "mismatch" in r.j_flags)
+    print(f"\n[vdjdb] good: arda stricter on {stricter}/{len(ref)}, never more permissive; "
+          f"{flagged} carry a reported germline disagreement")
+    assert flagged, "a declined disagreement must still be visible somewhere"
 
 
 def test_a_repaired_junction_is_always_canonical(vdjdb):

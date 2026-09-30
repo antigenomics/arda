@@ -118,23 +118,21 @@ def test_a_trim_must_pay_for_itself_and_never_eats_an_anchor():
     assert mk.j_canonical
 
 
-def test_max_replace_is_the_only_bound_on_an_anchor_substitution():
-    """`max_replace` is the whole budget, as `max_replace_size` is for legacy's fixer.
+def test_max_replace_bounds_the_junction_side_only():
+    """`max_replace` is legacy's `max_replace_size`: junction residues standing where the anchor
+    should be. At the default 1 that is exactly the anchor residue.
 
-    2.16.0 layered a second bound (`_MAX_FIX = 2`) on invented residues on top of it; the port
-    drops it, because two knobs on one decision meant the outcome depended on which bound happened
-    to bite first. Raising `max_replace` now does exactly what it says.
+    2.16.0 layered a second bound (`_MAX_FIX = 2`) on invented residues, and 2.32.0 read the knob
+    as a DISTANCE FROM THE ANCHOR, which let it reach one residue inside the germline run. Neither
+    is what it means now: no rung of it rewrites anything but the first/last residue.
     """
     # TRAJ31 templates `NNNARLMF`; the junction ends `...AQQQF`, so three residues disagree, at
-    # distances 1, 2 and 3 from Phe118. Each rung of `max_replace` admits exactly one more, and the
-    # side keeps saying `impossible` while any disagreement is still unrepaired.
-    want = {1: "CAVRDSNNNAQQMF", 2: "CAVRDSNNNAQLMF", 3: "CAVRDSNNNARLMF"}
-    for rung, expect in want.items():
+    # distances 1, 2 and 3 from Phe118 -- all of them inside the run, all of them reported.
+    for rung in (0, 1, 2, 3, 4):
         mk = markup_cdr3("CAVRDSNNNAQQQF", "TRAV1-1*01", "TRAJ31*01", "human", max_replace=rung)
-        assert mk.cdr3_repaired == expect, (rung, mk.cdr3_repaired)
-        assert mk.j_fix == "FixReplace"
-        assert len([e for e in mk.errors if e.side == "J" and e.applied]) == rung
-        assert ("impossible" in mk.j_flags) is (rung < 3)
+        assert mk.cdr3_repaired == "CAVRDSNNNAQQQF", (rung, mk.cdr3_repaired)
+        assert "mismatch" in mk.j_flags
+        assert not [e for e in mk.errors if e.applied]
 
 
 @pytest.mark.parametrize("cdr3,which", [("C", "j_fix"), ("F", "v_fix")])
@@ -145,23 +143,22 @@ def test_a_junction_with_nothing_to_align_fails_rather_than_guesses(cdr3, which)
     assert mk.cdr3_repaired == cdr3, "a failed side must not rewrite the junction"
 
 
-def test_max_replace_bounds_how_deep_a_repair_may_reach():
-    """``max_replace`` is a *distance from the anchor*, so 0 still repairs the anchor itself.
+def test_a_substitution_one_residue_in_is_never_applied():
+    """dist=0 is *at* the anchor and is repaired; dist=1 is inside the run and is not.
 
-    A substitution one residue in (dist=1) is refused at 0 and applied at 1. This is the knob
-    that keeps arda from rewriting the V/N boundary as if it were a curation error.
+    This is the whole of the rule at one position. `CXSSARSGELFF` carries an X where TRBV9 says A,
+    one residue in from Cys104 -- reported at every `max_replace`, rewritten at none -- while
+    `CASSARSGELF` is missing the terminal Phe118 itself and is repaired even at 0.
     """
     off_by_one = "CXSSARSGELFF"                       # sub at index 1, dist 1 from Cys104
-    assert markup_cdr3(off_by_one, V, J, "human", max_replace=0).cdr3_repaired == off_by_one
-    assert markup_cdr3(off_by_one, V, J, "human", max_replace=1).cdr3_repaired == CLEAN
-
-    reported = markup_cdr3(off_by_one, V, J, "human", max_replace=0)
-    assert reported.errors and not any(e.applied for e in reported.errors)
-    # A reported-only error does NOT leave the side clean: it is a germline disagreement arda
-    # declined, so the side is `impossible` and the record is not `good`. Reading `NoFixNeeded`
-    # here is issue #141 defect 4.
-    assert reported.v_flags == ("impossible",) and not reported.good
-    assert reported.v_fix == "FailedReplace"
+    for rung in (0, 1, 2):
+        m = markup_cdr3(off_by_one, V, J, "human", max_replace=rung)
+        assert m.cdr3_repaired == off_by_one, rung
+        assert m.v_flags == ("mismatch",) and m.v_fix == "NoFixNeeded"
+        assert m.errors and not any(e.applied for e in m.errors)
+        # A well-formed junction whose germline disagrees inside the run stays `good`: nothing is
+        # wrong with the string, and what is questionable is a residue only a curator can settle.
+        assert m.good
 
     # dist=0 is *at* the anchor and is repaired even at max_replace=0.
     assert markup_cdr3("CASSARSGELF", V, J, "human", max_replace=0).cdr3_repaired == CLEAN
