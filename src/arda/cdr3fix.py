@@ -85,6 +85,8 @@ __all__ = [
     "boundary_nt",
     "markup_records",
     "markup_batch",
+    "guess_allele",
+    "guess_alleles",
     "to_frame",
     "format_report",
     "MARKUP_COLUMNS",
@@ -204,7 +206,7 @@ _MIN_TRUNCATED_AA = 3
 MARKUP_COLUMNS = [
     "cdr3", "cdr3_repaired", "v_call", "j_call", "locus", "species",
     "v_end", "j_start", "v_end_nt", "j_start_nt", "v_fix", "j_fix",
-    "v_flags", "j_flags", "v_canonical", "j_canonical",
+    "v_flags", "j_flags", "v_alts", "j_alts", "v_canonical", "j_canonical",
     "good", "fix_needed", "n_errors", "errors", "cdr3fix",
 ]
 
@@ -282,6 +284,12 @@ class Cdr3Markup:
     j_fix: str = "FailedBadSegment"
     v_flags: tuple[str, ...] = ("impossible",)
     j_flags: tuple[str, ...] = ("impossible",)
+    #: Every allele that explains this end exactly as well as ``v_call`` / ``j_call`` does, the
+    #: chosen one first. An amino-acid junction frequently cannot separate the alleles of a gene, so
+    #: this is where that ambiguity is reported instead of being resolved by name order. Hand it to
+    #: ``vdjtools.model.infer_nt_batch``, which scores a LIST per row and can separate them.
+    v_alts: tuple[str, ...] = ()
+    j_alts: tuple[str, ...] = ()
     errors: list[Cdr3Error] = field(default_factory=list)
     sequence_id: str = ""
 
@@ -1054,6 +1062,11 @@ def _candidates(anchors: dict, segment: str, locus: str) -> tuple[tuple[str, str
     for that pseudogene and a junction for nothing. ORFs stay because ``TRBJ2-7*02`` is one and is
     the right answer for ``CASSKRGGYEQYV``, whose terminal V its germline templates.
     """
+    return tuple((run, min(owners)[1]) for run, owners in _run_owners(anchors, segment, locus).items())
+
+
+def _run_owners(anchors: dict, segment: str, locus: str) -> dict[str, list[tuple[bool, str]]]:
+    """``templated run -> [(is not functional, allele), ...]`` for one side of one locus."""
     by_run: dict[str, list[tuple[bool, str]]] = {}
     for (seg, allele), anchor in anchors.items():
         if seg != segment or anchor.locus != locus or anchor.status != "ok":
@@ -1062,13 +1075,26 @@ def _candidates(anchors: dict, segment: str, locus: str) -> tuple[tuple[str, str
             continue
         run = anchor.templated_aa[::-1] if segment == "J" else anchor.templated_aa
         by_run.setdefault(run, []).append((anchor.functionality != "F", allele))
-    return tuple((run, min(owners)[1]) for run, owners in by_run.items())
+    return {run: sorted(owners) for run, owners in by_run.items()}
 
 
 @lru_cache(maxsize=64)
 def _cached_candidates(organism: str, segment: str, locus: str) -> tuple[tuple[str, str], ...]:
     """``_candidates`` over an organism's shipped anchors; keyed on the organism, never ``id()``."""
     return _candidates(load_anchors(organism), segment, locus)
+
+
+@lru_cache(maxsize=64)
+def _cached_run_owners(organism: str, segment: str, locus: str) -> dict[str, tuple[str, ...]]:
+    """``templated run -> every allele carrying it``, functional first then by name.
+
+    :func:`_candidates` dedupes by run and keeps one representative, which is what makes re-calling
+    every record affordable -- and which is also why the representative alone is not the answer to
+    "which alleles could this be": the ones sharing its run are indistinguishable from an amino-acid
+    junction, by construction. :func:`guess_alleles` expands them back.
+    """
+    return {run: tuple(a for _, a in owners)
+            for run, owners in _run_owners(load_anchors(organism), segment, locus).items()}
 
 
 @lru_cache(maxsize=64)
@@ -1090,8 +1116,9 @@ def _cached_candidate_index(organism: str, segment: str,
     return {k: tuple(v) for k, v in idx.items()}
 
 
-def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
-                 called: str = "", min_gain: int = 1, organism: str = "") -> str:
+def _best_allele(cdr3: str, segment: str, locus: str, anchors: dict,
+                 called: str = "", min_gain: int = 1,
+                 organism: str = "") -> tuple[str, tuple[str, ...]]:
     """The allele of ``locus`` whose templated run best explains this junction end.
 
     ``cdr3`` is anchor-first (J reversed), as everywhere in this section.
@@ -1106,6 +1133,9 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     own anchor-side residues match a different allele better than the called one is evidence about
     the CALL; substituting residues to satisfy the call instead rewrites correct data.
 
+    Returns ``(winner, tied runs)``; the wrappers are :func:`guess_allele` (the winner) and
+    :func:`guess_alleles` (the winner plus every allele indistinguishable from it).
+
     ``min_gain`` is how many MORE residues the winner must explain than the submitted call does
     (:data:`_RECALL_GAIN`). Returns ``""`` when nothing clears it, so the submitted call stands
     unless the junction argues against it by a margin -- confirming a call is as much the job as
@@ -1119,13 +1149,13 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     # junction cut INSIDE its germline (`start_in_segment > 0`, a `FixAdd`) is left with the call it
     # was submitted with: there is no anchored hit to compare, so there is nothing to compare.
     if not called or (segment, called) not in anchors:
-        return ""
+        return "", ()
     if anchors[(segment, called)].status != "ok":
-        return ""                        # a partial reference record cannot lose a length contest
+        return "", ()                        # a partial reference record cannot lose a length contest
     t = anchors[(segment, called)].templated_aa
     h = scan(t[::-1] if segment == "J" else t, cdr3)
     if h is None or h.start_in_segment != 0:
-        return ""
+        return "", ()
     seg_t = t[::-1] if segment == "J" else t
     base = anchor_depth(seg_t, cdr3, h.start_in_cdr3)
     floor = base + min_gain
@@ -1160,6 +1190,7 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     off = h.start_in_cdr3
     q_at = cdr3[off:off + 1]
     best, best_score = "", -1
+    tied: list[str] = []
     for t, allele in cands:
         if len(t) < base:
             continue                     # a run cannot agree on more residues than it has
@@ -1182,8 +1213,45 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
         # represents a shared run does not depend on dict order.
         rank = (holds, depth, anchors[(segment, allele)].functionality == "F")
         if best_score == -1 or rank > best_score:
-            best, best_score = allele, rank
-    return "" if best == called else best
+            best, best_score, tied = allele, rank, [t]
+        elif rank == best_score:
+            tied.append(t)               # explains the junction exactly as well; see `guess_alleles`
+    return ("" if best == called else best), tuple(tied)
+
+
+def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
+                 called: str = "", min_gain: int = 1, organism: str = "") -> str:
+    """The single best allele, or ``""`` when nothing beats the submitted call. See
+    :func:`guess_alleles` for the ones it ties with."""
+    return _best_allele(cdr3, segment, locus, anchors, called, min_gain, organism)[0]
+
+
+def guess_alleles(cdr3: str, segment: str, locus: str, anchors: dict,
+                  called: str = "", min_gain: int = 1, organism: str = "") -> tuple[str, ...]:
+    """Every allele that explains this junction end **exactly as well as the best one does**.
+
+    :func:`guess_allele` has to answer with one allele, so it resolves a tie by functionality and
+    then by name -- and a tie between two alleles is real information that the name order throws
+    away. A junction's first few residues often cannot separate the alleles of a locus at all, which
+    is not a defect: it is what an amino-acid junction can say.
+
+    ⚠ **This is what the nucleotide stage should be given.** ``vdjtools.model.infer_nt_batch`` takes
+    a LIST of alleles per row and scores the reconstruction under each, so handing it the tie set
+    lets codon plausibility and the model's own usage settle what the junction could not -- whereas
+    handing it one allele makes arda's name-order tie-break bind an answer it has no evidence for.
+
+    The chosen allele is first; the rest follow in candidate order (functional first, then by name).
+    """
+    best, runs = _best_allele(cdr3, segment, locus, anchors, called, min_gain, organism)
+    owners = _cached_run_owners(organism, segment, locus) if organism else \
+        {r: tuple(a for _, a in o) for r, o in _run_owners(anchors, segment, locus).items()}
+    out: list[str] = []
+    head = best or called
+    if head:
+        out.append(head)
+    for run in runs:
+        out.extend(a for a in owners.get(run, ()) if a not in out)
+    return tuple(out)
 
 
 def _placeable(anchor: Anchor | None) -> bool:
@@ -1350,9 +1418,23 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             # better than the called one -- against 1.1 % of untouched records, a 68x enrichment.
             # `CASSLRGAATDTQYF` is the shape of it: a clean TRBJ2-3 junction called TRBJ2-1, which
             # 2.16.0-2.31.0 "repaired" to `CASSLRGAATDTQFF`, a string no germline supports.
-            better = guess_allele(fwd, side, anchor.locus, anchors,
-                                  called=v_id if side == "V" else j_id,
-                                  min_gain=_RECALL_GAIN[side], organism=organism)
+            better, tied_runs = _best_allele(fwd, side, anchor.locus, anchors,
+                                             called=v_id if side == "V" else j_id,
+                                             min_gain=_RECALL_GAIN[side], organism=organism)
+            # Every allele that explains this end exactly as well travels with the answer. A junction
+            # often cannot separate the alleles of a gene at all -- `CAISE` is TRBV10-3*01, *02 and
+            # *03 alike -- and collapsing that to one name by sort order binds a choice arda has no
+            # evidence for. The consumer that CAN separate them is the nucleotide stage
+            # (`vdjtools.model.infer_nt_batch` takes a list per row and scores each), so what it
+            # gets is the set, not the representative.
+            owners = _cached_run_owners(organism, side, anchor.locus) if organism else {}
+            alts: list[str] = []
+            for run in tied_runs:
+                alts.extend(a for a in owners.get(run, ()) if a not in alts)
+            if side == "V":
+                rec.v_alts = tuple(alts)
+            else:
+                rec.j_alts = tuple(alts)
             if better:
                 anchor = anchors[(side, better)]
                 moved = True
@@ -1378,6 +1460,9 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             rec.j_flags, rec.j_fix = flags, name
             rec.j_start = (len(repaired) - templated) if templated >= 0 else -1
 
+    # The chosen allele leads, so a consumer can read `v_alts[0]` and `v_call` interchangeably.
+    rec.v_alts = (v_id,) + tuple(a for a in rec.v_alts if a != v_id) if v_id else rec.v_alts
+    rec.j_alts = (j_id,) + tuple(a for a in rec.j_alts if a != j_id) if j_id else rec.j_alts
     rec.cdr3_repaired = repaired
     # Read off the REPAIRED junction, which is what `v_end` / `j_start` index.
     if v_anchor is not None and rec.v_end >= 0:
@@ -1413,6 +1498,7 @@ def to_frame(records: Iterable[Cdr3Markup]) -> pl.DataFrame:
         "v_fix": m.v_fix, "j_fix": m.j_fix,
         "v_flags": ",".join(m.v_flags), "j_flags": ",".join(m.j_flags),
         "v_canonical": m.v_canonical, "j_canonical": m.j_canonical,
+        "v_alts": ",".join(m.v_alts), "j_alts": ",".join(m.j_alts),
         "good": m.good, "fix_needed": m.fix_needed, "n_errors": len(m.errors),
         "errors": "; ".join(str(e) for e in m.errors),
         "cdr3fix": json.dumps(m.to_cdr3fix(), sort_keys=True),

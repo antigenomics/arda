@@ -3,6 +3,144 @@
 Notable changes per release. Earlier releases are described by their git tags
 (`git tag --sort=-v:refname`); this file starts at 2.5.0.
 
+## 2.33.0
+
+**2.32.0 was never released.** Its section below stays as the record of the `Cdr3Fixer` port this
+builds on; the repair policy that ships is this one.
+
+### Changed (BREAKING): the repair policy is "when it is not certain, flag it — do not change it"
+
+Stated by the author on 2026-09-30, and now the rule `cdr3fix` is written to. Four edits are
+admissible, **in this order**, and nothing else is ever rewritten:
+
+1. **Re-call** the V or J, when another allele of the locus explains **2 more residues contiguously
+   from its own anchor** (`anchor_depth`, `_RECALL_GAIN`) and does not break an anchor the
+   submission already holds. Confirming the submitted call is as much the job as replacing it.
+2. **Trim** framework sitting past that allele's anchor.
+3. **Add** back germline the submission was cut inside of.
+4. **Substitute the first or last residue only**, to the anchor the winning allele encodes, on a
+   solid match.
+
+A residue that disagrees with germline **inside** the templated run is reported (new `mismatch`
+flag) and left exactly as submitted, because a curation error and an allele IMGT does not record are
+indistinguishable from one junction. 2.32.0 rewrote them, and that is what
+`CAAAETSYDKV{M,R,T,V}F` on TRAJ50 shows: four junctions that all became `CAAAETSYDKVIF`. Four
+residues observed at one templated position is a suspect J call or an unrecorded allele, not four
+independent typos.
+
+`good` is "neither side `impossible`", and `mismatch` keeps it — the junction is well formed and
+every residue in it is the curator's. `impossible` is now exactly *an anchor the rules cannot
+restore*. `max_replace` is legacy's `max_replace_size` again (junction residues standing where the
+anchor should be), not 2.32.0's distance from the anchor: no setting of it reaches inside the run.
+
+Re-calling is **step one for every record**, not a rescan triggered by a substitution. Three guards,
+each because the alternative was measured to re-call a record wrongly: the hit must start at the
+germline's **own anchor** (`CSAR` is TRBV20-1's run and it does sit inside `CGGSARSGELFF`, at offset
+3, as N region); a candidate is scored at the **junction's own offset**, never at a placement of its
+own, so it cannot put its anchor deeper in and let the following trim delete what came before
+(`TRBJ2-2P`'s `LRGAAG` matched seven residues into `CASRPGAAGGRPELYF` and trimmed it to
+`CASRPGAAG`); and it may not **break an anchor the submission already explains** — `CAARLGNNYKLIW`
+is a clean TRAJ33 junction whose `WIL` is contiguous from its own W, which TRAJ12's five residues
+outscored only by skipping the anchor, whereupon step 4 turned the W into an F. `_canonicalise`
+cannot catch that one, because **both anchors are canonical**. The converse stays allowed:
+`CASSKRGGYEQYV` on TRBJ2-7*01 does not hold its anchor, so *02 takes the call at equal depth.
+
+`_RECALL_GAIN = 2` is measured, not chosen — against `isalgo/airr_control`'s nucleotide-called V/J
+(junctions seen in ≥ 3 donors carrying one V and one J throughout), over the 3,059 human TRA and 426
+human TRB curation keys that appear there. It is the smallest margin at which **no** re-call moves a
+call away from the nucleotide answer:
+
+| gain | TRA V | TRA J | TRB V | TRB J |
+|---|---|---|---|---|
+| no re-call | 88.17 % | 99.18 % | 94.13 % | 98.12 % |
+| 1 | 91.21 % (14 wrong) | 99.87 % (0) | 96.71 % (4 wrong) | 99.77 % (0) |
+| **2** | **89.47 % (0)** | **99.80 % (0)** | **96.71 % (0)** | **99.77 % (0)** |
+| 3 | 88.92 % | 99.80 % | 94.60 % | 99.77 % |
+| 4 | 88.33 % | 99.80 % | 94.13 % | 99.06 % |
+
+### Added: a junction that lost only its conserved anchor is repaired
+
+Neither legacy nor 2.32.0 did it. The survivors agree with germline from position 1 on, so the best
+placement is a one-residue coincidence below `_MIN_HIT` and both engines returned
+`FailedNoAlignment` — the 2026-06-03 release ships `AQGLLTGGGNKLTF` (TRAV29/DV5, `CAAS`) unrepaired
+and not `good`. Prepending the anchor is admissible exactly when doing so makes the germline agree
+from the anchor outward, so that record becomes `CAQGLLTGGGNKLTF` while `CALRPA` on TRAJ17 stays
+refused (prepending its Phe still leaves one residue).
+
+### Measured against the authoritative 2026-06-03 release
+
+All **187,488** distinct `(species, cdr3_old, vId, jId)` keys, both engines given the same four
+inputs — `scripts/compare_vdjdb_release.py`, new, so this is reproducible rather than reported:
+
+| | 2.32.0 | 2.33.0 |
+|---|---|---|
+| repaired junction agrees with the release | 98.3604 % | **99.8352 %** |
+| the release's own repairs reproduced | 4,267/4,499 | **4,331/4,499** |
+| rewrites the release never ships | 2,842 | **141** |
+| — of those, into an already-canonical junction | 2,744 | **35** |
+| — of those, making a non-canonical junction canonical | 69 | **95** |
+| non-canonical junctions shipped (release: 715) | 709 | **677** |
+| `good` (release: 174,407) | 170,218 | 186,139 |
+| throughput, one process | 32,400 keys/s | 28,900 keys/s |
+
+arda now ships **fewer** malformed junctions than the release it is measured against. `vEnd`
+concordance moves 99.86 % → 98.19 % and `jStart` 99.65 % → 98.91 %, entirely on records whose call
+arda re-assigns; on those the release's own boundary is wrong **100 %** of the time against
+nucleotide truth and arda's is right 25–100 %, and on confirmed calls arda matches or beats it
+everywhere.
+
+The re-call costs ~15 % of throughput, not the 3.1x it first did: `_candidates` indexes the anchor
+table by `(segment, locus)` and dedupes by templated run, an offset-1 index cuts a locus's ~60
+alleles to three to five, and scoring at the junction's own offset replaces a `scan` (two `_extend`
+sweeps plus a C++ alignment) with one `anchor_depth` walk.
+
+### Removed (BREAKING): `arda.dpost` moved to vdjtools
+
+Closes [#144](https://github.com/antigenomics/arda/issues/144),
+[#142](https://github.com/antigenomics/arda/issues/142) and
+[antigenomics/vdjtools#183](https://github.com/antigenomics/vdjtools/issues/183). A posterior over
+the D gene marginalises the generative model's insertion-length and D-trimming distributions and
+multiplies in `P(D | J)` — model marginals, not germline facts — so it belongs in the repository that
+owns the recombination model. It is now `vdjtools.model.posterior_d` and
+**`vdjtools.model.posterior_d_batch`**, the batch entry point #142 asked for.
+
+**Ported, not rewritten.** Over 3,000 real human TRB junctions from VDJdb the new module agrees with
+this one on every field of every row, so the measured accuracy travels intact (in-model human IGH
+82 %, TRB 82 %, TRD 87 %, mouse TRB 85 %; out-of-model against nucleotide calls 94/85/91/85 %).
+
+`arda markup --d-posterior` / `--d-prior` are gone with it. What **stays** here: the prior table
+`database/vdj/<org>/d_prior.tsv` (its other two consumers are `arda.hmm` and `arda.scenarios`, so a
+copy in vdjtools would be a second copy of a fitted artifact), the fitter `arda.scenarios`, and now
+its **reader** — `arda.scenarios.load_prior_table`, sitting beside the writer so the format has
+exactly one parser. vdjtools reads the table through it.
+
+### Added: the alleles a junction cannot separate travel with the answer (`v_alts` / `j_alts`)
+
+`CAISE` is the templated run of TRBV10-3*01, *02 **and** *03, so an amino-acid junction cannot tell
+them apart — and resolving that by functionality and then by name binds a choice with no evidence
+behind it. `Cdr3Markup` now carries the whole set, chosen allele first, and `markup_batch` emits it
+as two comma-joined columns. `arda.cdr3fix.guess_alleles` is the public form.
+
+The consumer that *can* separate them is the nucleotide stage: `vdjtools.model.infer_nt_batch` scores
+a LIST of alleles per row, so vdjtools' junction pipeline hands it the set and lets codon
+plausibility settle what the junction could not.
+
+### Added: `map_d_junction` takes the boundaries instead of re-deriving them
+
+`v_end=` / `j_start=` (nucleotides, `Cdr3Markup.v_end_nt` / `j_start_nt` exactly). Deriving them by
+exact germline prefix match is right for a read and wrong for a junction whose nucleotides were
+*inferred* under a model keyed on a different allele of the same gene: the prefix breaks at the first
+synonymous difference and the interior opens up inside the V, where a spurious D wins.
+`CATSIRFTDTQYF` placed a TRBD2 at nucleotide 6 that way. This is what vdjtools' junction pipeline
+passes.
+
+### Deprecated: `arda.hmm`
+
+Nothing consumes it — not the annotation path (two measured negatives in `ROADMAP.md`), not another
+repository, not the new pipeline. The question it answers, the most likely nucleotide reading of a
+junction, is `vdjtools.model.infer_nt_batch`: batched, threaded and C++. `arda.scenarios`, which
+fits the model, is **not** deprecated.
+
 ## 2.32.0
 
 ### Changed (BREAKING): `cdr3fix` is a port of VDJdb's own `Cdr3Fixer`, not an alignment of its own

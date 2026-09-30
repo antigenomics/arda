@@ -11,7 +11,7 @@ residues into each end of the junction, and arda ships those per allele.
 ```python
 from arda.cdr3fix import markup_cdr3, markup_records   # markup_records: a whole polars frame
 from arda.annotate.dmap import map_d_junction          # D (+ tandem D-D) on a bare nt junction
-from arda.dpost import posterior_d                     # D gene + position from junction LENGTH
+from vdjtools.model import posterior_d_batch           # D gene + position from junction LENGTH
 
 mk = markup_cdr3("CAIRDDKII", "TRAV12-3*01", "TRAJ30*01", "HomoSapiens")
 mk.cdr3_repaired             # 'CAIRDDKIIF'  -- the Phe118 anchor restored

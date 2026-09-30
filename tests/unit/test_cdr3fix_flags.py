@@ -386,3 +386,34 @@ def test_max_replace_bounds_the_junction_side_and_nothing_inside_the_run():
     assert one.cdr3_repaired == "CAAPGAGSYQTF" and one.j_fix == "FailedReplace"
     two = markup_cdr3("CAAPGAGSYQTF", "TRAV8-1*01", "TRAJ28*01", HS, max_replace=2)
     assert two.j_fix == "FixReplace" and two.cdr3_repaired != "CAAPGAGSYQTF"
+
+
+def test_the_alleles_a_junction_cannot_separate_travel_with_the_answer():
+    """`v_alts` / `j_alts`, and why one allele is not the honest answer.
+
+    `CAISE` is the templated run of TRBV10-3*01, *02 AND *03 alike, so an amino-acid junction cannot
+    tell them apart -- and resolving that by functionality and then by name binds a choice with no
+    evidence behind it. The chosen call leads, every allele indistinguishable from it follows, and
+    the consumer that CAN separate them is the nucleotide stage: `vdjtools.model.infer_nt_batch`
+    scores a LIST of alleles per row, so the tie is settled by codon plausibility rather than by
+    sort order.
+    """
+    m = markup_cdr3("CAISGEFGSGA", "TRBV10-1", "TRBJ2-6", HS)
+    assert m.v_alts[0] == m.v_call, "the chosen allele leads, so alts[0] and v_call agree"
+    assert set(m.v_alts) == {"TRBV10-3*01", "TRBV10-3*02", "TRBV10-3*03"}
+    assert m.j_alts and m.j_alts[0] == m.j_call
+
+    # A call the junction confirms still reports itself, so a consumer never has to special-case an
+    # empty list.
+    clean = markup_cdr3("CASSARSGELFF", "TRBV9*01", "TRBJ2-2*01", HS)
+    assert clean.v_alts[0] == "TRBV9*01" and clean.j_alts[0] == "TRBJ2-2*01"
+
+
+def test_the_alts_reach_the_frame():
+    import polars as pl
+    from arda.cdr3fix import MARKUP_COLUMNS, markup_batch
+
+    assert "v_alts" in MARKUP_COLUMNS and "j_alts" in MARKUP_COLUMNS
+    out = markup_batch(pl.DataFrame({"cdr3": ["CAISGEFGSGA"], "v": ["TRBV10-1"],
+                                     "j": ["TRBJ2-6"], "species": [HS]}))
+    assert out["v_alts"][0].split(",") == ["TRBV10-3*01", "TRBV10-3*02", "TRBV10-3*03"]

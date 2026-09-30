@@ -24,7 +24,8 @@ an organism. Requires IgBLAST (fetched into `bin/` by `setup.sh`).
      (`ok` / `no_anchor` — flagged, never guessed). This is what lets `arda.cdr3fix`
      mark up a junction with no read behind it, and what bounds the V..J interior for
      D mapping instead of the scaffold projection, which collapses it.
-   - `d_prior.tsv` — generative-model summaries used by `arda.dpost` (`insVD`/`insDJ`
+   - `d_prior.tsv` — generative-model summaries read by `arda.scenarios.load_prior_table`,
+     `arda.hmm` and `vdjtools.model.posterior_d` (`insVD`/`insDJ`
      insert lengths, surviving-D length, `P(D | J)`). **Derived, not measured**; shipped
      only for the (organism, locus) pairs with a published model. See `SOURCES.md` and
      `scripts/build_d_priors.py`.

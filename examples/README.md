@@ -189,7 +189,7 @@ Records with no read behind them, and D on a bare junction:
 ```python
 from arda.cdr3fix import markup_cdr3
 from arda.annotate.dmap import map_d_junction
-from arda.dpost import posterior_d
+from vdjtools.model import posterior_d   # moved out of arda in 2.33.0
 
 mk = markup_cdr3("CAIRDDKII", "TRAV12-3*01", "TRAJ30*01", "HomoSapiens")
 mk.cdr3_repaired               # 'CAIRDDKIIF'  -- the Phe118 anchor restored

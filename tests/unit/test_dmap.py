@@ -18,7 +18,7 @@ from arda.annotate.dmap import map_d_junction
 from arda.annotate.reference import _load_d_germlines
 from arda.annotate.transfer import _allowed_d, _dd_orientation_ok
 from arda.cdr3fix import load_anchors
-from arda.dpost import _mask_forbidden, load_d_prior, posterior_d
+from arda.scenarios import load_prior_table
 from arda.paths import vdj_dir
 
 J1, J2 = "TRBJ1-1*01", "TRBJ2-1*01"
@@ -98,7 +98,7 @@ def test_orphan_d_genes_are_never_candidates():
 
 @pytest.mark.parametrize("org", ["human", "mouse"])
 def test_shipped_prior_zeroes_trbd2_on_every_j1(org):
-    prior = load_d_prior(org)["TRB"]
+    prior = load_prior_table(org)["TRB"]
     for j_allele, row in prior.d_given_j.items():
         mass = sum(p for d, p in row.items() if d.startswith("TRBD2"))
         if j_allele.startswith("TRBJ1-"):
@@ -108,15 +108,17 @@ def test_shipped_prior_zeroes_trbd2_on_every_j1(org):
         assert abs(sum(row.values()) - 1.0) < 1e-6, f"{org} {j_allele} unnormalised"
 
 
-def test_marginal_backoff_also_forbids_trbd2():
-    """TRBJ1-6*01 has no row in the shipped human model, so it exercises the backoff path."""
-    prior = load_d_prior("human")["TRB"]
-    assert "TRBJ1-6*01" not in prior.d_given_j          # guards the premise of this test
+def test_the_shipped_marginal_still_carries_trbd2():
+    """The premise of the consumer-side backoff, which lives in vdjtools since 2.33.0.
+
+    `TRBJ1-6*01` has no row in the shipped human model, so a consumer reading `P(D | J)` for it has
+    to fall back to the marginal -- and the marginal pools both J clusters, so it does contain
+    TRBD2 and the reader must re-apply the genomic-order mask. That masking, and the posterior that
+    needs it, are `vdjtools.model.dpost` (issue #144); what this file still owns is the table.
+    """
+    prior = load_prior_table("human")["TRB"]
+    assert "TRBJ1-6*01" not in prior.d_given_j          # guards the premise
     assert any(d.startswith("TRBD2") for d in prior.d_marginal)
-    backed_off = _mask_forbidden(prior.d_marginal, "TRBJ1-6*01")
-    assert not any(d.startswith("TRBD2") for d in backed_off)
-    assert abs(sum(backed_off.values()) - 1.0) < 1e-6
-    assert _mask_forbidden(prior.d_marginal, J2) is prior.d_marginal
 
 
 def test_map_d_junction_partitions_the_interior_exactly():
@@ -154,15 +156,6 @@ def test_map_d_junction_needs_an_interior_to_search():
     junction = (anc[("V", V["human"])].germline_nt + anc[("J", J2)].germline_nt).upper()
     call = map_d_junction(junction, V["human"], J2, "human")
     assert not call.called and call.v_sequence_end == -1
-
-
-@pytest.mark.parametrize("j_call", [J1, "TRBJ1-6*01"])
-def test_posterior_never_calls_trbd2_on_a_j1(j_call):
-    """A junction whose middle *is* TRBD2 still posteriors onto TRBD1, with no entropy left."""
-    post = posterior_d("CSARDGTGGYSGANVLTF", "TRBV20-1*01", j_call, "human")
-    assert post is not None
-    assert post.d_call == "TRBD1" and post.by_gene.get("TRBD2", 0.0) == 0.0
-    assert post.posterior == pytest.approx(1.0) and post.entropy == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------------------------

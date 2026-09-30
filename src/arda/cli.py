@@ -335,16 +335,6 @@ def markup(
     max_replace: int = typer.Option(
         1, help="Repair edits at most this far from the conserved anchor; "
                 "edits further in are reported but not applied."),
-    d_posterior: bool = typer.Option(
-        False, "--d-posterior",
-        help="Also infer the D gene and its position from the junction length prior "
-             "and the amino-acid match (human IGH/TRB/TRD, mouse TRB)."),
-    d_prior: Path = typer.Option(
-        None, "--d-prior",
-        help="Score the D posterior against this prior table instead of the shipped "
-             "`database/vdj/<org>/d_prior.tsv` -- e.g. one `arda scenarios` fitted. Implies "
-             "`--d-posterior`. Using an estimate is not adopting one: nothing in the installed "
-             "database is touched."),
     report: Path = typer.Option(
         None, "--report", help="Write a human-readable fix log here ('-' for stdout)."),
     show_ok: bool = typer.Option(
@@ -354,6 +344,10 @@ def markup(
 
     The CDR3 column is the *junction*: Cys104 through Phe/Trp118, both included --
     the convention VDJdb's `cdr3` column uses.
+
+    `--d-posterior` / `--d-prior` are gone as of 2.33.0: the D posterior is a recombination-model
+    question and lives in vdjtools (`vdjtools.model.posterior_d_batch`, issue #144). Its answer is
+    unchanged -- the module was ported, not rewritten -- and it now has a batch entry point.
     """
     import polars as pl
 
@@ -367,20 +361,6 @@ def markup(
                              sequence_id=id_col or None, organism=organism or None,
                              max_replace=max_replace)
     out = to_frame(records)
-    if d_posterior or d_prior is not None:
-        from .dpost import posterior_d
-
-        posts = [posterior_d(r.cdr3_repaired, r.v_call, r.j_call, r.species, d_prior)
-                 for r in records]
-        out = out.with_columns([
-            pl.Series("d_call", [p.d_call if p else "" for p in posts]),
-            pl.Series("d_posterior", [round(p.posterior, 4) if p else None for p in posts]),
-            pl.Series("d_entropy", [round(p.entropy, 3) if p else None for p in posts]),
-            pl.Series("d_support_aa", [p.support_aa if p else None for p in posts]),
-            pl.Series("d_start", [p.d_start if p else None for p in posts]),
-            pl.Series("d_start_ci90",
-                      [f"{p.d_start_ci90[0]}-{p.d_start_ci90[1]}" if p else "" for p in posts]),
-        ])
     out.write_csv(output, separator="\t")
 
     if report is not None:
@@ -815,7 +795,8 @@ def scenarios_cmd(
     output: Path = typer.Option(
         ..., "--output", "-o",
         help="Prior TSV, the same long `locus/kind/key/value` shape as "
-             "`database/vdj/<org>/d_prior.tsv` -- so it is a drop-in for the shipped file."),
+             "`database/vdj/<org>/d_prior.tsv` -- so it is a drop-in for the shipped file, "
+             "which `vdjtools.model.posterior_d` reads."),
     organism: str = typer.Option("human", help="Reference organism."),
     iterations: int = typer.Option(
         5, "--iterations", help="EM iterations. The log-likelihood is echoed per pass; 4-5 is "

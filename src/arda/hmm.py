@@ -14,10 +14,11 @@ quantities that are measured not to be.
 space to ``(delV, insVD, D, delDl, delDr, insDJ, delJ)`` and the recursion cheap -- per clonotype
 after ``correct``, never per read.
 
-How this relates to :mod:`arda.dpost`
+How this relates to the D posterior
 -------------------------------------
 
-It does not replace it. ``dpost`` answers the **amino-acid** question -- a VDJdb-style record with
+It does not replace it. ``vdjtools.model.posterior_d`` (``arda.dpost`` up to 2.32.0) answers the
+**amino-acid** question -- a VDJdb-style record with
 no nucleotides, where the D is often invisible in the translated junction and the length
 constraint plus an aa match is all there is. This module needs nucleotides. They are two
 different inputs, and both ship.
@@ -35,6 +36,16 @@ Bayes factor buys IGH ~+3 pp recall at matched FP and nothing for TRD, but needs
 threshold -- which is a shipped constant of exactly the kind this project refuses. So this module
 reports likelihoods and posteriors; it does not gate anything, and nothing in the annotation path
 calls it.
+
+Deprecated
+----------
+⚠ **Deprecated in 2.33.0; scheduled for removal.** Nothing consumes it. It is not on the annotation
+path (two measured negatives in ``ROADMAP.md`` say re-ranking nucleotide D candidates by a scenario
+likelihood changes nothing, and that replacing the E-value gate with a Bayes factor would need a
+per-locus shipped threshold), no other repository imports it, and the question it answers -- the most
+likely nucleotide reading of a junction -- is answered faster and batched by
+``vdjtools.model.infer_nt_batch``, which is stage 2 of the junction pipeline
+(``docs/junction_pipeline.md`` there). :mod:`arda.scenarios`, which fits the model, is NOT deprecated.
 """
 
 from __future__ import annotations
@@ -65,12 +76,24 @@ class DPosterior:
         return min(a for a, p in self.probabilities.items() if p == top)
 
 
+def _warn_deprecated(what: str) -> None:
+    import warnings
+
+    warnings.warn(
+        f"arda.hmm.{what} is deprecated and will be removed: nothing consumes it, and the most "
+        "likely nucleotide reading of a junction is vdjtools.model.infer_nt_batch (stage 2 of the "
+        "junction pipeline). arda.scenarios, which fits the model, stays.",
+        DeprecationWarning, stacklevel=3)
+
+
 def model_for(organism: str = "human", *, prior: str | None = None) -> _Model:
     """The parameter set to score against.
 
     ``prior`` names a TSV written by ``arda scenarios`` -- so a model estimated on one cohort can
-    score another. ``None`` uses the shipped ``d_prior.tsv``, whose numbers are OLGA's.
+    score another. ``None`` uses the shipped ``d_prior.tsv``, whose numbers are OLGA's, read by
+    :func:`arda.scenarios.load_prior_table`.
     """
+    _warn_deprecated("model_for")
     model = _Model(organism)
     if prior is not None:
         _load_into(model, prior, organism)
