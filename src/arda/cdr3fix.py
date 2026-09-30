@@ -1071,6 +1071,25 @@ def _cached_candidates(organism: str, segment: str, locus: str) -> tuple[tuple[s
     return _candidates(load_anchors(organism), segment, locus)
 
 
+@lru_cache(maxsize=64)
+def _cached_candidate_index(organism: str, segment: str,
+                            locus: str) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Candidates grouped by their SECOND templated residue, which is a necessary condition.
+
+    A candidate has to reach ``anchor_depth >= 2`` to clear any margin >= 2, and both ways of
+    reaching 2 require the residue at offset 1 to match: contiguously from the anchor it is the
+    second of the two, and with the anchor forgiven it is the first one counted. So a junction only
+    ever has to be scanned against the alleles whose run carries its own offset-1 residue -- three
+    to five of them, against 60 for a whole locus, and the re-call is a per-record cost on every
+    record in a corpus.
+    """
+    idx: dict[str, list[tuple[str, str]]] = {}
+    for run, allele in _candidates(load_anchors(organism), segment, locus):
+        if len(run) >= 2:
+            idx.setdefault(run[1], []).append((run, allele))
+    return {k: tuple(v) for k, v in idx.items()}
+
+
 def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
                  called: str = "", min_gain: int = 1, organism: str = "") -> str:
     """The allele of ``locus`` whose templated run best explains this junction end.
@@ -1117,27 +1136,37 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
     # outscored, whereupon its W became an F. The reverse case is untouched -- `CASSKRGGYEQYV` on
     # TRBJ2-7*01 (`SYEQYF`) does NOT explain its anchor, so *02 (`SYEQYV`) is free to take it.
     keep_anchor = bool(seg_t) and seg_t[0] == cdr3[h.start_in_cdr3:h.start_in_cdr3 + 1]
-    cands = (_cached_candidates(organism, segment, locus) if organism
-             else _candidates(anchors, segment, locus))
+    # The offset-1 index is only a valid prefilter when the margin needs depth >= 2, which every
+    # shipped setting does; a caller asking for less gets the full scan.
+    q1 = cdr3[h.start_in_cdr3 + 1:h.start_in_cdr3 + 2]
+    if organism and floor >= 2 and q1:
+        cands = _cached_candidate_index(organism, segment, locus).get(q1, ())
+    elif organism:
+        cands = _cached_candidates(organism, segment, locus)
+    else:
+        cands = _candidates(anchors, segment, locus)
+    # ⛔ Every candidate is scored AT THE CALLED ALLELE'S OWN OFFSET, not at a placement of its
+    # own. Where the junction's germline run begins is a property of the JUNCTION -- a framework
+    # flank in front of Cys104 is there whatever allele is named -- so scoring each allele at its
+    # own best offset let one win by placing its anchor deeper inside the junction, where the trim
+    # that follows then deletes everything before it: `TRBJ2-2P`'s `LRGAAG` matches `GAAG` seven
+    # residues into `CASRPGAAGGRPELYF`, and winning there trimmed the record to `CASRPGAAG`. (IMGT
+    # files that pseudogene as an ORF, so functionality does not catch it, and its anchor decodes
+    # G, so `_canonicalise` accepts the result.)
+    #
+    # It is also what makes re-calling every record affordable: one `anchor_depth` per candidate,
+    # which is a walk of at most the run's length, instead of a `scan` -- two `_extend` sweeps and
+    # a C++ alignment. That was 1.4 M `_extend` calls over 20,000 records, 36 % of the markup.
+    off = h.start_in_cdr3
+    q_at = cdr3[off:off + 1]
     best, best_score = "", -1
     for t, allele in cands:
         if len(t) < base:
             continue                     # a run cannot agree on more residues than it has
-        hit = scan(t, cdr3)
-        if hit is None or hit.start_in_segment != 0:
-            continue
-        holds = t[:1] == cdr3[hit.start_in_cdr3:hit.start_in_cdr3 + 1]
+        holds = t[:1] == q_at
         if keep_anchor and not holds:
             continue
-        # ⛔ And it may not place its anchor FURTHER INSIDE the junction than the call does. The
-        # trim that follows deletes everything before it, so a germline anchor found deep in the
-        # junction is not a better call, it is a coincidence with a knife: `TRBJ2-2P`'s `LRGAAG`
-        # matches `GAAG` seven residues into `CASRPGAAGGRPELYF`, and winning there trimmed the
-        # record to `CASRPGAAG`. (IMGT files that pseudogene as an ORF, so functionality does not
-        # catch it, and its anchor decodes G, so `_canonicalise` accepts the result.)
-        if hit.start_in_cdr3 > h.start_in_cdr3:
-            continue
-        depth = anchor_depth(t, cdr3, hit.start_in_cdr3)
+        depth = anchor_depth(t, cdr3, off)
         # The margin is waived for a candidate that explains an anchor the call does NOT, at equal
         # depth: it accounts for the same residues PLUS the conserved one, so it explains strictly
         # more and asks for no edit. `CASSKRGGYEQYV` on TRBJ2-7*01 (`SYEQYF`) is that case --
@@ -1145,15 +1174,13 @@ def guess_allele(cdr3: str, segment: str, locus: str, anchors: dict,
         # is why VDJdb rewrote that V to an F to keep *01.
         if depth < (base if (holds and not keep_anchor) else floor):
             continue
-        anchor = anchors[(segment, allele)]
-        # Rank on agreement AT the anchor: a hit that starts at 0 in both is the germline
-        # explaining the junction from its anchor outward, which is the thing being compared.
         # ⚠ Functionality breaks a TIE and nothing more. A junction is evidence about which allele
-        # it came from, so an ORF or pseudogene that explains it where no functional allele does
-        # still wins -- `CASSKRGGYEQYV` is a clean TRBJ2-7*02 (`SYEQYV`, ORF) junction, and VDJdb
-        # rewrote its terminal V to F to force the functional *01 (`SYEQYF`). But where a
-        # functional allele explains the junction just as well, it is the likelier rearrangement.
-        rank = (holds, depth, hit.score, -hit.start_in_cdr3, anchor.functionality == "F")
+        # it came from, so an ORF that explains it where no functional allele does still wins --
+        # `CASSKRGGYEQYV` is a clean TRBJ2-7*02 (`SYEQYV`, ORF) junction. But where a functional
+        # allele explains the junction just as well, it is the likelier rearrangement. `_candidates`
+        # is ordered functional-first then by name and the comparison is strict, so which allele
+        # represents a shared run does not depend on dict order.
+        rank = (holds, depth, anchors[(segment, allele)].functionality == "F")
         if best_score == -1 or rank > best_score:
             best, best_score = allele, rank
     return "" if best == called else best
