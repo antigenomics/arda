@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.36.0"
+version = "2.36.1"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -83,8 +83,9 @@ wheel.packages = ["src/arda"]
 # VCS listing; this is what stands between an untracked copy sitting in a working tree and a
 # published artifact. Anchored with a leading "/" so only the repository root is meant.
 sdist.exclude = [
-    "/CLAUDE.md", "/SOURCES.md", "/CHANGELOG_local.md", "/ROADMAP_local.md",
+    "/AGENTS.md", "/CLAUDE.md", "/SOURCES.md", "/CHANGELOG_local.md", "/ROADMAP_local.md",
     "/TODO.md", "/NOTES.md", "/STATUS.md", "/ISSUES.md", "/ISSUES_ext.md",
+    "/examples/rnaseq/ex.stats.json", "/examples/rnaseq/ex.stats.tsv",
 ]
 cmake.version = ">=3.18"
 build-dir = "build/{wheel_tag}"

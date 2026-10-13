@@ -251,6 +251,7 @@ database/vdj/*/segments.markup.tsv
 # Working notes: internal by design, and kept out of the published tree. The detailed changelog and
 # roadmap live beside their slim public counterparts -- `CHANGELOG.md` and `ROADMAP.md` are what a
 # USER reads, `*_local.md` is what a maintainer does.
+/AGENTS.md
 /CLAUDE.md
 /SOURCES.md
 /CHANGELOG_local.md

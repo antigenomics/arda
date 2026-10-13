@@ -177,12 +177,12 @@ def germlines_for(v_call: str, j_call: str, species: str = "human") -> Germlines
     hundred distinct pairs, so this resolves each pair once.
     """
     organism = resolve_species(species)
-    locus = resolve_locus(v_call, j_call)
-    if not locus:
-        return None
     anchors = load_anchors(organism)
     v_id = resolve_allele((v_call or "").split(",")[0], "V", anchors)
     j_id = resolve_allele((j_call or "").split(",")[0], "J", anchors)
+    locus = resolve_locus(v_id or v_call, j_id or j_call)
+    if not locus:
+        return None
     va, ja = anchors.get(("V", v_id)), anchors.get(("J", j_id))
     if not va or not ja or va.status != "ok" or ja.status != "ok":
         return None

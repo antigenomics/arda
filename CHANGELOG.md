@@ -3,6 +3,23 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.36.1
+
+**Shared TRA/TRD V alleles retain both locus memberships.** `load_anchors` previously
+kept one `Anchor.locus` per allele, so the later TRD row hid the TRA membership of
+15 human and 42 mouse alleles, including `TRAV38-2/DV8*01`. `Anchor.loci` now retains
+all declared memberships; candidate selection uses them, while `Anchor.locus` remains
+available for existing callers.
+
+**A shared V uses its named J to determine the chain**, including accepted aliases
+such as `TRAV38-2` and `DV8`. Junction markup, scenario construction and D calling
+resolve aliases before choosing the locus, so a shared V with `TRDJ` remains TRD.
+With no J named, the canonical shared V continues to default to TRA.
+
+Regression checks cover membership and reversed reference-row order across all five
+bundled organisms, plus human and mouse aliases through all three consumers.
+No reference sequences or coordinates changed.
+
 ## 2.36.0
 
 **A junction naming NEITHER V nor J now gets a locus proposed too.** 2.34.0 proposed the missing

@@ -1462,6 +1462,7 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
     v_sub, j_sub = _leading_call(v_call), _leading_call(j_call)
     v_id = resolve_allele(v_sub, "V", anchors, organism)
     j_id = resolve_allele(j_sub, "J", anchors, organism)
+    rec.locus = resolve_locus(v_id or v_call, j_id or j_call)
     # ⛔ A submission is allowed to leave a call BLANK, and a blank is not a reason to refuse the
     # record: the junction itself is evidence about the missing side. 3,130 of VDJdb's 192,726
     # distinct keys do exactly this -- 2,669 name ONE side and 461 name NEITHER -- and every one of
@@ -1489,7 +1490,7 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
         # second.
         if sub.strip() or not other or side in rec.proposed:
             continue
-        locus = resolve_locus(v_call, j_call) or anchors[(("J" if side == "V" else "V"), other)].locus
+        locus = rec.locus or anchors[(("J" if side == "V" else "V"), other)].locus
         fwd = cdr3 if side == "V" else cdr3[::-1]
         picked = guess_alleles(fwd, side, locus, anchors, called="", min_gain=0,
                                organism=organism)
