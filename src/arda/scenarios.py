@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from functools import lru_cache
 
-from .cdr3fix import load_anchors, resolve_allele, resolve_locus, resolve_species
+from .cdr3fix import _leading_call, load_anchors, resolve_allele, resolve_locus, resolve_species
 from .annotate.reference import _load_d_germlines
 from .paths import vdj_dir
 
@@ -177,12 +177,12 @@ def germlines_for(v_call: str, j_call: str, species: str = "human") -> Germlines
     hundred distinct pairs, so this resolves each pair once.
     """
     organism = resolve_species(species)
-    locus = resolve_locus(v_call, j_call)
+    anchors = load_anchors(organism)
+    v_id = resolve_allele(_leading_call(v_call), "V", anchors)
+    j_id = resolve_allele(_leading_call(j_call), "J", anchors)
+    locus = resolve_locus(v_id or v_call, j_id or j_call)
     if not locus:
         return None
-    anchors = load_anchors(organism)
-    v_id = resolve_allele((v_call or "").split(",")[0], "V", anchors)
-    j_id = resolve_allele((j_call or "").split(",")[0], "J", anchors)
     va, ja = anchors.get(("V", v_id)), anchors.get(("J", j_id))
     if not va or not ja or va.status != "ok" or ja.status != "ok":
         return None

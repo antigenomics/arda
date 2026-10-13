@@ -557,6 +557,10 @@ list (substitution / insertion / deletion, with position and extent), a VDJdb-co
 deliberately conservative: only anchor-adjacent edits are *applied* (``--max-replace``), while
 errors deeper in the junction are reported and left alone.
 
+Shared ``TRAV…/DV…`` anchors retain both TRA and TRD in ``Anchor.loci``.
+Candidate selection uses this membership, and a named J determines the chain for a
+shared V. ``Anchor.locus`` remains a single label for existing callers.
+
 Since 2.32.0 the engine is a **port of VDJdb's own** ``Cdr3Fixer``: one gapless local alignment per
 side (:func:`arda._markup.d_local_align`, the same C++ the D caller uses) places the germline's
 templated run anywhere in the junction, and the outcome follows from the two offsets exactly as

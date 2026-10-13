@@ -34,7 +34,7 @@ PRIVATE = re.compile(
 )
 
 #: Every working-note name, as the sdist exclude and the gitignore must both spell them.
-NAMES = ("SOURCES.md", "CLAUDE.md", "CHANGELOG_local.md", "ROADMAP_local.md",
+NAMES = ("AGENTS.md", "SOURCES.md", "CLAUDE.md", "CHANGELOG_local.md", "ROADMAP_local.md",
          "TODO.md", "NOTES.md", "STATUS.md", "ISSUES.md", "ISSUES_ext.md")
 
 
