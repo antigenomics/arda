@@ -227,6 +227,11 @@ class Anchor:
     anchor_nt: int = -1   # 0-based offset of the anchor codon in the germline
     partial_nt: int = 0   # V: dangling 3' nt; J: dangling 5' nt (mid-codon)
     germline_nt: str = ""  # V: Cys104 -> 3' end. J: 5' end -> [FW]118 codon end.
+    loci: tuple[str, ...] = ()  # All loci declaring this allele; TRA/TRD can share V.
+
+    def __post_init__(self):
+        if not self.loci:
+            object.__setattr__(self, "loci", (self.locus,))
 
 
 @dataclass(frozen=True)
@@ -393,7 +398,7 @@ def _decisive(a: "Anchor") -> tuple:
 
 @lru_cache(maxsize=8)
 def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
-    """``{(segment, allele): Anchor}`` for one organism; ``{}`` if not built."""
+    """``{(segment, allele): Anchor}``; ``Anchor.loci`` retains shared locus membership."""
     path = _anchor_path(organism)
     if not path.exists():
         return {}
@@ -407,6 +412,8 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
             anchor_nt=int(r["anchor_nt"]), partial_nt=int(r["partial_nt"]),
             germline_nt=r["germline_nt"] or "")
         prev = out.get(key)
+        if prev is not None:
+            anchor = replace(anchor, loci=tuple(sorted(set(prev.loci + anchor.loci))))
         # Compare only the fields that DECIDE the junction. A TRAV/DV allele legitimately appears
         # twice -- once from the TRA pass and once from TRD's `v_shared` -- differing only in
         # `locus`, and warning about those would be 15 lines of noise per human load that trains
@@ -422,8 +429,7 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
             # whatever `iter_rows` yielded last.
             better = max((prev, anchor),
                          key=lambda a: (a.status == "ok", len(a.germline_nt), a.germline_nt))
-            if better is not prev:
-                out[key] = better
+            out[key] = replace(better, loci=anchor.loci)
             logger.warning(
                 "cdr3_anchors.tsv has conflicting rows for %s %s in %s; keeping status=%s "
                 "germline_nt=%s (IMGT ships two accessions under one allele name)",
@@ -440,8 +446,9 @@ def resolve_species(species: str) -> str:
 
 
 def resolve_locus(v_call: str, j_call: str = "") -> str:
-    """``TRBV6-1`` -> ``TRB``; ``TRAV29/DV5`` -> ``TRA`` (leading token wins)."""
-    for call in (v_call, j_call):
+    """Resolve the chain; a TRA/TRD-shared V defers to the J when named."""
+    calls = (j_call, v_call) if "/DV" in (v_call or "").upper() else (v_call, j_call)
+    for call in calls:
         token = (call or "").split(",")[0].split("/")[0].strip()
         if len(token) >= 3:
             return token[:3].upper()
@@ -1074,7 +1081,7 @@ def _run_owners(anchors: dict, segment: str, locus: str) -> dict[str, list[tuple
     """``templated run -> [(is not functional, allele), ...]`` for one side of one locus."""
     by_run: dict[str, list[tuple[bool, str]]] = {}
     for (seg, allele), anchor in anchors.items():
-        if seg != segment or anchor.locus != locus or anchor.status != "ok":
+        if seg != segment or locus not in anchor.loci or anchor.status != "ok":
             continue
         if anchor.functionality == "P":
             continue
@@ -1235,7 +1242,8 @@ def _best_allele(cdr3: str, segment: str, locus: str, anchors: dict,
 @lru_cache(maxsize=8)
 def _loci(organism: str) -> tuple[str, ...]:
     """Every locus this organism ships anchors for, in a fixed order."""
-    return tuple(sorted({a.locus for a in load_anchors(organism).values() if a.locus}))
+    return tuple(sorted({locus for a in load_anchors(organism).values()
+                         for locus in a.loci if locus}))
 
 
 def _propose_locus(cdr3: str, anchors: dict, organism: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
@@ -1518,7 +1526,8 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             # better than the called one -- against 1.1 % of untouched records, a 68x enrichment.
             # `CASSLRGAATDTQYF` is the shape of it: a clean TRBJ2-3 junction called TRBJ2-1, which
             # 2.16.0-2.31.0 "repaired" to `CASSLRGAATDTQFF`, a string no germline supports.
-            better, tied_runs = _best_allele(fwd, side, anchor.locus, anchors,
+            locus = rec.locus if rec.locus in anchor.loci else anchor.locus
+            better, tied_runs = _best_allele(fwd, side, locus, anchors,
                                              called=v_id if side == "V" else j_id,
                                              min_gain=_RECALL_GAIN[side], organism=organism)
             # Every allele that explains this end exactly as well travels with the answer. A junction
@@ -1527,7 +1536,7 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             # evidence for. The consumer that CAN separate them is the nucleotide stage
             # (`vdjtools.model.infer_nt_batch` takes a list per row and scores each), so what it
             # gets is the set, not the representative.
-            owners = _cached_run_owners(organism, side, anchor.locus) if organism else {}
+            owners = _cached_run_owners(organism, side, locus) if organism else {}
             alts: list[str] = []
             for run in tied_runs:
                 alts.extend(a for a in owners.get(run, ()) if a not in alts)
