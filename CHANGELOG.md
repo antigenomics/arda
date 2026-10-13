@@ -15,6 +15,8 @@ available for existing callers.
 such as `TRAV38-2` and `DV8`. Junction markup, scenario construction and D calling
 resolve aliases before choosing the locus, so a shared V with `TRDJ` remains TRD.
 With no J named, the canonical shared V continues to default to TRA.
+Comma- and `+`-joined call lists consistently use their leading candidate in all
+three consumers; later shared candidates do not change the leading V's locus.
 
 Regression checks cover membership and reversed reference-row order across all five
 bundled organisms, plus human and mouse aliases through all three consumers.

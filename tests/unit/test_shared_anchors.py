@@ -66,3 +66,24 @@ def test_shared_alias_chain_across_consumers(organism, v_call, j_call):
     assert germlines is not None and germlines.locus == 'TRD'
     assert germlines.d_germlines
     assert map_d_junction(nt, v_call, j_call, organism).locus == 'TRD'
+
+
+@pytest.mark.parametrize('separator', [',', '+'])
+def test_only_leading_candidate_determines_shared_locus(separator):
+    v_call = f'TRAV1-1*01{separator}TRAV38-2/DV8*01'
+    assert cdr3fix.resolve_locus(v_call, 'TRDJ1*01') == 'TRA'
+
+
+@pytest.mark.parametrize('separator', [',', '+'])
+def test_shared_alias_lists_match_primary_call_across_consumers(separator):
+    from arda.annotate.dmap import map_d_junction
+    from arda.scenarios import germlines_for
+    anchors = cdr3fix.load_anchors('human')
+    va, ja = anchors[('V', 'TRAV38-2/DV8*01')], anchors[('J', 'TRDJ1*01')]
+    v_call = f'DV8{separator}TRAV1-1'
+    j_call = f'TRDJ1*01{separator}TRAJ1*01'
+    nt = va.germline_nt + 'GGGGGG' + ja.germline_nt
+    assert cdr3fix.markup_cdr3(va.templated_aa + 'GG' + ja.templated_aa,
+                            v_call, j_call).locus == 'TRD'
+    assert germlines_for(v_call, j_call) == germlines_for('DV8', 'TRDJ1*01')
+    assert map_d_junction(nt, v_call, j_call) == map_d_junction(nt, 'DV8', 'TRDJ1*01')

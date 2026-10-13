@@ -447,7 +447,8 @@ def resolve_species(species: str) -> str:
 
 def resolve_locus(v_call: str, j_call: str = "") -> str:
     """Resolve the chain; a TRA/TRD-shared V defers to the J when named."""
-    calls = (j_call, v_call) if "/DV" in (v_call or "").upper() else (v_call, j_call)
+    v_call, j_call = _leading_call(v_call), _leading_call(j_call)
+    calls = (j_call, v_call) if "/DV" in v_call.upper() else (v_call, j_call)
     for call in calls:
         token = (call or "").split(",")[0].split("/")[0].strip()
         if len(token) >= 3:
