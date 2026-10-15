@@ -74,7 +74,12 @@ Rearrangement file and passes `airr.schema` validation.
 nt, `<= 0.05` for aa). It ships so a consumer can re-threshold: keeping rows with
 `d_support <= x` for `x < 0.2` reproduces exactly what a stricter arda would have called. A
 missing `d_call` on a VDJ locus usually means the best hit did not clear the gate, not that
-mapping was skipped. For explicit strand / sensitivity / streaming control use
+mapping was skipped. For exact searched-reference provenance use
+`arda.reference_index_identity(organism, seqtype="aa")`: resolves/validates the
+source and immutable MMseqs generation and returns source/payload SHA256 hashes.
+It can build an index but does not annotate sequences.
+
+For explicit strand / sensitivity / streaming control use
 `arda.annotate.mapper.annotate_records` and `annotate_file`.
 
 → **[references/annotation.md](references/annotation.md)** — full field list, parameter
@@ -238,7 +243,7 @@ pipeline and `build-db` / `build-index`.
   `vj_in_frame` stay empty — but `productive` and the D columns *are* populated.
 - `map_d=True` on synthetic or partial input with no real junction simply finds no D. Harmless;
   pass `map_d=False` to skip the search.
-- The shipped MMseqs2 indexes are used only when the local mmseqs **version** matches; otherwise
+- The shipped MMseqs2 indexes require matching source/payload SHA256 identities and MMseqs version; otherwise
   arda rebuilds a private cache on first run. `arda build-index` rebuilds the shipped ones.
 - IgBLAST is needed only to build references and to run `arda igblast`, never at annotation time.
   It auto-fetches on first use like mmseqs does.

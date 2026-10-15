@@ -7,12 +7,15 @@ hot path) -> AIRR TSV.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import queue
 import shutil
 import tempfile
 import threading
+import uuid
 from pathlib import Path
 
 import polars as pl
@@ -29,7 +32,7 @@ from .airr_out import airr_header, format_rows
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["annotate_file", "annotate_records", "build_index"]
+__all__ = ["annotate_file", "annotate_records", "build_index", "reference_index_identity"]
 
 # Streaming defaults: process the input in bounded chunks so memory stays flat
 # regardless of input size (a 30M-read FASTQ never fully loads).
@@ -161,86 +164,123 @@ def _dbtype(seqtype: str) -> int:
     return 2 if seqtype == "nt" else 1
 
 
-def _committed_index(organism: str, seqtype: str, target_fasta: Path | None = None) -> Path | None:
-    """A precompiled mmseqs DB shipped in ``database/`` — if it is version-matched **and current**.
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
-    The staleness check is not optional. ``build-db`` rewrites ``alleles.fasta`` in place, and without
-    this every later run silently searched the *previous* reference; the only symptom was a result that
-    quietly refused to change. Found exactly that way: a rebuild adding 345 constant-region scaffolds
-    produced zero constant-region hits. The ``data/mmseqs_db`` fallback below has always compared
-    mtimes -- this path did not.
-    """
-    d = vdj_dir(organism) / "mmseqs" / seqtype
-    db, ver = d / "db", d / "VERSION"
-    if not (db.exists() and ver.exists()):
-        return None
-    if target_fasta is not None and db.stat().st_mtime < Path(target_fasta).stat().st_mtime:
-        return None  # the reference was rebuilt after this index was compiled
+
+def _index_files(db: Path) -> dict[str, str]:
+    """Hash all MMseqs payloads, including numbered split sequence/header files."""
+    files = {p.name: _sha256(p) for p in sorted(db.parent.glob(db.name + "*")) if p.is_file()}
+    for stem in (db.name, db.name + "_h"):
+        payload = db.parent / stem
+        if not payload.is_file() and not list(db.parent.glob(stem + ".[0-9]*")):
+            raise ValueError(f"Missing MMseqs payload: {payload}")
+        for suffix in (".index", ".dbtype"):
+            if not (db.parent / (stem + suffix)).is_file():
+                raise ValueError(f"Missing MMseqs sidecar: {stem}{suffix}")
+    return files
+
+
+def _index_key(target_fasta: Path, dbtype: int) -> tuple[str, dict]:
+    identity = {"schema_version": 1, "source_fasta_sha256": _sha256(target_fasta),
+                "dbtype": dbtype, "mmseqs_version": mmseqs.version_key(mmseqs.version())}
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    return key, identity
+
+
+def _validated_index(db: Path, key: str, identity: dict) -> tuple[Path, dict] | None:
     try:
-        if mmseqs.versions_compatible(ver.read_text(), mmseqs.version()):
-            return db
-    except Exception:  # noqa: BLE001 — mmseqs missing; fall through to rebuild
+        pointer = json.loads((db.parent / (key + ".json")).read_text())
+        generation = db.parent / "generations" / pointer["generation"]
+        if generation.parent != db.parent / "generations" or generation.name != pointer["generation"]:
+            return None
+        manifest = json.loads((generation / "IDENTITY.json").read_text())
+        if any(manifest.get(k) != v for k, v in identity.items()):
+            return None
+        actual = _index_files(generation / db.name)
+        if actual != manifest["files_sha256"]:
+            return None
+        return generation / db.name, manifest
+    except (OSError, ValueError, KeyError, TypeError):
         return None
-    return None
 
 
-def _createdb_atomic(target_fasta: Path, db: Path, dbtype: int) -> None:
-    """Build an mmseqs DB at ``db``, safely when several arda processes start at once.
+def _committed_index(organism: str, seqtype: str, target_fasta: Path | None = None) -> Path | None:
+    """Return only a content-validated, version-compatible shipped generation.
 
-    `mmseqs createdb` writes ~6 sibling files (``db``, ``db.index``, ``db_h``, ``db_h.index``,
-    ``db.dbtype``, ``db.lookup``). Building them in place is not safe, and arda is routinely run
-    concurrently against the SAME reference (see :mod:`arda._locking`): every process finds no index
-    and starts building it into the same paths.
-
-    They then interleave writes -- and `build_index` additionally unlinks the files another process
-    is mid-read on. The observed failure is silent and total: a 0-byte ``db``, after which every read
-    fails to map (``0/200000 reads mapped, loci={}``) with no error and a clean exit code.
-
-    So: hold the build lock, build into a private temp dir, and move the finished files into place
-    with ``db`` **last** -- readers test ``db.exists()``, so it must not appear until its siblings are
-    all there. A killed builder leaves a temp dir, never a half-built DB that looks complete.
-
-    "Done" means a **current** db, not merely a present one: an existing db OLDER than
-    ``target_fasta`` is stale and must be rebuilt. Gating on bare existence made a stale cache
-    permanent -- ``_cached_target_db`` decides to rebuild on mtime, then this guard sees the old
-    file, calls it done, and skips. The reference was rebuilt (e.g. `build-db`, or a pulled
-    `alleles.fasta`) but every run kept searching the previous scaffolds, silently shifting markup.
+    Legacy indexes with only a VERSION/mtime marker cannot prove source identity.
+    They remain untouched and the runtime builds a validated cache instead.
     """
-    def _current() -> bool:
-        return db.exists() and db.stat().st_mtime >= target_fasta.stat().st_mtime
+    if target_fasta is None:
+        return None
+    key, identity = _index_key(Path(target_fasta), _dbtype(seqtype))
+    result = _validated_index(vdj_dir(organism) / "mmseqs" / seqtype / "db", key, identity)
+    return result[0] if result else None
 
-    with build_lock(db.parent / f".{db.name}.lock", done=_current) as ours:
-        if not ours:
-            return
-        tmp = db.parent / f".{db.name}.tmp.{os.getpid()}"
-        shutil.rmtree(tmp, ignore_errors=True)
-        tmp.mkdir(parents=True)
-        try:
-            mmseqs.createdb(target_fasta, tmp / db.name, dbtype=dbtype)
-            built = sorted(tmp.glob(f"{db.name}*"))
-            # `db` itself last: it is the existence check every reader uses.
-            for f in sorted(built, key=lambda p: p.name == db.name):
-                os.replace(f, db.parent / f.name)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+
+def _createdb_atomic(target_fasta: Path, db: Path, dbtype: int, *, force: bool = False) -> Path:
+    """Publish an immutable generation with one atomic pointer replacement.
+
+    Neither old readers nor split payloads can observe a mixture of generations.
+    Legacy files and old generations remain intact; each new directory contains
+    only freshly produced files, so obsolete sidecars are never searched.
+    """
+    key, identity = _index_key(target_fasta, dbtype)
+    def current() -> bool:
+        return not force and _validated_index(db, key, identity) is not None
+
+    with build_lock(db.parent / f".{db.name}.lock", done=current) as ours:
+        if ours:
+            generations = db.parent / "generations"
+            generations.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=".build-", dir=generations) as staging:
+                stage = Path(staging)
+                mmseqs.createdb(target_fasta, stage / db.name, dbtype=dbtype)
+                if _index_key(target_fasta, dbtype) != (key, identity):
+                    raise RuntimeError("Reference FASTA or MMseqs version changed during index build")
+                manifest = {**identity, "files_sha256": _index_files(stage / db.name)}
+                (stage / "IDENTITY.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+                name = key + "-" + uuid.uuid4().hex
+                os.replace(stage, generations / name)
+                pointer = db.parent / (".pointer-" + uuid.uuid4().hex)
+                try:
+                    pointer.write_text(json.dumps({"generation": name}) + "\n")
+                    os.replace(pointer, db.parent / (key + ".json"))
+                finally:
+                    pointer.unlink(missing_ok=True)
+    result = _validated_index(db, key, identity)
+    if result is None:
+        raise RuntimeError(f"MMseqs index failed content validation: {db}")
+    return result[0]
 
 
 def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
-    """Resolve the mmseqs target DB for the reference scaffolds.
-
-    Prefers the precompiled DB shipped in ``database/vdj/<org>/mmseqs/<seqtype>``
-    (used out of the box when its mmseqs version matches). Otherwise builds once
-    into a ``data/mmseqs_db`` cache and reuses it (rebuilt if the FASTA is newer).
-    """
+    """Resolve a verified shipped index or build an immutable private generation."""
     committed = _committed_index(organism, seqtype, target_fasta)
     if committed is not None:
         return committed
-    cache = data_dir() / "mmseqs_db" / f"{organism}_{seqtype}"
-    cache.mkdir(parents=True, exist_ok=True)
-    db = cache / "db"
-    if not db.exists() or db.stat().st_mtime < Path(target_fasta).stat().st_mtime:
-        _createdb_atomic(Path(target_fasta), db, _dbtype(seqtype))
-    return db
+    db = data_dir() / "mmseqs_db" / f"{organism}_{seqtype}" / "db"
+    return _createdb_atomic(Path(target_fasta), db, _dbtype(seqtype))
+
+
+def reference_index_identity(organism: str, seqtype: str = "aa") -> dict:
+    """Resolve and validate the exact searched reference index, returning SHA256 provenance.
+
+    The returned JSON-compatible mapping identifies the resolved FASTA, immutable
+    database prefix and every sequence/header/index file, including split payloads.
+    Resolving may build a missing or stale index; it never runs an annotation search.
+    """
+    if seqtype not in _SEARCH_TYPE:
+        raise ValueError("seqtype must be 'aa' or 'nt'")
+    fasta = vdj_dir(organism) / ("alleles.aa.fasta" if seqtype == "aa" else "alleles.fasta")
+    db = _cached_target_db(fasta, organism, seqtype)
+    manifest = json.loads((db.parent / "IDENTITY.json").read_text())
+    return {**manifest, "organism": organism, "seqtype": seqtype,
+            "source_fasta": str(fasta.resolve()), "database_path": str(db.resolve())}
 
 
 def _has_jc_targets(fasta: Path) -> bool:
@@ -261,7 +301,7 @@ def _regenerate_segments(fasta: Path, organism: str) -> None:
     ``build_segment_reference`` truncates both artifacts **in place**. That was fine while it only
     ran from ``build-index``; 2.8.0 put it on the map path, where arda is concurrent by design
     (Nextflow process-per-sample, SLURM task-per-shard). N array tasks would all see ``JC|``, all
-    truncate the same file, and ``_createdb_atomic``'s **mtime** gate would then happily compile an
+    truncate the same file, and ``_createdb_atomic`` would then compile an
     mmseqs DB from whatever bytes were on disk -- a short or interleaved reference, exit 0, targets
     quietly missing, every affected read pushed to rescue forever. Exactly the class of
     ``mmseqs createdb`` (0-byte ``db``) and ``fetch_database`` (cross-filesystem ``shutil.move``).
@@ -360,17 +400,15 @@ def _cached_segment_db(ref: Reference, organism: str) -> Path | None:
     cache = data_dir() / "mmseqs_db" / f"{organism}_segments"
     cache.mkdir(parents=True, exist_ok=True)
     db = cache / "db"
-    if not db.exists() or db.stat().st_mtime < fasta.stat().st_mtime:
-        _createdb_atomic(fasta, db, _dbtype("nt"))
-    return db
+    return _createdb_atomic(fasta, db, _dbtype("nt"))
 
 
 def build_index(organism: str = "all", *, force: bool = False) -> None:
     """(Re)build the precompiled mmseqs DBs shipped under ``database/``.
 
-    Writes ``database/vdj/<org>/mmseqs/<seqtype>/db*`` + a ``VERSION`` marker so
-    the runtime can use them out of the box (and detect a mmseqs-version mismatch).
-    Skips up-to-date DBs unless ``force``.
+    Publishes immutable generations under ``database/vdj/<org>/mmseqs/<seqtype>``
+    with source and payload SHA256 identities. Reuses validated generations unless
+    ``force``; existing generations are preserved for concurrent readers.
     """
     from ..igblast import SUPPORTED_ORGANISMS
     orgs = SUPPORTED_ORGANISMS if organism == "all" else (organism,)
@@ -382,22 +420,8 @@ def build_index(organism: str = "all", *, force: bool = False) -> None:
                 continue
             out = vdj_dir(org) / "mmseqs" / seqtype
             db, vfile = out / "db", out / "VERSION"
-            # Skip only if the DB is version-matched AND newer than the FASTA. Matching on the mmseqs
-            # version alone made `build-index` a silent no-op after `build-db` rewrote alleles.fasta:
-            # the rebuilt reference was never compiled, and the runtime kept searching the old one.
-            fresh = db.exists() and db.stat().st_mtime >= fasta.stat().st_mtime
-            if fresh and not force and vfile.exists() and \
-                    mmseqs.versions_compatible(vfile.read_text(), ver):
-                continue
-            out.mkdir(parents=True, exist_ok=True)
-            # No unlink-then-rebuild: that deleted the files a concurrently-running arda was reading.
-            # `_createdb_atomic` builds in a temp dir under a lock and moves the finished files in.
-            vfile.unlink(missing_ok=True)     # drop the marker first: a DB without one is "unusable",
-            if force:                         # so a crash mid-rebuild degrades to a rebuild, not a lie
-                for stale in out.glob("db*"):
-                    stale.unlink()
-            _createdb_atomic(fasta, db, _dbtype(seqtype))
-            vfile.write_text(ver + "\n")      # marker written LAST: it is what certifies the DB
+            _createdb_atomic(fasta, db, _dbtype(seqtype), force=force)
+            vfile.write_text(ver + "\n")
             print(f"[arda] built mmseqs index {org}/{seqtype} ({ver})")
 
         # The segment reference (V / J / J+C as separate targets) is derived from `alleles.fasta` +
