@@ -3,6 +3,18 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.36.2
+
+**Reference indexes are checked by content.** Source discovery recognizes ARDA's own
+source module rather than another project's `database/` and `pyproject.toml`.
+Explicit `ARDA_HOME` remains authoritative. Legacy timestamp-only MMseqs indexes
+are preserved but rebuilt into immutable generations. Reuse validates source FASTA,
+MMseqs version and every sequence/header/index file, including split payloads.
+Atomic generation publication keeps concurrent readers on coherent files.
+
+`arda.reference_index_identity(organism, seqtype="aa")` resolves and validates the
+actual searched index and returns SHA256 provenance for its source and payloads.
+
 ## 2.36.1
 
 **Shared TRA/TRD V alleles retain both locus memberships.** `load_anchors` previously

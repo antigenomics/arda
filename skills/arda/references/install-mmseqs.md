@@ -47,8 +47,16 @@ Asset defaults: macOS → `mmseqs-osx-universal.tar.gz`; Linux x86-64 →
 
 ## Shipped indexes & version mismatch
 
-`database/vdj/<organism>/mmseqs/<nt|aa>/` holds precompiled MMseqs2 indexes plus a
-`VERSION` marker. They are used out of the box **only when the local mmseqs
-version matches**; otherwise arda builds a private DB into `data/mmseqs_db/` on
-first run and reuses it. `arda build-index --organism all` rebuilds the shipped
-indexes for your installed mmseqs version.
+`database/vdj/<organism>/mmseqs/<nt|aa>/` can hold immutable index generations.
+Reuse requires the source FASTA SHA256, normalized MMseqs version, and SHA256 of
+all sequence/header/index files to match the generation manifest. Legacy `VERSION`
+and mtime markers alone cannot establish identity; old files remain untouched,
+while a validated private generation is built under `data/mmseqs_db/`.
+`arda build-index --organism all` builds validated generations in the source tree.
+
+`arda.reference_index_identity(organism, seqtype="aa")` returns a JSON-compatible
+mapping with `source_fasta` (resolved path), `source_fasta_sha256`, `database_path`
+(exact resolved generation prefix), `files_sha256` (sidecar basename → SHA256),
+`mmseqs_version`, `dbtype`, `schema_version`, `organism`, and `seqtype`.
+It validates or builds an index without running an annotation search. Capture it
+before and after a batch and require equality to pin that batch's reference.

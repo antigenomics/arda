@@ -29,7 +29,7 @@ __all__ = [
     "vdj_dir",
 ]
 
-_MARKERS = ("pyproject.toml", "setup.sh")
+
 _REFERENCE_MARKER = "vdj"  # database_dir()/vdj must exist for the reference to be usable
 
 
@@ -38,7 +38,7 @@ def _source_root() -> Path | None:
     """The source checkout root if this is a dev/editable install, else ``None``.
 
     Honors ``$ARDA_HOME`` (must be a directory); otherwise walks up from this file looking
-    for a directory that has both ``database/`` and a project marker. Never raises for a
+    for the ARDA source module itself, beside its reference database. Never raises for a
     plain PyPI install — it simply returns ``None`` and the caller falls back to the cache.
     """
     env = os.environ.get("ARDA_HOME")
@@ -49,7 +49,7 @@ def _source_root() -> Path | None:
         return root
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "database").is_dir() and any((parent / m).exists() for m in _MARKERS):
+        if (parent / "database").is_dir() and (parent / "src" / "arda" / "paths.py").resolve() == here:
             return parent
     return None
 

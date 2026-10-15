@@ -27,6 +27,23 @@ Library entry point
    :undoc-members:
    :show-inheritance:
 
+Reference provenance
+--------------------
+
+``arda.reference_index_identity(organism, seqtype="aa")`` resolves and validates
+an index without annotating queries. Its JSON-compatible result contains the
+resolved ``source_fasta`` and ``database_path``, ``source_fasta_sha256``, and a
+``files_sha256`` mapping from MMseqs payload basenames to SHA256 digests. The
+mapping includes split sequence/header files and indexes. ``schema_version``,
+``dbtype``, ``mmseqs_version``, ``organism`` and ``seqtype`` describe the identity.
+
+Only ARDA's own source module triggers automatic source-root discovery; explicit
+``ARDA_HOME`` remains authoritative. Index reuse checks content, not timestamps.
+Legacy indexes remain untouched. New generations publish atomically and remain
+immutable, so concurrent readers retain coherent sequence/header/index files.
+Capture the API result before and after a batch and require equality to detect a
+reference change during that batch.
+
 Runtime annotation
 ------------------
 
