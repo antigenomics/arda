@@ -37,7 +37,7 @@ dependencies = [
     # none of 1.0.0's `TextIndex` work touches it and the pybind11->nanobind move is documented as
     # externally unchanged; verified by running the full suite (1,073 passed) against 1.0.0 before
     # moving the floor.
-    "seqtree>=1.2.0,<2",
+    "seqtree>=1.1.1,<2",
     # C-accelerated FASTQ/FASTA parsing (cutadapt's parser). Once `--prefilter` removed the search,
     # reading became the largest single cost of a bulk run -- 65 % of a 0.024 %-receptor library --
     # and dnaio is 2x the reworked pure-Python loop including mate tagging. Required rather than
