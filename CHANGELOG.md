@@ -5,6 +5,11 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## 2.36.2
 
+Requires seqtree 1.1.1 or newer within major version 1. The productivity roadmap now
+points to the implemented FR4/frame/stop contract instead of promising a separate rule set.
+TRDV × TRAJ reference completeness remains an explicit follow-up; this release does not
+change the existing opt-in pairing policy or claim a junction-recall improvement.
+
 **Reference indexes are checked by content.** Source discovery recognizes ARDA's own
 source module rather than another project's `database/` and `pyproject.toml`.
 Explicit `ARDA_HOME` remains authoritative. Legacy timestamp-only MMseqs indexes
