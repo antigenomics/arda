@@ -46,12 +46,15 @@ you want "which D, and where" from an amino-acid junction, call
 
 - **Junction recall on TRDV × TRAJ rearrangements**, the largest remaining named gap against MiXCR
   on a real amplicon: 680 truth reads of which arda currently recovers 10 %.
-- **Full AIRR productivity rules**, beyond the stop-codon and frame checks shipped today.
 - **A live multi-node SLURM run**; the sharding is unit-tested without a cluster.
 
 ## Release follow-up — 17 October 2026
 
 [RELEASE_AUDIT.md](RELEASE_AUDIT.md) records the implemented structural-annotation
 requirements and 60 focused checks. [Issue 149](https://github.com/antigenomics/arda/issues/149)
-tracks the two remaining documented junction-recall/productivity items above.
+tracks the remaining TRDV × TRAJ reference-construction/recall work.
+The productivity contract is implemented and documented in `docs/productivity.rst`: FR4 frame,
+stops across the annotated span, and empty calls when the junction cannot be evaluated.
+A start-codon requirement is not appropriate for partial reads; matching the junction tail
+to germline is not a frame test.
 They are not prerequisites missing from the repaired reference-index API.
