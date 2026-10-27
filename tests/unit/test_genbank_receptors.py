@@ -44,7 +44,7 @@ def _load(fname: str) -> list[tuple[str, str]]:
 def _fr4_agreement(recs, organism):
     """Shared invariant: a V-less J->C fragment cut from each molecule reports an FR4 that contains
     the full-length V-J call. Returns (n_checked, n_truncation_recovered)."""
-    full = {r["sequence_id"]: r for r in annotate_records(recs, organism, "nt", threads=8)}
+    full = {r["sequence_id"]: r for r in annotate_records(recs, organism, "nt", threads=0)}
     seqs = dict(recs)
     frags, expect = [], {}
     for acc, r in full.items():
@@ -54,7 +54,7 @@ def _fr4_agreement(recs, organism):
         if len(frag) >= 80:
             frags.append((acc, frag))
             expect[acc] = r["fwr4_aa"]
-    jc = {x["sequence_id"]: x for x in annotate_records(frags, organism, "nt", threads=8)}
+    jc = {x["sequence_id"]: x for x in annotate_records(frags, organism, "nt", threads=0)}
     checked = truncation_recovered = 0
     for acc, _ in frags:
         b = jc.get(acc)
@@ -82,7 +82,7 @@ def human():
 
 @pytest.fixture(scope="module")
 def human_annot(human):
-    return {r["sequence_id"]: r for r in annotate_records(human, "human", "nt", threads=8)}
+    return {r["sequence_id"]: r for r in annotate_records(human, "human", "nt", threads=0)}
 
 
 def test_every_human_record_maps_to_its_locus(human_annot):
@@ -180,7 +180,7 @@ def test_reverse_complemented_input_yields_the_same_junction(human, human_annot)
     data are on its reverse complement. So for an antisense input, ``sequence`` is the (antisense)
     submitted read, while ``sequence_alignment`` and the junction are on the coding strand."""
     rc_in = {acc: seq.translate(_RC)[::-1] for acc, seq in human}
-    rc_annot = {r["sequence_id"]: r for r in annotate_records(list(rc_in.items()), "human", "nt", threads=8)}
+    rc_annot = {r["sequence_id"]: r for r in annotate_records(list(rc_in.items()), "human", "nt", threads=0)}
     compared = 0
     for acc, fwd in human_annot.items():
         if not fwd["junction_aa"]:
@@ -212,7 +212,7 @@ def mouse():
 def test_mouse_records_map_and_are_productive(mouse):
     """A whole organism the real-data suite otherwise never touches -- and a different aux file,
     which mixes legacy ``JH1``/``JK1`` names with ``IGHJ1``-style ones."""
-    for r in annotate_records(mouse, "mouse", "nt", threads=8):
+    for r in annotate_records(mouse, "mouse", "nt", threads=0):
         assert r["locus"] in ("IGH", "IGK", "TRA", "TRB"), f"{r['sequence_id']}: {r['locus']!r}"
         jaa = r["junction_aa"] or ""
         assert jaa.startswith("C") and jaa[-1] in "FW", f"{r['sequence_id']}: {jaa!r}"
