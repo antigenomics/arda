@@ -18,8 +18,8 @@ consumer failure as well as end of input. Python callers can pass `threads` to
 from exact scaffold geometry and existing germline anchors. The opt-in builder
 uses anchor-consistent J frames and refuses to package incomplete TRDV × TRAJ
 coverage. This changes neither the default pairing policy nor the shipped
-reference; real-read recall validation is tracked in issue #149. Reference-build
-construction preserves existing scaffold IDs, order and padding before appending
+reference. The matched real-read validation is recorded in issue #149.
+Construction preserves existing scaffold IDs, order and padding before appending
 new targets, preventing equal-score alignment changes from discarding junctions.
 Anchor tables follow `ARDA_IGBLAST` and fetched runtimes, matching the aligner
 instead of silently falling back when the tools live outside the checkout.
