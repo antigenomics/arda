@@ -89,10 +89,11 @@ def auxiliary_data(organism: str) -> Path:
 
 
 @lru_cache(maxsize=1)
-def igblast_root() -> Path:
+def igblast_root(*, fetch_missing: bool = True) -> Path:
     """The directory holding the IgBLAST executables and ``internal_data``.
 
     Fetches a release on first use; ``$ARDA_NO_AUTO_FETCH`` turns that into an error instead.
+    Metadata probes pass ``fetch_missing=False`` to keep optional discovery offline.
     """
     override = os.environ.get("ARDA_IGBLAST")
     if override:
@@ -105,7 +106,8 @@ def igblast_root() -> Path:
         return root
     if (bin_dir() / "igblastn").exists():  # setup.sh layout, in a source checkout
         return bin_dir()
-    return fetch(project_root() / "igblast")  # returns immediately if already complete
+    root = project_root() / "igblast"
+    return fetch(root) if fetch_missing else root
 
 
 def igblast_version() -> str | None:

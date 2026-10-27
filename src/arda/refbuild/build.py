@@ -18,7 +18,7 @@ import polars as pl
 
 from ..paths import data_dir, vdj_dir
 from .._threads import resolve_threads
-from ..igblast import SUPPORTED_ORGANISMS
+from ..igblast import SUPPORTED_ORGANISMS, igblast_root
 from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR, loci_for
 from . import imgt, combinations, airr_extract, constant
 from .translate import translate, aa_coords_from_nt, detect_coding_frame
@@ -609,6 +609,7 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False,
                 " [TRDV x TRAJ chimeras ALLOWED]" if allow_chimeras else "")
 
     imgt.download_reference()
+    igblast_root()  # Install the runtime before optional metadata probes read its tables.
     j_frames = combinations.load_j_frames(organism)
     fwr3_stops = combinations.load_v_fwr3_stops(organism)
     fr4_offsets = combinations.load_j_fr4_offsets(organism)

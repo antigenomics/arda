@@ -109,11 +109,71 @@ def test_load_j_frames_parses_aux_skipping_comments(tmp_path, monkeypatch):
         "malformed_line_without_frame\n"
         "\n"
     )
-    monkeypatch.setattr(combinations, "bin_dir", lambda: tmp_path)
+    monkeypatch.setattr(combinations, "igblast_root", lambda **kw: tmp_path)
     frames = combinations.load_j_frames("human")
     assert frames == {"IGHJ1*01": 1, "IGHJ2*01": 2}
 
 
 def test_load_j_frames_missing_file_returns_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr(combinations, "bin_dir", lambda: tmp_path)
+    monkeypatch.setattr(combinations, "igblast_root", lambda **kw: tmp_path)
     assert combinations.load_j_frames("nonexistent") == {}
+
+
+def test_anchor_tables_follow_explicit_igblast_root(tmp_path, monkeypatch, request):
+    """A custom runtime must supply the same authoritative tables as its aligner."""
+    runtime = tmp_path / "runtime"
+    (runtime / "optional_file").mkdir(parents=True)
+    (runtime / "internal_data" / "human").mkdir(parents=True)
+    (runtime / "igblastn").touch()
+    (runtime / "optional_file" / "human_gl.aux").write_text("TRAJ35*01 1 JA 7 2\n")
+    (runtime / "internal_data" / "human" / "human.ndm.imgt").write_text(
+        "TRDV1*01 1 2 3 4 5 6 7 8 9 300\n")
+    monkeypatch.setenv("ARDA_IGBLAST", str(runtime))
+    from arda import igblast
+    igblast.igblast_root.cache_clear()
+    request.addfinalizer(igblast.igblast_root.cache_clear)
+    assert combinations.load_j_frames("human") == {"TRAJ35*01": 1}
+    assert combinations.load_j_fr4_offsets("human") == {"TRAJ35*01": (7, 2)}
+    assert combinations.load_v_fwr3_stops("human") == {"TRDV1*01": 300}
+
+
+def test_first_build_fetches_anchor_tables_before_constructing_scaffolds(tmp_path, monkeypatch):
+    import importlib
+    import pytest
+    from arda import igblast
+    build = importlib.import_module("arda.refbuild.build")
+    monkeypatch.delenv("ARDA_IGBLAST", raising=False)
+    monkeypatch.setattr(igblast, "bin_dir", lambda: tmp_path / "bin")
+    monkeypatch.setattr(igblast, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(build, "vdj_dir", lambda _: tmp_path / "output")
+    monkeypatch.setattr(build.imgt, "download_reference", lambda: None)
+
+    def fetch(root):
+        (root / "optional_file").mkdir(parents=True)
+        (root / "internal_data" / "human").mkdir(parents=True)
+        (root / "igblastn").touch()
+        (root / "optional_file" / "human_gl.aux").write_text("TRAJ35*01 1 JA 7 2\n")
+        (root / "internal_data" / "human" / "human.ndm.imgt").write_text(
+            "TRDV1*01 1 2 3 4 5 6 7 8 9 300\n")
+        return root
+
+    class ReachedScaffolds(BaseException):
+        pass
+
+    received = {}
+
+    def process(org, species, locus, frames, logger, **kw):
+        received.update(frames=frames, **kw)
+        raise ReachedScaffolds
+
+    monkeypatch.setattr(igblast, "fetch", fetch)
+    monkeypatch.setattr(build, "_process_locus", process)
+    igblast.igblast_root.cache_clear()
+    try:
+        with pytest.raises(ReachedScaffolds):
+            build.build_species("human")
+        assert received["frames"] == {"TRAJ35*01": 1}
+        assert received["fwr3_stops"] == {"TRDV1*01": 300}
+        assert received["fr4_offsets"] == {"TRAJ35*01": (7, 2)}
+    finally:
+        igblast.igblast_root.cache_clear()

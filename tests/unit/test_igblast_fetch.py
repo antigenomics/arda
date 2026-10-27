@@ -147,3 +147,15 @@ def test_the_download_does_not_land_in_the_system_temp_dir(tmp_path, monkeypatch
     # is decisive: the default `TemporaryDirectory()` cannot land there.
     got = downloaded_to["path"].resolve()
     assert dest.parent.resolve() in got.parents, f"archive staged outside the cache: {got}"
+
+
+def test_metadata_lookup_never_fetches_missing_runtime(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARDA_IGBLAST", raising=False)
+    monkeypatch.setattr(igblast, "bin_dir", lambda: tmp_path / "bin")
+    monkeypatch.setattr(igblast, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(igblast, "fetch", lambda *a, **k: pytest.fail("must not fetch"))
+    igblast.igblast_root.cache_clear()
+    try:
+        assert igblast.igblast_root(fetch_missing=False) == tmp_path / "igblast"
+    finally:
+        igblast.igblast_root.cache_clear()
