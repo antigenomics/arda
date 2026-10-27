@@ -125,6 +125,10 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
         j = select_one_allele_per_gene(j, logger=logger, locus=locus.name, segment="J")
 
     if locus.name == "TRA" and locus.v_shared == ("TRDV", ""):
+        # Preserve every default target, including its ID, input order and padding.
+        # Renumbering changes equal-score alignments and can lose an anchored junction.
+        scaffolds = combinations.build_locus_scaffolds(
+            locus, {a: seq for a, seq in v.items() if not a.startswith("TRDV")}, j, j_frames)
         # Use the same anchor authority as _collect_cdr3_anchors. TRAJ31's aux
         # coding frame disagrees with its own CDR3 stop; two TRAJ alleles lack
         # aux rows altogether. Never align FR4 to that inconsistent frame.
@@ -135,7 +139,13 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
                 if anchor >= 0:
                     fr4_offsets[allele] = (anchor - 1, (len(seq) - anchor) % 3)
         j_frames = {**j_frames, **{a: (offset[0] + 1) % 3 for a, offset in fr4_offsets.items()}}
-    scaffolds = combinations.build_locus_scaffolds(locus, v, j, j_frames)
+        added = combinations.build_locus_scaffolds(
+            locus, {a: seq for a, seq in v.items() if a.startswith("TRDV")}, j, j_frames)
+        for sc in added:
+            sc.scaffold_id = f"{locus.name}_{len(scaffolds)}"
+            scaffolds.append(sc)
+    else:
+        scaffolds = combinations.build_locus_scaffolds(locus, v, j, j_frames)
     if not scaffolds:
         logger.warning("%s: no scaffolds produced — skipped", locus.name)
         return [], [], [], [], []

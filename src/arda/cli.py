@@ -227,16 +227,14 @@ def build_db(
     ),
     allow_chimeras: bool = typer.Option(
         False, "--allow-chimeras",
-        help="Also build TRDV x TRAJ scaffolds, which the default reference refuses as chimeric. "
-             "TRDV1/2/3 are dedicated delta V genes, but they sit INSIDE the TRA locus between the "
-             "TRAV genes and the TRAJ cluster. Measured on 48,030 TRA amplicon reads: IgBLAST "
-             "calls TRDV1 + a TRAJ on 530 of them (1.10 % of the library, median v_score 93.8, all "
-             "carrying a junction) and MiXCR independently agrees, while arda calls the same J as "
-             "both and emits NO v_call -- 83 % of its whole remaining v_gene gap. Either the "
-             "pairing is real and the default drops 1.1 % of a TRA repertoire, or it is a chimera "
-             "and the other two report it because they call V and J independently. That is a "
-             "domain judgement, so it is a flag. Off by default; assert the SCAFFOLD COUNT after "
-             "building -- an earlier attempt added 7 scaffolds, not the ~483 the product implies.",
+        help="Also build the optional TRDV x TRAJ cross-product. IMGT documents TRDV1 + TRAJ; "
+             "the legacy flag name does not make every such pairing a chimera. This is not a "
+             "gamma-delta mode: ordinary TRG/TRD annotation is already supported. Historical "
+             "benchmark on 48,030 TRA reads: IgBLAST and MiXCR agree on 530 TRDV1 + TRAJ calls "
+             "(1.10 %, median IgBLAST v_score 93.8, all with junctions), accounting for 83 % of "
+             "arda's remaining V-gene gap. Off by default. The builder requires all expected "
+             "scaffolds (483 in the human reference) and preserves existing targets; validate "
+             "junction retention and changed calls before promoting the broader reference.",
     ),
 ) -> None:
     """Build the curated reference database (Phase 1)."""

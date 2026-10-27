@@ -79,3 +79,41 @@ def test_optin_build_uses_anchor_frame_and_completes_every_j(tmp_path, monkeypat
         for region in build.REGION_NAMES:
             assert row[region] == sequence[row[f"{region}_start"] - 1:row[f"{region}_end"]]
         assert row["junction"] == sequence[row["fwr3_end"] - 3:row["fwr4_start"] + 2]
+
+
+def test_optin_appends_scaffolds_without_renumbering_or_reframing_existing_targets(tmp_path, monkeypatch):
+    """New vocabulary must not reshuffle equal-score legacy alignments or their anchors."""
+    import importlib
+    import logging
+    import pytest
+    from arda.refbuild.loci import loci_for
+    from arda.refbuild.combinations import build_locus_scaffolds
+
+    build = importlib.import_module("arda.refbuild.build")
+    vs = {"TRAV1*01": "GCT" * 9 + "TGT"}
+    ds = {"TRDV1*01": "GCC" * 9 + "TGT"}
+    js = {"TRAJ31*01": "AAATTTGGTGCTGGT"}
+    frames = {"TRAJ31*01": 1}  # historical aux frame differs from the trusted anchor frame
+    expected = build_locus_scaffolds(loci_for()[0], vs, js, frames)
+    monkeypatch.setattr(build.imgt, "load_functional_alleles", lambda sd, group, stem:
+                        ds if stem == "TRDV" else js if stem == "TRAJ" else vs.copy())
+    monkeypatch.setattr(build.combinations, "load_v_fwr3_stops", lambda _: {a: 30 for a in vs | ds})
+    monkeypatch.setattr(build.combinations, "load_j_fr4_offsets", lambda _: {"TRAJ31*01": (2, 0)})
+    monkeypatch.setattr(build, "_scaffold_fasta_path", lambda *args: tmp_path / "sc.fasta")
+    monkeypatch.setattr("arda.igblast.has_internal_annotation", lambda *args: True)
+    captured = []
+
+    class ReachedAnnotation(BaseException):
+        pass
+
+    def annotate(path, *args, **kw):
+        captured.extend(build.imgt.read_fasta(path))
+        raise ReachedAnnotation
+
+    monkeypatch.setattr(build.airr_extract, "annotate_scaffolds", annotate)
+    with pytest.raises(ReachedAnnotation):
+        build._process_locus("human", "test", loci_for(allow_chimeras=True)[0], frames,
+                             logging.getLogger())
+    assert captured[:len(expected)] == [(s.scaffold_id, s.sequence) for s in expected]
+    assert len(captured) == len(expected) + 1
+    assert captured[-1][0] == f"TRA_{len(expected)}"
