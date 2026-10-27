@@ -18,7 +18,7 @@ tools:
       homepage: "https://github.com/antigenomics/arda"
       documentation: "https://github.com/antigenomics/arda"
       tool_dev_url: "https://github.com/antigenomics/arda"
-      licence: ["GPL-3.0"]
+      licence: ["LicenseRef-ISALGO-LAB-Academic-Non-Commercial-1.0"]
       identifier: "biotools:arda"
 input:
   - - meta:

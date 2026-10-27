@@ -15,7 +15,7 @@
   <a href="https://github.com/antigenomics/arda/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/antigenomics/arda/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://docs.isalgo.dev/arda/"><img alt="docs" src="https://github.com/antigenomics/arda/actions/workflows/docs.yml/badge.svg"></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10%2B-blue">
-  <img alt="license" src="https://img.shields.io/badge/license-GPLv3-green">
+  <img alt="license" src="https://img.shields.io/badge/license-Academic%20%26%20Non--Commercial-green">
 </p>
 
 <p align="center">
@@ -196,4 +196,4 @@ clonotype matching — belongs to [vdjtools](https://github.com/antigenomics/vdj
 
 ## License
 
-GPLv3. See [`LICENSE`](LICENSE).
+ISALGO LAB Academic and Non-Commercial Research License v1.0. See [`LICENSE`](LICENSE).

@@ -2,7 +2,7 @@
 
 ``SequenceGeneration*.gen_rnd_prod_CDR3()`` returns only ``(nt, aa, V, J)`` and
 throws away the recombination events, but ``choose_random_recomb_events()`` keeps
-them. So we re-run OLGA's own accept/reject loop (OLGA is GPL-3.0, as is arda) and
+them. So we re-run OLGA's own accept/reject loop (OLGA is GPL-3.0) and
 retain ``delV``/``delJ``/``delDl``/``delDr``/``insVD``/``insDJ``. That gives the
 exact number of germline nucleotides each segment contributed to the junction --
 the only ground truth that can validate arda's error-vs-boundary heuristic.
