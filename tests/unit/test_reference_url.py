@@ -52,3 +52,8 @@ def test_leading_v_is_not_doubled(monkeypatch):
     monkeypatch.setenv("ARDA_REFERENCE_TAG", "v1.2.3")
     assert "/vv1.2.3/" not in reference_url()
     assert "/v1.2.3/" in reference_url()
+
+
+def test_explicit_environment_tag_is_not_silently_replaced(monkeypatch):
+    monkeypatch.setenv("ARDA_REFERENCE_TAG", "v9.9.9")
+    assert _candidate_urls() == [reference_url()]

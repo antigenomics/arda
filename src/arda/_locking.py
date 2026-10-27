@@ -1,53 +1,68 @@
-"""A cross-process build lock, for the two places arda races with itself.
-
-arda is routinely run concurrently against the **same** cache: the Nextflow module launches one
-process per sample and a SLURM array one per task. On first use in a fresh environment every one of
-them finds no reference and no mmseqs index, and starts building the same thing into the same path.
-
-Both races have the same shape and the same silent failure: an artifact whose mere *presence* is the
-"already built" gate becomes visible before it is complete, so every other process happily uses a
-half-written one and reports success over nothing.
-"""
-
+"""Crash-releasing cross-process and cross-thread coordination for cache builds."""
 from __future__ import annotations
 
+import errno
+import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 LOCK_TIMEOUT_S = 900
-"""These builds take seconds. Fifteen minutes means a dead lock, not a slow one."""
 
 
 @contextmanager
-def build_lock(lock: Path, *, done: Callable[[], bool]) -> Iterator[bool]:
-    """Serialize a build at ``lock``. Yields ``True`` if the work is ours, ``False`` if it is done.
+def build_lock(lock: Path, *, done: Callable[[], bool], timeout: float | None = None) -> Iterator[bool]:
+    """Yield whether this caller must build; the kernel releases ownership on exit or death.
 
-    ``mkdir`` is the lock: it is atomic on POSIX and Windows, needs no dependency, and leaves nothing
-    to clean up but an empty directory.
-
-    ``done()`` is checked while waiting *and* again after acquiring, because the common case is not
-    contention over the work — it is that the process we queued behind already finished it, and there
-    is nothing left for us to do.
+    A persistent guard file replaces the old mkdir lock. Legacy empty lock directories
+    do not block recovery. Never unlink the guard: waiters may already hold its inode.
     """
-    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    if done():
+        yield False
+        return
     lock.parent.mkdir(parents=True, exist_ok=True)
-    while True:
+    guard = lock.with_name(lock.name + ".guard")
+    timeout = LOCK_TIMEOUT_S if timeout is None else timeout
+    deadline = time.monotonic() + timeout
+    with guard.open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            if handle.seek(0, 2) == 0:
+                handle.write(b"\0")
+                handle.flush()
+
+            def acquire():
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release():
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def acquire():
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release():
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+        while True:
+            try:
+                acquire()
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise
+                if done():
+                    yield False
+                    return
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Another active arda build still owns {guard} after "
+                                       f"{timeout:g}s") from exc
+                time.sleep(0.05)
         try:
-            lock.mkdir()
-            break
-        except FileExistsError:
-            if done():  # the holder finished while we waited
-                yield False
-                return
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"waited {LOCK_TIMEOUT_S}s for another arda process to finish {lock.parent}. "
-                    f"If no other arda run is active, remove {lock} and retry."
-                )
-            time.sleep(0.5)
-    try:
-        yield not done()  # won the lock, but someone may have finished just before we took it
-    finally:
-        lock.rmdir()
+            yield not done()
+        finally:
+            release()

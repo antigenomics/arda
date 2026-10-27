@@ -13,18 +13,19 @@ it, which is the layout ``setup.sh`` has always produced.
 from __future__ import annotations
 
 import os
+import json
+import uuid
 import platform
 import re
 import shutil
 import sys
 import tarfile
 import tempfile
-import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 
 from ._locking import build_lock
+from ._mmseqs_fetch import _download
 
 LATEST_URL = "https://ftp.ncbi.nih.gov/blast/executables/igblast/release/LATEST/"
 
@@ -69,19 +70,6 @@ def find_tarball(suffix: str) -> str:
     return f"ncbi-igblast-{versions[-1]}-{suffix}.tar.gz"
 
 
-def _download(url: str, dest: Path, *, retries: int = 3) -> None:
-    last: Exception | None = None
-    for attempt in range(retries):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": _UA})
-            with urllib.request.urlopen(req, timeout=600) as resp, open(dest, "wb") as fh:
-                shutil.copyfileobj(resp, fh)
-            return
-        except (urllib.error.URLError, TimeoutError) as exc:
-            last = exc
-            if attempt < retries - 1:
-                time.sleep(2 * (attempt + 1))
-    raise RuntimeError(f"failed to download {url}: {last}")
 
 
 def _safe_extract(tarball: Path, into: Path) -> Path:
@@ -115,18 +103,36 @@ def lay_out(release_root: Path, dest: Path) -> None:
             shutil.copytree(src, dest / tree, dirs_exist_ok=True)
 
 
-def is_complete(dest: Path) -> bool:
-    """Is *dest* a usable IgBLAST root?
+def _flat_ready(root: Path) -> bool:
+    required = (VERSION_FILE, "igblastn", "makeblastdb", "edit_imgt_file.pl",
+                "internal_data/human/human.ndm.imgt", "optional_file/human_gl.aux")
+    try:
+        return all((root / name).is_file() and (root / name).stat().st_size > 0 for name in required)
+    except OSError:
+        return False
 
-    Deliberately NOT ``igblastn.exists()``. This repo has twice shipped a bug whose whole shape
-    was using a file's *existence* as the readiness gate for a multi-file artifact, so the check
-    is the marker written last, after every executable and both data trees are in place.
-    """
-    return (dest / VERSION_FILE).exists() and (dest / "igblastn").exists()
+
+def installed_root(dest: Path) -> Path | None:
+    """Resolve the selected immutable refresh, or an existing flat installation."""
+    pointer = dest.parent / f".{dest.name}.current.json"
+    if pointer.exists():
+        try:
+            name = json.loads(pointer.read_text())["generation"]
+            if not isinstance(name, str) or len(name) != 32 or any(c not in "0123456789abcdef" for c in name):
+                return None
+            root = dest.parent / f".{dest.name}.generations" / name
+            return root if _flat_ready(root) else None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+    return dest if _flat_ready(dest) else None
+
+
+def is_complete(dest: Path) -> bool:
+    return installed_root(dest) is not None
 
 
 def fetch(dest: Path, *, force: bool = False) -> Path:
-    """Install an IgBLAST release into *dest* (a flat root); return *dest*.
+    """Install IgBLAST and return its resolved flat root. Refreshes retain old reader roots.
 
     Concurrency-safe by construction, because arda runs concurrently against one cache by
     design (a Nextflow process per sample, a SLURM array task per shard). The release is built
@@ -136,8 +142,9 @@ def fetch(dest: Path, *, force: bool = False) -> Path:
     filesystem boundary.
     """
     dest = Path(dest)
-    if is_complete(dest) and not force:
-        return dest
+    current = installed_root(dest)
+    if current is not None and not force:
+        return current
     if os.environ.get("ARDA_NO_AUTO_FETCH"):
         raise RuntimeError(
             f"IgBLAST is not installed at {dest} and $ARDA_NO_AUTO_FETCH is set. Fetch it with "
@@ -146,9 +153,13 @@ def fetch(dest: Path, *, force: bool = False) -> Path:
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with build_lock(dest.parent / ".igblast.lock", done=lambda: is_complete(dest) and not force) as ours:
+    with build_lock(dest.parent / ".igblast.lock", done=lambda: is_complete(dest) and not force,
+                    timeout=2100) as ours:
         if not ours:
-            return dest
+            current = installed_root(dest)
+            if current is None:
+                raise RuntimeError("IgBLAST installation changed while resolving its root")
+            return current
         suffix = platform_suffix()
         tarball = find_tarball(suffix)
         print(f"[arda] fetching IgBLAST (one-time): {LATEST_URL}{tarball}", file=sys.stderr)
@@ -164,7 +175,7 @@ def fetch(dest: Path, *, force: bool = False) -> Path:
             with tempfile.TemporaryDirectory(prefix=".arda_igblast_", dir=dest.parent) as td:
                 tmp = Path(td)
                 tar_path = tmp / tarball
-                _download(LATEST_URL + tarball, tar_path)
+                _download(LATEST_URL + tarball, tar_path, max_seconds=1800)
                 lay_out(_safe_extract(tar_path, tmp), staging)
             # Last, so `is_complete` cannot be true before everything above landed. The version
             # is read back out of the asset name rather than stripped by suffix -- a strip is
@@ -172,18 +183,34 @@ def fetch(dest: Path, *, force: bool = False) -> Path:
             # as the version.
             m = re.search(r"ncbi-igblast-([0-9.]+)-", tarball)
             (staging / VERSION_FILE).write_text((m.group(1) if m else tarball) + "\n")
-            if dest.exists():
-                shutil.rmtree(dest)  # incomplete leftover: we hold the lock, so this is ours
-            os.replace(staging, dest)
+            if not _flat_ready(staging):
+                raise RuntimeError("Incomplete IgBLAST runtime: required tools or anchor tables are missing")
+            if dest.exists() or (dest.parent / f".{dest.name}.current.json").exists():
+                # Keep old readers and sibling tools untouched, even on failed publication.
+                generations = dest.parent / f".{dest.name}.generations"
+                generations.mkdir(exist_ok=True)
+                name = uuid.uuid4().hex
+                root = generations / name
+                os.replace(staging, root)
+                pointer = dest.parent / f".{dest.name}.current.json"
+                pending = dest.parent / (".igblast-pointer-" + uuid.uuid4().hex)
+                try:
+                    pending.write_text(json.dumps({"generation": name}))
+                    os.replace(pending, pointer)
+                finally:
+                    pending.unlink(missing_ok=True)
+            else:
+                os.replace(staging, dest)
+                root = dest
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-    print(f"[arda] installed IgBLAST -> {dest}", file=sys.stderr)
-    return dest
+    print(f"[arda] installed IgBLAST -> {root}", file=sys.stderr)
+    return root
 
 
 def installed_version(dest: Path) -> str | None:
     """The IgBLAST release version in *dest*, or None. Provenance for a benchmark record."""
-    marker = Path(dest) / VERSION_FILE
+    marker = (installed_root(Path(dest)) or Path(dest)) / VERSION_FILE
     return marker.read_text().strip() if marker.exists() else None
 
 
@@ -191,7 +218,7 @@ def main() -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description="Download an NCBI IgBLAST release for arda.")
-    ap.add_argument("--dest", required=True, help="Target directory (flat IgBLAST root).")
+    ap.add_argument("--dest", required=True, help="Install location; the resolved tool root is printed.")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
     fetch(Path(args.dest), force=args.force)

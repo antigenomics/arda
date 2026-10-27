@@ -88,7 +88,7 @@ pytestmark = [requires_mmseqs, requires_human_db]
 def human_annot():
     recs = _load("genbank_receptors.fa")
     assert len(recs) == 29
-    return {r["sequence_id"]: r for r in annotate_records(recs, "human", "nt", threads=8)}
+    return {r["sequence_id"]: r for r in annotate_records(recs, "human", "nt", threads=0)}
 
 
 def test_merge_reconstructs_the_reannotated_alignment(human_annot):

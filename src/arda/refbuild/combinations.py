@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ..paths import bin_dir
+from ..igblast import igblast_root
 from .loci import Locus
 from .translate import detect_coding_frame
 
@@ -57,7 +57,7 @@ def load_j_frames(organism: str) -> dict[str, int]:
 
     Frame is the 0-based "first coding frame start position" (column 2).
     """
-    aux = bin_dir() / "optional_file" / f"{organism}_gl.aux"
+    aux = igblast_root(fetch_missing=False) / "optional_file" / f"{organism}_gl.aux"
     frames: dict[str, int] = {}
     if not aux.exists():
         return frames
@@ -86,7 +86,7 @@ def load_v_fwr3_stops(organism: str) -> dict[str, int]:
     It does NOT cover every IMGT allele (IgBLAST ships a subset), hence the motif
     fallback in ``refbuild.build._v_anchor``.
     """
-    ndm = bin_dir() / "internal_data" / organism / f"{organism}.ndm.imgt"
+    ndm = igblast_root(fetch_missing=False) / "internal_data" / organism / f"{organism}.ndm.imgt"
     out: dict[str, int] = {}
     if not ndm.exists():
         return out
@@ -125,7 +125,7 @@ def load_j_fr4_offsets(organism: str) -> dict[str, tuple[int, int]]:
 
     Pseudogene J entries carry only three columns and are skipped -- they have no FR4 to report.
     """
-    aux = bin_dir() / "optional_file" / f"{organism}_gl.aux"
+    aux = igblast_root(fetch_missing=False) / "optional_file" / f"{organism}_gl.aux"
     out: dict[str, tuple[int, int]] = {}
     if not aux.exists():
         return out

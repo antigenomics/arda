@@ -11,14 +11,12 @@ import hashlib
 import json
 import logging
 import os
-import queue
 import shutil
 import tempfile
-import threading
 import uuid
 from pathlib import Path
 
-import polars as pl
+from .._threads import import_polars, streaming_threads
 
 from .. import mmseqs
 from .._locking import build_lock
@@ -29,6 +27,8 @@ from . import io as seqio
 from .reference import load_reference, Reference, REGIONS
 from .transfer import transfer_hit, AIRR_COLUMNS
 from .airr_out import airr_header, format_rows
+
+pl = import_polars()
 
 logger = logging.getLogger(__name__)
 
@@ -1508,8 +1508,14 @@ def _prep(organism, seqtype, threads, sensitivity, strand):
     # repertoire (the R2-only fragments; arda-benchmark RESULTS.md §13d).
     if strand not in ("both", "forward"):
         raise ValueError(f"strand must be 'both' or 'forward', got {strand!r}")
+    from .._threads import resolve_threads
+
+    threads = resolve_threads(threads)
+    if pl.thread_pool_size() > threads:
+        raise ValueError(f"Polars is already initialized with {pl.thread_pool_size()} threads, "
+                         f"exceeding the CPU budget {threads}. Start a fresh process with "
+                         "POLARS_MAX_THREADS no larger than the requested budget before importing Polars.")
     ref = load_reference(organism, seqtype)
-    threads = threads or (os.cpu_count() or 1)
     sensitivity = _SENSITIVITY[seqtype] if sensitivity is None else sensitivity
     mm_strand = (2 if strand == "both" else 1) if seqtype == "nt" else None
     target_db = _cached_target_db(ref.target_fasta, organism, seqtype)
@@ -1578,38 +1584,17 @@ def annotate_file(
     ref, target_db, threads, sensitivity, mm_strand = _prep(
         organism, seqtype, threads, sensitivity, strand)
 
-    chunks: queue.Queue = queue.Queue(maxsize=2)
-    # The reader runs in a daemon thread; anything it raises -- a missing file, a truncated gzip --
-    # would otherwise die there unheard while `finally` still posts the sentinel, so the main loop
-    # sees a clean end-of-stream and writes partial output with exit 0 (silent truncation). Capture
-    # it and re-raise on the consumer side. Same guard as `rnaseq.map.map_rnaseq`.
-    reader_exc: list[BaseException] = []
-
-    def reader():
-        try:
-            for chunk in seqio.chunked(seqio.read_sequences(input), chunk_size):
-                chunks.put(chunk)
-        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
-            reader_exc.append(exc)
-        finally:
-            chunks.put(None)  # sentinel
-
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
+    # Reserve a CPU for parsing while native search owns the remaining budget.
+    search_threads, read_ahead = streaming_threads(threads, pl.thread_pool_size())
+    source = seqio.chunked(seqio.read_sequences(input), chunk_size)
     extra_cols = FULL_COLUMNS if shm == "both" else ()
-    with open(output, "w") as fh:
+    with seqio.prefetched(source, enabled=read_ahead) as chunks, open(output, "w") as fh:
         fh.write(airr_header(extra_cols) + "\n")
-        while True:
-            chunk = chunks.get()
-            if chunk is None:
-                if reader_exc:
-                    raise reader_exc[0]
-                break
+        for chunk in chunks:
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
-                                   threads=threads, sensitivity=sensitivity,
+                                   threads=search_threads, sensitivity=sensitivity,
                                    mm_strand=mm_strand, map_d=map_d,
                                    d_max_evalue=d_max_evalue, shm=shm,
                                    complete_junction_nt=complete_junction_nt)
             fh.write(format_rows(recs, extra_cols))
-    t.join()
     return output

@@ -21,7 +21,7 @@ arda annotate -i examples/example.fasta -o examples/example.airr.tsv --organism 
 ```
 
 [`example.fasta`](example.fasta) holds five real human GenBank mRNA records;
-[`example.airr.tsv`](example.airr.tsv) is arda's 83-column AIRR output.
+[`example.airr.tsv`](example.airr.tsv) is AIRR output with ARDA's annotation columns.
 
 | sequence_id | locus | v_call | d_call | j_call | d_support | cdr3_aa |
 |---|---|---|---|---|---|---|
@@ -86,7 +86,7 @@ A VDJdb row is a CDR3 amino acid, a V call and a J call. There is nothing to ali
 
 ```bash
 arda markup -i examples/junctions.tsv -o examples/junctions.markup.tsv \
-            --id-col id --d-posterior --report examples/junctions.report.txt --show-ok
+            --id-col id --report examples/junctions.report.txt --show-ok
 ```
 
 [`junctions.tsv`](junctions.tsv) holds seven real VDJdb records, one per repair outcome. All
@@ -129,11 +129,11 @@ rewrites nothing it should not.
 [`junctions.report.txt`](junctions.report.txt) is the human-readable log (`--report`), with a
 fix-type cross-tab and a per-record line.
 
-`--d-posterior` adds a D gene inferred from junction *length*: the nucleotide length pins
-`insVD + |D surviving| + insDJ`. `clean-trb` (a TRBJ2 J) comes back `TRBD1` at posterior
-0.743; `j-anchor-extra-G` comes back `TRBD2` at 0.958. A TRBJ1 record would come back `TRBD1`
-at posterior **1.0** — TRBD2 lies 3' of the entire TRBJ1 cluster, so no TRBJ1 rearrangement
-can ever have used it.
+D inference for amino-acid junctions now belongs to `vdjtools.model.annotate_junctions`.
+ARDA removed `--d-posterior` in 2.33.0; the current markup example reports repair and boundaries.
+The earlier length-only example recorded TRBD1 posterior 0.743 for `clean-trb` and TRBD2
+posterior 0.958 for `j-anchor-extra-G`. Those are historical outputs of the retired engine,
+not values produced by this command. The genomic TRBD1/TRBJ1 ordering constraint still applies.
 
 ## 4. Bulk RNA-seq — reads to clonotypes
 

@@ -2,7 +2,9 @@
 
 How the curated `database/vdj/<organism>/` references are produced. **Most users
 never run this** — references ship with the package. Build only to add or refresh
-an organism. Requires IgBLAST (fetched into `bin/` by `setup.sh`).
+an organism, in an isolated source checkout (`ARDA_HOME` selects it). Installed
+reference generations are inputs, not rebuild destinations. Requires IgBLAST
+(resolved by `arda.igblast.igblast_root`, including complete anchor metadata).
 
 **Contents:** pipeline · CLI · outputs · manifest · when to rebuild.
 
@@ -12,14 +14,14 @@ an organism. Requires IgBLAST (fetched into `bin/` by `setup.sh`).
 2. **Enumerate** deduplicated, in-frame **V×J scaffolds**. D segments are *not*
    enumerated (they only affect the CDR3 interior and are mapped at runtime).
    Scaffolds are `V + N*pad + J`, with padding chosen to preserve the J frame.
-3. **Annotate** each scaffold once with `igblastn -outfmt 19` (the expensive,
-   offline step).
+3. **Annotate** all scaffolds in one batch per locus with `igblastn -outfmt 19`
+   (the expensive, offline step).
 4. **Translate** and **write** `database/vdj/<organism>/`:
    - `alleles.fasta`, `alleles.aa.fasta` — scaffold sequences (nt / aa)
    - `markup.tsv`, `markup.aa.tsv` — per-scaffold region coordinates + sequences
    - `combinations.tsv` — scaffold → (V, J) allele pairs, padding
    - `d_germlines.fasta` — D germlines for VDJ loci
-   - `cdr3_anchors.tsv` — **per allele**: the conserved Cys104 (V) or Phe/Trp118 (J)
+   - `cdr3_anchors.tsv` — **per allele**: the conserved Cys104 (V) or authoritative J anchor (usually Phe/Trp118)
      position, the residues that allele templates into the junction, and a `status`
      (`ok` / `no_anchor` — flagged, never guessed). This is what lets `arda.cdr3fix`
      mark up a junction with no read behind it, and what bounds the V..J interior for
@@ -98,3 +100,24 @@ none. Keep it raising.
 unreachable-D count, `ok`/`EMPTY` status), and the build warns at the end on any `EMPTY` locus or
 unreachable D germline. That is what makes an absent reference visible rather than silent:
 rat/rabbit/rhesus have no TR loci in IMGT, so their TCR loci build `EMPTY`.
+
+
+## Optional TRDV–TRAJ scope
+
+`build-db --allow-chimeras` is a legacy-named opt-in reference cross-product,
+not a γδ annotation mode. Default references already cover TRG and TRD.
+[IMGT documents TRDV1*01–TRAJ54*01](https://www.imgt.org/IMGTrepertoire/Regulation/cDNA/human/TRD/TRDV/Hu_TRDVcdna.html);
+a TRDV-named V does not by itself establish a TRD chain. The build requires
+complete additional scaffold coverage and preserves existing target IDs/order/padding.
+Validate junction retention and changed calls before promoting the broader scope.
+
+
+## Plain-install references
+
+The normal annotator auto-fetches a pinned, compressed reference asset and verifies
+all 37 canonical data files. Cache roots are immutable generations selected by an
+atomic pointer. A valid warm cache stays offline; valid legacy caches are adopted
+locally. Keep the complete database cache layout when staging an air-gapped machine.
+`arda info` prints the resolved root and MMseqs2 path. Kernel ownership is released
+on process death; persistent guard files are not stale locks. Use a separate cache
+when old releases still run with the pre-2.37 directory-lock protocol.

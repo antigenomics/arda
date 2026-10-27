@@ -317,3 +317,18 @@ def test_igblast_receptor_refuses_a_name_that_is_not_a_receptor_type(monkeypatch
                                  "--receptor", "igh"])
     assert result.exit_code != 0
     assert not called
+
+
+def test_entrypoint_reports_cache_failure_without_a_traceback(monkeypatch, capsys):
+    import arda.cli as cli
+
+    def unavailable():
+        raise RuntimeError("Reference download unavailable; retry when online")
+
+    monkeypatch.setattr(cli, "app", unavailable)
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    stderr = capsys.readouterr().err
+    assert "Reference download unavailable" in stderr
+    assert "Traceback" not in stderr

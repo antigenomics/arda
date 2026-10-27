@@ -80,7 +80,8 @@ Bare ``(junction_aa, V, J)`` records — a VDJdb-style table, a published supple
 From Python
 -----------
 
-The library entry point takes sequences and returns AIRR record dicts — no files, no subprocess:
+The library entry point takes a batch of sequences and returns AIRR record dicts.
+MMseqs2 subprocesses and temporary search files are managed internally:
 
 .. code-block:: python
 

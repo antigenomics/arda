@@ -2,19 +2,23 @@ API reference
 =============
 
 arda is usable as a library as well as a CLI. The single entry point most callers need is
-:func:`arda.annotate_sequences`, which takes sequences and returns AIRR record dicts with no
-subprocess and no temporary files:
+:func:`arda.annotate_sequences`, which takes a batch of sequences and returns AIRR record dicts. It invokes MMseqs2 and
+manages temporary search files internally:
 
 .. code-block:: python
 
    import arda
 
    records = arda.annotate_sequences(
-       ["GACGTGCAG...", ("clone7", "CAGGTG...")],   # strings or (id, sequence) pairs
+       [("q1", "TGTGCCAGCAGCTTAGCGGGAGGGAACACCGGGGAGCTGTTTTTTGGA")],
        seqtype="nt",          # "nt" or "aa"
        organism="human",      # human | mouse | rat | rabbit | rhesus_monkey
+       threads=2,             # 0 (default) uses all CPUs allocated to this process/job
        map_d=True,            # D segments for VDJ loci; works on amino-acid input too
    )
+
+Every input produces a record. Unmapped inputs retain ``sequence_id`` and ``sequence`` with
+empty annotation fields. Submit one batch instead of calling the mapper once per sequence. The batch is held in memory; use the streaming CLI for a whole FASTQ.
 
 The fields each record carries are documented in :doc:`outputs`. The modules below are the rest of
 the public surface, grouped as the package is.

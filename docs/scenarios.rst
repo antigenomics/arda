@@ -148,8 +148,7 @@ Limits
 
 * **Generating a prior is not adopting one.** ``database/vdj/<org>/d_prior.tsv`` is unchanged;
   swapping in an estimate is a measurement and a release decision, not a side effect of running
-  this. To *use* one without adopting it, pass the path — ``arda markup --d-prior PATH``, or
-  ``arda.hmm.model_for`` with ``prior=`` and
+  this. To *use* one without adopting it, pass the path to ``arda.hmm.model_for`` with ``prior=`` and
   :func:`arda.scenarios.load_prior_table` with a second argument, which is the same knob
   :func:`arda.hmm.model_for` already takes as ``prior=``.
   Nothing in the installed database is touched, and this is the only way to reach the **11 of the
@@ -162,7 +161,7 @@ Limits
      python -c "from arda.hmm import model_for; model_for('mouse', prior='fitted.tsv')"
 
   The shipped table is *allowed* to be missing — that is what ``None`` means — but a path you typed
-  is a request, so a ``--d-prior`` pointing at a file that is not there raises rather than silently
+  is a request, so an explicit prior path pointing at a file that is not there raises rather than silently
   scoring on an empty prior.
 * **The insertion composition is uniform** (0.25/base) rather than a fitted first-order Markov
   chain. The per-base cost is what breaks the degeneracy; composition is a refinement.

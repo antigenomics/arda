@@ -3,6 +3,42 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.37.0
+
+**One CPU allocation across mapping phases.** Automatic thread selection respects
+process affinity, Linux cgroup CPU quotas and SLURM allocations. Streaming mapping reserves one CPU for
+its reader and reads synchronously with a one-CPU budget. MMseqs preparation and
+reduction no longer default to every host core; child OpenMP limits prevent nested
+teams. The CLI initializes a one-thread Polars pool; embedded mapping rejects an
+already-initialized table pool that exceeds its selected CPU budget. A bounded reader stops on
+consumer failure as well as end of input. Python callers can pass `threads` to
+`annotate_sequences` while retaining the existing batch interface.
+
+**Opt-in TRDV × TRAJ reference construction.** Missing J markup can be restored
+from exact scaffold geometry and existing germline anchors. The opt-in builder
+uses anchor-consistent J frames and refuses to package incomplete TRDV × TRAJ
+coverage. This changes neither the default pairing policy nor the shipped
+reference. The matched real-read validation is recorded in issue #149.
+Construction preserves existing scaffold IDs, order and padding before appending
+new targets, preventing equal-score alignment changes from discarding junctions.
+Anchor tables follow `ARDA_IGBLAST` and fetched runtimes, matching the aligner
+instead of silently falling back when the tools live outside the checkout.
+
+**Reliable first use and refresh.** References use verified immutable generations
+and atomic selection. Missing or changed cached files are repaired, known complete
+legacy caches stay offline, and explicit data-release requests retain their identity.
+Kernel locks release on process death. Downloads have bounded waits, fail fast on
+permanent HTTP errors and reject truncated responses. IgBLAST refreshes retain old
+reader roots and validate required tools and anchor tables. Rebuilds use isolated
+source checkouts; CLI failures are concise with detailed debug logs available.
+
+**Documentation and examples.** Navigation separates tutorial, how-to, reference
+and explanation. The performance guide describes CPU ownership and resource
+measurements; embedding examples correctly describe internal search processes
+and temporary files. The cost-model benchmark uses the current `arda map`
+command. Junction example regeneration no longer passes retired D-posterior flags;
+markup TSV uses the same unquoted dialect as the other writers. Polars stays below its unvalidated major version 2.
+
 ## 2.36.2
 
 Requires seqtree 1.1.1 or newer within major version 1. The productivity roadmap now

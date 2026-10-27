@@ -193,8 +193,29 @@ def _auto_fetch() -> str | None:
 
 def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
     """Run ``mmseqs <args>`` capturing stdout/stderr."""
+    from ._threads import resolve_threads
+
+    args = list(map(str, args))
+    flags = [i for i, arg in enumerate(args) if arg == "--threads" or arg.startswith("--threads=")]
+    if len(flags) > 1:
+        raise ValueError("Pass --threads only once per MMseqs command")
+    threads = 1
+    if flags:
+        i = flags[0]
+        value = args[i].split("=", 1)[1] if "=" in args[i] else args[i + 1]
+        threads = resolve_threads(int(value))
+        if "=" in args[i]:
+            args[i] = f"--threads={threads}"
+        else:
+            args[i + 1] = str(threads)
+    elif args[0] in {"createdb", "filterdb", "createindex", "search", "align", "convertalis", "easy-search"}:
+        args += ["--threads", "1"]
+    # Preparation/reduction commands otherwise default to every HOST core,
+    # independently of the search budget. Do not mutate the embedding caller's env.
+    env = dict(os.environ, OMP_NUM_THREADS=str(threads), OMP_THREAD_LIMIT=str(threads),
+               OMP_MAX_ACTIVE_LEVELS="1")
     cmd = [mmseqs_binary(), *map(str, args)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if check and proc.returncode != 0:
         raise MMseqsError(
             f"`{' '.join(cmd)}` failed (exit {proc.returncode}):\n{proc.stderr}"

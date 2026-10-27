@@ -5,7 +5,7 @@ Installation
 
    pip install arda-mapper
 
-That is the whole installation for normal use. The distribution is ``arda-mapper``; it imports as
+On Linux and macOS, that is the whole installation for normal annotation. The distribution is ``arda-mapper``; it imports as
 ``arda``. Binary wheels are published for CPython 3.10–3.13 on Linux, macOS (arm64) and Windows,
 and carry arda's four C++ extensions prebuilt.
 
@@ -39,14 +39,50 @@ Two things arda needs are not in the wheel, and both are fetched automatically o
    * - What
      - When
    * - The germline reference
-     - On the first command that annotates anything. About 3 MB, taken from the matching GitHub
-       release asset. The MMseqs2 index is then built in the cache.
+     - On the first command that annotates anything. About 3 MB, taken from a pinned data-release
+       asset independent of the package version. The MMseqs2 index is then built in the cache.
    * - The MMseqs2 binary
      - On the first search, unless a suitable ``mmseqs`` is already resolvable. A static build, so
        there is no conda requirement.
 
 IgBLAST is fetched only if you run ``arda igblast`` or rebuild the reference. Annotation never
-needs it.
+needs it. The default macOS IgBLAST download is x86_64 and needs Rosetta on Apple Silicon.
+A complete native arm64 installation can be selected with ``ARDA_IGBLAST``; its tools,
+``internal_data`` and ``optional_file`` must come from the same installation.
+
+On Windows, use Linux Python inside WSL2 for search workflows, following the
+`MMseqs2 Windows guidance <https://github.com/soedinglab/MMseqs2/wiki#install-mmseqs2-for-windows-preview>`_.
+The native Windows Python wheel installs the library and its extensions; ARDA's automatic
+MMseqs2 downloader currently targets Linux and macOS.
+
+Reference cache and concurrent starts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``arda info`` resolves the reference and MMseqs2 before a long run. A valid warm cache
+needs no network. The pinned reference's 37 data files have canonical SHA256 checks;
+complete older caches are adopted locally rather than downloaded again. Missing,
+truncated or changed cached data is repaired from the release asset.
+
+Downloads and extraction happen privately on the destination filesystem. Only a
+complete, verified reference generation is selected, through an atomic pointer update.
+Concurrent processes and threads share that result. A failed or interrupted refresh
+keeps the previous generation available; existing readers keep their original paths.
+The kernel releases build ownership when a process exits or is killed. A small hidden
+guard file may remain: its presence does not mean a lock is held and it needs no cleanup.
+
+Set ``XDG_CACHE_HOME`` before starting ARDA to choose the cache location. When upgrading
+from a release before 2.37 while older jobs still run, give the new jobs a separate cache;
+the older directory-lock protocol cannot coordinate with the new kernel locks.
+For an air-gapped destination, copy the complete ``arda/database`` cache directory,
+including its pointer and generation files, and provide a destination-compatible
+MMseqs2 binary through ``ARDA_MMSEQS``. Set ``ARDA_NO_AUTO_FETCH=1`` there; an incomplete
+cache produces an actionable error rather than a partial annotation.
+
+Network reads have a 30-second inactivity limit and a bounded retry budget. Permanent
+HTTP errors fail promptly; transient errors retry, and truncated responses are rejected.
+The normal reference/tool budget is 120 seconds; only the explicitly requested large
+IgBLAST download has a longer budget. Detailed CLI diagnostics are available with
+``-v`` or ``--log-file``; ordinary failures report a short error and a nonzero exit code.
 
 .. note::
 

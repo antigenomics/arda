@@ -16,7 +16,7 @@ def test_raw_strings_get_synthetic_ids(monkeypatch):
         lambda pairs, **kw: captured.update(pairs=pairs, kw=kw) or [])
     annotate_sequences(["ACGT", "TTTT"], organism="mouse", seqtype="nt", map_d=False)
     assert captured["pairs"] == [("seq0", "ACGT"), ("seq1", "TTTT")]
-    assert captured["kw"] == {"organism": "mouse", "seqtype": "nt", "map_d": False}
+    assert captured["kw"] == {"organism": "mouse", "seqtype": "nt", "map_d": False, "threads": 0}
 
 
 def test_id_sequence_pairs_are_preserved(monkeypatch):
@@ -26,3 +26,11 @@ def test_id_sequence_pairs_are_preserved(monkeypatch):
         lambda pairs, **kw: captured.update(pairs=pairs) or [])
     annotate_sequences([("read1", "ACGT"), ("read2", "TTTT")])
     assert captured["pairs"] == [("read1", "ACGT"), ("read2", "TTTT")]
+
+
+def test_thread_budget_reaches_the_single_batch_mapper(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mapper_mod, "annotate_records", lambda pairs, **kw: calls.append((pairs, kw)))
+    annotate_sequences(["ACGT", "TTTT"], threads=2)
+    assert len(calls) == 1
+    assert calls[0][1]["threads"] == 2

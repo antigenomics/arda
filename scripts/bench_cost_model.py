@@ -88,7 +88,7 @@ def measure(r1: Path, r2: Path | None, depths: list[int], threads: int, chunk: i
     with tempfile.TemporaryDirectory(prefix="arda_cost_") as td:
         for n in depths:
             out, rep = Path(td) / f"{n}.tsv", Path(td) / f"{n}.json"
-            cmd = ["arda", "rnaseq", "map", "--r1", str(r1), "-o", str(out),
+            cmd = ["arda", "map", "--r1", str(r1), "-o", str(out),
                    "--report", str(rep), "--threads", str(threads),
                    "--chunk-size", str(chunk), "-n", str(n)]
             if r2:

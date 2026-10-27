@@ -6,7 +6,7 @@ it is a silent 2-4x slowdown:
 
 * ``arda rnaseq``     — bulk / whole-transcriptome RNA-seq  (``--prefilter``)
 * ``arda amplicon``   — targeted RepSeq / 5'RACE  (``--two-pass --fast-segments --v-only-on-segment``)
-* ``arda singlecell`` — reserved; not implemented yet
+* ``arda cells``      — single cell, starting from per-molecule UMI consensus
 
 Until 2.16.0 the only entry point was ``arda rnaseq run``, which was used for amplicon too and
 exposed the regime as four loose flags. ``--two-pass`` ALONE is a LOSS on both regimes (0.762x on
@@ -227,16 +227,14 @@ def build_db(
     ),
     allow_chimeras: bool = typer.Option(
         False, "--allow-chimeras",
-        help="Also build TRDV x TRAJ scaffolds, which the default reference refuses as chimeric. "
-             "TRDV1/2/3 are dedicated delta V genes, but they sit INSIDE the TRA locus between the "
-             "TRAV genes and the TRAJ cluster. Measured on 48,030 TRA amplicon reads: IgBLAST "
-             "calls TRDV1 + a TRAJ on 530 of them (1.10 % of the library, median v_score 93.8, all "
-             "carrying a junction) and MiXCR independently agrees, while arda calls the same J as "
-             "both and emits NO v_call -- 83 % of its whole remaining v_gene gap. Either the "
-             "pairing is real and the default drops 1.1 % of a TRA repertoire, or it is a chimera "
-             "and the other two report it because they call V and J independently. That is a "
-             "domain judgement, so it is a flag. Off by default; assert the SCAFFOLD COUNT after "
-             "building -- an earlier attempt added 7 scaffolds, not the ~483 the product implies.",
+        help="Also build the optional TRDV x TRAJ cross-product. IMGT documents TRDV1 + TRAJ; "
+             "the legacy flag name does not make every such pairing a chimera. This is not a "
+             "gamma-delta mode: ordinary TRG/TRD annotation is already supported. Historical "
+             "benchmark on 48,030 TRA reads: IgBLAST and MiXCR agree on 530 TRDV1 + TRAJ calls "
+             "(1.10 %, median IgBLAST v_score 93.8, all with junctions), accounting for 83 % of "
+             "arda's remaining V-gene gap. Off by default. The builder requires all expected "
+             "scaffolds (483 in the human reference) and preserves existing targets; validate "
+             "junction retention and changed calls before promoting the broader reference.",
     ),
 ) -> None:
     """Build the curated reference database (Phase 1)."""
@@ -299,7 +297,7 @@ def annotate(
     output: Path = typer.Option(..., "--output", "-o", help="Output AIRR TSV."),
     organism: str = typer.Option("human", help="Reference organism."),
     seqtype: str = typer.Option("nt", help="Input sequence type: nt or aa."),
-    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     strand: str = typer.Option("both", help="nt only: 'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
         50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
@@ -361,7 +359,7 @@ def markup(
                              sequence_id=id_col or None, organism=organism or None,
                              max_replace=max_replace)
     out = to_frame(records)
-    out.write_csv(output, separator="\t")
+    out.write_csv(output, separator="\t", quote_style="never")
 
     if report is not None:
         text = format_report(records, show_ok=show_ok)
@@ -469,7 +467,7 @@ def igblast_cmd(
              "run."),
 ) -> None:
     """Gold-standard AIRR alignment with IgBLAST across all annotatable loci."""
-    import os
+    from ._threads import resolve_threads
     from .refbuild.gold import igblast_reads
 
     groups = {"both": None, "ig": ("IG",), "tr": ("TR",)}.get(receptor.strip().lower(), ...)
@@ -477,7 +475,7 @@ def igblast_cmd(
         raise typer.BadParameter("--receptor must be one of: both, ig, tr", param_hint="--receptor")
 
     igblast_reads(input, output, organism=organism, groups=groups,
-                  num_threads=threads or (os.cpu_count() or 1))
+                  num_threads=resolve_threads(threads))
     typer.echo(f"[arda] igblast AIRR -> {output}")
 
 
@@ -493,7 +491,7 @@ def rnaseq_map(
     r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     sensitivity: Optional[float] = typer.Option(None, help="mmseqs -s (default: tuned)."),
     strand: str = typer.Option("both", help="'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
@@ -762,7 +760,7 @@ def rnaseq_assemble(
         ..., "--output", "-o",
         help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="mmseqs threads for re-annotation (0 = all cores)."),
+    threads: int = typer.Option(0, help="CPU budget for re-annotation (0 = all allocated CPUs)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
         help="Call D (and tandem D-D) on each assembled contig and carry it onto its member "
@@ -1163,7 +1161,7 @@ def rnaseq_mode(
              "With --id or --samples the sample id is the basename and this is not used."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     assemble: bool = typer.Option(
         True, "--assemble/--no-assemble",
         help="Stage 3: assemble long-CDR3 contigs no single 100-150 bp read spans (V(D)J "
@@ -1255,7 +1253,7 @@ def amplicon_mode(
              "With --id or --samples the sample id is the basename and this is not used."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     assemble: bool = typer.Option(
         True, "--assemble/--no-assemble",
         help="Stage 3: assemble long-CDR3 contigs no single read spans and fold them into the "
@@ -1482,7 +1480,7 @@ def rnaseq_reduce(
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="mmseqs threads (0 = all cores)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
@@ -1921,5 +1919,24 @@ def qc_report(
     typer.echo(str(render(input, output, title=title)))
 
 
+def main():
+    """Keep table operations serial; search/native batches own CLI parallelism."""
+    import os
+
+    previous = os.environ.get("POLARS_MAX_THREADS")
+    os.environ["POLARS_MAX_THREADS"] = "1"
+    try:
+        app()
+    except (RuntimeError, OSError, ValueError) as exc:
+        log.debug("Command failed", exc_info=True)
+        typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from None
+    finally:
+        if previous is None:
+            os.environ.pop("POLARS_MAX_THREADS", None)
+        else:
+            os.environ["POLARS_MAX_THREADS"] = previous
+
+
 if __name__ == "__main__":
-    app()
+    main()

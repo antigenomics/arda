@@ -14,9 +14,13 @@ from arda import _igblast_fetch, igblast
 def _fake_release(root, *, complete=True):
     """A directory shaped like an installed IgBLAST release."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "igblastn").write_text("#!/bin/sh\n")
+    for tool in ("igblastn", "makeblastdb", "edit_imgt_file.pl"):
+        (root / tool).write_text("#!/bin/sh\n")
+    (root / "optional_file").mkdir(parents=True, exist_ok=True)
+    (root / "optional_file/human_gl.aux").write_text("TRAJ1*01 0 JA 2 0\n")
     (root / "internal_data" / "human").mkdir(parents=True, exist_ok=True)
     (root / "internal_data" / "human" / "human_V.nin").write_text("")
+    (root / "internal_data/human/human.ndm.imgt").write_text("TRAV1*01 1 2 3 4 5 6 7 8 9 300\n")
     if complete:
         (root / _igblast_fetch.VERSION_FILE).write_text("1.22.0\n")
     return root
@@ -147,3 +151,96 @@ def test_the_download_does_not_land_in_the_system_temp_dir(tmp_path, monkeypatch
     # is decisive: the default `TemporaryDirectory()` cannot land there.
     got = downloaded_to["path"].resolve()
     assert dest.parent.resolve() in got.parents, f"archive staged outside the cache: {got}"
+
+
+def test_metadata_lookup_never_fetches_missing_runtime(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARDA_IGBLAST", raising=False)
+    monkeypatch.setattr(igblast, "bin_dir", lambda: tmp_path / "bin")
+    monkeypatch.setattr(igblast, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(igblast, "fetch", lambda *a, **k: pytest.fail("must not fetch"))
+    igblast.igblast_root.cache_clear()
+    try:
+        assert igblast.igblast_root(fetch_missing=False) == tmp_path / "igblast"
+    finally:
+        igblast.igblast_root.cache_clear()
+
+
+def test_forced_tool_refresh_preserves_old_reader_paths(tmp_path, monkeypatch):
+    dest = _fake_release(tmp_path / "igblast")
+    (dest / _igblast_fetch.VERSION_FILE).write_text("1.21.0\n")
+    monkeypatch.setattr(_igblast_fetch, "find_tarball", lambda _: "ncbi-igblast-1.22.0-x64-linux.tar.gz")
+    monkeypatch.setattr(_igblast_fetch, "_download", lambda url, out, **kw: out.write_bytes(b""))
+    monkeypatch.setattr(_igblast_fetch, "_safe_extract", lambda path, into: into)
+    monkeypatch.setattr(_igblast_fetch, "lay_out", lambda release, into: _fake_release(into))
+    new = _igblast_fetch.fetch(dest, force=True)
+    assert new != dest
+    assert (dest / _igblast_fetch.VERSION_FILE).read_text().strip() == "1.21.0"
+    assert _igblast_fetch.installed_version(dest) == "1.22.0"
+    assert _igblast_fetch.installed_root(dest) == new
+
+
+def test_failed_forced_tool_publication_preserves_installation(tmp_path, monkeypatch):
+    dest = _fake_release(tmp_path / "igblast")
+    monkeypatch.setattr(_igblast_fetch, "find_tarball", lambda _: "ncbi-igblast-1.22.0-x64-linux.tar.gz")
+    monkeypatch.setattr(_igblast_fetch, "_download", lambda url, out, **kw: out.write_bytes(b""))
+    monkeypatch.setattr(_igblast_fetch, "_safe_extract", lambda path, into: into)
+    monkeypatch.setattr(_igblast_fetch, "lay_out", lambda release, into: _fake_release(into))
+    replace = _igblast_fetch.os.replace
+
+    def fail(src, target):
+        if target == dest or str(target).endswith(".current.json"):
+            raise OSError("simulated tool publication failure")
+        return replace(src, target)
+
+    monkeypatch.setattr(_igblast_fetch.os, "replace", fail)
+    with pytest.raises(OSError):
+        _igblast_fetch.fetch(dest, force=True)
+    assert (dest / "igblastn").is_file()
+    assert _igblast_fetch.is_complete(dest)
+
+
+def test_managed_runtime_with_missing_metadata_is_not_ready(tmp_path, monkeypatch):
+    root = _fake_release(tmp_path / "igblast")
+    (root / "optional_file/human_gl.aux").unlink()
+    assert not _igblast_fetch.is_complete(root)
+    monkeypatch.setenv("ARDA_IGBLAST", str(root))
+    igblast.igblast_root.cache_clear()
+    try:
+        with pytest.raises(igblast.IgBlastError, match="[Ii]ncomplete"):
+            igblast.igblast_root()
+    finally:
+        igblast.igblast_root.cache_clear()
+
+
+def test_forced_refresh_updates_pointer_after_old_flat_root_removed(tmp_path, monkeypatch):
+    import shutil
+    dest = _fake_release(tmp_path / "igblast")
+    monkeypatch.setattr(_igblast_fetch, "find_tarball", lambda _: "ncbi-igblast-1.22.0-x64-linux.tar.gz")
+    monkeypatch.setattr(_igblast_fetch, "_download", lambda url, out, **kw: out.write_bytes(b""))
+    monkeypatch.setattr(_igblast_fetch, "_safe_extract", lambda path, into: into)
+    monkeypatch.setattr(_igblast_fetch, "lay_out", lambda release, into: _fake_release(into))
+    first = _igblast_fetch.fetch(dest, force=True)
+    shutil.rmtree(dest)
+    new = _igblast_fetch.fetch(dest, force=True)
+    assert new != first
+    assert _igblast_fetch.installed_root(dest) == new
+
+
+def test_metadata_and_execution_stay_on_one_runtime_across_refresh(tmp_path, monkeypatch):
+    dest = _fake_release(tmp_path / "igblast")
+    monkeypatch.delenv("ARDA_IGBLAST", raising=False)
+    monkeypatch.setattr(igblast, "bin_dir", lambda: tmp_path / "bin")
+    monkeypatch.setattr(igblast, "project_root", lambda: tmp_path)
+    monkeypatch.setattr(_igblast_fetch, "find_tarball", lambda _: "ncbi-igblast-1.22.0-x64-linux.tar.gz")
+    monkeypatch.setattr(_igblast_fetch, "_download", lambda url, out, **kw: out.write_bytes(b""))
+    monkeypatch.setattr(_igblast_fetch, "_safe_extract", lambda path, into: into)
+    monkeypatch.setattr(_igblast_fetch, "lay_out", lambda release, into: _fake_release(into))
+    igblast.igblast_root.cache_clear()
+    try:
+        assert igblast.igblast_root() == dest
+        new = _igblast_fetch.fetch(dest, force=True)
+        assert new != dest
+        assert igblast.igblast_root(fetch_missing=False) == dest
+        assert igblast.igblast_root() == dest
+    finally:
+        igblast.igblast_root.cache_clear()

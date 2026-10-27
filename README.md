@@ -38,7 +38,8 @@ It works on nucleotide and amino-acid input, on FASTA and FASTQ, across all loci
 **human** and **mouse** (full IG + TR) and for **rat, rabbit and rhesus macaque** (IG only — IMGT
 ships no TR reference for those three). It also annotates records with no read behind them — a
 CDR3 amino acid plus a V and J call, as in a VDJdb row — marking up which residues each germline
-templates, repairing the junction, and inferring the D gene from junction length.
+templates and repairing the junction. D inference from amino-acid junctions is provided by
+[vdjtools](https://github.com/antigenomics/vdjtools), using ARDA markup and germline.
 
 ## Install
 
@@ -105,7 +106,8 @@ whose Cys104 anchor is not in the read is not emitted. A germline with no deriva
 flagged, not invented. A `j_call` requires J evidence rather than inheriting it from the scaffold.
 
 **Embeddable and scriptable.** `import arda; arda.annotate_sequences(...)` returns AIRR record
-dicts — no subprocess, no temp files. The CLI is plain files in, plain files out, so it drops into
+dicts. The library runs MMseqs2 and manages temporary search files internally. The CLI uses
+plain files in and out, so it drops into
 any workflow engine; the same sample sheet drives the CLI, a SLURM array, the Nextflow module and
 the Snakemake workflow, and a sharded run is byte-identical to a single-node one.
 
@@ -114,12 +116,15 @@ entitled to claim: **[Benchmarks](https://docs.isalgo.dev/arda/benchmarks.html)*
 
 ## Documentation
 
+Start with the tutorial, use a how-to guide for a task, consult reference pages for exact
+interfaces, and read the explanations for the reasoning behind them.
+
 | | |
 |---|---|
 | **[Quickstart](https://docs.isalgo.dev/arda/quickstart.html)** | Install, run a library, read the table that comes out |
 | **[Choosing a mode](https://docs.isalgo.dev/arda/usage.html)** | Bulk, amplicon or single cell, and what each writes |
 | **[Output reference](https://docs.isalgo.dev/arda/outputs.html)** | Every file a run produces, and every column in it |
-| **[Command reference](https://docs.isalgo.dev/arda/cli.html)** | All 22 commands, grouped by task |
+| **[Command reference](https://docs.isalgo.dev/arda/cli.html)** | Commands grouped by task |
 | **[Recipes](https://docs.isalgo.dev/arda/examples.html)** | Copy-paste shell and polars snippets for post-run analysis |
 | **[Use cases](https://docs.isalgo.dev/arda/use_cases.html)** | Monoclonal QC, low-frequency variants, SHM, tool comparisons |
 | **[Single cell](https://docs.isalgo.dev/arda/singlecell.html)** | Reference-free per-cell contigs, chain pairing, doublets |

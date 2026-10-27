@@ -11,6 +11,11 @@ import pytest
 from arda import mmseqs
 from arda._log import logger as arda_logger
 from arda.paths import vdj_dir
+from arda._threads import import_polars
+
+# Tests share one interpreter while exercising smaller per-call CPU budgets.
+# Initialize its table pool before test modules import Polars themselves.
+import_polars()
 
 
 @pytest.fixture(autouse=True)

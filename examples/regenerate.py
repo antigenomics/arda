@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Rebuild every committed artifact under ``examples/``.
 
-# Run from the repo root, in the `arda` conda env:
-#     python examples/regenerate.py
+# Run from the repository root after `bash setup.sh`:
+#     .venv/bin/python examples/regenerate.py
 #
 # Everything here is DERIVED from data already committed to this repo -- no network, no
 # hand-typed sequences. The inputs are the five real GenBank records in `example.fasta`
@@ -107,7 +107,7 @@ def build_junctions() -> None:
     ).write_csv(EX / "junctions.tsv", separator="\t")
     _sh(sys.executable, "-m", "arda.cli", "markup",
         "-i", "examples/junctions.tsv", "-o", "examples/junctions.markup.tsv",
-        "--id-col", "id", "--d-posterior",
+        "--id-col", "id",
         "--report", "examples/junctions.report.txt", "--show-ok")
 
 

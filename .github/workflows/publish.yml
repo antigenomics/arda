@@ -95,7 +95,12 @@ jobs:
               raise SystemExit(f"expected 1 wheel for {tag}, found {len(matches)}: {matches}")
           subprocess.check_call([sys.executable, "-m", "pip", "install", matches[0]])
           PY
-          python -c "import arda; print('[OK] arda', arda.__version__)"
+          python - <<'PY'
+          import arda
+          from arda import _markup, _prefilter, _segmap, _denoise
+          assert _markup.translate("TGT", 0) == "C"
+          print("[OK] arda", arda.__version__, "all four native extensions loaded")
+          PY
 
   publish:
     name: Publish To PyPI

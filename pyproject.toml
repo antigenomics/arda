@@ -7,7 +7,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "arda-mapper"  # PyPI distribution name (`arda` is taken); imports as `arda`
-version = "2.36.2"
+version = "2.37.0"
 description = "Antigen Receptor Domain Annotation — fast TCR/BCR FR/CDR region annotation"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 dependencies = [
-    "polars>=1.0",
+    "polars>=1.0,<2",
     "typer>=0.12",
     "requests>=2.31",
     # `arda rnaseq correct` -- CDR3 error correction (neighbour search). REQUIRED, not optional:
@@ -70,7 +70,7 @@ mmseqs = []
 groundtruth = ["olga"]
 
 [project.scripts]
-arda = "arda.cli:app"
+arda = "arda.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/antigenomics/arda"

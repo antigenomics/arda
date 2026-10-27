@@ -58,10 +58,9 @@ class Locus:
             Without this, a δ rearrangement on such a V gene has no TRD scaffold to match and is
             miscalled TRA (the locus is set by J/D/C, never the V).
 
-            Never: The sharing runs **both ways**, and only one direction was wired. TRDV1/2/3 are
-            dedicated δ V genes but lie *inside* the TRA locus, between the TRAV genes and the TRAJ
-            cluster, so an α rearrangement can join one to a TRAJ. Without a ``TRDV × TRAJ``
-            scaffold such a read gets its J called and **no V at all**, hence no junction.
+            TRDV-named genes are distinct from the dual-designation TRAV/DV genes. IMGT
+            documents TRDV1 rearranged to TRAJ and expressed with TRAC; its V name alone does
+            not make that a TRD chain. The optional TRA cross-product includes the TRDV stem.
     """
 
     name: str
@@ -84,18 +83,10 @@ class Locus:
 
 LOCI: tuple[Locus, ...] = (
     # VJ loci
-    # Never: TRA does NOT pull the TRDV stem, and a previous attempt to make it do so was biologically
-    # wrong. The sharing is not symmetric:
-    #
-    #   * **TRDV1/2/3 are dedicated delta V genes.** They rearrange to TRDJ. A `TRDV1 + TRAJ`
-    #     scaffold is not a rearrangement that happens, so building one invites reads onto a
-    #     chimera the biology does not contain.
-    #   * **TRAV/DV genes pair with EITHER**, and which J they took is what defines the locus.
-    #     Those are already covered from both sides: `TRAV/DV x TRAJ` comes free with the TRA
-    #     build because IMGT files them under TRAV, and `TRAV/DV x TRDJ` is exactly what TRD's
-    #     `v_shared=("TRAV", "/DV")` below exists to add.
-    #
-    # So the asymmetry in this table is the correct encoding of the biology, not an oversight.
+    # Keep the shipped TRAV-based TRA vocabulary until the broader cross-product is promoted.
+    # This is a reference-scope policy, not a claim that TRDV–TRAJ is impossible: IMGT documents
+    # TRDV1–TRAJ/TRAC (https://www.imgt.org/IMGTrepertoire/Regulation/cDNA/human/TRD/TRDV/Hu_TRDVcdna.html).
+    # Dual-designation TRAV/DV genes are already covered in both TRA and TRD; J/D/C define locus.
     Locus("TRA", "TR", "TRAV", "TRAJ", None, "TCR"),
     Locus("TRG", "TR", "TRGV", "TRGJ", None, "TCR"),
     Locus("IGK", "IG", "IGKV", "IGKJ", None, "Ig"),
@@ -113,29 +104,20 @@ VDJ_LOCI = tuple(loc for loc in LOCI if loc.has_d)
 def loci_for(*, allow_chimeras: bool = False) -> tuple[Locus, ...]:
     """:data:`LOCI`, optionally with the ``TRDV × TRAJ`` scaffolds the default build refuses.
 
-    The refusal above is a *biological* claim: TRDV1/2/3 are dedicated δ V genes, so a
-    ``TRDV × TRAJ`` scaffold is a chimera. The claim is testable and the test disagrees with it on
-    the only external evidence available. Measured on 48,030 TRA amplicon reads against an IgBLAST
-    truth (arda-benchmark ``results/round18`` §5c): **530 reads — 1.10 % of the library — are
-    called ``TRDV1`` + a ``TRAJ`` by IgBLAST, and MiXCR independently agrees**; all sit at IgBLAST
-    ``v_score ≥ 70`` (median 93.8), all carry an IgBLAST junction, and **arda calls their J
-    identically to both tools** while emitting no ``v_call`` and no junction at all. They are
-    **83 % of arda's entire remaining ``v_gene`` gap** on that library (.9867 vs MiXCR's .9973;
-    .9978 excluding them).
+    The legacy flag name does not establish that a pairing is chimeric. IMGT explicitly
+    documents TRDV1*01–TRAJ54*01 and another TRDV1–TRAJ example. That supports admitting the
+    observed pairing; it does not by itself validate every member of the broader cross-product.
 
-    So the two readings are:
+    Historical real-read evidence (arda-benchmark ``results/round18`` §5c): on 48,030 TRA
+    amplicon reads, IgBLAST calls ``TRDV1`` + a ``TRAJ`` on **530 reads (1.10 %)** and MiXCR
+    independently agrees. All have ``v_score ≥ 70`` (median 93.8) and an IgBLAST junction.
+    Arda calls their J identically while emitting no V/junction: **83 %** of its remaining
+    V-gene gap (.9867 vs MiXCR's .9973; .9978 excluding these reads).
 
-    * the pairing is real — arda silently drops 1.1 % of a TRA repertoire, or
-    * it is a chimera — arda is right and IgBLAST and MiXCR both report it because they call V and
-      J independently, with no combination constraint at all.
-
-    This flag exists because that is a domain judgement, not a code decision, and the default must
-    not quietly encode either answer as if it were settled. ``False`` keeps the shipped biology.
-
-    Never: It is **not** free to turn on. An earlier attempt at the same scaffolds measured **+7**
-    scaffolds, not the ~483 the cross-product predicts, because 62 of 69 dropped for incomplete
-    markup — so a reference built with this on may not contain what you expect. Assert the
-    scaffold count, never the flag (CLAUDE.md: a reference swap can silently be a no-op).
+    ``False`` preserves the shipped reference scope. Ordinary TRG/TRD annotation already exists;
+    this is not a gamma-delta mode. The opt-in build requires complete expected scaffold coverage
+    and appends targets without renumbering or reframing existing ones. An earlier build added
+    only 7 of the expected 483 scaffolds because of missing markup; assert coverage, not the flag.
     """
     if not allow_chimeras:
         return LOCI
