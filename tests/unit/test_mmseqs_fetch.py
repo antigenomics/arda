@@ -113,8 +113,9 @@ def test_the_binary_is_published_by_rename_not_written_in_place(tmp_path, monkey
 
     assert seen["dst"] == dest, "dest must be created by the rename, not written in place"
     assert seen["src"].parent.parent == dest.parent, "staging must share dest's filesystem"
-    assert seen["mode_before_publish"] & st.S_IXUSR, "must be executable BEFORE it is published"
-    assert dest.stat().st_mode & st.S_IXUSR
+    if os.name != "nt":  # Windows has no POSIX executable permission bits.
+        assert seen["mode_before_publish"] & st.S_IXUSR, "must be executable BEFORE it is published"
+        assert dest.stat().st_mode & st.S_IXUSR
 
 
 def test_a_failed_download_leaves_no_binary_for_anyone_to_exec(tmp_path, monkeypatch):

@@ -195,7 +195,7 @@ def test_legacy_copy_is_revalidated_before_publication(tmp_path, monkeypatch):
 
     def changed_during_copy(src, target):
         result = copy(src, target)
-        if str(target).endswith("human/markup.tsv"):
+        if Path(target).parts[-2:] == ("human", "markup.tsv"):
             Path(target).write_text("changed during staging\n")
         return result
 
