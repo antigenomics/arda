@@ -151,7 +151,9 @@ def test_first_build_fetches_anchor_tables_before_constructing_scaffolds(tmp_pat
     def fetch(root):
         (root / "optional_file").mkdir(parents=True)
         (root / "internal_data" / "human").mkdir(parents=True)
-        (root / "igblastn").touch()
+        for name in ("igblastn", "makeblastdb", "edit_imgt_file.pl"):
+            (root / name).write_text("#!/bin/sh\n")
+        (root / "IGBLAST_VERSION").write_text("1.22.0\n")
         (root / "optional_file" / "human_gl.aux").write_text("TRAJ35*01 1 JA 7 2\n")
         (root / "internal_data" / "human" / "human.ndm.imgt").write_text(
             "TRDV1*01 1 2 3 4 5 6 7 8 9 300\n")

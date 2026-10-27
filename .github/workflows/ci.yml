@@ -63,3 +63,23 @@ jobs:
       # arda transparently rebuilds a private cache — this also exercises that path.
       - name: Run tests
         run: python -m pytest tests/unit tests/synthetic tests/realworld -q
+
+
+  cache-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install cache-test dependencies
+        run: python -m pip install pytest "polars>=1.0,<2" "requests>=2.31"
+      - name: Verify Windows cache coordination and crash recovery
+        run: >-
+          python -m pytest tests/unit/test_lock_recovery.py
+          tests/unit/test_database_fetch_atomic.py tests/unit/test_download_reliability.py
+          tests/unit/test_reference_url.py tests/unit/test_igblast_fetch.py
+          tests/unit/test_mmseqs_fetch.py -q

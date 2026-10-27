@@ -2,7 +2,9 @@
 
 How the curated `database/vdj/<organism>/` references are produced. **Most users
 never run this** — references ship with the package. Build only to add or refresh
-an organism. Requires IgBLAST (fetched into `bin/` by `setup.sh`).
+an organism, in an isolated source checkout (`ARDA_HOME` selects it). Installed
+reference generations are inputs, not rebuild destinations. Requires IgBLAST
+(resolved by `arda.igblast.igblast_root`, including complete anchor metadata).
 
 **Contents:** pipeline · CLI · outputs · manifest · when to rebuild.
 
@@ -108,3 +110,14 @@ not a γδ annotation mode. Default references already cover TRG and TRD.
 a TRDV-named V does not by itself establish a TRD chain. The build requires
 complete additional scaffold coverage and preserves existing target IDs/order/padding.
 Validate junction retention and changed calls before promoting the broader scope.
+
+
+## Plain-install references
+
+The normal annotator auto-fetches a pinned, compressed reference asset and verifies
+all 37 canonical data files. Cache roots are immutable generations selected by an
+atomic pointer. A valid warm cache stays offline; valid legacy caches are adopted
+locally. Keep the complete database cache layout when staging an air-gapped machine.
+`arda info` prints the resolved root and MMseqs2 path. Kernel ownership is released
+on process death; persistent guard files are not stale locks. Use a separate cache
+when old releases still run with the pre-2.37 directory-lock protocol.

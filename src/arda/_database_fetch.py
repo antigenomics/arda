@@ -3,7 +3,8 @@
 The wheel ships code only; the curated ``vdj/`` reference (allele FASTAs + region markup, per
 species, AA + NT; ~50 MB on disk, ~3 MB compressed) is published as the
 ``arda-reference-vdj.tar.gz`` asset on the
-matching ``vX.Y.Z`` GitHub release and downloaded once into the per-user cache on first use.
+versioned data release (independent of the package version) and downloaded once into the
+per-user cache on first use. Readers pin a verified immutable generation.
 Version-sensitive precompiled mmseqs DBs are *not* shipped — they are built on demand from
 the fetched FASTAs into ``<cache>/data``.
 """
@@ -11,6 +12,9 @@ the fetched FASTAs into ``<cache>/data``.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
+import uuid
 import shutil
 import sys
 import tarfile
@@ -36,6 +40,7 @@ _URL = "https://github.com/antigenomics/arda/releases/download/v{version}/" + _A
 # Bump this ONLY when a release actually publishes a new reference tarball. `$ARDA_REFERENCE_TAG`
 # overrides it for testing a candidate asset.
 _REFERENCE_TAG = "2.5.7"
+_PINNED_FILES = json.loads(Path(__file__).with_name("_reference_manifest.json").read_text())["files_sha256"]
 
 
 def reference_url(version: str | None = None) -> str:
@@ -56,7 +61,7 @@ def _candidate_urls(version: str | None = None) -> list[str]:
     running package version, which covers a release that *did* ship its own asset before
     ``_REFERENCE_TAG`` was updated.
     """
-    if version:
+    if version or os.environ.get("ARDA_REFERENCE_TAG"):
         return [reference_url(version)]
     urls = [reference_url()]
     fallback = _URL.format(version=__version__)
@@ -65,46 +70,101 @@ def _candidate_urls(version: str | None = None) -> list[str]:
     return urls
 
 
+_ORGANISMS = ("human", "mouse", "rat", "rabbit", "rhesus_monkey")
+_REQUIRED = ("alleles.fasta", "alleles.aa.fasta", "markup.tsv", "markup.aa.tsv",
+             "cdr3_anchors.tsv", "combinations.tsv", "d_germlines.fasta")
+
+
+def _validate_required(root: Path) -> None:
+    for organism in _ORGANISMS:
+        files = _REQUIRED + (("d_prior.tsv",) if organism in ("human", "mouse") else ())
+        for name in files:
+            path = root / "vdj" / organism / name
+            minimum = 1000 if name in _REQUIRED[:5] else 0
+            if not path.is_file() or path.stat().st_size <= minimum:
+                raise RuntimeError(f"Incomplete reference: missing or empty {organism}/{name}")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def installed_database(dest: Path, *, version: str | None = None) -> Path | None:
+    """Resolve one complete immutable generation, rejecting missing/corrupt cache files."""
+    try:
+        name = json.loads((dest / "REFERENCE.json").read_text())["generation"]
+        if not isinstance(name, str) or len(name) != 32 or any(c not in "0123456789abcdef" for c in name):
+            return None
+        root = dest / ".references" / name
+        manifest = json.loads((root / "MANIFEST.json").read_text())
+        files = manifest["files_sha256"]
+        if manifest["source_url"] not in _candidate_urls(version):
+            return None
+        _validate_required(root)
+        required = {f"vdj/{o}/{f}" for o in _ORGANISMS for f in _REQUIRED}
+        required |= {f"vdj/{o}/d_prior.tsv" for o in ("human", "mouse")}
+        if not isinstance(files, dict) or not required <= files.keys():
+            return None
+        if (manifest["source_url"] == reference_url(_REFERENCE_TAG) and
+                any(files.get(name) != digest for name, digest in _PINNED_FILES.items())):
+            return None
+        for relative, expected in files.items():
+            path = root / relative
+            if not path.resolve().is_relative_to(root.resolve()) or _sha256(path) != expected:
+                return None
+        return root
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return None
+
+
+def legacy_database(dest: Path, *, version: str | None = None) -> Path | None:
+    """Accept a flat legacy cache only when all canonical data hashes match."""
+    if not _PINNED_FILES or reference_url(_REFERENCE_TAG) not in _candidate_urls(version):
+        return None
+    try:
+        _validate_required(dest)
+        return dest if all(_sha256(dest / name) == digest
+                           for name, digest in _PINNED_FILES.items()) else None
+    except (OSError, RuntimeError):
+        return None
+
+
 def fetch_database(dest: Path, *, force: bool = False, version: str | None = None) -> Path:
-    """Download + extract the reference (``vdj/<org>/...``) into ``dest``; return ``dest``.
+    """Fetch a complete reference and return its immutable root (containing ``vdj/``).
 
-    Skips the download if ``dest/vdj`` already exists (unless ``force``).
-
-    **``vdj/`` must never be visible in a partial state**, because its mere existence is the gate
-    every other arda process tests (``paths.database_dir``) — a half-populated tree is not a slow
-    download, it is a silent wrong answer. Two things guarantee that:
-
-    * a :func:`~arda._locking.build_lock`, because arda is routinely run concurrently against the
-      same cache (one Nextflow process per sample, one SLURM task per array index), and on first use
-      in a fresh environment all of them would otherwise fetch into the same path at once;
-    * extraction into ``dest`` itself, then a single :func:`os.replace`. The extraction directory has
-      to be a *sibling* of the target for that to be a rename: the previous code extracted into
-      ``/tmp`` and called ``shutil.move``, which silently degrades to a recursive **copy** across
-      filesystems (``/tmp`` and ``~/.cache`` usually are different ones) — populating ``vdj/`` file
-      by file, in full view of every other process.
-
-    Extraction still rejects symlinks/hardlinks and any path escaping the staging dir.
+    Publication replaces a small pointer atomically. Existing readers keep their old root;
+    failed or interrupted refreshes cannot remove it. A warm valid cache needs no network.
     """
     dest = Path(dest)
-    target = dest / "vdj"
-    if target.is_dir() and not force:
-        return dest
+    current = installed_database(dest, version=version)
+    if current is not None and not force:
+        return current
     dest.mkdir(parents=True, exist_ok=True)
-
-    # Under --force the work is ours by definition; otherwise whoever installed vdj/ has done it.
-    done = (lambda: False) if force else target.is_dir
-    with build_lock(dest / ".vdj.lock", done=done) as ours:
+    with build_lock(dest / ".vdj.lock",
+                    done=lambda: not force and installed_database(dest, version=version) is not None) as ours:
         if not ours:
-            return dest
-        _fetch_into(dest, target, version)
-    return dest
+            current = installed_database(dest, version=version)
+            if current is None:
+                raise RuntimeError("Reference changed while resolving its installed generation")
+            return current
+        if not force and legacy_database(dest, version=version) is not None:
+            with tempfile.TemporaryDirectory(dir=dest, prefix=".arda_legacy_") as td:
+                stage = Path(td)
+                for name in _PINNED_FILES:
+                    target = stage / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(dest / name, target)
+                return _publish_reference(dest, stage / "vdj", reference_url(_REFERENCE_TAG))
+        return _fetch_into(dest, version)
 
 
-def _fetch_into(dest: Path, target: Path, version: str | None) -> None:
-    """Download, verify and stage the reference beside ``target``, then swap it in atomically."""
+def _fetch_into(dest: Path, version: str | None) -> Path:
     urls = _candidate_urls(version)
     print(f"[arda] fetching reference database (one-time): {urls[0]}", file=sys.stderr)
-    # dir=dest, not /tmp: os.replace below is only a rename -- and only atomic -- within one filesystem.
     staging = Path(tempfile.mkdtemp(dir=dest, prefix=".arda_db_"))
     try:
         tarball = staging / _ASSET
@@ -123,32 +183,49 @@ def _fetch_into(dest: Path, target: Path, version: str | None) -> None:
         with tarfile.open(tarball) as tf:
             staged = staging.resolve()
             for member in tf.getmembers():
-                if member.issym() or member.islnk():
+                if not (member.isfile() or member.isdir()):
                     raise RuntimeError(f"Refusing to extract link from archive: {member.name}")
-                member_path = (staging / member.name).resolve()
-                if not str(member_path).startswith(str(staged) + os.sep):
+                if not (staging / member.name).resolve().is_relative_to(staged):
                     raise RuntimeError(f"Refusing to extract path outside temp dir: {member.name}")
             tf.extractall(staging)
-        # tarball root holds vdj/ (created with `tar -C database ... vdj`); tolerate a nested layout.
         src = staging / "vdj"
         if not src.is_dir():
-            src = next((p for p in staging.rglob("vdj") if p.is_dir()), None)
-        if src is None:
-            raise RuntimeError(f"Unexpected reference archive layout in {_ASSET} (no vdj/)")
-
-        if target.exists():
-            # os.replace refuses a non-empty destination directory, so retire the old tree first.
-            # Renaming it (rather than deleting it) keeps a reader that is mid-search on the old
-            # files alive: it holds inodes, and those survive until it closes them.
-            retired = dest / f".vdj.old.{os.getpid()}"
-            shutil.rmtree(retired, ignore_errors=True)
-            os.replace(target, retired)
-            try:
-                os.replace(src, target)
-            finally:
-                shutil.rmtree(retired, ignore_errors=True)
-        else:
-            os.replace(src, target)
+            candidates = [p for p in staging.rglob("vdj") if p.is_dir()]
+            if len(candidates) != 1:
+                raise RuntimeError(f"Unexpected reference archive layout in {_ASSET}")
+            src = candidates[0]
+        _validate_required(src.parent)
+        if url == reference_url(_REFERENCE_TAG):
+            for name, expected in _PINNED_FILES.items():
+                if _sha256(src.parent / name) != expected:
+                    raise RuntimeError(f"Reference checksum mismatch: {name}")
+        return _publish_reference(dest, src, url)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-    print(f"[arda] installed reference -> {dest}", file=sys.stderr)
+
+
+def _publish_reference(dest: Path, src: Path, source_url: str) -> Path:
+    """Install one private tree and publish only its pointer; never retire an active root."""
+    prepared = Path(tempfile.mkdtemp(dir=dest, prefix=".arda_ref_"))
+    pointer = dest / (".reference-" + uuid.uuid4().hex + ".json")
+    try:
+        os.replace(src, prepared / "vdj")
+        files = {p.relative_to(prepared).as_posix(): _sha256(p)
+                 for p in (prepared / "vdj").rglob("*") if p.is_file()}
+        if (source_url == reference_url(_REFERENCE_TAG) and
+                any(files.get(name) != digest for name, digest in _PINNED_FILES.items())):
+            raise RuntimeError("Reference checksum mismatch while staging the selected data release")
+        manifest = {"files_sha256": files, "source_url": source_url}
+        (prepared / "MANIFEST.json").write_text(json.dumps(manifest, sort_keys=True))
+        generations = dest / ".references"
+        generations.mkdir(exist_ok=True)
+        name = uuid.uuid4().hex
+        root = generations / name
+        os.replace(prepared, root)
+        pointer.write_text(json.dumps({"generation": name}))
+        os.replace(pointer, dest / "REFERENCE.json")
+    finally:
+        pointer.unlink(missing_ok=True)
+        shutil.rmtree(prepared, ignore_errors=True)
+    print(f"[arda] installed reference -> {root}", file=sys.stderr)
+    return root

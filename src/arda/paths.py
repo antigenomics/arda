@@ -30,9 +30,6 @@ __all__ = [
 ]
 
 
-_REFERENCE_MARKER = "vdj"  # database_dir()/vdj must exist for the reference to be usable
-
-
 @lru_cache(maxsize=1)
 def _source_root() -> Path | None:
     """The source checkout root if this is a dev/editable install, else ``None``.
@@ -85,20 +82,29 @@ def data_dir() -> Path:
 
 @lru_cache(maxsize=1)
 def database_dir() -> Path:
-    """Curated reference database root.
+    """Curated reference root, pinned to one complete generation per process.
 
-    Source checkout → the committed ``database/``. PyPI install → ``<cache>/database``, with
-    the reference auto-fetched on first call unless ``$ARDA_NO_AUTO_FETCH`` is set.
+    Source checkout → the committed ``database/``. PyPI install → a verified generation
+    within ``<cache>/database``, fetched once unless ``$ARDA_NO_AUTO_FETCH`` is set.
     """
     src = _source_root()
     if src is not None:
         return src / "database"
     db = cache_root() / "database"
-    if not (db / _REFERENCE_MARKER).is_dir() and "ARDA_NO_AUTO_FETCH" not in os.environ:
-        from ._database_fetch import fetch_database
+    from ._database_fetch import fetch_database, installed_database, legacy_database
 
-        fetch_database(db)
-    return db
+    if "ARDA_NO_AUTO_FETCH" not in os.environ:
+        return fetch_database(db)
+    current = installed_database(db)
+    if current is not None:
+        return current
+    # Explicitly staged air-gapped installations retain the legacy directory layout.
+    legacy = legacy_database(db)
+    if legacy is not None:
+        return legacy
+    raise RuntimeError(f"No complete verified reference at {db}. Automatic downloads are disabled "
+                       "by ARDA_NO_AUTO_FETCH. Stage a complete reference cache or run once "
+                       "with automatic downloads enabled.")
 
 
 def vdj_dir(species: str | None = None) -> Path:

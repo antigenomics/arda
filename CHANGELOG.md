@@ -24,6 +24,14 @@ new targets, preventing equal-score alignment changes from discarding junctions.
 Anchor tables follow `ARDA_IGBLAST` and fetched runtimes, matching the aligner
 instead of silently falling back when the tools live outside the checkout.
 
+**Reliable first use and refresh.** References use verified immutable generations
+and atomic selection. Missing or changed cached files are repaired, known complete
+legacy caches stay offline, and explicit data-release requests retain their identity.
+Kernel locks release on process death. Downloads have bounded waits, fail fast on
+permanent HTTP errors and reject truncated responses. IgBLAST refreshes retain old
+reader roots and validate required tools and anchor tables. Rebuilds use isolated
+source checkouts; CLI failures are concise with detailed debug logs available.
+
 **Documentation and examples.** Navigation separates tutorial, how-to, reference
 and explanation. The performance guide describes CPU ownership and resource
 measurements; embedding examples correctly describe internal search processes

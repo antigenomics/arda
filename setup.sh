@@ -80,7 +80,7 @@ for cmd in rnaseq amplicon singlecell map correct assemble shm cluster annotate;
     || { echo "FAIL: 'arda ${cmd}' does not resolve" >&2; exit 1; }
 done
 log "CLI surface OK (modes: rnaseq/amplicon/singlecell; stages: map/correct/assemble/shm)"
-"$ROOT/bin/igblastn" -version | head -1 || true
+python -c 'import subprocess; from arda.igblast import tool; subprocess.run([str(tool("igblastn")), "-version"], check=True)' || true
 
 # --- optional follow-ups ---------------------------------------------------
 if [[ "$DO_BUILD_DB" -eq 1 ]]; then

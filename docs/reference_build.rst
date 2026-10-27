@@ -3,7 +3,11 @@ Reference database build
 
 The reference build is an offline, reproducible process (``arda build-db``). It
 is only needed to regenerate ``database/vdj/<organism>/``; normal annotation uses
-the committed references.
+the committed or auto-fetched references. Rebuilding requires an isolated source
+checkout; a wheel installation does not overwrite its installed reference generation.
+Follow :doc:`installation` to obtain the checkout and set ``ARDA_HOME`` to it when
+using another environment's CLI. Missing tools or I/O failures abort the build
+rather than silently dropping loci.
 
 Pipeline
 --------

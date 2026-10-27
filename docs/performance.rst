@@ -67,3 +67,14 @@ Use the small committed fixtures for functional checks. Measure throughput and
 scaling on a representative library; a short fixture can be dominated by process
 startup and does not establish a speedup for a full cohort. Heavy Aldan-3 checks
 belong in scheduled compute jobs.
+
+
+Prepare a shared cache
+----------------------
+
+Run ``arda info`` once before submitting a large array to resolve the reference and
+MMseqs2. Indexes are built on first search and validated against their input and
+binary identities. Concurrent starts coordinate one build; a killed writer releases
+its kernel lock automatically. Reference refreshes select a new verified generation
+without deleting files used by current readers. See :doc:`installation` for offline
+staging and the cache boundary when older releases are still running.

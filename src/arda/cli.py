@@ -1927,6 +1927,10 @@ def main():
     os.environ["POLARS_MAX_THREADS"] = "1"
     try:
         app()
+    except (RuntimeError, OSError, ValueError) as exc:
+        log.debug("Command failed", exc_info=True)
+        typer.echo(f"Error: {exc}", err=True)
+        raise SystemExit(1) from None
     finally:
         if previous is None:
             os.environ.pop("POLARS_MAX_THREADS", None)

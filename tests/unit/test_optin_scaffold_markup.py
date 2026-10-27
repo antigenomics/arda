@@ -117,3 +117,14 @@ def test_optin_appends_scaffolds_without_renumbering_or_reframing_existing_targe
     assert captured[:len(expected)] == [(s.scaffold_id, s.sequence) for s in expected]
     assert len(captured) == len(expected) + 1
     assert captured[-1][0] == f"TRA_{len(expected)}"
+
+
+def test_rebuilding_requires_an_isolated_source_checkout(tmp_path, monkeypatch):
+    import importlib
+    import pytest
+    build = importlib.import_module("arda.refbuild.build")
+    monkeypatch.setattr(build, "_source_root", lambda: None, raising=False)
+    monkeypatch.setattr(build, "vdj_dir", lambda _: tmp_path / "output")
+    monkeypatch.setattr(build.imgt, "download_reference", lambda: pytest.fail("must fail before downloading"))
+    with pytest.raises(RuntimeError, match="source checkout"):
+        build.build_species("human")

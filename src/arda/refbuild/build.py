@@ -16,9 +16,9 @@ from pathlib import Path
 
 import polars as pl
 
-from ..paths import data_dir, vdj_dir
+from ..paths import data_dir, vdj_dir, _source_root
 from .._threads import resolve_threads
-from ..igblast import SUPPORTED_ORGANISMS, igblast_root
+from ..igblast import SUPPORTED_ORGANISMS, igblast_root, IgBlastError
 from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR, loci_for
 from . import imgt, combinations, airr_extract, constant
 from .translate import translate, aa_coords_from_nt, detect_coding_frame
@@ -610,6 +610,10 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False,
     """
     if organism not in IMGT_SPECIES_DIR:
         raise ValueError(f"Unknown organism {organism!r}; one of {list(IMGT_SPECIES_DIR)}")
+    if _source_root() is None:
+        raise RuntimeError("Reference rebuilding requires an isolated source checkout; "
+                           "clone antigenomics/arda and set ARDA_HOME to that checkout. "
+                           "Installed reference generations are read-only inputs.")
     species_dir = IMGT_SPECIES_DIR[organism]
     out_dir = vdj_dir(organism)
     logger = _setup_logger(out_dir)
@@ -631,6 +635,8 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False,
                 organism, species_dir, locus, j_frames, logger,
                 fwr3_stops=fwr3_stops, fr4_offsets=fr4_offsets,
                 one_allele_per_gene=one_allele_per_gene)
+        except (IgBlastError, OSError):
+            raise  # Missing/broken tools and I/O failures must not publish a partial species.
         except Exception as exc:  # noqa: BLE001 — one bad locus must not kill the species
             if allow_chimeras and locus.name == "TRA":
                 raise

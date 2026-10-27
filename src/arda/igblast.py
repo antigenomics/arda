@@ -27,11 +27,13 @@ as "IgBLAST was never installed here".
 from __future__ import annotations
 
 import os
+import errno
+import threading
 import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-from ._igblast_fetch import fetch, installed_version
+from ._igblast_fetch import fetch, installed_root, VERSION_FILE
 from .paths import bin_dir, project_root
 
 __all__ = [
@@ -88,31 +90,76 @@ def auxiliary_data(organism: str) -> Path:
     return aux
 
 
-@lru_cache(maxsize=1)
-def igblast_root(*, fetch_missing: bool = True) -> Path:
-    """The directory holding the IgBLAST executables and ``internal_data``.
+_root_lock = threading.RLock()
 
-    Fetches a release on first use; ``$ARDA_NO_AUTO_FETCH`` turns that into an error instead.
-    Metadata probes pass ``fetch_missing=False`` to keep optional discovery offline.
-    """
+
+def _reset_root_lock_after_fork():
+    global _root_lock
+    _root_lock = threading.RLock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_root_lock_after_fork)
+
+
+@lru_cache(maxsize=1)
+def _selected_root() -> Path:
+    """Cache only a successfully selected runtime; the caller serializes first selection."""
     override = os.environ.get("ARDA_IGBLAST")
     if override:
-        root = Path(override)
+        supplied = Path(override)
+        managed = installed_root(supplied)
+        if managed is None and ((supplied / VERSION_FILE).exists() or
+                                (supplied.parent / f".{supplied.name}.current.json").exists()):
+            raise IgBlastError(f"Incomplete managed IgBLAST installation at {supplied}; "
+                               "repair it or select a complete runtime with ARDA_IGBLAST.")
+        root = managed or supplied
         if not (root / "igblastn").exists():
-            raise IgBlastError(
-                f"$ARDA_IGBLAST={override} does not contain igblastn. Point it at the directory "
-                "holding the IgBLAST executables and internal_data/."
-            )
+            raise IgBlastError(f"$ARDA_IGBLAST={override} does not contain igblastn. "
+                               "Select a complete IgBLAST installation including its metadata.")
         return root
-    if (bin_dir() / "igblastn").exists():  # setup.sh layout, in a source checkout
-        return bin_dir()
+    binary_root = bin_dir()
+    managed = installed_root(binary_root)
+    if managed is not None:
+        return managed
+    if (binary_root / VERSION_FILE).exists():
+        raise FileNotFoundError(errno.ENOENT, "Incomplete managed IgBLAST", str(binary_root))
+    if (binary_root / "igblastn").exists():
+        return binary_root  # explicitly/manual installed source-checkout layout
     root = project_root() / "igblast"
-    return fetch(root) if fetch_missing else root
+    managed = installed_root(root)
+    if managed is not None:
+        return managed
+    raise FileNotFoundError(errno.ENOENT, "IgBLAST is not installed", str(root))
+
+
+def igblast_root(*, fetch_missing: bool = True) -> Path:
+    """Pin one complete runtime for execution and metadata; optional probes stay offline."""
+    with _root_lock:
+        try:
+            return _selected_root()
+        except FileNotFoundError as exc:
+            missing = Path(exc.filename)
+    if not fetch_missing:
+        return missing  # do not cache a missing runtime
+    fetch(missing)
+    with _root_lock:
+        return _selected_root()
+
+
+def _clear_selected_root():
+    with _root_lock:
+        _selected_root.cache_clear()
+
+
+igblast_root.cache_clear = _clear_selected_root
+igblast_root.cache_info = _selected_root.cache_info
 
 
 def igblast_version() -> str | None:
-    """The auto-fetched IgBLAST release version, or None if it was not fetched by arda."""
-    return installed_version(igblast_root())
+    """Version of this process's pinned root, independent of later refreshes."""
+    marker = igblast_root() / VERSION_FILE
+    return marker.read_text().strip() if marker.exists() else None
 
 
 def tool(name: str) -> Path:

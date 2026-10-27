@@ -1,22 +1,6 @@
-"""``vdj/`` must never be visible half-populated -- its existence is the gate.
-
-`paths.database_dir` decides "is the reference already here?" by testing whether ``vdj/`` is a
-directory. So anything that makes ``vdj/`` appear before it is complete does not cause a slow
-download or a crash -- it causes every *other* arda process to search an incomplete reference and
-report success over nothing.
-
-Two ways that happened, both fixed here:
-
-* **No lock.** The Nextflow module runs one process per sample, a SLURM array one per task; on first
-  use in a fresh cache they all fetch at once, into the same path.
-* **A cross-filesystem move.** The old code extracted into ``/tmp`` and called ``shutil.move``, which
-  is a rename only *within* one filesystem and silently degrades to a recursive **copy** across them
-  -- and ``/tmp`` and ``~/.cache`` normally are two different filesystems. So ``vdj/`` got populated
-  file by file, in full view of everyone else.
-"""
-
+"""Cold-cache races, incomplete downloads and refreshes must never expose partial references."""
 import multiprocessing as mp
-import os
+import shutil
 import tarfile
 import time
 from pathlib import Path
@@ -25,132 +9,197 @@ import pytest
 
 from arda import _database_fetch as dbf
 
-# Enough files that a file-by-file copy has a wide window to be caught in the act.
-_ORGANISMS = [f"org{i}" for i in range(12)]
+_ORGANISMS = ("human", "mouse", "rat", "rabbit", "rhesus_monkey")
+@pytest.fixture(autouse=True)
+def synthetic_reference_identity(monkeypatch):
+    # These synthetic archives are not the published dataset. Identity tests override this map.
+    monkeypatch.setattr(dbf, "_PINNED_FILES", {})
 
 
-def _make_tarball(path: Path) -> None:
-    """A stand-in reference archive: vdj/<org>/alleles.fasta, as the real asset is laid out."""
-    stage = path.parent / "stage"
+_FILES = ("alleles.fasta", "alleles.aa.fasta", "markup.tsv", "markup.aa.tsv",
+          "cdr3_anchors.tsv", "combinations.tsv", "d_germlines.fasta")
+
+
+def _make_tarball(path, label="original"):
+    stage = path.parent / ("stage-" + label)
     for org in _ORGANISMS:
         d = stage / "vdj" / org
         d.mkdir(parents=True, exist_ok=True)
-        (d / "alleles.fasta").write_text(f">{org}\nACGT\n" * 200)
+        for name in _FILES + (("d_prior.tsv",) if org in ("human", "mouse") else ()):
+            (d / name).write_text((label + "\n") * 200)
     with tarfile.open(path, "w:gz") as tf:
         tf.add(stage / "vdj", arcname="vdj")
 
 
-def _complete(vdj: Path) -> bool:
-    return all((vdj / o / "alleles.fasta").is_file() for o in _ORGANISMS)
+def _fetch(dest):
+    dbf._PINNED_FILES = {}  # spawned workers use the synthetic archive, not real pinned data
+    asset = Path(dest).parent / "asset.tar.gz"
+
+    def download(url, out):
+        with (Path(dest).parent / "downloads.log").open("a") as log:
+            log.write("download\n")
+        time.sleep(0.05)
+        shutil.copyfile(asset, out)
+
+    dbf._download = download
+    return str(dbf.fetch_database(Path(dest)))
 
 
-def _fetch(dest: str) -> None:
-    """One arda process fetching the reference into a shared cache."""
-    tarball = Path(dest).parent / "asset.tar.gz"
-
-    def fake_download(url, out):
-        time.sleep(0.05)  # a real download is not instant; give the racers room to interleave
-        out.write_bytes(tarball.read_bytes())
-
-    dbf._download = fake_download
-    dbf.fetch_database(Path(dest))
-
-
-def _watch(dest: str) -> str:
-    """Another arda process: the moment `vdj/` exists it is considered usable -- is it?"""
-    vdj = Path(dest) / "vdj"
-    for _ in range(4000):
-        if vdj.is_dir():
-            # No sleep: the whole point is what a reader sees the instant the gate opens.
-            return "complete" if _complete(vdj) else f"PARTIAL: {len(list(vdj.iterdir()))} of {len(_ORGANISMS)}"
-        time.sleep(0.002)
-    return "never appeared"
-
-
-def test_a_reader_never_sees_a_partially_extracted_reference(tmp_path):
-    """Catches any file-by-file materialization of ``vdj/`` (verified: swap the `os.replace` for a
-    `copytree` and this reports ``PARTIAL: 5 of 12``).
-
-    It does **not** by itself reproduce the shipped bug, and that is worth knowing rather than
-    assuming: the old `shutil.move` is a plain rename when source and destination share a
-    filesystem, which they do under pytest's tmp_path. It only degrades to a copy across a
-    filesystem boundary -- i.e. in production, where the staging dir was ``/tmp`` and the cache is
-    ``~/.cache``. `test_staging_is_a_sibling_of_the_target` is the deterministic guard for that.
-    """
+def test_concurrent_fetchers_download_once_and_share_one_complete_generation(tmp_path):
     dest = tmp_path / "database"
-    dest.mkdir()
     _make_tarball(tmp_path / "asset.tar.gz")
-
-    watcher = mp.Pool(1)
-    async_result = watcher.apply_async(_watch, (str(dest),))
-    fetcher = mp.Process(target=_fetch, args=(str(dest),))
-    fetcher.start()
-    saw = async_result.get(timeout=60)
-    fetcher.join()
-    watcher.close()
-
-    assert saw == "complete", (
-        f"a concurrent arda process saw {saw}. `vdj/` became visible before it was fully "
-        "extracted, and its existence is what every other process uses to decide the reference "
-        "is ready."
-    )
+    with mp.get_context("spawn").Pool(4) as pool:
+        roots = pool.map(_fetch, [str(dest)] * 4)
+    assert len(set(roots)) == 1
+    assert (tmp_path / "downloads.log").read_text().splitlines() == ["download"]
+    assert len(list((dest / ".references").iterdir())) == 1
+    root = Path(roots[0])
+    assert all((root / "vdj" / o / f).is_file() for o in _ORGANISMS for f in _FILES)
+    assert dbf.installed_database(dest) == root
+    assert not list(dest.glob(".arda_db_*"))
 
 
-def test_concurrent_fetchers_download_once_and_leave_one_good_tree(tmp_path):
+def test_empty_legacy_cache_is_repaired(tmp_path, monkeypatch):
     dest = tmp_path / "database"
-    dest.mkdir()
+    (dest / "vdj").mkdir(parents=True)
     _make_tarball(tmp_path / "asset.tar.gz")
+    calls = []
 
-    with mp.Pool(4) as pool:
-        pool.map(_fetch, [str(dest)] * 4)
+    def download(url, out):
+        calls.append(url)
+        shutil.copyfile(tmp_path / "asset.tar.gz", out)
 
-    assert _complete(dest / "vdj"), "the reference tree is incomplete after 4 concurrent fetchers"
-    leftovers = [p.name for p in dest.iterdir() if p.name != "vdj"]
-    assert not leftovers, f"staging/lock dirs left behind: {leftovers}"
+    monkeypatch.setattr(dbf, "_download", download)
+    root = dbf.fetch_database(dest)
+    assert calls
+    assert (root / "vdj/human/markup.tsv").stat().st_size > 1000
 
 
-def test_force_replaces_the_tree_without_ever_exposing_a_partial_one(tmp_path):
+def test_incomplete_archive_is_rejected_before_publication(tmp_path, monkeypatch):
+    (tmp_path / "empty/vdj").mkdir(parents=True)
+    asset = tmp_path / "asset.tar.gz"
+    with tarfile.open(asset, "w:gz") as tf:
+        tf.add(tmp_path / "empty/vdj", arcname="vdj")
+    monkeypatch.setattr(dbf, "_download", lambda url, out: shutil.copyfile(asset, out))
+    with pytest.raises(RuntimeError, match="reference|Reference"):
+        dbf.fetch_database(tmp_path / "database")
+    assert not (tmp_path / "database/REFERENCE.json").exists()
+
+
+def test_failed_refresh_preserves_current_generation(tmp_path, monkeypatch):
     dest = tmp_path / "database"
-    dest.mkdir()
     _make_tarball(tmp_path / "asset.tar.gz")
-    _fetch(str(dest))
+    old = Path(_fetch(str(dest)))
+    content = (old / "vdj/human/alleles.fasta").read_bytes()
+    replace = dbf.os.replace
 
-    stale = dest / "vdj" / "org0" / "alleles.fasta"
-    stale.write_text(">stale\n")
-    dbf.fetch_database(dest, force=True)
+    def fail_pointer(src, target):
+        if Path(target) == dest / "REFERENCE.json" or Path(target) == dest / "vdj":
+            raise OSError("simulated publication failure")
+        return replace(src, target)
 
-    assert _complete(dest / "vdj")
-    assert stale.read_text() != ">stale\n", "--force did not actually replace the old tree"
-    assert not [p.name for p in dest.iterdir() if p.name != "vdj"], "staging dirs left behind"
+    monkeypatch.setattr(dbf.os, "replace", fail_pointer)
+    with pytest.raises(OSError, match="publication failure"):
+        dbf.fetch_database(dest, force=True)
+    assert (old / "vdj/human/alleles.fasta").read_bytes() == content
+    assert dbf.installed_database(dest) == old
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX rename semantics")
-def test_staging_is_a_sibling_of_the_target(tmp_path):
-    """The staging dir must live in `dest`, or `os.replace` is a cross-device copy, not a rename.
-
-    This is the actual defect: `/tmp` and `~/.cache` are usually different filesystems, so the old
-    `shutil.move` silently copied `vdj/` into place file by file instead of renaming it.
-    """
+def test_refresh_keeps_reader_paths_immutable(tmp_path):
     dest = tmp_path / "database"
-    dest.mkdir()
     _make_tarball(tmp_path / "asset.tar.gz")
-    seen: list[Path] = []
+    old = Path(_fetch(str(dest)))
+    content = (old / "vdj/human/alleles.fasta").read_bytes()
+    _make_tarball(tmp_path / "asset.tar.gz", "replacement")
+    new = dbf.fetch_database(dest, force=True)
+    assert old != new
+    assert (old / "vdj/human/alleles.fasta").read_bytes() == content
+    assert (new / "vdj/human/alleles.fasta").read_bytes() != content
+    assert dbf.installed_database(dest) == new
 
-    real_mkdtemp = dbf.tempfile.mkdtemp
+
+def test_corrupted_cached_file_is_repaired(tmp_path):
+    dest = tmp_path / "database"
+    _make_tarball(tmp_path / "asset.tar.gz")
+    old = Path(_fetch(str(dest)))
+    (old / "vdj/human/markup.tsv").write_text("broken\n")
+    new = dbf.fetch_database(dest)
+    assert old != new
+    assert (new / "vdj/human/markup.tsv").stat().st_size > 1000
+
+
+def test_staging_is_on_the_destination_filesystem(tmp_path, monkeypatch):
+    dest = tmp_path / "database"
+    _make_tarball(tmp_path / "asset.tar.gz")
+    seen = []
+    mkdtemp = dbf.tempfile.mkdtemp
 
     def spy(*a, **kw):
-        d = real_mkdtemp(*a, **kw)
-        seen.append(Path(d))
-        return d
+        path = mkdtemp(*a, **kw)
+        seen.append(Path(path))
+        return path
 
-    dbf.tempfile.mkdtemp = spy
-    try:
-        _fetch(str(dest))
-    finally:
-        dbf.tempfile.mkdtemp = real_mkdtemp
+    monkeypatch.setattr(dbf.tempfile, "mkdtemp", spy)
+    _fetch(str(dest))
+    assert seen and all(p.parent == dest for p in seen)
 
-    assert seen, "no staging directory was created"
-    assert seen[0].parent == dest, (
-        f"staged in {seen[0].parent}, not in {dest}: os.replace across filesystems is a copy, "
-        "which is exactly the bug"
-    )
+
+def test_known_legacy_reference_is_adopted_without_network(tmp_path, monkeypatch):
+    dest = tmp_path / "database"
+    _make_tarball(tmp_path / "asset.tar.gz")
+    shutil.copytree(tmp_path / "stage-original/vdj", dest / "vdj")
+    expected = {p.relative_to(dest).as_posix(): dbf._sha256(p)
+                for p in (dest / "vdj").rglob("*") if p.is_file()}
+    monkeypatch.setattr(dbf, "_PINNED_FILES", expected, raising=False)
+    monkeypatch.setattr(dbf, "_download", lambda *a: pytest.fail("complete cache must stay offline"))
+    root = dbf.fetch_database(dest)
+    assert root != dest
+    assert dbf.installed_database(dest) == root
+    assert (dest / "vdj/human/alleles.fasta").is_file(), "old readers retain their path"
+
+
+def test_explicit_version_cannot_reuse_a_different_generation(tmp_path, monkeypatch):
+    dest = tmp_path / "database"
+    _make_tarball(tmp_path / "asset.tar.gz")
+    old = Path(_fetch(str(dest)))
+    calls = []
+
+    def download(url, out):
+        calls.append(url)
+        shutil.copyfile(tmp_path / "asset.tar.gz", out)
+
+    monkeypatch.setattr(dbf, "_download", download)
+    new = dbf.fetch_database(dest, version="different")
+    assert old != new
+    assert calls == [dbf.reference_url("different")]
+    assert dbf.installed_database(dest, version="different") == new
+    assert dbf.installed_database(dest) is None
+
+
+def test_pinned_asset_payload_must_match_known_file_hashes(tmp_path, monkeypatch):
+    _make_tarball(tmp_path / "asset.tar.gz")
+    monkeypatch.setattr(dbf, "_PINNED_FILES", {"vdj/human/alleles.fasta": "0" * 64})
+    monkeypatch.setattr(dbf, "_download", lambda url, out: shutil.copyfile(tmp_path / "asset.tar.gz", out))
+    with pytest.raises(RuntimeError, match="[Cc]hecksum"):
+        dbf.fetch_database(tmp_path / "database")
+
+
+def test_legacy_copy_is_revalidated_before_publication(tmp_path, monkeypatch):
+    dest = tmp_path / "database"
+    _make_tarball(tmp_path / "asset.tar.gz")
+    shutil.copytree(tmp_path / "stage-original/vdj", dest / "vdj")
+    expected = {p.relative_to(dest).as_posix(): dbf._sha256(p)
+                for p in (dest / "vdj").rglob("*") if p.is_file()}
+    monkeypatch.setattr(dbf, "_PINNED_FILES", expected)
+    copy = dbf.shutil.copy2
+
+    def changed_during_copy(src, target):
+        result = copy(src, target)
+        if str(target).endswith("human/markup.tsv"):
+            Path(target).write_text("changed during staging\n")
+        return result
+
+    monkeypatch.setattr(dbf.shutil, "copy2", changed_during_copy)
+    with pytest.raises(RuntimeError, match="[Cc]hecksum"):
+        dbf.fetch_database(dest)
+    assert not (dest / "REFERENCE.json").exists()
