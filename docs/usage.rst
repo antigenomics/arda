@@ -547,7 +547,7 @@ the submitted junction disagrees with them, and how far the disagreement extends
 .. code-block:: bash
 
    arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report -
-   arda markup -i records.tsv -o marked.tsv --organism human --d-posterior
+   arda markup -i records.tsv -o marked.tsv --organism human
 
 Coordinates are **junction space** throughout (Cys104 … Phe/Trp118, both anchors included) —
 the convention VDJdb's ``cdr3`` column uses, which is *not* arda's ``cdr3`` field. Output adds
@@ -676,10 +676,10 @@ answer — the V is exonuclease-trimmed back to Cys104 and ``GGS`` is N region �
 property of a junction separates the two, so both are flagged and both keep their boundary; filter
 on the flag if your analysis needs germline depth.
 
-``--d-posterior`` adds a D-gene call inferred from the junction *length* — the nucleotide length
-pins ``insVD + |D surviving| + insDJ``, so the D can be placed to a median 1–3 nt even when the
-protein shows nothing of it. Available for human IGH/TRB/TRD and mouse TRB, the pairs with a
-published generative model; everything else returns nothing rather than guessing.
+D inference for amino-acid junctions is provided by
+``vdjtools.model.annotate_junctions``. The ARDA ``--d-posterior`` option was removed
+in 2.33.0. Nucleotide-junction D alignment remains available through
+``arda.annotate.dmap.map_d_junction``.
 
 Running at scale
 ----------------

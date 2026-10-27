@@ -52,3 +52,24 @@ V germline is normalized to its coding frame by stop-free frame detection (the
 IMGT "codon start" header field is unreliable for 5'-partial alleles). The J
 coding frame comes from the IgBLAST auxiliary file; junction N-padding keeps the
 J frame aligned to V so the conserved FR4 ``[FW]GXG`` motif translates correctly.
+
+Opt-in TRDV–TRAJ scaffolds
+--------------------------
+
+``arda build-db --allow-chimeras`` enables the existing optional TRDV × TRAJ
+cross-product. It does not change the default pairing policy. Build into an
+isolated reference checkout when evaluating it; do not replace the shipped
+reference merely to test a candidate.
+
+IgBLAST can identify the exact TRDV germline while omitting J markup. For these
+constructed scaffolds, the builder can recover J coordinates from the known
+``V + N-padding + J`` sequence and the same germline anchor authority used by
+``cdr3_anchors.tsv``. Auxiliary coordinates take precedence, including the
+noncanonical Cys118 of TRAJ35*01. The existing motif fallback applies only to
+alleles without auxiliary metadata. J padding follows the anchor frame when
+the auxiliary coding-frame field disagrees with its own anchor.
+
+The opt-in build fails if any expected TRDV × TRAJ scaffold lacks complete
+markup. Check every region's sequence/coordinate round trip before packaging a
+candidate. Complete scaffold coverage establishes reference construction;
+measure recovered junctions and changed calls on real reads separately.

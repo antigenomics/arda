@@ -61,8 +61,8 @@ FASTQ, all loci searched at once.
 clonotype table in one call, running mapping, contig assembly and error correction for you.
 
 **Records with no read behind them.** A CDR3 amino acid plus a V and a J call — a VDJdb row —
-can be marked up, its junction repaired against the germline anchors, and its D gene inferred
-from junction length.
+can be marked up and its junction repaired against the germline anchors. For D inference
+from an amino-acid junction, use ``vdjtools.model.annotate_junctions``.
 
 Why arda
 --------
@@ -101,8 +101,8 @@ Why arda
      </div>
      <div class="proj-feature">
        <h3>Embeddable</h3>
-       <p><code>import arda; arda.annotate_sequences(...)</code> returns AIRR record dicts. No
-       subprocess, no temporary files, no server.</p>
+       <p><code>import arda; arda.annotate_sequences(...)</code> returns AIRR record dicts.
+       Search subprocesses and temporary files are managed internally.</p>
      </div>
    </div>
 
@@ -135,18 +135,19 @@ Where to go next
 
 .. toctree::
    :hidden:
-   :caption: Get started
+   :caption: Tutorial
    :maxdepth: 2
 
    quickstart
-   installation
-   usage
 
 .. toctree::
    :hidden:
-   :caption: Guides
+   :caption: How-to guides
    :maxdepth: 2
 
+   installation
+   usage
+   performance
    examples
    use_cases
    singlecell
@@ -170,7 +171,7 @@ Where to go next
 
 .. toctree::
    :hidden:
-   :caption: Background
+   :caption: Explanation
    :maxdepth: 2
 
    how_it_works

@@ -9,7 +9,6 @@ derive protein markup. Writes the committed artifacts under
 from __future__ import annotations
 
 import logging
-import os
 import re
 import time
 from collections import Counter
@@ -18,10 +17,11 @@ from pathlib import Path
 import polars as pl
 
 from ..paths import data_dir, vdj_dir
+from .._threads import resolve_threads
 from ..igblast import SUPPORTED_ORGANISMS
 from .loci import LOCI, VDJ_LOCI, IMGT_SPECIES_DIR, loci_for
 from . import imgt, combinations, airr_extract, constant
-from .translate import translate, aa_coords_from_nt
+from .translate import translate, aa_coords_from_nt, detect_coding_frame
 from .airr_extract import REGION_NAMES
 
 __all__ = ["build", "build_species"]
@@ -43,6 +43,43 @@ def _setup_logger(out_dir: Path) -> logging.Logger:
     logger.addHandler(fh)
     logger.addHandler(logging.StreamHandler())
     return logger
+
+
+def _complete_scaffold_j(rec, sc, v_seq, j_seq, fr4_offset) -> bool:
+    """Restore J markup only for an exact V+pad+J scaffold with trusted anchors.
+
+    IgBLAST can refuse TRAJ after identifying a TRDV. The scaffold is assembled
+    from known germlines, so the aux FR4 offset fixes its J coordinates exactly.
+    This is reference construction, never completion of an observed read.
+    """
+    if fr4_offset is None:
+        return False
+    v_seq = v_seq[detect_coding_frame(v_seq):]
+    if sc.sequence != v_seq + "N" * sc.n_pad + j_seq:
+        return False
+    try:
+        coding_start, v_end = int(rec["fwr1_start"]), int(rec["fwr3_end"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    j_start = len(v_seq) + sc.n_pad + 1
+    fr4_start = j_start + fr4_offset[0] + 1
+    fr4_end = len(sc.sequence) - fr4_offset[1]
+    if not (1 <= coding_start <= v_end - 2 and v_end <= len(v_seq) and
+            j_start <= fr4_start and v_end + 1 <= fr4_start - 1 and
+            fr4_start + 2 <= fr4_end <= len(sc.sequence)):
+        return False
+    if translate(v_seq[v_end - 3:v_end], 0) != "C" or (fr4_start - coding_start) % 3:
+        return False
+    rec.update(j_call=",".join(sc.j_calls), j_sequence_start=j_start,
+               j_sequence_end=len(sc.sequence), cdr3_start=v_end + 1,
+               cdr3_end=fr4_start - 1, fwr4_start=fr4_start, fwr4_end=fr4_end)
+    for region in ("cdr3", "fwr4"):
+        rec[region] = sc.sequence[rec[f"{region}_start"] - 1:rec[f"{region}_end"]]
+        rec[f"{region}_aa"] = translate(rec[region], 0)
+    rec["junction"] = sc.sequence[v_end - 3:fr4_start + 2]
+    rec["junction_aa"] = translate(rec["junction"], 0)
+    rec["productive"] = "F" if "*" in translate(sc.sequence[coding_start - 1:fr4_end], 0) else "T"
+    return True
 
 
 def _process_locus(organism, species_dir, locus, j_frames, logger,
@@ -87,6 +124,17 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
         v = select_one_allele_per_gene(v, logger=logger, locus=locus.name, segment="V")
         j = select_one_allele_per_gene(j, logger=logger, locus=locus.name, segment="J")
 
+    if locus.name == "TRA" and locus.v_shared == ("TRDV", ""):
+        # Use the same anchor authority as _collect_cdr3_anchors. TRAJ31's aux
+        # coding frame disagrees with its own CDR3 stop; two TRAJ alleles lack
+        # aux rows altogether. Never align FR4 to that inconsistent frame.
+        fr4_offsets = dict(fr4_offsets)
+        for allele, seq in j.items():
+            if allele not in fr4_offsets:
+                anchor = _j_anchor_from_motif(seq)
+                if anchor >= 0:
+                    fr4_offsets[allele] = (anchor - 1, (len(seq) - anchor) % 3)
+        j_frames = {**j_frames, **{a: (offset[0] + 1) % 3 for a, offset in fr4_offsets.items()}}
     scaffolds = combinations.build_locus_scaffolds(locus, v, j, j_frames)
     if not scaffolds:
         logger.warning("%s: no scaffolds produced — skipped", locus.name)
@@ -97,7 +145,7 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
     fa.write_text("".join(f">{s.scaffold_id}\n{s.sequence}\n" for s in scaffolds))
 
     df = airr_extract.annotate_scaffolds(
-        fa, organism, species_dir, locus, num_threads=max(1, (os.cpu_count() or 2)))
+        fa, organism, species_dir, locus, num_threads=resolve_threads())
     raw = len(v) * len(j)
     logger.info("%s: V=%d J=%d raw_combos=%d unique_scaffolds=%d annotated=%d",
                 locus.name, len(v), len(j), raw, len(scaffolds), df.height)
@@ -111,6 +159,11 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
         sc = by_id.get(sid)
         if sc is None:
             continue
+        if (locus.name == "TRA" and locus.v_shared == ("TRDV", "") and
+                any(a.startswith("TRDV") for a in sc.v_calls) and
+                any(rec.get(c) in (None, "", "NA") for c in coord_cols)):
+            _complete_scaffold_j(rec, sc, v[sc.v_calls[0]], j[sc.j_calls[0]],
+                                 fr4_offsets.get(sc.j_calls[0]))
         # Require complete markup (all region coordinates present).
         if any(rec.get(c) in (None, "", "NA") for c in coord_cols):
             incomplete += 1
@@ -170,6 +223,12 @@ def _process_locus(organism, species_dir, locus, j_frames, logger,
 
     if incomplete:
         logger.info("%s: dropped %d scaffolds with incomplete markup", locus.name, incomplete)
+    if locus.name == "TRA" and locus.v_shared == ("TRDV", ""):
+        expected = {sc.scaffold_id for sc in scaffolds if any(a.startswith("TRDV") for a in sc.v_calls)}
+        missing = expected - {row["scaffold_id"] for row in nt_rows}
+        if missing:
+            raise ValueError(f"Opt-in TRDV–TRAJ reference lacks complete markup for {len(missing)} "
+                             f"of {len(expected)} expected scaffolds; reference must not be packaged")
     if unanchored:
         logger.info("%s: %d scaffolds have no Cys104 anchor — kept for mapping, junction suppressed",
                     locus.name, unanchored)
@@ -562,6 +621,8 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False,
                 fwr3_stops=fwr3_stops, fr4_offsets=fr4_offsets,
                 one_allele_per_gene=one_allele_per_gene)
         except Exception as exc:  # noqa: BLE001 — one bad locus must not kill the species
+            if allow_chimeras and locus.name == "TRA":
+                raise
             logger.warning("%s: failed (%s) — skipped", locus.name, exc)
             continue
         nt_all += nt

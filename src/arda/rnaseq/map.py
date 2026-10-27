@@ -18,8 +18,6 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-import queue
-import threading
 from itertools import islice, zip_longest
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +30,7 @@ except ImportError:       # pure-Python fallback below keeps a source checkout w
 
 from ._res import Stage, peak_rss_mb
 from .._log import Throttle
+from .._threads import streaming_threads
 from ..annotate import io as seqio
 from ..annotate import mapper
 from ..annotate.airr_out import airr_header, format_rows
@@ -723,26 +722,11 @@ def map_rnaseq(
             from ..annotate.shortlist import load_combinations
             combos = load_combinations(ref.target_fasta.parent / "combinations.tsv")
 
-    chunks: queue.Queue = queue.Queue(maxsize=2)
-    # The reader runs in a daemon thread, so anything it raises -- a missing FASTQ, a shuffled mate
-    # file, a truncated gzip -- dies there unheard while `finally` still posts the sentinel. The main
-    # loop then sees a clean end-of-stream and reports "0/0 reads mapped", exit 0. A pipeline reads
-    # that as "this sample has no receptor reads". Capture it and re-raise on the consumer side.
-    reader_exc: list[BaseException] = []
-
-    def reader():
-        try:
-            pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit,
-                               with_qual=want_qual)
-            for chunk in chunked_fragments(pairs, chunk_size):
-                chunks.put(chunk)
-        except BaseException as exc:  # noqa: BLE001 — re-raised in the consumer
-            reader_exc.append(exc)
-        finally:
-            chunks.put(None)  # sentinel
-
-    t = threading.Thread(target=reader, daemon=True)
-    t.start()
+    # The reader and native scan/search share this one allocation. Serial mode
+    # reads synchronously instead of quietly computing on a second core.
+    search_threads, read_ahead = streaming_threads(threads, mapper.pl.thread_pool_size())
+    pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit, with_qual=want_qual)
+    source = chunked_fragments(pairs, chunk_size)
 
     report = RnaseqReport(input=str(r1), organism=organism, threads=threads,
                           min_score=min_score, paired=r2 is not None,
@@ -768,7 +752,7 @@ def map_rnaseq(
     logger.info("map: %s%s -> %s | %d threads, chunk %d, min_score %g",
                 r1, f" + {r2}" if r2 else "", output, threads, chunk_size, min_score)
     try:
-        with open(output, "w") as fh:
+        with seqio.prefetched(source, enabled=read_ahead) as chunks, open(output, "w") as fh:
             fh.write(airr_header(extra_cols) + "\n")
 
             def flush(batch: list) -> None:
@@ -781,7 +765,7 @@ def map_rnaseq(
                     quals = {r[0]: r[2] for r in batch}
                     batch = [(r[0], r[1]) for r in batch]
                 keep = mapper._annotate_chunk(
-                    batch, ref, target_db, seqtype, threads=threads,
+                    batch, ref, target_db, seqtype, threads=search_threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
                     d_max_evalue=d_max_evalue,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
@@ -856,12 +840,7 @@ def map_rnaseq(
             # guarantees a fragment's mates land in the same chunk, and splitting them is a bug
             # this pipeline has already shipped once under --reconstruct.
             pending: list = []
-            while True:
-                chunk = chunks.get()
-                if chunk is None:
-                    if reader_exc:
-                        raise reader_exc[0]
-                    break
+            for chunk in chunks:
                 report.total_reads += len(chunk)
                 # Read length, over the WHOLE library rather than the mapped subset -- the AIRR
                 # only holds reads that mapped, so nothing downstream can recover this. One pass
@@ -885,9 +864,9 @@ def map_rnaseq(
                         qmap = {r[0]: r[2] for r in chunk}
                         survivors = [(i, s, qmap[i]) for i, s in
                                      keep_records([(r[0], r[1]) for r in chunk],
-                                                  ref.target_fasta, threads=threads)]
+                                                  ref.target_fasta, threads=search_threads)]
                     else:
-                        survivors = keep_records(chunk, ref.target_fasta, threads=threads)
+                        survivors = keep_records(chunk, ref.target_fasta, threads=search_threads)
                     report.prefilter_stats["seen"] = (
                         report.prefilter_stats.get("seen", 0) + len(chunk))
                     report.prefilter_stats["passed"] = (
@@ -906,7 +885,6 @@ def map_rnaseq(
     finally:
         if reads_fh is not None:
             reads_fh.close()
-    t.join()
 
     stage.finish(report)   # wall_seconds / peak_rss_mb / rss_gain_mb, same definition as Stages 2-3
     report.reads_per_second = round(

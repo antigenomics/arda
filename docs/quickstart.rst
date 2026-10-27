@@ -116,7 +116,8 @@ Progress goes to stderr, and the paths of the files written go to stdout, one pe
 
 Three things are worth reading off it immediately.
 
-``junction_aa`` **includes both anchors.** It runs from Cys104 to Phe/Trp118 inclusive, which is
+``junction_aa`` **includes both anchors.** It runs from Cys104 through the J anchor at position 118 inclusive
+(usually Phe or Trp; the germline defines exceptions), which is
 why every string above opens with ``C``. IMGT CDR3 excludes them and is two residues shorter;
 arda writes that separately as ``cdr3_aa``. See :term:`junction`.
 
@@ -156,7 +157,7 @@ The full column list for every file is in :doc:`outputs`.
    }
 
 The ``unmapped`` breakdown accounts for every read that did not produce a row, so an unexpectedly
-low mapped fraction has a cause rather than a shrug. This fixture is receptor-enriched; a genuine
+low mapped fraction has a cause rather than a shrug. This fixture is receptor-enriched; a typical
 bulk RNA-seq library maps 0.02–3 % of its reads, and that is normal rather than a failure.
 
 ``out/DEMO.stats.tsv`` is the same run as QC in long format — four columns, one value per cell:
@@ -209,7 +210,7 @@ Or from Python:
    import arda
 
    records = arda.annotate_sequences(
-       ["GACGTGCAG...", ("clone7", "CAGGTG...")],   # strings, or (id, sequence) pairs
+       [("q1", "TGTGCCAGCAGCTTAGCGGGAGGGAACACCGGGGAGCTGTTTTTTGGA")],
        seqtype="nt",
        organism="human",
    )

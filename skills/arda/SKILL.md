@@ -27,7 +27,7 @@ across all five organisms.
 
 It also handles records with **no read behind them** — a CDR3 amino acid plus a V and J call, as
 in VDJdb — marking up which residues each germline templates, repairing the junction, and
-inferring the D gene from the junction's length.
+passing the resulting markup to vdjtools for D inference when needed.
 
 Human-facing documentation lives at https://docs.isalgo.dev/arda/ — `quickstart`, `usage`,
 `cli`, `outputs`, `benchmarks`, `glossary`, `how_it_works`. Point users there rather than
@@ -54,17 +54,19 @@ Bulk RNA-seq needs no extra: `seqtree` and `dnaio` are core dependencies. The `r
 import arda
 
 records = arda.annotate_sequences(
-    ["GACGTGCAG...", ("clone7", "CAGGTG...")],  # raw strings or (id, seq) pairs
+    [("q1", "TGTGCCAGCAGCTTAGCGGGAGGGAACACCGGGGAGCTGTTTTTTGGA")],
     seqtype="nt",          # "nt" or "aa"
     organism="human",      # human | mouse | rat | rabbit | rhesus_monkey
+    threads=0,            # affinity/cgroup/SLURM allocation; positive = explicit budget
     map_d=True,            # map D segments for VDJ loci — works on aa input too
 )
 ```
 
-Each record is a dict of AIRR fields in query space, 1-based closed: `locus`,
-`v_call`/`d_call`/`d2_call`/`j_call`, `c_call`/`c_class`, `productive`/`stop_codon`/`vj_in_frame`,
-`rev_comp`, `v_identity`, `sequence_alignment`/`germline_alignment`, `{v,j,c,d}_cigar`,
-`*_germline_start`/`*_germline_end`, `v_sequence_end`, `j_sequence_start`, `np1/np2/np3`,
+Each record is a dict of AIRR fields in 1-based closed query coordinates: gene calls,
+region sequences and bounds, alignments, CIGARs, productivity and junction fields.
+Use the [output reference](https://docs.isalgo.dev/arda/outputs.html) for the full schema.
+Ambiguous calls are comma-separated; unmapped records retain their ID and input sequence.
+
 `d_support`/`d2_support`, `junction(_aa)`, and per region in
 `(fwr1, cdr1, fwr2, cdr2, fwr3, cdr3, fwr4)`: `{r}_start`, `{r}_end`, `{r}`, `{r}_aa`. Ambiguous
 D and C calls are comma-joined allele lists, as V and J are. The TSV is a spec-valid AIRR
@@ -96,10 +98,8 @@ recs = arda.annotate_sequences([(cid, seq) for cid, seq in all_chains], organism
 by_id = {r["sequence_id"]: r for r in recs}     # map back per-item downstream
 ```
 
-Never wrap a per-item `annotate_*` in a loop, a `ProcessPoolExecutor` or a `ThreadPoolExecutor`:
-a process pool that forks after mmseqs2/BLAS have spawned threads **deadlocks**, a thread pool
-just serialises on the same overhead, and either way the fixed cost is paid N times instead of
-once.
+Never wrap per-item annotation in a process or thread pool: submit one batch to the
+existing internally threaded mapper. Use the streaming CLI to bound FASTQ memory.
 
 ## Region and junction semantics
 
@@ -141,19 +141,15 @@ arda cells    asm/PBMC.consensus.fq.gz -p out/PBMC            # single cell (UMI
 arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv  # the stages, separately
 arda assemble -i mapped.airr.tsv -o assembled.airr.tsv
 arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
-arda shm      -i mapped.airr.tsv -o rescoped.airr.tsv         # recount SHM outside the junction
 arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv
 arda qc batch  -d out/ -o out/batch --samples sheet.tsv   # every sample's QC as one table
 arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-contained page
-arda scenarios -i clones.tsv -o d_prior.tsv   # EM over recombination scenarios -> a generative model
-arda shm-model -i mapped.airr.tsv -o shm.tsv --locus IGH   # P(substitution | 5-mer context, region)
 
 arda genotype     -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB   # which V alleles this donor has
 arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # widen only where it helps
 arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv
 
 arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
-arda igblast    -i reads.fastq -o truth.airr.tsv --receptor ig   # known receptor: skip the TR pass
 arda export-ref --kind segments --locus TRB --format fasta
 arda build-db    --organism all             # offline reference build (needs IgBLAST)
 arda build-index --organism all             # rebuild mmseqs indexes for the local mmseqs
@@ -207,43 +203,20 @@ pipeline and `build-db` / `build-index`.
 `translate(nt, frame=0)`, `detect_coding_frame(nt)`, `reverse_complement(nt)`,
 `back_translate(aa)`, `aa_coords_from_nt(nt_start, nt_end, coding_start)`.
 
-## Gotchas
+## Essential conventions
 
-- **`junction` is not `cdr3`.** Both conserved anchors are *in* `junction`/`junction_aa` and *out*
-  of `cdr3`/`cdr3_aa`, so `cdr3_aa == junction_aa[1:-1]` always. Everything in `arda.cdr3fix` /
-  `dmap` (and vdjtools' D posterior) works in **junction** space, matching VDJdb's `cdr3` column. Mixing the two
-  conventions is the most expensive mistake available here, and it corrupts Pgen, clustering and
-  matching downstream.
-- **An empty `d_call` is a decision, not a gap.** The call is gated on `d_support` (E-value ≤ 0.2
-  nt, ≤ 0.05 aa). Human TRB gets a D on only ~47 % of junctions because an ordinary TRB interior
-  is 11–21 nt and a heavily-trimmed TRBD1 scores below the gate. TRA, TRG, IGK and IGL have no D
-  gene at all.
-- **A conserved-motif check is not an anchor.** `TRAJ35*01`'s anchor codon decodes Cys (TGC), not
-  [FW] — it is a functional IMGT `F` gene. Read `anchor_nt` from `cdr3_anchors.tsv`; a `[FW]GXG`
-  motif check silently deletes the gene.
-- **An overlapping V / J / NDN assignment inside the junction is not a defect.** Exonuclease
-  chew-back and N/P addition mean that partition is often not identifiable from sequence alone.
-  What *is* checkable: the junction's outer bounds, the gene calls, and whether arda invented a
-  junction it has no anchor for.
-- `arda.hmm.posterior_d` returns `None` for organisms with no shipped generative model (rat,
-  rabbit, rhesus) and for VJ loci. That is deliberate — do not substitute a human proxy. To score
-  one of those pairs, fit a table with `arda scenarios` and pass it to
-  `arda.hmm.model_for(prior=PATH)`. Nothing in the installed database is touched.
-- **`resolve-ties` helps on IGK/IGL/TRB and HURTS on IGH.** Exact `v_gene`-set agreement with
-  IgBLAST: IGK **.5707 -> .9373**, IGL .8586 -> .9137, TRB .9299 -> .9694 -- IGH .8255 -> .7238.
-  arda's IGK call is 0.42 genes/read too NARROW (1.18 vs 1.60); its IGH call already matches
-  IgBLAST's width, so IGH only pays the overshoot. Use `--loci IGK,IGL`. ⚠ Intersection recall
-  rises on every locus including IGH -- score the EXACT set, not the intersection.
-- **An IG `v_call` is only as good as the V germline the read covers**: `v_gene` recall is
-  **.1170 under 60 nt and .9896 at 200 nt or more**, and .9896 is the TRA amplicon's .9867 — no
-  IG-specific deficit at that coverage. Position beats length (IGHV diverges in FR1/CDR1/CDR2,
-  conserved near Cys104). No threshold ships; filter `v_germline_start`/`v_germline_end` yourself.
-  Tables and the rejected gate: `docs/usage.rst`.
-- aa input returns region `*_aa` directly with no frame bridging, so `stop_codon` and
-  `vj_in_frame` stay empty — but `productive` and the D columns *are* populated.
-- `map_d=True` on synthetic or partial input with no real junction simply finds no D. Harmless;
-  pass `map_d=False` to skip the search.
-- The shipped MMseqs2 indexes require matching source/payload SHA256 identities and MMseqs version; otherwise
-  arda rebuilds a private cache on first run. `arda build-index` rebuilds the shipped ones.
-- IgBLAST is needed only to build references and to run `arda igblast`, never at annotation time.
-  It auto-fetches on first use like mmseqs does.
+- Coordinates are 1-based closed. ``junction(_aa)`` includes both conserved anchors;
+  IMGT ``cdr3(_aa)`` excludes them. VDJdb's ``cdr3`` is a junction.
+- Use ``anchor_nt`` from the germline table; TRAJ35*01 has Cys118, so an F/W motif
+  is not a universal anchor. V/J/NDN attribution inside a junction is not recombination history.
+- ``annotate_sequences`` retains every input; unmapped records have empty annotation fields.
+  Streaming commands reserve one CPU for reading; a one-CPU budget reads synchronously.
+- The library manages MMseqs subprocesses and temporary files. Do not wrap per-sequence
+  calls in a worker pool. The CLI initializes serial Polars processing.
+- An absent D call can mean the E-value gate rejected it. Amino-acid D-posterior inference
+  belongs to ``vdjtools.model.annotate_junctions``; ``arda markup`` repairs and marks boundaries.
+- Reference indexes require matching FASTA/payload hashes and MMseqs version.
+  IgBLAST is needed for rebuilding references and ``arda igblast``, not ordinary annotation.
+- Read TSV with ``quote_char=None``. More field, coverage and genotype constraints:
+  [annotation](references/annotation.md), [regions](references/region-segments.md),
+  [genotype](references/genotype.md), [speed](references/speed-flags.md).

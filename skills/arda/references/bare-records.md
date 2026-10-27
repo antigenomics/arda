@@ -22,7 +22,7 @@ mk.good                      # neither side `impossible` AND both anchors presen
 mk.to_cdr3fix()              # VDJdb's `cdr3fix` JSON object, key for key
 ```
 
-CLI: `arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report - [--d-posterior]`.
+CLI: `arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report -`.
 
 ## 2.32.0 — the engine is a PORT of VDJdb's `Cdr3Fixer`, not an alignment of its own
 
@@ -129,14 +129,7 @@ which pins `insVD + |D surviving| + insDJ`. Shipped for human IGH/TRB/TRD and mo
 (the pairs with a published generative model); **every other pair returns `None` rather than
 guessing** — do not substitute a human proxy.
 
-```python
-posterior_d(junction_aa, v_call, j_call, "rhesus_monkey", prior_path="fitted.tsv")
-```
-
-`prior_path` (CLI: `arda markup --d-prior PATH`, which implies `--d-posterior`) scores against a
-table `arda scenarios` fitted instead of the shipped `database/vdj/<org>/d_prior.tsv`. That is the
-only way to reach the **11 of 13 shipped (organism, D-locus) pairs that have no prior at all** --
-OLGA has no model for them -- without overwriting a file inside the installed database, which
-would silently change every later run on the machine. Using an estimate is not adopting one.
-⚠ A `prior_path` that does not exist **raises**: the shipped table is allowed to be missing, a
-path the caller typed is not.
+Use ``vdjtools.model.annotate_junctions`` for batched amino-acid D inference.
+The retired ``arda markup --d-prior`` / ``--d-posterior`` options are unavailable
+since 2.33.0. For a fitted ARDA nucleotide scenario model, load it with
+``arda.hmm.model_for(prior=PATH)``; this does not modify the installed reference.

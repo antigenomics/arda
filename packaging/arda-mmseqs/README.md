@@ -2,14 +2,11 @@
 
 A static [MMseqs2](https://github.com/soedinglab/MMseqs2) binary, packaged as a wheel.
 
-Install it and `arda` finds mmseqs with nothing else to set up:
-
-```bash
-pip install 'arda-mapper[mmseqs]'
-```
-
-Plain `pip install arda-mapper` still works — it downloads the same binary on first use.
-This package only removes that first-run download (and the need for a network at all).
+This wheel packaging is prepared for distribution, but `arda-mmseqs` is not currently
+published on PyPI. Install `arda-mapper` normally: it fetches MMseqs2 on first use.
+The compatibility extra `arda-mapper[mmseqs]` is empty and does not bundle a binary.
+For offline use, pre-stage both the binary and germline reference as described in the
+[installation guide](https://docs.isalgo.dev/arda/installation.html).
 
 ## Why a separate distribution
 

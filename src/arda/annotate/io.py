@@ -6,10 +6,71 @@ Native parsing (no BioPython). Transparently handles gzip by ``.gz`` extension.
 from __future__ import annotations
 
 import gzip
+import queue
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 __all__ = ["open_text", "read_sequences", "detect_format", "write_fasta", "chunked"]
+
+
+@contextmanager
+def prefetched(chunks, *, enabled=True):
+    """Read at most two chunks ahead; stop the reader on consumer failure too."""
+    source = iter(chunks)
+    if not enabled:
+        try:
+            yield source
+        finally:
+            if hasattr(source, "close"):
+                source.close()
+        return
+    pending = queue.Queue(maxsize=2)
+    stop = threading.Event()
+    errors = []
+    sentinel = object()
+
+    def put(item):
+        while not stop.is_set():
+            try:
+                pending.put(item, timeout=0.1)
+                return True
+            except queue.Full:
+                pass
+        return False
+
+    def read():
+        try:
+            for chunk in source:
+                if not put(chunk):
+                    break
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            try:
+                if hasattr(source, "close"):
+                    source.close()
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                put(sentinel)
+
+    def consume():
+        while (item := pending.get()) is not sentinel:
+            yield item
+        if errors:
+            raise errors[0]
+
+    reader = threading.Thread(target=read, name="arda-reader", daemon=True)
+    reader.start()
+    try:
+        yield consume()
+    finally:
+        stop.set()
+        reader.join(timeout=5)
+        if reader.is_alive():
+            raise RuntimeError("ARDA input reader did not stop within 5 seconds")
 
 
 def open_text(path: str | Path):
