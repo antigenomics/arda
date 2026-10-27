@@ -21,7 +21,7 @@ arda annotate -i examples/example.fasta -o examples/example.airr.tsv --organism 
 ```
 
 [`example.fasta`](example.fasta) holds five real human GenBank mRNA records;
-[`example.airr.tsv`](example.airr.tsv) is arda's 83-column AIRR output.
+[`example.airr.tsv`](example.airr.tsv) is AIRR output with ARDA's annotation columns.
 
 | sequence_id | locus | v_call | d_call | j_call | d_support | cdr3_aa |
 |---|---|---|---|---|---|---|
