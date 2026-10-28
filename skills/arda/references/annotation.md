@@ -24,7 +24,7 @@ annotate_records(
     records,                 # list[(id, seq)]
     organism="human",
     seqtype="nt",            # "nt" | "aa"
-    threads=0,               # 0 = all cores
+    threads=0,               # 0 = affinity/cgroup/SLURM CPU allocation
     sensitivity=None,        # None -> tuned default (7.0)
     strand="both",           # nt only: "both" (search + re-orient) | "forward"
     map_d=True,              # map D segments (VDJ loci; works on aa input too)
@@ -101,9 +101,10 @@ j_sequence_start, np1, np2, np3, junction, junction_aa,
 - `{region}` is the nucleotide (or aa, for aa input) slice; `{region}_aa` is the
   amino-acid translation (V-side regions read in the V frame; FR4 in the J frame).
 - `productive` = "T" only when in-frame and free of stop codons / N-bridge;
-  `stop_codon` and `vj_in_frame` surface the two facts it collapses. All three are **empty**
-  (unevaluable, ~72 % of mapped bulk reads) when the read reached neither the junction nor FR4 —
-  never "F". Flags, never filters.
+  `stop_codon` and `vj_in_frame` surface the two facts it collapses. For nucleotide input, `productive` and `vj_in_frame` are empty when the junction/frame
+  cannot be evaluated. `stop_codon` remains evaluable from observed V-side regions even
+  without a junction. Annotation retains rows; single-cell pairing uses
+  `--require-productive` for chain status, retaining excluded chains as `extra`.
 - Never: `vj_in_frame` is `phase = (fwr4_start - v_coding_start) % 3 == 0` — *where the frame
   lands at FR4*, which is what decides whether the constant exon translates. It is NOT "the
   junction's 3' residues match the called J's germline residues". Reading it as the latter

@@ -229,9 +229,11 @@ Productivity
    * - ``productive``
      - The conjunction of the two.
 
-All three are **empty** when the read never reached both the junction and FR4 — *unevaluable*
-rather than non-productive. On real bulk RNA-seq that is around 72 % of mapped reads. They are
-flags: no stage drops a non-productive read. Worked examples in :doc:`productivity`.
+For nucleotide input, ``productive`` and ``vj_in_frame`` are empty when the junction/frame
+cannot be evaluated. ``stop_codon`` remains evaluable from observed V-side regions even
+without a junction. These are annotation flags; single-cell pairing retains excluded
+chains as ``extra``. Protein-input semantics and worked examples are in :doc:`productivity`.
+
 
 Search diagnostics
 ~~~~~~~~~~~~~~~~~~

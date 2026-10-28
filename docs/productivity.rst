@@ -26,8 +26,8 @@ The rule
    * - ``productive``
      - ``T`` when ``vj_in_frame`` is ``T`` **and** no annotated region carries a stop. It is
        the conjunction, not an independent judgement.
-   * - all three
-     - **Empty** when the read never reached both the junction and FR4. That is not
+   * - ``productive`` and ``vj_in_frame``
+     - **Empty** when the nucleotide read lacks an evaluable junction/frame. That is not
        "non-productive", it is *unevaluable* — on real bulk RNA-seq it is about 72 % of mapped
        reads, and writing ``F`` there would look like a repertoire of broken rearrangements.
 
@@ -40,8 +40,14 @@ residues. Those are different questions and they give different answers — see
 Flags, never filters
 --------------------
 
-arda writes these columns and does not act on them. No stage drops a non-productive read, and
-no threshold is applied anywhere. A non-functional rearrangement is real biology: one allele of
+Annotation retains non-productive rows. Single-cell pairing uses
+``--require-productive`` by default to classify chains as ``extra``; they remain
+in the chain table (see :doc:`singlecell`).
+
+For nucleotide input, ``stop_codon`` remains evaluable from observed V-side regions
+even without an evaluable junction/frame. For amino-acid input, ``productive``
+is evaluated over the observed FR1–FR4 span when both endpoints are present;
+``vj_in_frame`` is not inferred from protein sequence. A non-functional rearrangement is real biology: one allele of
 a T cell's two is usually out of frame, and a sample with *no* out-of-frame reads is usually a
 sample that has been filtered upstream.
 

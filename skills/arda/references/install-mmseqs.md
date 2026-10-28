@@ -17,6 +17,13 @@ version mismatch.
 So both conda users (env ships `mmseqs2`) and plain-pip users get a working
 binary with no manual step.
 
+Candidates are checked against the shipped index version; a matching candidate wins.
+The optional `arda-mmseqs` companion wheel is checked before checkout/PATH binaries.
+An explicit `ARDA_MMSEQS` bypasses version checking. A mismatched fallback warns
+and requires a private index rebuild.
+
+On Windows, use Linux Python in WSL2 for searches; automatic downloads target Linux/macOS.
+
 ## Auto-fetch
 
 On first use with nothing found, arda downloads the platform-appropriate static
@@ -29,7 +36,7 @@ python scripts/fetch_mmseqs.py            # eager fetch into bin/
 python scripts/fetch_mmseqs.py --force    # re-download
 ```
 
-`setup.sh --no-conda` runs the eager fetch for you.
+`bash setup.sh` runs the eager fetch for you.
 
 Implementation note: the downloader sends a browser `User-Agent` — GitHub release
 downloads return HTTP 504 under the default `Python-urllib` UA on some networks.

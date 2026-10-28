@@ -37,7 +37,8 @@ restating it.
 
 `pip install arda-mapper` (imports as `arda`). Nothing else is needed: the curated `vdj/`
 reference auto-fetches into `~/.cache/arda` on first use, and a static `mmseqs` binary fetches
-itself if one is not already resolvable. A source checkout uses the committed `database/` instead.
+itself if one is not already resolvable. A source checkout uses the committed `database/` instead. On Windows, use Linux Python
+in WSL2 for searches; automatic MMseqs2 downloads target Linux and macOS.
 
 - `ARDA_NO_AUTO_FETCH` — air-gapped runs against a pre-populated cache.
 - `ARDA_MMSEQS` — pin a binary; overrides everything and is not version-checked.
