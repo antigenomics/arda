@@ -644,6 +644,7 @@ def rnaseq_map(
 def rnaseq_correct(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(..., "--output", "-o", help="Corrected clonotype table TSV."),
+    threads: int = typer.Option(0, help="CPU budget for batched correction searches (0 = all allocated CPUs)."),
     max_subs: int = typer.Option(
         3, help="Max substitutions between an error child and its parent. A search RADIUS, not a "
                 "threshold -- the length-scaled probability model still decides. Saturates at 3."),
@@ -732,7 +733,7 @@ def rnaseq_correct(
     """Stage 2 — collapse CDR3 sequencing errors into clonotypes (per-substitution/indel model)."""
     from .rnaseq.correct import correct_airr
 
-    rep = correct_airr(input, output, organism=organism, map_d=map_d,
+    rep = correct_airr(input, output, organism=organism, map_d=map_d, threads=threads,
                        d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel,
                        error_rate=_error_rate(error_rate),
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,

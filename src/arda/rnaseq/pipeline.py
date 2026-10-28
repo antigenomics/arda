@@ -118,7 +118,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
         say(f"assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
-    crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d,
+    crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d, threads=threads,
                         d_max_evalue=d_max_evalue, ec_mode=ec_mode,
                         min_junction_q=min_junction_q, clonotype_key=clonotype_key,
                         call_level=call_level, isotype=isotype,

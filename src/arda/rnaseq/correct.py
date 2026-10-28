@@ -28,6 +28,7 @@ from pathlib import Path
 import polars as pl
 
 from .. import _markup
+from .._threads import resolve_threads
 from ..annotate.airr_out import read_airr as _read_airr
 
 from ._res import Stage
@@ -234,7 +235,7 @@ class CorrectReport:
 
 
 def estimate_error_rate(junctions: list[str], counts: list[int], v: list[str], j: list[str],
-                        *, require_vj: bool = True, min_parent: int = 100
+                        *, require_vj: bool = True, min_parent: int = 100, threads: int = 0
                         ) -> tuple[float | None, dict]:
     """The per-base substitution rate implied by the library's OWN 1-substitution error cloud.
 
@@ -275,9 +276,10 @@ def estimate_error_rate(junctions: list[str], counts: list[int], v: list[str], j
                                   engine="seqtm")
     parent_reads = child_reads = 0
     lengths: list[int] = []
-    for pi in safe:
+    hits = index.search_batch([junctions[i] for i in safe], params, resolve_threads(threads))
+    for pi, neighbors in zip(safe, hits):
         mass = 0
-        for hit in index.search(junctions[pi], params):
+        for hit in neighbors:
             ci = usable[hit.ref_id]
             if ci == pi or hit.n_subs == 0 or counts[ci] >= counts[pi]:
                 continue
@@ -305,7 +307,7 @@ def estimate_error_rate(junctions: list[str], counts: list[int], v: list[str], j
 
 def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str],
              *, max_subs: int, max_indel: int, error_rate: float, indel_rate: float,
-             require_vj: bool) -> list[int | None]:
+             require_vj: bool, threads: int = 0) -> list[int | None]:
     """For each clonotype, the strongest neighbour that is its sequencing-error parent (or None).
 
     ``counts`` is the SPANNING read count -- reads that fully observe the junction -- so the test is
@@ -333,12 +335,13 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
     index = seqtree.Index.build([junctions[i] for i in safe], alphabet="nt")
     params = seqtree.SearchParams(max_subs=max_subs, max_ins=max_indel, max_dels=max_indel,
                                   max_total_edits=max_subs + max_indel, engine="seqtm")
-    for ci in safe:
+    hits = index.search_batch([junctions[i] for i in safe], params, resolve_threads(threads))
+    for ci, neighbors in zip(safe, hits):
         L = len(junctions[ci])
         p_sub = min(0.5, error_rate * L)          # per-substitution collapse prob, scaled by length
         p_ind = min(0.5, indel_rate * L)
         best, best_count = None, -1
-        for hit in index.search(junctions[ci], params):
+        for hit in neighbors:
             nj = safe[hit.ref_id]
             if nj == ci or (hit.n_subs + hit.n_ins + hit.n_dels) == 0:
                 continue
@@ -355,7 +358,7 @@ def _parents(junctions: list[str], counts: list[int], v: list[str], j: list[str]
 
 
 def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bool,
-                  error_rate: float = 1e-3) -> tuple[pl.DataFrame, int, int]:
+                  error_rate: float = 1e-3, threads: int = 0) -> tuple[pl.DataFrame, int, int]:
     """Move reads whose junction differs from its putative parent ONLY at low-quality bases.
 
     **Never: The read is REASSIGNED to the parent, never discarded.** A read that reached a complete
@@ -422,9 +425,10 @@ def _quality_gate(df: pl.DataFrame, *, min_q: int, max_subs: int, require_vj: bo
         index = seqtree.Index.build([seqs[i] for i in safe], alphabet="nt")
         params = seqtree.SearchParams(max_subs=max_subs, max_ins=0, max_dels=0,
                                       max_total_edits=max_subs, engine="seqtm")
-        for ci in safe:
+        hits = index.search_batch([seqs[i] for i in safe], params, resolve_threads(threads))
+        for ci, neighbors in zip(safe, hits):
             best, best_count = None, -1
-            for hit in index.search(seqs[ci], params):
+            for hit in neighbors:
                 nj = safe[hit.ref_id]
                 if nj == ci or hit.n_subs == 0 or len(seqs[nj]) != len(seqs[ci]):
                     continue
@@ -589,6 +593,7 @@ def _error_pileup(
     alpha: float = 1e-3,
     k: int = 12,
     cap: int = 64,
+    threads: int = 0,
 ) -> list[int | None]:
     """Re-decide parentage from per-position read DEPTH -- the deep, low-coverage path.
 
@@ -659,10 +664,11 @@ def _error_pileup(
     safe = [i for i, s in enumerate(junctions) if s and set(s) <= _DNA]
     idx = seqtree.Index.build([junctions[i] for i in safe], alphabet="nt")
     params = seqtree.SearchParams(max_subs=2, max_ins=0, max_dels=0, max_total_edits=2, engine="seqtm")
-    for ci in safe:
+    hits = idx.search_batch([junctions[i] for i in safe], params, resolve_threads(threads))
+    for ci, neighbors in zip(safe, hits):
         jc_str = junctions[ci]
         best, best_count = None, -1
-        for hit in idx.search(jc_str, params):
+        for hit in neighbors:
             nj = safe[hit.ref_id]
             if nj == ci or hit.n_subs == 0 or hit.n_ins or hit.n_dels:
                 continue
@@ -1052,6 +1058,7 @@ def correct_airr(
     output: str | Path,
     *,
     organism: str = "human",
+    threads: int = 0,
     map_d: bool = True,
     d_max_evalue: float | None = None,
     max_subs: int = 3,
@@ -1078,6 +1085,8 @@ def correct_airr(
 
     Args:
         airr_tsv: Stage-1 mapped-reads AIRR TSV (needs ``junction``, ``sequence_id``).
+        threads: CPU budget for batched neighbour searches; 0 uses allocated CPUs.
+            Use 1 when distributing samples across external workers.
         organism: reference organism, used only to map D into each clonotype's junction.
         map_d: append the D columns (``_D_STR_COLS`` + ``_D_INT_COLS``), called once per
             clonotype on its corrected junction (see :func:`_clonotype_d`). Default ``True``.
@@ -1148,6 +1157,7 @@ def correct_airr(
     Returns:
         A :class:`CorrectReport`.
     """
+    threads = resolve_threads(threads)
     if ec_mode not in EC_MODES:
         raise ValueError(f"ec_mode must be one of {sorted(EC_MODES)}, got {ec_mode!r}")
     if clonotype_key not in CLONOTYPE_KEYS:
@@ -1264,7 +1274,7 @@ def correct_airr(
         estimated, estimate_report = estimate_error_rate(
             aggregated["junction"].to_list(), aggregated["len"].to_list(),
             aggregated["v_call"].to_list(), aggregated["j_call"].to_list(),
-            require_vj=require_vj)
+            require_vj=require_vj, threads=threads)
         if estimated is None:
             # Never: fall back LOUDLY. A library too shallow to measure is a normal outcome (three
             # bulk RNA-seq arms in benchmark round 35 hit it), and silently substituting the
@@ -1287,7 +1297,7 @@ def correct_airr(
     if min_junction_q > 0:
         df, n_low_q, n_clono_low_q, moved_sid, emptied_keys = _quality_gate(
             df, min_q=min_junction_q, max_subs=max_subs, require_vj=require_vj,
-            error_rate=error_rate)
+            error_rate=error_rate, threads=threads)
 
     # A clonotype is (locus, v_call, j_call, junction) -- NOT the junction alone. Two reads with the
     # same nucleotide junction but a different locus/V/J are different clonotypes. `read_ids` keeps
@@ -1338,10 +1348,10 @@ def correct_airr(
                                                     else "fallback")),
                            error_rate_parents=(estimate_report or {}).get("parents", 0))
     parent = _parents(junctions, span_counts, v, j, max_subs=max_subs, max_indel=max_indel,
-                      error_rate=error_rate, indel_rate=indel_rate, require_vj=require_vj)
+                      error_rate=error_rate, indel_rate=indel_rate, require_vj=require_vj, threads=threads)
     if error_method != "simple":
         parent = _error_pileup(raw, junctions, v, j, locus, parent, span_counts,
-                               error_rate=error_rate, indel_rate=indel_rate, method=error_method)
+                               error_rate=error_rate, indel_rate=indel_rate, method=error_method, threads=threads)
 
     # QUALITY-DIRECTED RESCUE (arda.rnaseq.denoise). The abundance model above is only valid where
     # a ladder of observed intermediates exists -- measured at k <= 2, with 3 as headroom. Beyond

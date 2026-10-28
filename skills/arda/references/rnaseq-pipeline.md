@@ -125,3 +125,8 @@ bundle, no new dependency — so it opens air-gapped and survives the results di
 The two quality columns feeding it are opt-in on `map` and use **different encodings**:
 `--junction-quality` writes raw Phred+33 *characters* over `junction`; `--mutation-quality` writes
 comma-joined *integers*, one per `v_mutations` / `j_mutations` entry, in the same order.
+
+Correction neighbour searches use seqtree batches. `arda correct --threads 0` and
+`correct_airr(..., threads=0)` select the process/job CPU allocation; pipeline
+commands forward their budget to correction. With one external sample worker per
+CPU, pass `threads=1` to avoid nested search parallelism.
