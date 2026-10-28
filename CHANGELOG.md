@@ -3,7 +3,7 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
-## Unreleased
+## 2.37.1
 
 - Batch correction-neighbour searches through seqtree instead of one call per junction.
   `arda correct --threads` and `correct_airr(..., threads=...)` use the process/job
