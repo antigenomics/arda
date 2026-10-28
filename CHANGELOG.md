@@ -3,6 +3,13 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## Unreleased
+
+- Batch correction-neighbour searches through seqtree instead of one call per junction.
+  `arda correct --threads` and `correct_airr(..., threads=...)` use the process/job
+  allocation by default; RNA-seq and amplicon pipelines forward their CPU budget.
+  Parent selection, quality gates and error-rate calculations are unchanged.
+
 ## 2.37.0
 
 **One CPU allocation across mapping phases.** Automatic thread selection respects

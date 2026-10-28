@@ -110,7 +110,7 @@ def test_cli_correct_accepts_auto(tmp_path):
                     + "\n".join("\t".join(r) for r in rows) + "\n")
     out = tmp_path / "clones.tsv"
     result = CliRunner().invoke(app, ["correct", "-i", str(airr), "-o", str(out),
-                                      "--error-rate", "auto"])
+                                      "--error-rate", "auto", "--threads", "1"])
     assert result.exit_code == 0, result.output
     assert out.exists()
 

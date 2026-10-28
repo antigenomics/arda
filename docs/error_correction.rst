@@ -9,6 +9,14 @@ explained as sequencing error than as biology are collapsed onto the clone they 
 
    arda correct -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
 
+Correction submits one query batch per neighbour-search phase to seqtree.
+``--threads 0`` uses the CPUs allocated to the process or SLURM task; an explicit
+positive budget is checked against that allocation. The library equivalent is
+``correct_airr(..., threads=...)``. When samples run in separate external workers,
+pass each worker its share (or ``threads=1`` for one worker per CPU).
+The RNA-seq and amplicon pipelines pass their existing ``--threads`` budget through
+to correction.
+
 The clonotype key is ``(locus, v_call, j_call, junction)``. Abundance is the AIRR
 ``duplicate_count`` — every read that encompasses the junction, spanning or partial, assigned by
 alignment — and ``consensus_count`` carries the distinct-fragment count beside it. Each
