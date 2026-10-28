@@ -50,7 +50,8 @@ pip install arda-mapper
 That is all. The distribution is `arda-mapper` and imports as `arda`; binary wheels carry its C++
 extensions for CPython 3.10–3.13 on Linux, macOS (arm64) and Windows. The MMseqs2 search binary and
 the curated germline reference are fetched automatically on first use into `~/.cache/arda` — no
-conda, no manual reference build. Run `arda info` to see what got resolved.
+conda, no manual reference build on Linux and macOS. On Windows, run search workflows
+with Linux Python inside WSL2; the automatic MMseqs2 downloader targets Linux and macOS. Run `arda info` to see what got resolved.
 
 For a development checkout, `bash setup.sh` builds a uv venv, compiles the extensions and fetches
 IgBLAST and MMseqs2. See the [installation guide](https://docs.isalgo.dev/arda/installation.html).
@@ -66,7 +67,7 @@ arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # targeted RepSeq 
 arda cells    asm/PBMC.consensus.fq.gz -p out/PBMC            # single cell, from UMI consensus
 ```
 
-Each mode runs mapping → assembly → error correction and writes:
+`rnaseq` and `amplicon` run mapping → assembly → error correction and write:
 
 | file | contents |
 |---|---|
@@ -74,6 +75,11 @@ Each mode runs mapping → assembly → error correction and writes:
 | `SAMPLE.airr.tsv` | one AIRR Rearrangement row per mapped read |
 | `SAMPLE.arda.json` | run report: reads in, reads mapped, why the rest were not, wall time, peak RSS |
 | `SAMPLE.stats.tsv` | run QC in long format, for per-sample and cohort checks |
+
+Single-cell runs assemble molecules per cell before annotation and pairing, writing
+`SAMPLE.contigs.fasta`, `SAMPLE.contigs.airr.tsv`, `SAMPLE.chains.tsv` and
+`SAMPLE.cells.tsv`, plus diagnostics and QC. See the
+[single-cell output reference](https://docs.isalgo.dev/arda/outputs.html#outputs-singlecell).
 
 Progress goes to stderr; the output paths, one per line, to stdout.
 
@@ -188,7 +194,7 @@ suite as full coverage — optional extras gate optional suites.
 Layout: the package is `src/arda/` (`cli.py`, `annotate/`, `rnaseq/`, `refbuild/`), the four
 nanobind C++ extensions are `src/_markup/`, `src/_prefilter/`, `src/_segmap/`, `src/_denoise/`, the
 committed references are in `database/`, and `integrations/` holds the Nextflow module and Snakemake
-workflow. Contributor guidance is in [`CLAUDE.md`](CLAUDE.md); design records are in
+workflow. Contributor guidance is in [`AGENTS.md`](AGENTS.md); design records are in
 [`project/`](project/); planned work is in [`ROADMAP.md`](ROADMAP.md); data provenance is in
 [`SOURCES.md`](SOURCES.md); per-release changes are in [`CHANGELOG.md`](CHANGELOG.md).
 
