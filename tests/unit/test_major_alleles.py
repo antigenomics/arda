@@ -80,3 +80,13 @@ def test_name_selector_import_stays_lightweight():
     import sys
     result = subprocess.run([sys.executable, '-c', "import sys; from arda import select_major_alleles; assert select_major_alleles(['V*10','V*02']) == {'V':'V*02'}; assert 'polars' not in sys.modules"], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_d_major_prefers_complete_then_keeps_partial_only_gene(tmp_path, monkeypatch):
+    from arda import major_allele_map, paths
+    monkeypatch.setattr(paths, 'vdj_dir', lambda _: tmp_path)
+    (tmp_path/'markup.tsv').write_text('locus\tv_call\tj_call\n')
+    (tmp_path/'cdr3_anchors.tsv').write_text('locus\tallele\tstatus\tfunctionality\n')
+    (tmp_path/'d_germlines.fasta').write_text('>TRB|D1*01\nAAA\n>TRB|D1*02\nGGG\n>TRB|D2*01\nCCC\n')
+    (tmp_path/'d_germlines.tsv').write_text('allele\tstatus\nD1*01\tpartial\nD1*02\tok\nD2*01\tpartial\n')
+    assert major_allele_map('human') == {'D1':'D1*02','D2':'D2*01'}

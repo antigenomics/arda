@@ -40,12 +40,21 @@ def major_allele_map(organism="human", locus=None):
                     if row["allele"] in available and row["status"] == "ok"
                     and row["functionality"] in ("F", "ORF")
                     and (locus is None or row["locus"] == locus)}
+    d_names = set()
     with (base / "d_germlines.fasta").open() as handle:
         for line in handle:
             if line.startswith(">"):
                 loc, allele = line[1:].strip().split("|", 1)
                 if locus is None or loc == locus:
-                    eligible.add(allele)
+                    d_names.add(allele)
+    available.update(d_names)
+    d_metadata = base / "d_germlines.tsv"
+    if d_metadata.exists():
+        with d_metadata.open() as handle:
+            eligible.update(row["allele"] for row in csv.DictReader(handle, delimiter="\t")
+                            if row["allele"] in d_names and row["status"] == "ok")
+    else:
+        eligible.update(d_names)
     selected = select_major_alleles(available)
     selected.update(select_major_alleles(eligible))
     return selected
