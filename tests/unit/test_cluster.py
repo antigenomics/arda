@@ -7,7 +7,7 @@ from arda.annotate.io import read_sequences
 
 
 def _write_fasta(path: Path, n: int):
-    path.write_text("".join(f">s{i}\nACGT{i:04d}AAA\n" for i in range(n)))
+    path.write_text("".join(f">s{i}\nACGTAAA\n" for i in range(n)))
 
 
 def test_split_partitions_all_records_disjointly(tmp_path):
@@ -49,3 +49,10 @@ def test_render_submit_script_chains_steps(tmp_path):
     assert "--dependency=afterok:$ARRAY_JID" in s
     assert '"$ARDA" cluster merge' in s
     assert "--partition=cpu" in s and "--cpus-per-task=8" in s
+
+
+def test_render_submit_script_preserves_protein_ingress(tmp_path):
+    script = render_submit_script('protein.fa', 'out.tsv', tmp_path,
+                                  shards=3, seqtype='aa')
+    split_line = next(line for line in script.splitlines() if 'cluster split-fasta' in line)
+    assert '--seqtype aa' in split_line

@@ -8,6 +8,17 @@ For copy-paste recipes — the one-liners, annotating sequences you already have
 snippets that turn a clonotype table into clonal fractions, gene usage, repertoire overlap and
 cohort QC — see :doc:`examples`.
 
+Sequencing DNA input rule
+-------------------------
+
+All nucleotide sequencing inputs are uppercased, and every ambiguous DNA IUPAC
+base (``RYSWKMBDHVN``) is replaced with ``A`` before search or assembly. Other
+non-DNA symbols are rejected; gaps are permitted only in aligned strings. This rule
+applies to file and in-memory library inputs and has no opt-out. Imported AIRR
+correction/assembly inputs receive the same treatment for observed nucleotide
+fields and affected region translations. Protein inputs (``seqtype="aa"``),
+raw germline references, read identifiers and quality strings are preserved.
+
 .. _choosing a mode:
 
 The three modes
@@ -355,7 +366,7 @@ constant-region ``c_call``/``c_class`` (isotype), per-segment CIGARs
 
 On a score tie ``d_call``/``d2_call`` are comma-separated allele ambiguity lists, and ``d2_call``
 is the second (3′) segment of a D-D fusion — called in every D locus (IGH, TRB, TRD). The
-``sequence`` field holds the read **as submitted**; ``rev_comp`` = ``T`` signals that the other
+``sequence`` field holds the normalized read in its **input orientation**; ``rev_comp`` = ``T`` signals that the other
 output fields describe its reverse complement (per the AIRR spec).
 
 The D call is accepted on a Karlin–Altschul E-value (``d_support``, shipped so a consumer can

@@ -87,7 +87,7 @@ Identity and locus
    * - ``sequence_id``
      - The read or record name, verbatim from the input.
    * - ``sequence``
-     - The query sequence, re-oriented to the plus strand if it mapped reversed.
+     - The normalized query sequence in its input orientation; ``rev_comp`` marks coding-strand reversal.
    * - ``locus``
      - ``TRA``, ``TRB``, ``TRG``, ``TRD``, ``IGH``, ``IGK`` or ``IGL``.
    * - ``rev_comp``

@@ -33,6 +33,11 @@ Human-facing documentation lives at https://docs.isalgo.dev/arda/ — `quickstar
 `cli`, `outputs`, `benchmarks`, `glossary`, `how_it_works`. Point users there rather than
 restating it.
 
+
+Sequencing DNA is always uppercased and ambiguous IUPAC bases (`RYSWKMBDHVN`)
+are replaced with `A` at input, before search/assembly, with no opt-out.
+Protein (`seqtype="aa"`) input and raw germline/reference resources are unchanged.
+
 ## Install and environment
 
 `pip install arda-mapper` (imports as `arda`). Nothing else is needed: the curated `vdj/`

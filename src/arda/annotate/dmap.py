@@ -23,6 +23,8 @@ Only IGH, TRB and TRD have D germlines; VJ loci return an empty call.
 
 from __future__ import annotations
 
+from .io import normalize_nt
+
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -146,7 +148,7 @@ def map_d_junction(junction_nt: str, v_call: str, j_call: str,
     placed a TRBD2 at nucleotide 6 that way.
     """
     organism = resolve_species(species)
-    junction_nt = (junction_nt or "").strip().upper()
+    junction_nt = normalize_nt((junction_nt or "").strip())
     anchors = load_anchors(organism)
     v_id = resolve_allele(_leading_call(v_call), "V", anchors)
     j_id = resolve_allele(_leading_call(j_call), "J", anchors)

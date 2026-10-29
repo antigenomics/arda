@@ -84,7 +84,7 @@ def test_streaming_keeps_input_synchronous_when_table_pool_fills_budget(tmp_path
     monkeypatch.setattr(mapper, "_prep", lambda *args: (None, None, 2, 7, 2))
     monkeypatch.setattr(mapper.pl, "thread_pool_size", lambda: 2)
 
-    def reads(_):
+    def reads(_, **kwargs):
         assert threading.get_ident() == caller
         yield "q", "ACGT"
 

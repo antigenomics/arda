@@ -44,6 +44,8 @@ cells is the obvious upgrade and was tried and reverted -- see the comment in
 
 from __future__ import annotations
 
+from .annotate.io import normalize_nt
+
 import math
 import re
 from collections import defaultdict
@@ -83,6 +85,7 @@ def trim(seq: str, *, adapter: str = ADAPTER, min_stub: int = 8) -> str:
     Both orientations are tried, and a partial stub counts: a consensus that ended eight bases
     into the adapter still shares those eight bases with every other such consensus.
     """
+    seq = normalize_nt(seq)
     for probe in (adapter, _rc(adapter)):
         for length in range(len(probe), min_stub - 1, -1):
             cut = seq.find(probe[:length])
@@ -353,6 +356,7 @@ def assemble_cell(
     column that a hundred molecules cover and two disagree on. ``min_informative_columns``
     requires the disagreement to co-segregate across positions rather than stand on one.
     """
+    sequences = [normalize_nt(seq) for seq in sequences]
     weights = [1] * len(sequences) if weights is None else weights
     usable = [i for i, s in enumerate(sequences) if len(s) >= k]
     if not usable:
@@ -391,9 +395,9 @@ def assemble_cell(
             seq, weight, base = local[i], local_w[i], off - lo
             for p, char in enumerate(seq):
                 columns[base + p][char] += weight
-        return "".join(
+        return normalize_nt("".join(
             max(col.items(), key=lambda kv: kv[1])[0] if col else "N" for col in columns
-        )
+        ))
 
     contigs: list[Contig] = []
     for members in sorted(components.values(), key=len, reverse=True):
@@ -441,19 +445,19 @@ def read_records(path: str | Path):
                     continue
                 name, _, comment = header[1:].rstrip("\n").partition(" ")
                 depth = _DEPTH.search(comment)
-                yield name, seq.rstrip("\n").upper(), int(depth.group(1)) if depth else 1
+                yield name, normalize_nt(seq.rstrip("\n")), int(depth.group(1)) if depth else 1
         else:
             name, buf = None, []
             for line in fh:
                 if line[:1] == ">":
                     if name is not None:
-                        yield name, "".join(buf).upper(), 1
+                        yield name, normalize_nt("".join(buf)), 1
                     name = line[1:].rstrip("\n").split()[0] if line[1:].strip() else ""
                     buf = []
                 elif line.strip():
                     buf.append(line.strip())
             if name is not None:
-                yield name, "".join(buf).upper(), 1
+                yield name, normalize_nt("".join(buf)), 1
 
 
 def read_molecules(

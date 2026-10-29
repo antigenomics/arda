@@ -85,8 +85,11 @@ def _format_rows_py(records: list[dict], cols=_COLUMNS) -> str:
         out.append("\t".join(vals))
     return "\n".join(out) + ("\n" if out else "")
 
-def read_airr(path):
+def read_airr(path, *, seqtype="nt"):
     """Read an AIRR TSV, tolerating BOTH dialects arda has written.
+
+    Observed nucleotide columns follow the mandatory IUPAC-to-A rule.
+    ``seqtype="aa"`` denotes protein observations and preserves their alphabet.
 
     Never: ``quote_char=None`` is not a style choice. ``junction_quality`` is a Phred+33 string and
     **chr 34 is ``"``, i.e. Q1** -- a legitimate score any low-quality base produces. polars' reader
@@ -102,7 +105,14 @@ def read_airr(path):
     Hence the normalisation below: an AIRR field is never legitimately the two-character string
     ``""``, so mapping it back to empty is unambiguous and makes both dialects read the same.
     """
+    if seqtype not in ("nt", "aa"):
+        raise ValueError("seqtype must be nt or aa")
     df = pl.read_csv(path, separator="\t", infer_schema_length=0, quote_char=None)
-    return df.with_columns(
+    df = df.with_columns(
         pl.when(pl.col(c) == '""').then(pl.lit("")).otherwise(pl.col(c)).alias(c)
         for c, t in df.schema.items() if t == pl.Utf8)
+
+    if seqtype == "nt":
+        from .io import normalize_nt_frame
+        df = normalize_nt_frame(df)
+    return df

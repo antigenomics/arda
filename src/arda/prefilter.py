@@ -85,5 +85,7 @@ def keep_records(records: list[tuple[str, str]], target_fasta: Path, *,
     measured 2.66x in isolation and 1.16x through a mask-shaped API. Here the only Python objects
     created are the survivors, which on bulk is 0.5-2 % of the input.
     """
+    from .annotate.io import normalize_nt
+    records = [(sid, normalize_nt(seq)) for sid, seq in records]
     idx = build(Path(target_fasta), k)
     return idx.filter(records, 1, min_hits, threads)

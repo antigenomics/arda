@@ -41,11 +41,12 @@ def test_batched_candidate_api_preserves_all_hits(tmp_path, monkeypatch, extra):
     monkeypatch.setattr(mod.mmseqs, "convertalis", convert)
     if extra in ("unknown", "qlen", "bounds"):
         with pytest.raises(RuntimeError, match="invalid MMseqs"):
-            mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "AAAA")])
+            mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "RYSWKMBDHVN")])
         return
-    result = mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "AAAA")])
+    result = mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "RYSWKMBDHVN")])
     assert result["limits"]["rejected_reverse_hits"] == int(extra == "reverse")
     assert result["queries"]["sequence"][0] == "AAACAAA"
+    assert result["queries"]["sequence"][1] == "A" * 11
     assert len(calls) == 1
     hits = result["alignments"].to_dicts()
     assert len(hits) == 2
@@ -54,8 +55,8 @@ def test_batched_candidate_api_preserves_all_hits(tmp_path, monkeypatch, extra):
     assert result["queries"].height == 2
     assert {h["sequence_id"] for h in hits} == {"q1"}
     assert result["limits"]["max_seqs"] == 300
-    serial = mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "AAAA")], threads=1)
-    parallel = mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "AAAA")], threads=4)
+    serial = mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "RYSWKMBDHVN")], threads=1)
+    parallel = mod.alignment_candidates([("q1", "aaacaaa"), ("q2", "RYSWKMBDHVN")], threads=4)
     assert serial["alignments"].equals(parallel["alignments"])
 
 

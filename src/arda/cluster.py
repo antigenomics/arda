@@ -98,7 +98,7 @@ def regime_flags(regime: str, *, organism: str = "human", threads: int = 8, kmer
 
 
 def split(input: str | Path, out_dir: str | Path, shards: int,
-          *, prefix: str = "shard") -> list[Path]:
+          *, prefix: str = "shard", seqtype: str = "nt") -> list[Path]:
     """Round-robin split a FASTA/FASTQ into ``shards`` FASTA files (one pass).
 
     Round-robin (record ``k`` → shard ``k % shards``) balances load even when
@@ -111,7 +111,7 @@ def split(input: str | Path, out_dir: str | Path, shards: int,
     paths = [out_dir / f"{prefix}_{i}.fasta" for i in range(shards)]
     handles = [open(p, "w") for p in paths]
     try:
-        for k, (sid, seq) in enumerate(seqio.read_sequences(input)):
+        for k, (sid, seq) in enumerate(seqio.read_sequences(input, seqtype=seqtype)):
             handles[k % shards].write(f">{sid}\n{seq}\n")
     finally:
         for h in handles:
@@ -322,7 +322,7 @@ set -euo pipefail
 mkdir -p "{shards_dir}" "{out_dir}"
 
 # 1. Split once (cheap, single pass).
-"$ARDA" cluster split-fasta "{input}" "{shards_dir}" --shards {shards}
+"$ARDA" cluster split-fasta "{input}" "{shards_dir}" --shards {shards} --seqtype {seqtype}
 
 # 2. Annotate each shard as an array task.
 ARRAY_JID=$(sbatch --parsable {common} --job-name=arda-map --array=0-{last} \\

@@ -3,6 +3,18 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.38.2
+
+- Always replace ambiguous DNA IUPAC bases (including N) in sequencing
+  observations with A before annotation, candidate search, paired-read merging,
+  single-cell assembly, correction and junction scenario scoring. This input
+  rule is mandatory in both library and CLI paths. Protein input and raw
+  germline references retain their existing alphabets.
+- Imported AIRR correction/assembly inputs normalize observed nucleotide fields
+  and update affected junction/region translations while preserving reference
+  fields, coordinates, identifiers and quality strings.
+- Keep the immutable 2.38.1 reference resource pin and major-only defaults.
+
 ## 2.38.1
 
 - Honor raw IMGT completeness labels when building junction germline resources.

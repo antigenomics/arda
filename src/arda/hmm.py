@@ -67,6 +67,8 @@ SHM-aware one. :mod:`arda.scenarios`, which fits the model, was never deprecated
 
 from __future__ import annotations
 
+from .annotate.io import normalize_nt
+
 from dataclasses import dataclass
 from math import log
 
@@ -204,7 +206,7 @@ def best_scenario(junction_nt: str, v_call: str, j_call: str, model: _Model,
     dg = dict(g.d_germlines)[allele]
     # The germline offset is recovered from the placement: the surviving D sits at `p`, and among
     # equal-length matches `_d_placements` kept the first offset, which is what this reproduces.
-    start = dg.find(junction_nt.strip().upper()[p:p + m]) if m else 0
+    start = dg.find(normalize_nt(junction_nt.strip())[p:p + m]) if m else 0
     return Scenario(del_v=len(g.v_nt) - v_t, ins_vd=ins1, d_call=allele,
                     del_dl=max(start, 0), del_dr=len(dg) - max(start, 0) - m,
                     ins_dj=ins2, del_j=len(g.j_nt) - j_t)

@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 from .. import _markup, mmseqs
 from .._threads import import_polars, resolve_threads
+from .io import normalize_nt
 from .mapper import _cached_segment_db
 from .reference import load_reference
 
@@ -58,9 +59,9 @@ def alignment_candidates(records, *, organism="human", threads=0, max_seqs=300,
     if len(set(ids)) != len(ids):
         raise ValueError("sequence IDs must be unique")
     for name, seq in records:
-        if not name or any(c.isspace() for c in name) or not seq or set(seq.upper()) - set("ACGTN"):
+        if not name or any(c.isspace() for c in name) or not seq or set(seq.upper()) - set("ACGTRYSWKMBDHVN"):
             raise ValueError("expected nonempty whitespace-free IDs and nucleotide sequences")
-    records = [(name, seq.upper()) for name, seq in records]
+    records = [(name, normalize_nt(seq)) for name, seq in records]
     threads = resolve_threads(threads)
     if pl.thread_pool_size() > threads:
         raise ValueError(f"Polars is already initialized with {pl.thread_pool_size()} threads, "

@@ -45,14 +45,17 @@ def germlines(monkeypatch):
 
 
 def _airr(tmp_path, reads, name="in.tsv"):
-    """``reads`` is ``(v_call, germline_end, junction)`` per row; span always starts at 1."""
+    """Encode opaque clonotype labels as distinct valid DNA; spans start at 1."""
+    def junction(label):
+        return "".join("ACGT"[(byte >> shift) & 3]
+                       for byte in label.encode() for shift in (6, 4, 2, 0))
     path = tmp_path / name
     pl.DataFrame({
         "sequence_id": [f"r{i}" for i in range(len(reads))],
         "locus": ["TRB"] * len(reads),
         "v_call": [c for c, _e, _j in reads],
         "j_call": ["TRBJ1-1*01"] * len(reads),
-        "junction": [j for _c, _e, j in reads],
+        "junction": [junction(j) for _c, _e, j in reads],
         "v_germline_start": ["1"] * len(reads),
         "v_germline_end": [str(e) for _c, e, _j in reads],
         "v_mutations": [""] * len(reads),
@@ -343,8 +346,9 @@ def test_read_depth_is_reported_beside_the_clonotype_count(tmp_path):
     clonotype's own allele assignment can be trusted. Reporting only one of the two hides half the
     question.
     """
-    reads = ([("G*01", 120, "a")] * 5 + [("G*01", 120, "b")] * 3
-             + [("G*01", 120, f"c{i}") for i in range(10)])
+    reads = ([("G*01", 120, "AAAA")] * 5 + [("G*01", 120, "CCCC")] * 3
+             + [("G*01", 120, "G" + format(i, "04b").translate(str.maketrans("01", "AT")))
+                for i in range(10)])
     rows, report = infer_genotype(_airr(tmp_path, reads), min_clonotypes=5)
     row = next(r for r in rows if r[1] == "G")
     assert row[3] == "12", "12 clonotypes"

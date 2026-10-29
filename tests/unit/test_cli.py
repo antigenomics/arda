@@ -19,7 +19,7 @@ runner = CliRunner()
 
 
 def _write_fasta(path: Path, n: int):
-    path.write_text("".join(f">s{i}\nACGT{i:04d}AAA\n" for i in range(n)))
+    path.write_text("".join(f">s{i}\nACGTAAA\n" for i in range(n)))
 
 
 def test_info_reports_version_and_paths():

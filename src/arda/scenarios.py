@@ -28,6 +28,8 @@ See ``project/design-scenarios.md``.
 
 from __future__ import annotations
 
+from .annotate.io import normalize_nt
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from functools import lru_cache
@@ -479,7 +481,7 @@ def lattice(junction_nt: str, v_call: str, j_call: str, model: _Model,
     parameter nothing measured.
     """
     g = germlines_for(v_call, j_call, species)
-    junction = (junction_nt or "").strip().upper()
+    junction = normalize_nt((junction_nt or "").strip())
     if g is None or not junction:
         return None
     locus, L = g.locus, len(junction)
@@ -623,7 +625,7 @@ def enumerate_scenarios(junction_nt: str, v_call: str, j_call: str,
     placement and enumerating the product explicitly is what makes a naive version slow.
     """
     g = germlines_for(v_call, j_call, species)
-    junction = (junction_nt or "").strip().upper()
+    junction = normalize_nt((junction_nt or "").strip())
     if g is None or not junction:
         return []
     L = len(junction)

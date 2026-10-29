@@ -176,10 +176,11 @@ def test_reverse_complemented_input_yields_the_same_junction(human, human_annot)
     """arda searches both strands, so an antisense molecule must give the same junction as its
     sense form -- the exact property a stranded library's R2 reads depend on.
 
-    Per AIRR, ``sequence`` keeps the read AS SUBMITTED and ``rev_comp=T`` signals that the output
+    Per AIRR, ``sequence`` keeps the normalized input read and ``rev_comp=T`` signals that the output
     data are on its reverse complement. So for an antisense input, ``sequence`` is the (antisense)
     submitted read, while ``sequence_alignment`` and the junction are on the coding strand."""
-    rc_in = {acc: seq.translate(_RC)[::-1] for acc, seq in human}
+    from arda.annotate.io import normalize_nt
+    rc_in = {acc: normalize_nt(seq).translate(_RC)[::-1] for acc, seq in human}
     rc_annot = {r["sequence_id"]: r for r in annotate_records(list(rc_in.items()), "human", "nt", threads=0)}
     compared = 0
     for acc, fwd in human_annot.items():
