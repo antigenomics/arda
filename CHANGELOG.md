@@ -3,6 +3,16 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.38.0
+
+- Add `arda.alignment_candidates` for bounded batches of preliminary V/J/D evidence:
+  scored alternative targets and allele groups, mismatch/CIGAR details, and query/reference
+  coordinates. Search limits are explicit. Candidate endpoints do not fix recombination
+  trimming or N/P additions; ordinary AIRR annotation retains its existing interface.
+- Use the selected CPU budget sequentially for MMseqs and the native D-candidate batch.
+  Results have deterministic row order, initialized table pools must fit the budget,
+  and importing `arda` remains lightweight.
+
 ## 2.37.1
 
 - Batch correction-neighbour searches through seqtree instead of one call per junction.

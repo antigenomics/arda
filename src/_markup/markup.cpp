@@ -25,6 +25,8 @@
 #include <climits>
 #include <map>
 #include <stdexcept>
+#include <thread>
+#include <exception>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -255,6 +257,49 @@ static std::tuple<int, int, int, int, int> d_local_align(const std::string &inte
     const int ds = (bs < 0) ? -1 : bs - best_off;
     const int de = (be < 0) ? -1 : be - best_off;
     return {best, bs, be, ds, de};
+}
+
+// One preliminary span per query/allele; inference owns alternative trimming.
+using DCandidate = std::tuple<int, int, int, int, int, int, int, int>;
+static std::vector<DCandidate> d_candidates_batch(
+    const std::vector<std::string> &queries, const std::vector<std::string> &germlines,
+    int threads = 1) {
+    if (threads < 1) throw std::invalid_argument("threads must be positive");
+    if (queries.empty() || germlines.empty()) return {};
+    // Tiny batches cannot amortize thread startup; same explicit threshold as the API metadata.
+    const size_t nt = queries.size() < 32 ? 1 : std::min(size_t(threads), queries.size());
+    std::vector<std::vector<DCandidate>> parts(nt);
+    std::vector<std::exception_ptr> errors(nt);
+    auto worker = [&](size_t t) {
+        try {
+            const size_t lo = queries.size() * t / nt, hi = queries.size() * (t+1) / nt;
+            for (size_t qi = lo; qi < hi; ++qi)
+                for (size_t di = 0; di < germlines.size(); ++di) {
+                    auto [score, qs, qe, ts, te] = d_local_align(queries[qi], germlines[di]);
+                    if (score > 0) parts[t].emplace_back(qi, di, score, qs+1, qe+1,
+                                                       ts+1, te+1, (qe-qs+1-score)/2);
+                }
+        } catch (...) { errors[t] = std::current_exception(); }
+    };
+    std::vector<std::thread> pool;
+    pool.reserve(nt);
+    if (nt == 1) worker(0);
+    else {
+        try {
+            for (size_t t = 0; t < nt; ++t) pool.emplace_back(worker, t);
+        } catch (...) {
+            for (auto &thread : pool) thread.join();
+            throw;  // Startup failure is an error, never a serial fallback.
+        }
+        for (auto &thread : pool) thread.join();
+    }
+    for (const auto &error : errors) if (error) std::rethrow_exception(error);
+    size_t size = 0;
+    for (const auto &part : parts) size += part.size();
+    std::vector<DCandidate> out;
+    out.reserve(size);
+    for (auto &part : parts) out.insert(out.end(), part.begin(), part.end());
+    return out;
 }
 
 // Stitch a contig's alignment to the scaffold from its constituent reads'
@@ -682,6 +727,10 @@ NB_MODULE(_markup, m) {
           nb::arg("qaln"), nb::arg("taln"), nb::arg("tstart"), nb::arg("t_lo"), nb::arg("t_hi"),
           "Fractional identity over germline positions in target range [t_lo, t_hi]; "
           "-1.0 when no germline position is covered.");
+    m.def("d_candidates_batch", &d_candidates_batch, nb::arg("queries"), nb::arg("germlines"), nb::arg("threads") = 1,
+          nb::call_guard<nb::gil_scoped_release>(),
+          "Per-allele best gapless D spans; 1-based closed coordinates. "
+          "Rows: query index, germline index, +1/-1 score, qstart, qend, tstart, tend, mismatches.");
     m.def("d_local_align", &d_local_align, nb::arg("interior"), nb::arg("d"),
           "Gapless local alignment (match=+1, mismatch=-1) of a short D germline "
           "against a query interior. Returns (score, i_start, i_end, d_start, d_end) "
