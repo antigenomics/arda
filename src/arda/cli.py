@@ -295,6 +295,7 @@ def build_index_cmd(
 def annotate(
     input: Path = typer.Option(..., "--input", "-i", help="Input FASTA/FASTQ."),
     output: Path = typer.Option(..., "--output", "-o", help="Output AIRR TSV."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one usable major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     seqtype: str = typer.Option("nt", help="Input sequence type: nt or aa."),
     threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
@@ -314,7 +315,7 @@ def annotate(
 
     annotate_file(input, output, organism=organism, seqtype=seqtype,
                   threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d,
-                  d_max_evalue=d_max_evalue)
+                  d_max_evalue=d_max_evalue, major_only=major_only)
 
 
 @app.command()
@@ -490,6 +491,7 @@ def rnaseq_map(
     output: Path = typer.Option(..., "--output", "-o", help="AIRR TSV of mapped reads only."),
     r1: Path = typer.Option(..., "--r1", help="FASTQ (single-end, or R1 of a pair)."),
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one usable major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     sensitivity: Optional[float] = typer.Option(None, help="mmseqs -s (default: tuned)."),
@@ -635,7 +637,7 @@ def rnaseq_map(
                     with_mutation_quality=mutation_quality, shm=shm,
                     complete_junction_nt=complete_junction_nt,
                     cell_from=cell_from, cell_regex=cell_regex,
-                    emit_reads=emit_reads, report_path=report)
+                    emit_reads=emit_reads, report_path=report, major_only=major_only)
     # `map_rnaseq` already logged the summary line; only the output path belongs on stdout.
     typer.echo(str(output))
 
@@ -718,6 +720,7 @@ def rnaseq_correct(
     extra_airr: Optional[Path] = typer.Option(
         None, "--extra-airr",
         help="Stage-3 assembled-reads AIRR (from `assemble`) to fold into the clonotype table."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major D allele per gene; --all-alleles restores all D alleles."),
     organism: str = typer.Option("human", help="Reference organism (used only to map D)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
@@ -734,7 +737,7 @@ def rnaseq_correct(
     from .rnaseq.correct import correct_airr
 
     rep = correct_airr(input, output, organism=organism, map_d=map_d, threads=threads,
-                       d_max_evalue=d_max_evalue, max_subs=max_subs, max_indel=max_indel,
+                       d_max_evalue=d_max_evalue, major_only=major_only, max_subs=max_subs, max_indel=max_indel,
                        error_rate=_error_rate(error_rate),
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
                        ec_mode=ec_mode, min_junction_q=min_junction_q,
@@ -760,6 +763,7 @@ def rnaseq_assemble(
     output: Path = typer.Option(
         ..., "--output", "-o",
         help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="CPU budget for re-annotation (0 = all allocated CPUs)."),
     map_d: bool = typer.Option(
@@ -779,7 +783,7 @@ def rnaseq_assemble(
     from .rnaseq.assemble import assemble_contigs
 
     rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d,
-                           d_max_evalue=d_max_evalue, report_path=report)
+                           d_max_evalue=d_max_evalue, report_path=report, major_only=major_only)
     log.info("assemble: %d/%d complete contigs from %d seeds; rescued %d reads",
              rep.contigs_complete, rep.contigs, rep.seeds, rep.reads_rescued)
     typer.echo(str(output))
@@ -1161,6 +1165,7 @@ def rnaseq_mode(
              "<prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv. "
              "With --id or --samples the sample id is the basename and this is not used."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     assemble: bool = typer.Option(
@@ -1230,7 +1235,7 @@ def rnaseq_mode(
     """
     _mode_run("rnaseq", exact=exact, indel_rescue=False,
               r1=r1, r2=r2, ids=ids, samples_sheet=samples_sheet, out_prefix=out_prefix,
-              out_dir=out_dir, organism=organism,
+              out_dir=out_dir, organism=organism, major_only=major_only,
               threads=threads, reconstruct=reconstruct, min_score=min_score,
               kmer=(None if kmer == 0 else kmer), assemble=assemble,
               complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
@@ -1253,6 +1258,7 @@ def amplicon_mode(
              "<prefix>.airr.tsv, <prefix>.clones.tsv, <prefix>.arda.json and <prefix>.stats.tsv. "
              "With --id or --samples the sample id is the basename and this is not used."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     assemble: bool = typer.Option(
@@ -1314,7 +1320,7 @@ def amplicon_mode(
     """
     _mode_run("amplicon", exact=exact, indel_rescue=indel_rescue,
               r1=r1, r2=r2, ids=ids, samples_sheet=samples_sheet, out_prefix=out_prefix,
-              out_dir=out_dir, organism=organism,
+              out_dir=out_dir, organism=organism, major_only=major_only,
               threads=threads, reconstruct=reconstruct, min_score=min_score,
               kmer=(None if kmer == 0 else kmer), assemble=assemble,
               complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
@@ -1332,6 +1338,7 @@ def cells_cmd(
                   "barcode -- what `migec assemble` writes. Not raw reads: the UMI collapse "
                   "belongs upstream and arda does not do it."),
     prefix: Path = typer.Option(..., "--prefix", "-p", help="Output prefix for every table."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism for the annotation pass."),
     cell_from: str = typer.Option("auto", "--cell-from", help=_CELL_FROM_HELP),
     cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
@@ -1417,7 +1424,7 @@ def cells_cmd(
         min_informative_columns=min_informative_columns,
         min_extra_molecules=min_extra_molecules, min_extra_fraction=min_extra_fraction,
         require_productive=require_productive, cells_file=cells, reference=reference,
-        threads=threads, map_d=map_d, plot=plot,
+        threads=threads, map_d=map_d, plot=plot, major_only=major_only,
     )
     log.info("cells: %d cells, %d contigs (N50 %d nt) from %d molecules; %d chains",
              summary["cells"], summary["contigs"], summary["contig_n50"],
@@ -1480,6 +1487,7 @@ def rnaseq_reduce(
     shard_dir: Path = typer.Option(..., "--shard-dir", help="Directory of per-shard AIRR TSVs."),
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
+    major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Use the same major/all-allele choice as Stage 1."),
     organism: str = typer.Option("human", help="Reference organism."),
     threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
     assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
@@ -1516,7 +1524,7 @@ def rnaseq_reduce(
     from .rnaseq import pipeline
 
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
-                    assemble=assemble, complete_only=complete_only, map_d=map_d,
+                    assemble=assemble, complete_only=complete_only, map_d=map_d, major_only=major_only,
                     d_max_evalue=d_max_evalue, ec_mode=ec_mode,
                     min_junction_q=min_junction_q, call_level=call_level, isotype=isotype,
                     cell_from=cell_from, cell_regex=cell_regex)

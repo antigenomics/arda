@@ -18,7 +18,7 @@ def test_d_candidates_keep_alleles_offsets_and_mismatches():
 def test_batched_candidate_api_preserves_all_hits(tmp_path, monkeypatch, extra):
     entries = {"V|a": SimpleNamespace(locus="TRB", v_call="TRBV1*01,TRBV1*02", j_call=""),
                "V|b": SimpleNamespace(locus="TRB", v_call="TRBV2*01", j_call="")}
-    monkeypatch.setattr(mod, "load_reference", lambda *a: SimpleNamespace(entries=entries, d_germlines={}))
+    monkeypatch.setattr(mod, "load_reference", lambda *a, **k: SimpleNamespace(entries=entries, d_germlines={}))
     monkeypatch.setattr(mod, "_cached_segment_db", lambda *a: tmp_path / "segments")
     monkeypatch.setattr(mod.mmseqs, "createdb", lambda *a, **k: tmp_path / "query")
     calls = []

@@ -3,6 +3,21 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.38.1
+
+- Honor raw IMGT completeness labels when building junction germline resources.
+  V records missing their 3-prime end, J records missing their 5-prime end, and
+  partial records cannot serve as complete emission templates. Opposite-end
+  partial V/J records remain eligible; functionality labels remain unchanged.
+- Preserve raw completeness labels in `cdr3_anchors.tsv` and distinguish
+  `partial` records from complete anchors even when sibling lengths agree.
+  Published annotation targets retain their preliminary alignment role.
+- Search one major allele per gene by default, preserving ambiguity between
+  genes. Prefer usable complete alleles, retaining preliminary targets for genes
+  with only incomplete records. Select `major_only=False` or `--all-alleles`
+  for the full frozen annotation reference. Shared numeric allele selection keeps
+  naming consistent across annotation and downstream models.
+
 ## 2.38.0
 
 - Add `arda.alignment_candidates` for bounded batches of preliminary V/J/D evidence:

@@ -4,6 +4,9 @@
 while the schema grew to 83, and carrying a `d_call` a later E-value gate correctly withdrew —
 because nothing regenerated it. This is that check.
 
+These frozen artifacts use the explicit all-allele compatibility mode.
+Major-only defaults are tested separately.
+
 The alignment-quality scalars (`mmseqs2_score`/`_evalue`/`_identity`) are excluded from the
 comparison: they move with the mmseqs2 version, and nothing in the docs quotes them. Every
 biological column — calls, coordinates, regions, `d_support` — is compared exactly.
@@ -30,7 +33,7 @@ VOLATILE = {"mmseqs2_score", "mmseqs2_evalue", "mmseqs2_identity"}
 
 
 def _reannotate(fasta: Path) -> pl.DataFrame:
-    recs = annotate_records(list(read_sequences(fasta)), "human", "nt", threads=4)
+    recs = annotate_records(list(read_sequences(fasta)), "human", "nt", threads=4, major_only=False)
     return pl.DataFrame([{k: ("" if v is None else str(v)) for k, v in r.items()} for r in recs])
 
 
@@ -106,7 +109,7 @@ def test_dd_reads_reproduce_from_the_junction_alone():
     from arda.annotate.dmap import map_d_junction
 
     for r in _committed(EXAMPLES / "dd.airr.tsv").iter_rows(named=True):
-        call = map_d_junction(r["junction"], r["v_call"], r["j_call"], "human")
+        call = map_d_junction(r["junction"], r["v_call"], r["j_call"], "human", major_only=False)
         # An absent second D reads back as None from the TSV and as "" from the caller; both mean
         # "no second D", so compare on emptiness rather than on the sentinel.
         assert call.d_call == r["d_call"], r["sequence_id"]
@@ -124,9 +127,9 @@ def test_committed_rnaseq_clonotypes_still_reproduce(tmp_path):
     from arda.rnaseq.map import map_rnaseq
 
     airr, extra, clones = (tmp_path / n for n in ("m.airr.tsv", "a.airr.tsv", "c.tsv"))
-    map_rnaseq(EXAMPLES / "rnaseq" / "reads.fq.gz", airr, organism="human", threads=4)
-    assemble_contigs(airr, extra, organism="human", threads=4)
-    correct_airr(airr, clones, organism="human", extra_airr=extra)
+    map_rnaseq(EXAMPLES / "rnaseq" / "reads.fq.gz", airr, organism="human", threads=4, major_only=False)
+    assemble_contigs(airr, extra, organism="human", threads=4, major_only=False)
+    correct_airr(airr, clones, organism="human", extra_airr=extra, major_only=False)
 
     cols = ["junction_aa", "v_call", "j_call", "locus", "d_call", "d2_call"]
     got = _committed(clones).select(cols).sort(cols)

@@ -268,6 +268,28 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
     return out
 
 
+def _d_germline_metadata(species_dir, germlines):
+    """Exact raw-record completeness, separate from preliminary D alignments."""
+    import json
+    records = {}
+    for locus in VDJ_LOCI:
+        try:
+            raw = _gapped_alleles(species_dir, locus.group, locus.d)
+        except FileNotFoundError:
+            continue
+        for allele, functionality, sequence, label in raw:
+            records.setdefault((locus.name, allele, sequence.replace(".", "")), []).append((functionality, label))
+    rows = []
+    for locus, allele, sequence in germlines:
+        matches = records[(locus, allele, sequence)]
+        labels = list(dict.fromkeys(label for _, label in matches))
+        functionality = next((f for f in ("F", "ORF", "P") if any(x == f for x, _ in matches)), matches[0][0])
+        rows.append(dict(locus=locus, allele=allele, sequence=sequence, functionality=functionality,
+                         status="partial" if all(imgt.junction_incomplete(label, "D") for label in labels) else "ok",
+                         imgt_completeness=labels[0] if len(labels) == 1 else json.dumps(labels)))
+    return rows
+
+
 # --------------------------------------------------------------------------
 # CDR3 junction anchors (per V/J allele).
 #
@@ -307,24 +329,24 @@ _V_TAIL_MIN, _V_TAIL_MAX = 1, 14   # residues the V templates into the junction 
 _J_FR4_MOTIF = re.compile(r"[FW]G.G")
 
 _ANCHOR_COLUMNS = ["locus", "segment", "allele", "functionality", "anchor_nt",
-                   "partial_nt", "templated_aa", "germline_nt", "status", "source"]
+                   "partial_nt", "templated_aa", "germline_nt", "status", "source", "imgt_completeness"]
 
 
-def _gapped_alleles(species_dir: str, group: str, stem: str) -> list[tuple[str, str, str]]:
-    """``(allele, functionality, gapped_seq)`` from an IMGT V-QUEST gene file.
+def _gapped_alleles(species_dir: str, group: str, stem: str) -> list[tuple[str, str, str, str]]:
+    """``(allele, functionality, gapped_seq, imgt_completeness)`` from an IMGT V-QUEST gene file.
 
     Keeps every allele regardless of functionality: VDJdb cites pseudogene and
     ORF alleles, and ``markup.tsv`` (which is scaffold-gated and deduped) is not
     a valid substitute.
     """
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     for header, seq in imgt.read_fasta(imgt.gene_fasta_path(species_dir, group, stem)):
         fields = header.split("|")
         if len(fields) < 4 or not seq:
             continue
         allele = fields[1].strip()
         func = fields[3].strip().strip("()[]").split("/")[0].split()[0] or "?"
-        out.append((allele, func, seq.upper()))
+        out.append((allele, func, seq.upper(), fields[13].strip() if len(fields) > 13 else ""))
     return out
 
 
@@ -455,17 +477,10 @@ def select_one_allele_per_gene(alleles: dict[str, str], *, logger, locus: str,
     ``*01`` filter -- 19 human V genes (IGHV2-70D, IGHV3-25, IGHV3-43D, …) have no ``*01`` record
     and would silently vanish.
     """
-    by_gene: dict[str, list[str]] = {}
-    for a in alleles:
-        by_gene.setdefault(a.split("*")[0], []).append(a)
-    keep: dict[str, str] = {}
-    no01: list[str] = []
-    for al in by_gene.values():
-        pick = next((a for a in al if a.endswith("*01")), None)
-        if pick is None:
-            pick = min(al, key=lambda a: a.rsplit("*", 1)[-1])
-            no01.append(pick)
-        keep[pick] = alleles[pick]
+    from ..alleles import select_major_alleles
+    selected = select_major_alleles(alleles)
+    keep = {allele: alleles[allele] for allele in selected.values()}
+    no01 = [allele for allele in selected.values() if not allele.endswith("*01")]
     if no01:
         logger.info("%s: %d %s gene(s) have no *01 — kept the lowest allele: %s",
                     locus, len(no01), segment, ", ".join(sorted(no01)[:6]))
@@ -499,7 +514,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             logger.info("%s: no IMGT V file (%s) for %s — no anchors",
                         locus.name, locus.v, species_dir)
             v_alleles = []
-        for allele, func, gapped in v_alleles:
+        for allele, func, gapped, completeness in v_alleles:
             ungapped = gapped.replace(".", "")
             anchor, source = _v_anchor(ungapped, fwr3_stops.get(allele))
             status = "ok" if anchor >= 0 else "no_anchor"
@@ -511,6 +526,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
                 "partial_nt": len(tail) - whole,          # V ends mid-codon
                 "templated_aa": translate(tail[:whole], 0),
                 "germline_nt": tail, "status": status, "source": source,
+                "imgt_completeness": completeness,
             })
             counts[f"V:{status}"] += 1
 
@@ -521,7 +537,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             logger.info("%s: no IMGT J file (%s) for %s — no anchors",
                         locus.name, locus.j, species_dir)
             j_alleles = []
-        for allele, func, gapped in j_alleles:
+        for allele, func, gapped, completeness in j_alleles:
             seq = gapped.replace(".", "")
             if allele in fr4_offsets:
                 anchor, source = fr4_offsets[allele][0] + 1, "aux"
@@ -543,6 +559,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
                 "partial_nt": frame,                       # J starts mid-codon
                 "templated_aa": translate(slice_nt[frame:], 0) if slice_nt else "",
                 "germline_nt": slice_nt, "status": status, "source": source,
+                "imgt_completeness": completeness,
             })
             counts[f"J:{status}"] += 1
 
@@ -564,6 +581,12 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
                 r["status"] = "truncated"
                 counts[f"{r['segment']}:ok"] -= 1
                 counts[f"{r['segment']}:truncated"] += 1
+
+    for row in rows:
+        if row["status"] == "ok" and imgt.junction_incomplete(row["imgt_completeness"], row["segment"]):
+            row["status"] = "partial"
+            counts[f"{row['segment']}:ok"] -= 1
+            counts[f"{row['segment']}:partial"] += 1
 
     bad = {k: v for k, v in counts.items() if not k.endswith(":ok")}
     if bad:
@@ -693,6 +716,10 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False,
     d_germ = _collect_d_germlines(species_dir, logger)
     (out_dir / "d_germlines.fasta").write_text(
         "".join(f">{loc}|{al}\n{s}\n" for loc, al, s in d_germ))
+    d_metadata = _d_germline_metadata(species_dir, d_germ)
+    pl.DataFrame(d_metadata, schema={name: pl.String for name in
+        ("locus", "allele", "sequence", "functionality", "status", "imgt_completeness")}).write_csv(
+            out_dir / "d_germlines.tsv", separator="\t")
     logger.info("D germlines: %d alleles across %d loci",
                 len(d_germ), len({loc for loc, _, _ in d_germ}))
 

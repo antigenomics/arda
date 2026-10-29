@@ -580,6 +580,7 @@ class RnaseqReport:
     # ⚠ This is a LEDGER: every read arda was handed is in exactly one bucket here or in
     # `mapped_reads`, and `unmapped_accounted` says so rather than leaving the reader to add up.
     unmapped: dict = field(default_factory=dict)
+    major_only: bool = True
 
     @property
     def mapped_fraction(self) -> float:
@@ -631,6 +632,7 @@ def map_rnaseq(
     complete_junction_nt: int = 0,
     cell_from: str = "",
     cell_regex: str | None = None,
+    major_only: bool = True,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -708,7 +710,7 @@ def map_rnaseq(
         raise ValueError(f"--shm must be one of {SHM_MODES}, got {shm!r}")
     output = Path(output)
     ref, target_db, threads, sens, mm_strand = mapper._prep(
-        organism, seqtype, threads, sensitivity, strand)
+        organism, seqtype, threads, sensitivity, strand, major_only)
 
     # Built and parsed ONCE for the whole run, not per chunk: the segment DB is an mmseqs build
     # and `combinations.tsv` is 550 KB. Both are read-only afterwards.
@@ -728,7 +730,7 @@ def map_rnaseq(
     pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit, with_qual=want_qual)
     source = chunked_fragments(pairs, chunk_size)
 
-    report = RnaseqReport(input=str(r1), organism=organism, threads=threads,
+    report = RnaseqReport(input=str(r1), organism=organism, threads=threads, major_only=major_only,
                           min_score=min_score, paired=r2 is not None,
                           input_bytes=sum(Path(p).stat().st_size
                                           for p in (r1, r2) if p and Path(p).exists()))

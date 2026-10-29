@@ -6,12 +6,16 @@ via offline IgBLAST-built references mapped at runtime with MMseqs2.
 
 from __future__ import annotations
 
-__version__ = "2.38.0"
+__version__ = "2.38.1"
 
 from .adapter import annotate_sequences  # noqa: E402
 
 
 def __getattr__(name):
+    if name in ("select_major_alleles", "major_allele_map", "d_germline_metadata"):
+        from . import alleles
+
+        return getattr(alleles, name)
     if name == "alignment_candidates":
         from .annotate.candidates import alignment_candidates
 
@@ -22,4 +26,4 @@ def __getattr__(name):
         return reference_index_identity
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
-__all__ = ["alignment_candidates", "annotate_sequences", "reference_index_identity", "__version__"]
+__all__ = ["d_germline_metadata", "select_major_alleles", "major_allele_map", "alignment_candidates", "annotate_sequences", "reference_index_identity", "__version__"]

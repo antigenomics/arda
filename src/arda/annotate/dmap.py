@@ -115,14 +115,20 @@ def _common_suffix(a: str, b: str) -> int:
 # whole load per clonotype. Measured at 54.4 us/call: 2.0 s on a 36,741-clonotype TRA amplicon and
 # 21.6 s on a 397,305-clonotype bulk sample, on the DEFAULT path (`--map-d` is on unless disabled).
 # The reference is immutable for the life of the process, so one entry per organism is enough.
-@lru_cache(maxsize=8)
-def _d_germlines(organism: str) -> dict[str, list[tuple[str, str]]]:
-    return _load_d_germlines(vdj_dir(organism))
+@lru_cache(maxsize=16)
+def _d_germlines(organism: str, major_only: bool = False) -> dict[str, list[tuple[str, str]]]:
+    germlines = _load_d_germlines(vdj_dir(organism))
+    if major_only:
+        from ..alleles import major_allele_map
+        selected = set(major_allele_map(organism).values())
+        return {locus: [(a, s) for a, s in rows if a in selected] for locus, rows in germlines.items()}
+    return germlines
 
 
 def map_d_junction(junction_nt: str, v_call: str, j_call: str,
                    species: str = "human", d_max_evalue: float | None = None,
-                   v_end: int | None = None, j_start: int | None = None) -> DCall:
+                   v_end: int | None = None, j_start: int | None = None,
+                   major_only: bool = True) -> DCall:
     """Map D (and a tandem second D) into a bare nucleotide junction.
 
     ``d_max_evalue`` overrides the shipped E-value gate on the D call(s); see
@@ -149,7 +155,7 @@ def map_d_junction(junction_nt: str, v_call: str, j_call: str,
     if not junction_nt:
         return out
 
-    germlines = _d_germlines(organism).get(locus)
+    germlines = _d_germlines(organism, major_only).get(locus)
     if not germlines:
         return out                       # VJ locus, or no D germlines for this organism
 

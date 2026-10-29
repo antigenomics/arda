@@ -261,6 +261,7 @@ def assemble_contigs(
     map_d: bool = True,
     d_max_evalue: float | None = None,
     report_path: str | Path | None = None,
+    major_only: bool = True,
 ) -> AssembleReport:
     """Assemble long-CDR3 contigs from Stage-1 mapped reads and attribute their junctions.
 
@@ -357,7 +358,7 @@ def assemble_contigs(
         return report
 
     ann = reannotate_contigs(contig_records, organism, threads=threads, map_d=map_d,
-                             d_max_evalue=d_max_evalue)
+                             d_max_evalue=d_max_evalue, major_only=major_only)
     ann_by_id = {a.get("sequence_id"): a for a in ann}
 
     rows: list[dict] = []

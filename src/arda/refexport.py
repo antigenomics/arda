@@ -80,6 +80,9 @@ def _records(ref: Reference, kind: str) -> Iterator[_Record]:
     if kind == "segments":
         fasta, markup = base / "segments.fasta", base / "segments.markup.tsv"
         if not fasta.exists():
+            from .annotate.mapper import _generate_segments
+            _generate_segments(fasta, ref.organism)
+        if not fasta.exists():
             raise FileNotFoundError(
                 f"No segment reference at {fasta}. It is GENERATED, not shipped — run "
                 f"`arda build-index --organism {ref.organism} --force`."
@@ -218,7 +221,7 @@ def export_reference(organism: str = "human", *, kind: str = "scaffolds",
         raise ValueError(f"format must be one of {FORMATS}, got {fmt!r}")
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
-    ref = load_reference(organism, seqtype)
+    ref = load_reference(organism, seqtype, major_only=False)
     fh = open(out, "w", newline="") if out else sys.stdout
     try:
         if kind == "anchors":

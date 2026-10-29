@@ -618,7 +618,7 @@ def test_assemble_rescues_incomplete_reads_via_contig(tmp_path, monkeypatch):
     pl.DataFrame(rows).write_csv(airr, separator="\t")
 
     JN, JA = "TGT" + "GCTAGA" * 12 + "TGG", "C" + "AR" * 12 + "W"   # canonical, in frame, no stop
-    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0, map_d=True, d_max_evalue=None: [
+    monkeypatch.setattr(asm, "reannotate_contigs", lambda records, organism, threads=0, map_d=True, d_max_evalue=None, major_only=True: [
         {"sequence_id": cid, "junction": JN, "junction_aa": JA, "v_call": "IGHV3-23*01",
          "j_call": "IGHJ4*02", "locus": "IGH", "d_call": "IGHD3-10*01", "d_support": "0.01",
          "np1": "GG", "np2": "TT"} for cid, _ in records])

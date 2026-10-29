@@ -30,7 +30,7 @@ Outputs (per organism)
 * ``d_germlines.fasta`` — per-locus D germlines (VDJ loci only), for runtime D mapping.
 * ``cdr3_anchors.tsv`` — **per allele**, the conserved Cys104 (V) or Phe/Trp118 (J)
   position, the residues that allele templates into the junction, and a ``status``
-  (``ok`` / ``truncated`` / ``no_anchor`` — flagged, never guessed). This is what lets
+  (``ok`` / ``truncated`` / ``partial`` / ``no_anchor`` — flagged, never guessed). This is what lets
   :mod:`arda.cdr3fix` mark up a junction with no read behind it, and what pins the
   V..J interior for D mapping.
 * ``d_prior.tsv`` — generative-model summaries read by :func:`arda.scenarios.load_prior_table`,
@@ -88,3 +88,22 @@ and padding, so vocabulary expansion does not reshuffle equal-score legacy
 alignments. Check every region's sequence/coordinate round trip before packaging a
 candidate. Complete scaffold coverage establishes reference construction;
 measure recovered junctions and changed calls on real reads separately.
+
+IMGT completeness
+-----------------
+
+The anchor table preserves the raw IMGT completeness label in
+``imgt_completeness``. Junction-side partial records have ``status=partial``
+regardless of same-gene length agreement: V requires a complete 3-prime end,
+J a complete 5-prime end, and D both ends. Unspecified partial records also
+fail completeness. Opposite-end partial V/J records remain eligible. Default annotation targets remain available as preliminary alignment evidence.
+Complete emission templates must exclude ``partial`` rows. Major-only searches
+restrict targets to usable complete major alleles. This changes emission
+eligibility, not functionality labels. Existing anchor metadata can be refreshed
+without regenerating annotation targets.
+
+D alignment targets remain in ``d_germlines.fasta``. Their exact raw-record
+completeness and functionality are recorded separately in ``d_germlines.tsv``;
+complete emission consumers reject ``status=partial``. Metadata keys include
+both allele and sequence so a complete duplicate accession cannot validate a
+different partial sequence. ``arda.d_germline_metadata`` reads this table.

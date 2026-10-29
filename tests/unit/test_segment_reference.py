@@ -202,7 +202,7 @@ def test_segment_targets_resolve_through_the_reference():
     """
     from arda.annotate.reference import load_reference
 
-    ref = load_reference("human", "nt")
+    ref = load_reference("human", "nt", major_only=False)
     scaffold = ref.get("IGH_1053")
     assert scaffold is not None and scaffold.v_call and scaffold.j_call
 
@@ -229,7 +229,7 @@ def test_v_segment_region_coordinates_match_their_scaffolds():
 
     from arda.annotate.reference import load_reference
 
-    ref = load_reference("human", "nt")
+    ref = load_reference("human", "nt", major_only=False)
     d = ref.target_fasta.parent
     seg = {r["scaffold_id"].split("|", 1)[1]: r
            for r in pl.read_csv(d / "segments.markup.tsv", separator="\t",

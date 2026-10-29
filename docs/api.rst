@@ -247,3 +247,12 @@ Preliminary segment evidence
 ----------------------------
 
 .. autofunction:: arda.alignment_candidates
+
+Major allele naming
+-------------------
+
+.. autofunction:: arda.select_major_alleles
+
+.. autofunction:: arda.major_allele_map
+
+.. autofunction:: arda.d_germline_metadata

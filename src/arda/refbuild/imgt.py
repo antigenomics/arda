@@ -123,6 +123,20 @@ def read_fasta(path: Path) -> list[tuple[str, str]]:
     return records
 
 
+def junction_incomplete(completeness: str, segment: str) -> bool:
+    """Whether IMGT's raw completeness label excludes a junction emission template.
+
+    V needs its 3' end, J its 5' end and D both ends. Unspecified partial
+    records cannot establish a complete junction-side template either.
+    """
+    label = completeness.lower()
+    if "partial" not in label:
+        return False
+    return (segment == "D" or ("5'" not in label and "3'" not in label)
+            or (segment == "V" and "3'" in label)
+            or (segment == "J" and "5'" in label))
+
+
 def parse_functionality(path: Path) -> dict[str, str]:
     """Map allele name -> normalized functionality from gapped IMGT headers.
 
@@ -184,7 +198,8 @@ def load_functional_alleles(
 
     ``keep_orphons=True`` restores the old vocabulary, for reproducing a pre-2.13.3 reference.
     """
-    functionality = parse_functionality(gene_fasta_path(species_dir, group, gene_stem))
+    raw_path = gene_fasta_path(species_dir, group, gene_stem)
+    functionality = parse_functionality(raw_path)
     ungapped = ungap_gene(species_dir, group, gene_stem)
     out: dict[str, str] = {}
     for header, seq in read_fasta(ungapped):

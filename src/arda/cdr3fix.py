@@ -222,12 +222,13 @@ class Anchor:
     segment: str          # "V" | "J"
     templated_aa: str     # V: starts at Cys104. J: ends at [FW]118.
     functionality: str
-    status: str           # "ok" | "truncated" | "no_anchor"
+    status: str           # "ok" | "truncated" | "partial" | "no_anchor"
     source: str           # "ndm" | "aux" | "motif" | "no_anchor"
     anchor_nt: int = -1   # 0-based offset of the anchor codon in the germline
     partial_nt: int = 0   # V: dangling 3' nt; J: dangling 5' nt (mid-codon)
     germline_nt: str = ""  # V: Cys104 -> 3' end. J: 5' end -> [FW]118 codon end.
     loci: tuple[str, ...] = ()  # All loci declaring this allele; TRA/TRD can share V.
+    imgt_completeness: str = ""
 
     def __post_init__(self):
         if not self.loci:
@@ -410,7 +411,7 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
             locus=r["locus"], segment=r["segment"], templated_aa=r["templated_aa"] or "",
             functionality=r["functionality"], status=r["status"], source=r["source"],
             anchor_nt=int(r["anchor_nt"]), partial_nt=int(r["partial_nt"]),
-            germline_nt=r["germline_nt"] or "")
+            germline_nt=r["germline_nt"] or "", imgt_completeness=r.get("imgt_completeness") or "")
         prev = out.get(key)
         if prev is not None:
             anchor = replace(anchor, loci=tuple(sorted(set(prev.loci + anchor.loci))))
@@ -1329,7 +1330,7 @@ def guess_alleles(cdr3: str, segment: str, locus: str, anchors: dict,
 def _placeable(anchor: Anchor | None) -> bool:
     """Can this anchor place a junction boundary at all?
 
-    ``status == "ok"`` always can. ``truncated`` can when it still carries
+    ``status == "ok"`` always can. ``truncated`` / ``partial`` can when they carry
     ``_MIN_TRUNCATED_AA`` residues: IMGT ships those allele records as partial sequences that
     stop inside the anchor region, so the templated run is SHORT but correct as far as it goes,
     and refusing it throws away a boundary that is present. ``no_anchor`` never can.
@@ -1338,7 +1339,7 @@ def _placeable(anchor: Anchor | None) -> bool:
         return False
     if anchor.status == "ok":
         return True
-    return (anchor.status == "truncated"
+    return (anchor.status in ("truncated", "partial")
             and len(anchor.templated_aa) >= _MIN_TRUNCATED_AA)
 
 
@@ -1560,7 +1561,7 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             rec.errors.extend(errs)
             # A germline record IMGT ships incomplete still places a boundary, but a LOWER-bound
             # one: residues past the record's end are unattributed, not known non-templated.
-            if anchor.status == "truncated" and name in _GOOD:
+            if anchor.status in ("truncated", "partial") and name in _GOOD:
                 name = "TruncatedGermline"
         if side == "V":
             v_anchor = anchor

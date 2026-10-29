@@ -17,7 +17,7 @@ def synthetic_reference_identity(monkeypatch):
 
 
 _FILES = ("alleles.fasta", "alleles.aa.fasta", "markup.tsv", "markup.aa.tsv",
-          "cdr3_anchors.tsv", "combinations.tsv", "d_germlines.fasta")
+          "cdr3_anchors.tsv", "combinations.tsv", "d_germlines.fasta", "d_germlines.tsv")
 
 
 def _make_tarball(path, label="original"):

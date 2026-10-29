@@ -78,7 +78,7 @@ def annotate_examples() -> None:
     print("example.airr.tsv")
     _sh(sys.executable, "-m", "arda.cli", "annotate",
         "-i", "examples/example.fasta", "-o", "examples/example.airr.tsv",
-        "--organism", "human", "--threads", "4")
+        "--organism", "human", "--threads", "4", "--all-alleles")
 
 
 def build_dd() -> None:
@@ -95,7 +95,7 @@ def build_dd() -> None:
             fh.write(f">{sid}\n{found[sid]}\n")
     _sh(sys.executable, "-m", "arda.cli", "annotate",
         "-i", "examples/dd.fasta", "-o", "examples/dd.airr.tsv",
-        "--organism", "human", "--threads", "4")
+        "--organism", "human", "--threads", "4", "--all-alleles")
 
 
 def build_junctions() -> None:
@@ -130,7 +130,7 @@ def _rnaseq_source_ids() -> list[str]:
 
     recs = [r for r in read_sequences(FIXTURES / "human.fasta.gz") if len(r[1]) >= 400]
     by_locus: dict[str, list[tuple[int, str]]] = {}
-    for r in annotate_records(recs, "human", "nt", threads=4):
+    for r in annotate_records(recs, "human", "nt", threads=4, major_only=False):
         ja = r.get("junction_aa") or ""
         if (r.get("locus") in RNASEQ_LOCI and r.get("productive") == "T"
                 and ja.startswith("C") and ja.endswith(("F", "W")) and len(ja) >= 10):
@@ -172,7 +172,7 @@ def build_rnaseq() -> None:
     # mapped reads, which would make the committed table depend on a speed knob.
     _sh(sys.executable, "-m", "arda.cli", "rnaseq", "--exact",
         "--r1", "examples/rnaseq/reads.fq.gz", "-p", "ex", "-d", "examples/rnaseq",
-        "--organism", "human", "--threads", "4")
+        "--organism", "human", "--threads", "4", "--all-alleles")
     # The run report carries wall time and peak RSS -- not reproducible, so don't commit it.
     (EX / "rnaseq" / "ex.arda.json").unlink(missing_ok=True)
     for stale in ("ex.airr.tsv", "ex.assembled.airr.tsv"):       # large, and derivable

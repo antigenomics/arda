@@ -23,7 +23,7 @@ JN = "TGT" + "GCTAGA" * 12 + "TGG"
 JA = "C" + "AR" * 12 + "W"
 
 
-def _mock_reannotate(records, organism, threads=0, map_d=True, d_max_evalue=None):
+def _mock_reannotate(records, organism, threads=0, map_d=True, d_max_evalue=None, major_only=True):
     return [{"sequence_id": cid, "junction": JN, "junction_aa": JA, "v_call": "IGHV3-23*01",
              "j_call": "IGHJ4*02", "locus": "IGH"} for cid, _ in records]
 

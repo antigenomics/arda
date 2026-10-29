@@ -34,6 +34,10 @@ for org in human mouse rat rabbit rhesus_monkey; do
     [ "$sz" -gt 1000 ] || { echo "ERROR: vdj/$org/$f is empty ($sz B) -- was build-db run without IgBLAST?"; exit 1; }
   done
 done
+# Completeness metadata accompanies every organism, including an empty D set.
+for org in human mouse rat rabbit rhesus_monkey; do
+  grep -q "^vdj/$org/d_germlines.tsv\$" <<<"$members" || { echo "ERROR: vdj/$org/d_germlines.tsv missing"; exit 1; }
+done
 # D germlines exist only for organisms with a D locus; d_prior only where a model was published. The
 # prior table is still shipped although the POSTERIOR moved to vdjtools in 2.33.0 (#144): `arda.hmm`
 # and `arda.scenarios` read it too, and vdjtools reads this copy rather than vendoring a second one.
