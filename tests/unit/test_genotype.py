@@ -343,8 +343,9 @@ def test_read_depth_is_reported_beside_the_clonotype_count(tmp_path):
     clonotype's own allele assignment can be trusted. Reporting only one of the two hides half the
     question.
     """
-    reads = ([("G*01", 120, "a")] * 5 + [("G*01", 120, "b")] * 3
-             + [("G*01", 120, f"c{i}") for i in range(10)])
+    reads = ([("G*01", 120, "AAAA")] * 5 + [("G*01", 120, "CCCC")] * 3
+             + [("G*01", 120, "G" + format(i, "04b").translate(str.maketrans("01", "AT")))
+                for i in range(10)])
     rows, report = infer_genotype(_airr(tmp_path, reads), min_clonotypes=5)
     row = next(r for r in rows if r[1] == "G")
     assert row[3] == "12", "12 clonotypes"
