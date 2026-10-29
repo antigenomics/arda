@@ -30,7 +30,6 @@ import polars as pl
 from .. import _markup
 from .._threads import resolve_threads
 from ..annotate.airr_out import read_airr as _read_airr
-from ..annotate.io import normalize_nt_frame
 
 from ._res import Stage
 import seqtree
@@ -1186,11 +1185,11 @@ def correct_airr(
 
     stage = Stage()
     output = Path(output)
-    raw = normalize_nt_frame(_read_airr(airr_tsv))
+    raw = _read_airr(airr_tsv)
     n_assembled = 0
     asm_from = -1                          # index of the first assembled row in `raw`, if any
     if extra_airr is not None:
-        extra = normalize_nt_frame(_read_airr(extra_airr))
+        extra = _read_airr(extra_airr)
         if extra.height:
             # Never: Remember how many rows came from ASSEMBLY. A rescued read appears TWICE in the
             # concatenated frame -- once as its incomplete Stage-1 row and once as the assembled

@@ -63,3 +63,14 @@ def test_paired_and_direct_cell_ingress(tmp_path):
     kw = dict(k=3, min_overlap=3, min_molecules=1)
     assert assemble_cell('cell', [ambiguous], **kw) == assemble_cell('cell', [normal], **kw)
     assert merge_pair(ambiguous, 'ACGTACGTACGT', min_overlap=8) == merge_pair(normal, 'ACGTACGTACGT', min_overlap=8)
+
+
+def test_airr_reader_normalizes_nt_but_preserves_protein(tmp_path):
+    from arda.annotate.airr_out import read_airr
+    path = tmp_path / 'input.tsv'
+    pl.DataFrame({'sequence': ['NRYSWKM'], 'sequence_alignment': ['NRYSWKM'],
+                  'germline_alignment': ['NRYSWKM']}).write_csv(path, separator='\t')
+    assert read_airr(path)['sequence'][0] == 'A' * 7
+    protein = read_airr(path, seqtype='aa')
+    assert protein['sequence'][0] == 'NRYSWKM'
+    assert read_airr(path)['germline_alignment'].equals(protein['germline_alignment'])

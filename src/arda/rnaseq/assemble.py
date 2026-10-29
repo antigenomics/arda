@@ -36,7 +36,6 @@ import polars as pl
 
 from .. import _markup
 from ..annotate.airr_out import read_airr as _read_airr
-from ..annotate.io import normalize_nt_frame
 
 from ._res import Stage
 from ..annotate.contig import reannotate_contigs
@@ -291,7 +290,7 @@ def assemble_contigs(
         An :class:`AssembleReport`.
     """
     output = Path(output)
-    raw = normalize_nt_frame(_read_airr(airr_tsv))
+    raw = _read_airr(airr_tsv)
     stage = Stage()
     report = AssembleReport(reads_in=raw.height)
     n = raw.height

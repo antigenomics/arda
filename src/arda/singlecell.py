@@ -395,9 +395,9 @@ def assemble_cell(
             seq, weight, base = local[i], local_w[i], off - lo
             for p, char in enumerate(seq):
                 columns[base + p][char] += weight
-        return "".join(
+        return normalize_nt("".join(
             max(col.items(), key=lambda kv: kv[1])[0] if col else "N" for col in columns
-        )
+        ))
 
     contigs: list[Contig] = []
     for members in sorted(components.values(), key=len, reverse=True):

@@ -182,8 +182,8 @@ def read_sequences(path: str | Path, *, with_qual: bool = False, seqtype: str = 
     denotes protein input, which is preserved.
 
     ``with_qual=True`` yields ``(id, sequence, qual)`` instead -- the FASTQ Phred string, or
-    ``None`` for FASTA (which has no quality). The default is unchanged and pays nothing: the
-    quality line is consumed either way, only kept when asked (needed solely by the paired
+    ``None`` for FASTA (which has no quality). The quality line is consumed either way,
+    only kept when asked (needed solely by the paired
     overlap-merge, :func:`arda.rnaseq.map.merge_pair`)."""
     if seqtype not in ("nt", "aa"):
         raise ValueError("seqtype must be nt or aa")

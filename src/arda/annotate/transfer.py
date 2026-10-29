@@ -793,6 +793,12 @@ def transfer_hit(
     #
     # `_project_point` is kept: `_extra_points` can only fold in positions known BEFORE the walk,
     # and the aa path still projects one that is not.
+    if seqtype == "nt":
+        from .io import normalize_nt
+        query_seq = normalize_nt(query_seq)
+        if submitted_seq is not None:
+            submitted_seq = normalize_nt(submitted_seq)
+        hit = dict(hit, qaln=normalize_nt(hit["qaln"]))
     ts = int(hit["tstart"])
     t0 = ref.starts[0]
     # The V coding-frame anchor: first scaffold position >= tstart that is in the V reading frame.
