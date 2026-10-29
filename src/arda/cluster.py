@@ -322,7 +322,7 @@ set -euo pipefail
 mkdir -p "{shards_dir}" "{out_dir}"
 
 # 1. Split once (cheap, single pass).
-"$ARDA" cluster split-fasta "{input}" "{shards_dir}" --shards {shards}
+"$ARDA" cluster split-fasta "{input}" "{shards_dir}" --shards {shards} --seqtype {seqtype}
 
 # 2. Annotate each shard as an array task.
 ARRAY_JID=$(sbatch --parsable {common} --job-name=arda-map --array=0-{last} \\
