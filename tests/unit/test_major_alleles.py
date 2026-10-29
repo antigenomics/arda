@@ -90,3 +90,13 @@ def test_d_major_prefers_complete_then_keeps_partial_only_gene(tmp_path, monkeyp
     (tmp_path/'d_germlines.fasta').write_text('>TRB|D1*01\nAAA\n>TRB|D1*02\nGGG\n>TRB|D2*01\nCCC\n')
     (tmp_path/'d_germlines.tsv').write_text('allele\tstatus\nD1*01\tpartial\nD1*02\tok\nD2*01\tpartial\n')
     assert major_allele_map('human') == {'D1':'D1*02','D2':'D2*01'}
+
+
+def test_mapping_mode_survives_report_merge_and_cannot_mix(tmp_path):
+    import pytest
+    from arda.rnaseq.pipeline import _merge_map_reports, finish
+    assert _merge_map_reports([{'major_only':False},{'major_only':False}])['major_only'] is False
+    with pytest.raises(ValueError,match='different major_only'):
+        _merge_map_reports([{'major_only':False},{'major_only':True}])
+    with pytest.raises(ValueError,match='recorded mapping'):
+        finish('unused',tmp_path,'sample',major_only=True,map_report={'major_only':False})

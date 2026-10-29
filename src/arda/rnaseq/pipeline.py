@@ -100,6 +100,9 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
     """
     from .correct import correct_airr
 
+    recorded_mode = (map_report or {}).get("major_only")
+    if recorded_mode is not None and recorded_mode != major_only:
+        raise ValueError("major_only must match the recorded mapping mode")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     airr = Path(airr)
@@ -311,6 +314,9 @@ def _merge_map_reports(shards: list[dict]) -> dict:
     """
     if not shards:
         return {}
+    modes = {shard.get("major_only") for shard in shards}
+    if len(modes) != 1:
+        raise ValueError("cannot merge different major_only mapping modes")
     per_locus: dict[str, int] = {}
     for s in shards:
         for locus, n in (s.get("per_locus") or {}).items():
@@ -324,6 +330,7 @@ def _merge_map_reports(shards: list[dict]) -> dict:
     weights = [int(s["total_reads"]) for s in sized]
     wall_sum = round(sum(float(s.get("wall_seconds", 0.0)) for s in shards), 3)
     return {
+        "major_only": modes.pop(),
         "shards": len(shards),
         "read_groups": len(shards),
         "organism": shards[0].get("organism"),

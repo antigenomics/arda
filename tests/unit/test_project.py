@@ -136,7 +136,7 @@ def test_the_anchor_offsets_decode_to_real_anchor_codons_in_the_shipped_referenc
     from arda.annotate.reference import load_reference
     from arda.refbuild.segments import build_segment_reference
 
-    ref = load_reference("human", "nt")
+    ref = load_reference("human", "nt", major_only=False)
     seg = ref.target_fasta.parent / "segments.fasta"
     if not seg.exists():
         build_segment_reference("human", out_dir=ref.target_fasta.parent)
