@@ -19,6 +19,7 @@ def annotate_sequences(
     map_d: bool = True,
     *,
     threads: int = 0,
+    major_only: bool = True,
 ):
     """Annotate FR/CDR regions for a batch of sequences.
 
@@ -29,6 +30,7 @@ def annotate_sequences(
             rhesus_monkey).
         map_d: Map D segments (``d_call``/``d2_call``/``np*``) for VDJ-locus hits;
             ``False`` skips D mapping. Supports nucleotide and amino-acid input.
+        major_only: Search one major allele per gene (default); False searches all alleles.
         threads: CPU budget; 0 uses all CPUs available to the process/job. An already
             initialized Polars pool exceeding this budget raises ``ValueError``.
 
@@ -44,4 +46,4 @@ def annotate_sequences(
             pairs.append((f"seq{i}", item))
         else:
             pairs.append((str(item[0]), str(item[1])))
-    return annotate_records(pairs, organism=organism, seqtype=seqtype, map_d=map_d, threads=threads)
+    return annotate_records(pairs, organism=organism, seqtype=seqtype, map_d=map_d, threads=threads, major_only=major_only)

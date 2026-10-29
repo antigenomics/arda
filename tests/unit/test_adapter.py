@@ -16,7 +16,7 @@ def test_raw_strings_get_synthetic_ids(monkeypatch):
         lambda pairs, **kw: captured.update(pairs=pairs, kw=kw) or [])
     annotate_sequences(["ACGT", "TTTT"], organism="mouse", seqtype="nt", map_d=False)
     assert captured["pairs"] == [("seq0", "ACGT"), ("seq1", "TTTT")]
-    assert captured["kw"] == {"organism": "mouse", "seqtype": "nt", "map_d": False, "threads": 0}
+    assert captured["kw"] == {"organism": "mouse", "seqtype": "nt", "map_d": False, "threads": 0, "major_only": True}
 
 
 def test_id_sequence_pairs_are_preserved(monkeypatch):

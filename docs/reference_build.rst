@@ -96,7 +96,14 @@ The anchor table preserves the raw IMGT completeness label in
 ``imgt_completeness``. Junction-side partial records have ``status=partial``
 regardless of same-gene length agreement: V requires a complete 3-prime end,
 J a complete 5-prime end, and D both ends. Unspecified partial records also
-fail completeness. Opposite-end partial V/J records remain eligible. The
-scaffold builder excludes these incomplete V/J templates before deduplication;
-D export excludes incomplete D records. This changes emission eligibility,
-not functionality labels. Existing references require regeneration to apply it.
+fail completeness. Opposite-end partial V/J records remain eligible. Default annotation targets remain available as preliminary alignment evidence.
+Complete emission templates must exclude ``partial`` rows. Major-only searches
+restrict targets to usable complete major alleles. This changes emission
+eligibility, not functionality labels. Existing anchor metadata can be refreshed
+without regenerating annotation targets.
+
+D alignment targets remain in ``d_germlines.fasta``. Their exact raw-record
+completeness and functionality are recorded separately in ``d_germlines.tsv``;
+complete emission consumers reject ``status=partial``. Metadata keys include
+both allele and sequence so a complete duplicate accession cannot validate a
+different partial sequence. ``arda.d_germline_metadata`` reads this table.

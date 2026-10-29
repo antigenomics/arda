@@ -64,6 +64,7 @@ def reannotate_contigs(
     strand: str = "both",
     map_d: bool = True,
     d_max_evalue: float | None = None,
+    major_only: bool = True,
 ) -> list[dict]:
     """Annotate assembled contigs by re-aligning them (baseline path).
 
@@ -72,7 +73,7 @@ def reannotate_contigs(
     """
     return annotate_records(records, organism, seqtype, threads=threads,
                             sensitivity=sensitivity, strand=strand, map_d=map_d,
-                            d_max_evalue=d_max_evalue)
+                            d_max_evalue=d_max_evalue, major_only=major_only)
 
 
 def merge_contig(contig: Contig, reference: Reference, *, map_d: bool = True) -> dict:
@@ -111,5 +112,5 @@ def merge_contigs(
     map_d: bool = True,
 ) -> list[dict]:
     """Annotate contigs by the merge path; loads the reference once for all of them."""
-    ref = reference or load_reference(organism, seqtype)
+    ref = reference or load_reference(organism, seqtype, major_only=False)
     return [merge_contig(c, ref, map_d=map_d) for c in contigs]

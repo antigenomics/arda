@@ -22,7 +22,7 @@ def _raw(allele, label):
     return "|".join(["accession", allele, "species", "F", "V-REGION"] + [""] * 8 + [label, "", ""])
 
 
-def test_functional_loader_excludes_only_junction_side_partial(tmp_path, monkeypatch):
+def test_annotation_loader_retains_partial_alignment_targets(tmp_path, monkeypatch):
     raw = tmp_path / "raw.fasta"
     raw.write_text("".join(f">{_raw(a, label)}\nTGTAAA\n" for a, label in
                            [("TRAV1*01", "partial in 3'"), ("TRAV2*01", "partial in 5'"), ("TRAV3*01", "")]))
@@ -30,7 +30,7 @@ def test_functional_loader_excludes_only_junction_side_partial(tmp_path, monkeyp
     ungapped.write_text("".join(f">TRAV{i}*01\nTGTAAA\n" for i in (1, 2, 3)))
     monkeypatch.setattr(imgt, "gene_fasta_path", lambda *a: raw)
     monkeypatch.setattr(imgt, "ungap_gene", lambda *a: ungapped)
-    assert set(imgt.load_functional_alleles("sp", "TR", "TRAV")) == {"TRAV2*01", "TRAV3*01"}
+    assert set(imgt.load_functional_alleles("sp", "TR", "TRAV")) == {"TRAV1*01", "TRAV2*01", "TRAV3*01"}
 
 
 def test_anchor_metadata_preserves_partial_even_when_lengths_equal(tmp_path, monkeypatch):
@@ -51,7 +51,7 @@ def test_anchor_metadata_preserves_partial_even_when_lengths_equal(tmp_path, mon
     assert all(rows[a]["status"] == "ok" for a in ("TRAV1*01", "TRAV2*01", "TRAJ2*01"))
 
 
-def test_d_collector_excludes_partial_records(tmp_path, monkeypatch):
+def test_d_collector_preserves_preliminary_alignment_records(tmp_path, monkeypatch):
     raw, ungapped = tmp_path / "raw.fasta", tmp_path / "d.fasta"
     partial_header = _raw("TRBD1*01", "partial in 3'")
     complete_header = _raw("TRBD2*01", "")
@@ -60,15 +60,18 @@ def test_d_collector_excludes_partial_records(tmp_path, monkeypatch):
     monkeypatch.setattr(build, "VDJ_LOCI", [SimpleNamespace(name="TRB", group="TR", d="TRBD")])
     monkeypatch.setattr(imgt, "gene_fasta_path", lambda *a: raw)
     monkeypatch.setattr(imgt, "ungap_gene", lambda *a: ungapped)
-    assert build._collect_d_germlines("sp", logging.getLogger("test")) == [("TRB", "TRBD2*01", "AAA")]
+    assert build._collect_d_germlines("sp", logging.getLogger("test")) == [("TRB", "TRBD1*01", "GGG"), ("TRB", "TRBD2*01", "AAA")]
+    rows = build._d_germline_metadata("sp", [("TRB", "TRBD1*01", "GGG"), ("TRB", "TRBD2*01", "AAA")])
+    assert [r["status"] for r in rows] == ["partial", "ok"]
+    assert rows[0]["imgt_completeness"] == "partial in 3'"
 
 
-def test_complete_duplicate_is_not_discarded(tmp_path):
-    raw = tmp_path / "duplicate.fasta"
-    partial = _raw("TRAV1*01", "partial in 3'")
-    complete = _raw("TRAV1*01", "")
-    raw.write_text(f">{partial}\nTGTAAA\n>{complete}\nTGTAAA\n")
-    assert not imgt.junction_partial_sequences(raw, "V")
+def test_complete_duplicate_is_not_discarded(monkeypatch):
+    monkeypatch.setattr(build, "VDJ_LOCI", [SimpleNamespace(name="TRB", group="TR", d="TRBD")])
+    monkeypatch.setattr(build, "_gapped_alleles", lambda *a: [
+        ("D1", "F", "AAA", "partial in 3'"), ("D1", "F", "AAA", "")])
+    rows = build._d_germline_metadata("sp", [("TRB", "D1", "AAA")])
+    assert rows[0]["status"] == "ok"
 
 
 def test_raw_partial_is_not_a_placeable_complete_anchor():

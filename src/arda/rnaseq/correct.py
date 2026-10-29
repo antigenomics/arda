@@ -1022,7 +1022,7 @@ _D_INT_COLS = ("v_sequence_end", "d_sequence_start", "d_sequence_end",
 
 
 def _clonotype_d(out: pl.DataFrame, organism: str,
-                 d_max_evalue: float | None = None) -> list[pl.Series]:
+                 d_max_evalue: float | None = None, major_only: bool = True) -> list[pl.Series]:
     """D (and tandem D-D) per clonotype, mapped into its error-corrected junction.
 
     Reads carry their own ``d_call``, but a read's D is called on a sequencing-error copy of
@@ -1042,7 +1042,7 @@ def _clonotype_d(out: pl.DataFrame, organism: str,
     for jn, vc, jc in zip(out["junction"], out["v_call"], out["j_call"]):
         try:
             call = map_d_junction(jn or "", vc or "", jc or "", organism,
-                                  d_max_evalue=d_max_evalue)
+                                  d_max_evalue=d_max_evalue, major_only=major_only)
         except (KeyError, ValueError):        # unknown allele / organism without anchors
             call = None
         for c in _D_STR_COLS:
@@ -1080,6 +1080,7 @@ def correct_airr(
     report_path: str | Path | None = None,
     cell_from: str = "",
     cell_regex: str | None = None,
+    major_only: bool = True,
 ) -> CorrectReport:
     """Aggregate mapped reads into clonotypes and collapse CDR3 sequencing errors.
 
@@ -1583,7 +1584,7 @@ def correct_airr(
         "consensus_count": [cons[r] for r in order],             # distinct fragment consensuses
     })
     if map_d:
-        out = out.with_columns(_clonotype_d(out, organism, d_max_evalue))
+        out = out.with_columns(_clonotype_d(out, organism, d_max_evalue, major_only))
     if flag_chimeras:
         # Never: Appended LAST and never used to drop a row -- see `_flag_chimeras` for the measured
         # rate (0.40 % of bulk IG clonotypes) and why that does not justify deletion.

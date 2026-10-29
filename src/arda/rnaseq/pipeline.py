@@ -84,7 +84,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
            map_report: dict | None = None, write_qc: bool = True,
-           cell_from: str = "", cell_regex: str | None = None, echo=None) -> dict:
+           cell_from: str = "", cell_regex: str | None = None, major_only: bool = True, echo=None) -> dict:
     """Run Stages 2-3 over a Stage-1 AIRR and write the clonotype table + merged report.
 
     Called by both :func:`run` (single node) and :func:`reduce` (after a sharded Stage 1).
@@ -114,12 +114,12 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
 
         extra = paths["assembled_airr"]
         arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d,
-                                d_max_evalue=d_max_evalue)
+                                d_max_evalue=d_max_evalue, major_only=major_only)
         say(f"assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
     crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d, threads=threads,
-                        d_max_evalue=d_max_evalue, ec_mode=ec_mode,
+                        d_max_evalue=d_max_evalue, ec_mode=ec_mode, major_only=major_only,
                         min_junction_q=min_junction_q, clonotype_key=clonotype_key,
                         call_level=call_level, isotype=isotype,
                         complete_only=complete_only, extra_airr=extra,
@@ -130,6 +130,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
     report = {
         **_provenance(),
         "wall_seconds": round(stage.wall_seconds, 3),
+        "major_only": major_only,
         "map": map_report,
         "assemble": arep.as_dict() if arep else None,
         "correct": crep.as_dict(),
@@ -235,7 +236,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
         complete_junction_nt: int = 0,
         cell_from: str = "",
         cell_regex: str | None = None,
-        echo=None) -> dict:
+        major_only: bool = True, echo=None) -> dict:
     """Single-node map -> assemble -> correct, over ONE sample's read groups.
 
     Args:
@@ -260,7 +261,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
         cell_from = _resolve_auto_dialect(pairs, limit)
         say(f"cell barcodes: --cell-from auto resolved to {cell_from!r} for every read group")
 
-    map_kw = dict(organism=organism, threads=threads,
+    map_kw = dict(organism=organism, threads=threads, major_only=major_only,
                   reconstruct=reconstruct, min_score=min_score, map_d=map_d,
                   d_max_evalue=d_max_evalue,
                   kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
@@ -286,7 +287,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
                     ec_mode=ec_mode, min_junction_q=min_junction_q,
                     clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                     d_max_evalue=d_max_evalue, cell_from=cell_from, cell_regex=cell_regex,
-                    map_report=mrep, write_qc=False, echo=echo)
+                    map_report=mrep, write_qc=False, major_only=major_only, echo=echo)
     report["wall_seconds"] = round(whole.wall_seconds, 3)
     (out_dir / OUTPUTS["report"].format(prefix=out_prefix)).write_text(
         json.dumps(report, indent=2) + "\n")
@@ -417,7 +418,7 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
            cell_from: str = "", cell_regex: str | None = None,
-           echo=None) -> dict:
+           major_only: bool = True, echo=None) -> dict:
     """Merge sharded Stage-1 output, then run Stages 2-3 once over the whole thing.
 
     Never: the Stage-2/3 knobs are reachable here for one reason -- a sharded run must be able to
@@ -456,4 +457,4 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
                   d_max_evalue=d_max_evalue, ec_mode=ec_mode, min_junction_q=min_junction_q,
                   clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                   cell_from=cell_from, cell_regex=cell_regex,
-                  map_report=mrep or None, echo=echo)
+                  map_report=mrep or None, major_only=major_only, echo=echo)

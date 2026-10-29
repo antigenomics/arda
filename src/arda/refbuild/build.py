@@ -255,8 +255,6 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
     out: list[tuple[str, str, str]] = []
     for locus in VDJ_LOCI:
         try:
-            partial = imgt.junction_partial_sequences(
-                imgt.gene_fasta_path(species_dir, locus.group, locus.d), "D")
             path = imgt.ungap_gene(species_dir, locus.group, locus.d)
         except FileNotFoundError:
             logger.info("%s: no IMGT D file (%s) for %s — no D germlines",
@@ -265,9 +263,31 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
         for header, seq in imgt.read_fasta(path):
             allele = header.split("|")[0].strip().split()[0]
             s = seq.upper().replace(".", "")
-            if allele and s and (allele, s) not in partial:
+            if allele and s:
                 out.append((locus.name, allele, s))
     return out
+
+
+def _d_germline_metadata(species_dir, germlines):
+    """Exact raw-record completeness, separate from preliminary D alignments."""
+    import json
+    records = {}
+    for locus in VDJ_LOCI:
+        try:
+            raw = _gapped_alleles(species_dir, locus.group, locus.d)
+        except FileNotFoundError:
+            continue
+        for allele, functionality, sequence, label in raw:
+            records.setdefault((locus.name, allele, sequence.replace(".", "")), []).append((functionality, label))
+    rows = []
+    for locus, allele, sequence in germlines:
+        matches = records[(locus, allele, sequence)]
+        labels = list(dict.fromkeys(label for _, label in matches))
+        functionality = next((f for f in ("F", "ORF", "P") if any(x == f for x, _ in matches)), matches[0][0])
+        rows.append(dict(locus=locus, allele=allele, sequence=sequence, functionality=functionality,
+                         status="partial" if all(imgt.junction_incomplete(label, "D") for label in labels) else "ok",
+                         imgt_completeness=labels[0] if len(labels) == 1 else json.dumps(labels)))
+    return rows
 
 
 # --------------------------------------------------------------------------
@@ -457,17 +477,10 @@ def select_one_allele_per_gene(alleles: dict[str, str], *, logger, locus: str,
     ``*01`` filter -- 19 human V genes (IGHV2-70D, IGHV3-25, IGHV3-43D, …) have no ``*01`` record
     and would silently vanish.
     """
-    by_gene: dict[str, list[str]] = {}
-    for a in alleles:
-        by_gene.setdefault(a.split("*")[0], []).append(a)
-    keep: dict[str, str] = {}
-    no01: list[str] = []
-    for al in by_gene.values():
-        pick = next((a for a in al if a.endswith("*01")), None)
-        if pick is None:
-            pick = min(al, key=lambda a: a.rsplit("*", 1)[-1])
-            no01.append(pick)
-        keep[pick] = alleles[pick]
+    from ..alleles import select_major_alleles
+    selected = select_major_alleles(alleles)
+    keep = {allele: alleles[allele] for allele in selected.values()}
+    no01 = [allele for allele in selected.values() if not allele.endswith("*01")]
     if no01:
         logger.info("%s: %d %s gene(s) have no *01 — kept the lowest allele: %s",
                     locus, len(no01), segment, ", ".join(sorted(no01)[:6]))
@@ -701,6 +714,10 @@ def build_species(organism: str, *, one_allele_per_gene: bool = False,
     d_germ = _collect_d_germlines(species_dir, logger)
     (out_dir / "d_germlines.fasta").write_text(
         "".join(f">{loc}|{al}\n{s}\n" for loc, al, s in d_germ))
+    d_metadata = _d_germline_metadata(species_dir, d_germ)
+    pl.DataFrame(d_metadata, schema={name: pl.String for name in
+        ("locus", "allele", "sequence", "functionality", "status", "imgt_completeness")}).write_csv(
+            out_dir / "d_germlines.tsv", separator="\t")
     logger.info("D germlines: %d alleles across %d loci",
                 len(d_germ), len({loc for loc, _, _ in d_germ}))
 

@@ -228,6 +228,7 @@ class Anchor:
     partial_nt: int = 0   # V: dangling 3' nt; J: dangling 5' nt (mid-codon)
     germline_nt: str = ""  # V: Cys104 -> 3' end. J: 5' end -> [FW]118 codon end.
     loci: tuple[str, ...] = ()  # All loci declaring this allele; TRA/TRD can share V.
+    imgt_completeness: str = ""
 
     def __post_init__(self):
         if not self.loci:
@@ -410,7 +411,7 @@ def load_anchors(organism: str) -> dict[tuple[str, str], Anchor]:
             locus=r["locus"], segment=r["segment"], templated_aa=r["templated_aa"] or "",
             functionality=r["functionality"], status=r["status"], source=r["source"],
             anchor_nt=int(r["anchor_nt"]), partial_nt=int(r["partial_nt"]),
-            germline_nt=r["germline_nt"] or "")
+            germline_nt=r["germline_nt"] or "", imgt_completeness=r.get("imgt_completeness") or "")
         prev = out.get(key)
         if prev is not None:
             anchor = replace(anchor, loci=tuple(sorted(set(prev.loci + anchor.loci))))

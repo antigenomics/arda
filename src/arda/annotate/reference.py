@@ -57,6 +57,7 @@ class Reference:
     d_germlines: dict[str, list[tuple[str, str]]]
     anchors: dict = field(default_factory=dict)    # (segment, allele) -> cdr3fix.Anchor
     _jc_combos: dict[tuple[str, str], str] | None = field(default=None, repr=False)
+    major_alleles: dict[str, str] = field(default_factory=dict)
 
     def jc_combinations(self) -> dict[tuple[str, str], str]:
         """``(j_allele, c_allele) -> J+C scaffold id``, the C-side twin of ``combinations.tsv``.
@@ -215,8 +216,12 @@ def _load_markup(path: Path, entries: dict[str, RefEntry]) -> None:
         )
 
 
-def load_reference(organism: str, seqtype: str = "nt") -> Reference:
-    """Load reference markup + target FASTA path for an organism."""
+def load_reference(organism: str, seqtype: str = "nt", *, major_only: bool = True) -> Reference:
+    """Load major-only search templates; ``major_only=False`` loads the full resource.
+
+    Each call returns its own metadata object. Major derivatives have a separate
+    content-addressed path, so full-reference metadata and index keys stay distinct.
+    """
     base = vdj_dir(organism)
     if not base.is_dir():
         raise FileNotFoundError(
@@ -251,4 +256,8 @@ def load_reference(organism: str, seqtype: str = "nt") -> Reference:
     # Both alphabets need the anchors: nt reads them as `germline_nt`, aa as `templated_aa`.
     from ..cdr3fix import load_anchors
     anchors = load_anchors(organism)
-    return Reference(organism, seqtype, target_fasta, entries, d_germlines, anchors)
+    ref = Reference(organism, seqtype, target_fasta, entries, d_germlines, anchors)
+    if major_only:
+        from .major import major_reference
+        return major_reference(ref)
+    return ref

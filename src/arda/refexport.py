@@ -218,7 +218,7 @@ def export_reference(organism: str = "human", *, kind: str = "scaffolds",
         raise ValueError(f"format must be one of {FORMATS}, got {fmt!r}")
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}, got {kind!r}")
-    ref = load_reference(organism, seqtype)
+    ref = load_reference(organism, seqtype, major_only=False)
     fh = open(out, "w", newline="") if out else sys.stdout
     try:
         if kind == "anchors":

@@ -137,20 +137,6 @@ def junction_incomplete(completeness: str, segment: str) -> bool:
             or (segment == "J" and "5'" in label))
 
 
-def junction_partial_sequences(path: Path, segment: str) -> set[tuple[str, str]]:
-    """Raw allele/sequence records whose junction-side completeness is unproven."""
-    out, complete = set(), set()
-    for header, seq in read_fasta(path):
-        fields = header.split("|")
-        if len(fields) > 13:
-            key = (fields[1].strip(), seq.upper().replace(".", ""))
-            if junction_incomplete(fields[13], segment):
-                out.add(key)
-            else:
-                complete.add(key)
-    return out - complete
-
-
 def parse_functionality(path: Path) -> dict[str, str]:
     """Map allele name -> normalized functionality from gapped IMGT headers.
 
@@ -214,7 +200,6 @@ def load_functional_alleles(
     """
     raw_path = gene_fasta_path(species_dir, group, gene_stem)
     functionality = parse_functionality(raw_path)
-    partial = junction_partial_sequences(raw_path, gene_stem[-1])
     ungapped = ungap_gene(species_dir, group, gene_stem)
     out: dict[str, str] = {}
     for header, seq in read_fasta(ungapped):
@@ -223,8 +208,6 @@ def load_functional_alleles(
         if not keep_orphons and "/OR" in allele:
             continue
         func = functionality.get(allele, "")
-        if (allele, seq.upper().replace(".", "")) in partial:
-            continue
         if func in _FUNCTIONAL and seq:
             out[allele] = seq.upper().replace(".", "")
     return out

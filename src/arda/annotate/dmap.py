@@ -122,7 +122,8 @@ def _d_germlines(organism: str) -> dict[str, list[tuple[str, str]]]:
 
 def map_d_junction(junction_nt: str, v_call: str, j_call: str,
                    species: str = "human", d_max_evalue: float | None = None,
-                   v_end: int | None = None, j_start: int | None = None) -> DCall:
+                   v_end: int | None = None, j_start: int | None = None,
+                   major_only: bool = True) -> DCall:
     """Map D (and a tandem second D) into a bare nucleotide junction.
 
     ``d_max_evalue`` overrides the shipped E-value gate on the D call(s); see
@@ -150,6 +151,10 @@ def map_d_junction(junction_nt: str, v_call: str, j_call: str,
         return out
 
     germlines = _d_germlines(organism).get(locus)
+    if major_only and germlines:
+        from ..alleles import select_major_alleles
+        selected = set(select_major_alleles(a for a, _ in germlines).values())
+        germlines = [(a, s) for a, s in germlines if a in selected]
     if not germlines:
         return out                       # VJ locus, or no D germlines for this organism
 

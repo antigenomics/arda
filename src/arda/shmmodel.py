@@ -135,7 +135,7 @@ def germline_map(organism: str = "human", locus: str = "") -> dict[str, tuple[st
     """
     from .refexport import _read_fasta          # the same dict[id, seq] reader export-ref uses
 
-    ref = load_reference(organism)
+    ref = load_reference(organism, major_only=False)
     targets = _read_fasta(ref.target_fasta)
     out: dict[str, tuple[str, list]] = {}
     for sid, entry in ref.entries.items():

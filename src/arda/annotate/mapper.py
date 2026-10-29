@@ -267,7 +267,7 @@ def _cached_target_db(target_fasta: Path, organism: str, seqtype: str) -> Path:
     return _createdb_atomic(Path(target_fasta), db, _dbtype(seqtype))
 
 
-def reference_index_identity(organism: str, seqtype: str = "aa") -> dict:
+def reference_index_identity(organism: str, seqtype: str = "aa", *, major_only: bool = True) -> dict:
     """Resolve and validate the exact searched reference index, returning SHA256 provenance.
 
     The returned JSON-compatible mapping identifies the resolved FASTA, immutable
@@ -276,10 +276,11 @@ def reference_index_identity(organism: str, seqtype: str = "aa") -> dict:
     """
     if seqtype not in _SEARCH_TYPE:
         raise ValueError("seqtype must be 'aa' or 'nt'")
-    fasta = vdj_dir(organism) / ("alleles.aa.fasta" if seqtype == "aa" else "alleles.fasta")
+    fasta = (load_reference(organism, seqtype, major_only=True).target_fasta if major_only else
+             vdj_dir(organism) / ("alleles.aa.fasta" if seqtype == "aa" else "alleles.fasta"))
     db = _cached_target_db(fasta, organism, seqtype)
     manifest = json.loads((db.parent / "IDENTITY.json").read_text())
-    return {**manifest, "organism": organism, "seqtype": seqtype,
+    return {**manifest, "organism": organism, "seqtype": seqtype, "major_only": major_only,
             "source_fasta": str(fasta.resolve()), "database_path": str(db.resolve())}
 
 
@@ -1500,7 +1501,7 @@ def _annotate_chunk(
     return out
 
 
-def _prep(organism, seqtype, threads, sensitivity, strand):
+def _prep(organism, seqtype, threads, sensitivity, strand, major_only=True):
     if seqtype not in _SEARCH_TYPE:
         raise ValueError(f"seqtype must be 'nt' or 'aa', got {seqtype!r}")
     # Reject an unknown strand rather than silently searching forward-only. On stranded paired
@@ -1515,7 +1516,7 @@ def _prep(organism, seqtype, threads, sensitivity, strand):
         raise ValueError(f"Polars is already initialized with {pl.thread_pool_size()} threads, "
                          f"exceeding the CPU budget {threads}. Start a fresh process with "
                          "POLARS_MAX_THREADS no larger than the requested budget before importing Polars.")
-    ref = load_reference(organism, seqtype)
+    ref = load_reference(organism, seqtype, major_only=major_only)
     sensitivity = _SENSITIVITY[seqtype] if sensitivity is None else sensitivity
     mm_strand = (2 if strand == "both" else 1) if seqtype == "nt" else None
     target_db = _cached_target_db(ref.target_fasta, organism, seqtype)
@@ -1534,6 +1535,7 @@ def annotate_records(
     d_max_evalue: float | None = None,
     shm: str = "framework",
     complete_junction_nt: int = 0,
+    major_only: bool = True,
 ) -> list[dict]:
     """Annotate in-memory ``(id, sequence)`` records; return AIRR record dicts.
 
@@ -1550,7 +1552,7 @@ def annotate_records(
             :mod:`arda.shm`.
     """
     ref, target_db, threads, sensitivity, mm_strand = _prep(
-        organism, seqtype, threads, sensitivity, strand)
+        organism, seqtype, threads, sensitivity, strand, major_only)
     return _annotate_chunk(records, ref, target_db, seqtype,
                            threads=threads, sensitivity=sensitivity,
                            mm_strand=mm_strand, map_d=map_d, d_max_evalue=d_max_evalue,
@@ -1571,6 +1573,7 @@ def annotate_file(
     d_max_evalue: float | None = None,
     shm: str = "framework",
     complete_junction_nt: int = 0,
+    major_only: bool = True,
 ) -> Path:
     """Annotate a FASTA/FASTQ file and stream an AIRR TSV.
 
@@ -1582,7 +1585,7 @@ def annotate_file(
     """
     output = Path(output)
     ref, target_db, threads, sensitivity, mm_strand = _prep(
-        organism, seqtype, threads, sensitivity, strand)
+        organism, seqtype, threads, sensitivity, strand, major_only)
 
     # Reserve a CPU for parsing while native search owns the remaining budget.
     search_threads, read_ahead = streaming_threads(threads, pl.thread_pool_size())

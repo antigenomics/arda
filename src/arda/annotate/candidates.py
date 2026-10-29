@@ -25,9 +25,11 @@ _SCHEMA = {("sequence_id" if c == "query" else c): t for c, t in _MM_SCHEMA.item
 
 
 def alignment_candidates(records, *, organism="human", threads=0, max_seqs=300,
-                         evalue=1e-3, sensitivity=7.0, batch_size=10000):
+                         evalue=1e-3, sensitivity=7.0, batch_size=10000, major_only=True):
     """Return independent nucleotide V/J/D alignment candidates for each input.
 
+    Major-only search is the default; ``major_only=False`` searches all alleles.
+    The returned ``major_alleles`` map uses the shared gene-to-major convention.
     These are preliminary evidence, not assignments or recombination boundaries.
     Returns flat Polars ``queries`` and ``alignments`` frames plus ``limits``.
     Calls are bounded to ``batch_size`` inputs; iterate batches for large cohorts.
@@ -65,12 +67,12 @@ def alignment_candidates(records, *, organism="human", threads=0, max_seqs=300,
                          f"exceeding the CPU budget {threads}. Start a fresh process with "
                          "POLARS_MAX_THREADS no larger than the requested budget before importing Polars.")
     limits = dict(max_seqs=max_seqs, evalue=evalue, sensitivity=sensitivity, kmer=13,
-                  strand="forward", rejected_reverse_hits=0, d_threads=1 if len(records) < 32 else min(threads, len(records)), d_serial_below=32, vj_spans="one per target", d_spans="best positive span per allele", batch_size=batch_size)
+                  strand="forward", major_only=major_only, rejected_reverse_hits=0, d_threads=1 if len(records) < 32 else min(threads, len(records)), d_serial_below=32, vj_spans="one per target", d_spans="best positive span per allele", batch_size=batch_size)
     queries = pl.DataFrame({"sequence_id": ids, "sequence": [seq for _, seq in records]}, schema=_QUERY_SCHEMA)
     hits = pl.DataFrame(schema=_SCHEMA)
     if not records:
-        return dict(queries=queries, alignments=hits, limits=limits)
-    ref = load_reference(organism, "nt")
+        return dict(queries=queries, alignments=hits, limits=limits, major_alleles={})
+    ref = load_reference(organism, "nt", major_only=major_only)
     db = _cached_segment_db(ref, organism)
     if db is None:
         raise RuntimeError("segment reference unavailable for candidate search")
@@ -132,4 +134,4 @@ def alignment_candidates(records, *, organism="human", threads=0, max_seqs=300,
                 d = d.with_columns(pl.lit(None, dtype=dtype).alias(column))
         hits = pl.concat([hits.select(list(_SCHEMA)), d.select(list(_SCHEMA))], how="vertical")
     return dict(queries=queries, alignments=hits.select(list(_SCHEMA)).sort(
-        "sequence_id", "segment", "target", "qstart", "tstart", "qend", "tend"), limits=limits)
+        "sequence_id", "segment", "target", "qstart", "tstart", "qend", "tend"), limits=limits, major_alleles=getattr(ref, "major_alleles", {}))
