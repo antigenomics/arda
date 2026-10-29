@@ -141,6 +141,8 @@ def segment_rows(segments_fasta: Path, reads: dict[str, str], *, max_tied: int,
     downstream compares the two: the value is used to rank candidates within a read and to detect
     exact ties, both of which are internal to the segment pass.
     """
+    from .annotate.io import normalize_nt
+    reads = {sid: normalize_nt(seq) for sid, seq in reads.items()}
     mapper, names = build(Path(segments_fasta))
     ids = list(reads)
     hits = mapper.map([reads[i] for i in ids], max_tied, min_score, threads, max_indel)

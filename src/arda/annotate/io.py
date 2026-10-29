@@ -12,7 +12,51 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-__all__ = ["open_text", "read_sequences", "detect_format", "write_fasta", "chunked"]
+__all__ = ["open_text", "read_sequences", "detect_format", "write_fasta", "chunked", "normalize_nt", "normalize_nt_frame"]
+
+
+# Sequencing observations only: reference/template readers deliberately do not call this.
+_IUPAC_TO_A = str.maketrans("RYSWKMBDHVN", "A" * 11)
+
+
+def normalize_nt(sequence: str) -> str:
+    """Uppercase sequencing DNA and replace every ambiguous DNA IUPAC base with A.
+
+    This mandatory input rule preserves positions and leaves non-IUPAC characters
+    unchanged for the caller's existing validation. Never apply it to germlines.
+    """
+    return sequence.upper().translate(_IUPAC_TO_A)
+
+
+def normalize_nt_frame(frame):
+    """Normalize observed AIRR nucleotide columns, preserving references and metadata.
+
+    Re-translate existing region/junction amino acids only where their observed
+    nucleotide sequence changed. Nulls, coordinates and quality strings survive.
+    """
+    import polars as pl
+    from .._markup import translate
+
+    regions = ("junction", "fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
+    columns = ("sequence", "sequence_alignment", "v_sequence_alignment",
+               "d_sequence_alignment", "j_sequence_alignment", "c_sequence_alignment",
+               "np1", "np2", "np3", *regions)
+    expressions = []
+    for name in columns:
+        if name not in frame.columns:
+            continue
+        normalized = pl.col(name).cast(pl.String).str.to_uppercase().str.replace_all("[RYSWKMBDHVN]", "A")
+        expressions.append(normalized.alias(name))
+        aa = name + "_aa"
+        if name in regions and aa in frame.columns:
+            # Only changed distinct observations cross the native translation boundary.
+            changed = frame.filter(pl.col(name) != normalized).select(normalized.alias(name))[name].unique().to_list()
+            if changed:
+                mapping = {nt: translate(nt) for nt in changed}
+                expressions.append(pl.when(pl.col(name) != normalized)
+                    .then(normalized.replace_strict(mapping, default=pl.col(aa)))
+                    .otherwise(pl.col(aa)).alias(aa))
+    return frame.with_columns(expressions)
 
 
 @contextmanager
@@ -131,21 +175,29 @@ def _read_fastq(fh, with_qual: bool = False) -> Iterator[tuple]:
                 yield header[1:].split(None, 1)[0], seq.rstrip("\n")
 
 
-def read_sequences(path: str | Path, *, with_qual: bool = False) -> Iterator[tuple]:
+def read_sequences(path: str | Path, *, with_qual: bool = False, seqtype: str = "nt") -> Iterator[tuple]:
     """Yield ``(id, sequence)`` from a FASTA or FASTQ file (auto-detected).
+
+    Sequencing DNA IUPAC bases are always replaced with A. ``seqtype="aa"``
+    denotes protein input, which is preserved.
 
     ``with_qual=True`` yields ``(id, sequence, qual)`` instead -- the FASTQ Phred string, or
     ``None`` for FASTA (which has no quality). The default is unchanged and pays nothing: the
     quality line is consumed either way, only kept when asked (needed solely by the paired
     overlap-merge, :func:`arda.rnaseq.map.merge_pair`)."""
+    if seqtype not in ("nt", "aa"):
+        raise ValueError("seqtype must be nt or aa")
     try:
         fmt = detect_format(path)
         with open_text(path) as fh:
             if fmt == "fasta":
                 for sid, seq in _read_fasta(fh):
+                    seq = normalize_nt(seq) if seqtype == "nt" else seq
                     yield (sid, seq, None) if with_qual else (sid, seq)
             else:
-                yield from _read_fastq(fh, with_qual=with_qual)
+                for record in _read_fastq(fh, with_qual=with_qual):
+                    sid, seq, *qual = record
+                    yield (sid, normalize_nt(seq) if seqtype == "nt" else seq, *qual)
     except (EOFError, gzip.BadGzipFile) as exc:
         # A truncated/corrupt .gz raises deep in the gzip layer mid-stream (EOFError:
         # "Compressed file ended before the end-of-stream marker"). Surface it as a clear

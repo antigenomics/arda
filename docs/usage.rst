@@ -8,6 +8,16 @@ For copy-paste recipes — the one-liners, annotating sequences you already have
 snippets that turn a clonotype table into clonal fractions, gene usage, repertoire overlap and
 cohort QC — see :doc:`examples`.
 
+Sequencing DNA input rule
+-------------------------
+
+All nucleotide sequencing inputs are uppercased, and every ambiguous DNA IUPAC
+base (``RYSWKMBDHVN``) is replaced with ``A`` before search or assembly. This rule
+applies to file and in-memory library inputs and has no opt-out. Imported AIRR
+correction/assembly inputs receive the same treatment for observed nucleotide
+fields and affected region translations. Protein inputs (``seqtype="aa"``),
+raw germline references, read identifiers and quality strings are preserved.
+
 .. _choosing a mode:
 
 The three modes

@@ -1423,6 +1423,8 @@ def _annotate_chunk(
     """
     if not records:
         return []
+    if seqtype == "nt":
+        records = [(sid, seqio.normalize_nt(seq)) for sid, seq in records]
     if kmer == -1:  # sentinel: caller did not override, use the seqtype default
         kmer = _KMER[seqtype]
     with tempfile.TemporaryDirectory(prefix="arda_") as td:
@@ -1589,7 +1591,7 @@ def annotate_file(
 
     # Reserve a CPU for parsing while native search owns the remaining budget.
     search_threads, read_ahead = streaming_threads(threads, pl.thread_pool_size())
-    source = seqio.chunked(seqio.read_sequences(input), chunk_size)
+    source = seqio.chunked(seqio.read_sequences(input, seqtype=seqtype), chunk_size)
     extra_cols = FULL_COLUMNS if shm == "both" else ()
     with seqio.prefetched(source, enabled=read_ahead) as chunks, open(output, "w") as fh:
         fh.write(airr_header(extra_cols) + "\n")

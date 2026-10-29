@@ -388,6 +388,7 @@ def split_fasta(
     input: Path = typer.Argument(..., help="Input FASTA/FASTQ."),
     out_dir: Path = typer.Argument(..., help="Directory for shard FASTA files."),
     shards: int = typer.Option(..., "--shards", help="Number of shards."),
+    seqtype: str = typer.Option("nt", "--seqtype", help="Input type: nt or aa."),
 ) -> None:
     """Round-robin split an input into N shard FASTA files (amplicon / single-end).
 
@@ -396,7 +397,7 @@ def split_fasta(
     """
     from .cluster import split as _split
 
-    paths = _split(input, out_dir, shards)
+    paths = _split(input, out_dir, shards, seqtype=seqtype)
     typer.echo(f"wrote {len(paths)} shards to {out_dir}")
 
 

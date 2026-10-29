@@ -304,6 +304,7 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
     complemented); without them R2 wins the whole overlap (the historical behaviour). Outside
     the overlap, R1 supplies its 5' part and R2 its 3' tail.
     """
+    s1, s2 = seqio.normalize_nt(s1), seqio.normalize_nt(s2)
     r2 = reverse_complement(s2)
     if len(s1) < min_overlap or len(r2) < min_overlap:
         return None
@@ -500,23 +501,24 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool,
         if r2 is None:
             with _dnaio.open(str(r1)) as fh:
                 for rec in fh:
-                    yield ((rec.id, rec.sequence, rec.qualities or "") if with_qual
-                           else (rec.id, rec.sequence))
+                    yield ((rec.id, seqio.normalize_nt(rec.sequence), rec.qualities or "") if with_qual
+                           else (rec.id, seqio.normalize_nt(rec.sequence)))
             return
         with _dnaio.open(str(r1), str(r2)) as fh:
             for a, b in fh:
+                s1, s2 = seqio.normalize_nt(a.sequence), seqio.normalize_nt(b.sequence)
                 if reconstruct:
-                    merged = merge_pair(a.sequence, b.sequence,
+                    merged = merge_pair(s1, s2,
                                         q1=a.qualities, q2=b.qualities)
                     if merged is not None:
                         yield a.id, merged
                         continue
                 if with_qual:
-                    yield f"{a.id}/1", a.sequence, a.qualities or ""
-                    yield f"{b.id}/2", b.sequence, b.qualities or ""
+                    yield f"{a.id}/1", s1, a.qualities or ""
+                    yield f"{b.id}/2", s2, b.qualities or ""
                 else:
-                    yield f"{a.id}/1", a.sequence
-                    yield f"{b.id}/2", b.sequence
+                    yield f"{a.id}/1", s1
+                    yield f"{b.id}/2", s2
     except _dnaio.FileFormatError as exc:
         # Re-word to the two phrases callers and tests match on. dnaio says "Reads are improperly
         # paired. There are more reads in file 1 than in file 2" and "Read name 'b' in file 1 does
