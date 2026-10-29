@@ -3,6 +3,16 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.38.1
+
+- Honor raw IMGT completeness labels when building junction germline resources.
+  V records missing their 3-prime end, J records missing their 5-prime end, and
+  partial D records cannot serve as complete emission templates. Opposite-end
+  partial V/J records remain eligible; functionality labels remain unchanged.
+- Preserve raw completeness labels in `cdr3_anchors.tsv` and distinguish
+  `partial` records from complete anchors even when sibling lengths agree.
+  Regenerated annotation references omit these incomplete V/J targets.
+
 ## 2.38.0
 
 - Add `arda.alignment_candidates` for bounded batches of preliminary V/J/D evidence:
