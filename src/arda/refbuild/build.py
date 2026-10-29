@@ -518,8 +518,6 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             ungapped = gapped.replace(".", "")
             anchor, source = _v_anchor(ungapped, fwr3_stops.get(allele))
             status = "ok" if anchor >= 0 else "no_anchor"
-            if imgt.junction_incomplete(completeness, "V"):
-                status = "partial"
             tail = ungapped[anchor:] if anchor >= 0 else ""
             whole = len(tail) // 3 * 3
             rows.append({
@@ -554,8 +552,6 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             # cdr3_stop ((anchor - frame) % 3 == 1) and yields a garbage translation.
             frame = anchor % 3 if anchor >= 0 else 0
             status = "ok" if anchor >= 0 else "no_anchor"
-            if imgt.junction_incomplete(completeness, "J"):
-                status = "partial"
             slice_nt = seq[: anchor + 3] if anchor >= 0 else ""
             rows.append({
                 "locus": locus.name, "segment": "J", "allele": allele,
@@ -585,6 +581,12 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
                 r["status"] = "truncated"
                 counts[f"{r['segment']}:ok"] -= 1
                 counts[f"{r['segment']}:truncated"] += 1
+
+    for row in rows:
+        if row["status"] == "ok" and imgt.junction_incomplete(row["imgt_completeness"], row["segment"]):
+            row["status"] = "partial"
+            counts[f"{row['segment']}:ok"] -= 1
+            counts[f"{row['segment']}:partial"] += 1
 
     bad = {k: v for k, v in counts.items() if not k.endswith(":ok")}
     if bad:

@@ -74,9 +74,10 @@ def test_complete_duplicate_is_not_discarded(monkeypatch):
     assert rows[0]["status"] == "ok"
 
 
-def test_raw_partial_is_not_a_placeable_complete_anchor():
+def test_raw_partial_remains_preliminary_placeable_evidence():
     from arda.cdr3fix import Anchor, _placeable
 
     anchor = Anchor(locus="TRB", segment="V", templated_aa="CASS", functionality="F",
                     status="partial", source="ndm")
-    assert not _placeable(anchor)
+    assert anchor.status != "ok"
+    assert _placeable(anchor)

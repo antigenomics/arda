@@ -439,7 +439,7 @@ IGK	V	IGKV12-41*02	F	261	2	CQHFWSTP	TGTCAACATTTTTGGAGTACTCCTCC	ok	motif	""
 IGK	V	IGKV12-44*01	F	261	2	CQHHYGTP	TGTCAACATCATTATGGTACTCCTCC	ok	motif	""
 IGK	V	IGKV12-46*01	F	261	2	CQHFWGTP	TGTCAACATTTTTGGGGTACTCCTCC	ok	motif	""
 IGK	V	IGKV12-47*01	ORF	261	2	CEQS	TGTGAACAGAGTTA	ok	motif	""
-IGK	V	IGKV12-49*02	P	-1	0			partial	no_anchor	partial in 3'
+IGK	V	IGKV12-49*02	P	-1	0			no_anchor	no_anchor	partial in 3'
 IGK	V	IGKV12-89*01	F	261	2	CQNVLSTP	TGTCAAAATGTGTTAAGTACTCCTCC	ok	motif	""
 IGK	V	IGKV12-98*01	F	261	2	CQQLYSTP	TGTCAACAACTTTACAGTACTCCTCT	ok	motif	""
 IGK	V	IGKV12-e*01	F	261	2	CQHFWSAP	TGTCAACATTTTTGGAGTGCTCCTCC	ok	motif	""
@@ -450,8 +450,8 @@ IGK	V	IGKV13-77-1*01	P	261	2	CQQYFFIT	TGTCAACAGTATTTTTTTATAACTAC	ok	motif	""
 IGK	V	IGKV13-82*01	P	261	1	CEQYLVYL	TGTGAACAGTACTTAGTATACCTAC	ok	motif	""
 IGK	V	IGKV13-84*01	F	261	2	CQQYWSTP	TGTCAACAGTATTGGAGTACTCCTCC	ok	motif	""
 IGK	V	IGKV13-85*01	F	261	2	CQQYWSTP	TGTCAACAGTATTGGAGTACTCCTCC	ok	motif	""
-IGK	V	IGKV13-85*02	F	-1	0			partial	no_anchor	partial in 3'
-IGK	V	IGKV13-85*03	F	-1	0			partial	no_anchor	partial in 3'
+IGK	V	IGKV13-85*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGK	V	IGKV13-85*03	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGK	V	IGKV14-100*01	F	261	2	CVQYAQFP	TGTGTACAGTATGCTCAGTTTCCTCC	ok	motif	""
 IGK	V	IGKV14-111*01	F	261	2	CLQYDEFP	TGTCTACAGTATGATGAGTTTCCTCC	ok	motif	""
 IGK	V	IGKV14-126*01	F	261	2	CLQHGESP	TGTCTACAGCATGGTGAGAGCCCTCC	ok	motif	""
@@ -533,7 +533,7 @@ IGK	V	IGKV5-48*01	F	261	2	CQQSNSWP	TGTCAACAAAGTAATAGCTGGCCAAC	ok	motif	""
 IGK	V	IGKV6-13*01	F	261	2	CQQYSSYP	TGCCAGCAATATAGCAGCTATCCTCT	ok	motif	""
 IGK	V	IGKV6-14*01	F	261	2	CLQHWNYP	TGTCTGCAACATTGGAATTATCCTCT	ok	motif	""
 IGK	V	IGKV6-15*01	F	261	2	CQQYNSYP	TGTCAGCAATATAACAGCTATCCTCT	ok	motif	""
-IGK	V	IGKV6-15-1*01	P	-1	0			partial	no_anchor	partial in 3'
+IGK	V	IGKV6-15-1*01	P	-1	0			no_anchor	no_anchor	partial in 3'
 IGK	V	IGKV6-17*01	F	261	2	CQQHYSTP	TGTCAGCAACATTATAGTACTCCTCC	ok	motif	""
 IGK	V	IGKV6-20*01	F	261	2	CGQSYSYP	TGTGGACAGAGTTACAGCTATCCTCC	ok	motif	""
 IGK	V	IGKV6-23*01	F	261	2	CQQYSSYP	TGTCAGCAATATAGCAGCTATCCTCT	ok	motif	""
@@ -619,8 +619,8 @@ IGH	V	IGHV1-16*01	ORF	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-16*02	ORF	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-17-1*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-18*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-18*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-18*03	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-18*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-18*03	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-18*04	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-18*05	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-18-11*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -723,7 +723,7 @@ IGH	V	IGHV1-34*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-34*03	P	-1	0			no_anchor	no_anchor	""
 IGH	V	IGHV1-35*01	P	-1	0			no_anchor	no_anchor	""
 IGH	V	IGHV1-35*02	P	-1	0			no_anchor	no_anchor	""
-IGH	V	IGHV1-35*03	P	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-35*03	P	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-35*04	ORF	-1	0			no_anchor	no_anchor	""
 IGH	V	IGHV1-36*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-36*02	ORF	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -739,8 +739,8 @@ IGH	V	IGHV1-39*03	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-4*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-4*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-42*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-42*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-42*03	P	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-42*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-42*03	P	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-42*04	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-42*05	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-42-1*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -815,16 +815,16 @@ IGH	V	IGHV1-50*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-51*01	P	285	0	CARQV	TGTGCTAGACAAGTG	ok	motif	""
 IGH	V	IGHV1-52*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-53*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-53*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-53*03	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-53*04	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-53*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-53*03	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-53*04	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-54*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-54*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-54*03	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-55*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-55*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-55*03	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-55*04	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-55*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-55*03	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-55*04	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-55*05	ORF	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-56*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-56*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -838,11 +838,11 @@ IGH	V	IGHV1-61*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-62-1*01	F	285	1	CK	TGCAAGG	ok	motif	""
 IGH	V	IGHV1-62-2*01	F	285	2	CARHE	TGTGCAAGACACGAAGA	ok	motif	""
 IGH	V	IGHV1-62-3*01	ORF	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-62-3*02	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-62-3*02	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-63*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-63*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-64*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-64*02	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-64*02	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-66*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-67*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-69*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -879,13 +879,13 @@ IGH	V	IGHV1-71-6*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-71-8*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-71-9*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-72*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-72*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-72*03	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-72*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-72*03	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-72*04	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1-72*05	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-72*05	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-74*01	F	285	0	CAI	TGTGCAATA	ok	motif	""
-IGH	V	IGHV1-74*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1-74*03	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1-74*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1-74*03	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1-74*04	F	285	0	CAI	TGTGCAATA	ok	motif	""
 IGH	V	IGHV1-75*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1-76*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -970,22 +970,22 @@ IGH	V	IGHV15-2-1*01	ORF	288	0	CAR	TGTGCAAGG	ok	motif	""
 IGH	V	IGHV16-1*01	ORF	288	2	CAR	TGTGCCAGAGA	ok	motif	""
 IGH	V	IGHV1S10*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S10*02	P	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1S100*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S101*01	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S101*02	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S103*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S107*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S108*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1S100*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S101*01	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S101*02	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S103*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S107*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S108*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1S11*01	P	-1	0			no_anchor	no_anchor	""
-IGH	V	IGHV1S110*01	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S111*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S112*01	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S112*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S113*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S118*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S120*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S121*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S124*01	P	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1S110*01	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S111*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S112*01	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S112*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S113*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S118*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S120*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S121*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S124*01	P	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1S127*01	F	285	0	CTR	TGTACAAGA	ok	motif	""
 IGH	V	IGHV1S130*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S134*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -998,21 +998,21 @@ IGH	V	IGHV1S18*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S19*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S20*01	F	-1	0			no_anchor	no_anchor	partial in 5'
 IGH	V	IGHV1S20*02	F	240	0	CAR	TGTGCAAGA	ok	motif	partial in 5'
-IGH	V	IGHV1S21*01	F	-1	0			partial	no_anchor	partial in 5' and in 3'
-IGH	V	IGHV1S21*02	F	-1	0			partial	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV1S21*01	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV1S21*02	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
 IGH	V	IGHV1S26*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S28*01	P	285	0	CSR	TGTTCGAGA	ok	motif	""
-IGH	V	IGHV1S29*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1S29*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1S29*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S30*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S30*02	F	276	0	CAR	TGTGCAAGA	ok	motif	partial in 5'
-IGH	V	IGHV1S31*01	F	-1	0			partial	no_anchor	partial in 5' and in 3'
-IGH	V	IGHV1S33*01	F	-1	0			partial	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV1S31*01	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV1S33*01	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
 IGH	V	IGHV1S34*01	F	-1	0			no_anchor	no_anchor	partial in 5'
 IGH	V	IGHV1S35*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S36*01	F	285	0	CTR	TGTACAAGA	ok	motif	""
 IGH	V	IGHV1S36*02	F	285	0	CTR	TGTACAAGA	ok	motif	""
-IGH	V	IGHV1S37*01	F	-1	0			partial	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV1S37*01	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
 IGH	V	IGHV1S40*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S41*01	F	258	0	CAR	TGTGCAAGA	ok	motif	partial in 5'
 IGH	V	IGHV1S46*01	F	285	1	CAR	TGTGCAAGAT	ok	motif	""
@@ -1026,24 +1026,24 @@ IGH	V	IGHV1S53*01	F	285	0	CKR	TGTAAAAGA	ok	motif	""
 IGH	V	IGHV1S55*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S56*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV1S61*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1S65*02	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S65*03	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S67*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S68*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S70*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S73*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S74*01	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S75*02	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S78*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S81*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1S65*02	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S65*03	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S67*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S68*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S70*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S73*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S74*01	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S75*02	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S78*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S81*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1S81*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1S83*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S84*01	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S87*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1S83*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S84*01	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S87*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV1S9*01	P	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV1S92*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S95*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV1S96*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV1S92*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S95*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV1S96*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV2-2*01	F	282	2	CAR	TGTGCCAGAAA	ok	motif	""
 IGH	V	IGHV2-2*02	F	282	2	CAR	TGTGCCAGAAA	ok	motif	""
 IGH	V	IGHV2-2*03	F	282	2	CAR	TGTGCCAGAAA	ok	motif	""
@@ -1187,9 +1187,9 @@ IGH	V	IGHV6-7-2*01	ORF	291	0	CTR	TGTACAAGG	ok	motif	""
 IGH	V	IGHV6-7-3*01	ORF	291	0	CTR	TGTACAAGG	ok	motif	""
 IGH	V	IGHV6-7-4*01	F	291	0	CTR	TGTACCAGG	ok	motif	""
 IGH	V	IGHV6-7-5*01	F	291	0	CTW	TGTACATGG	ok	motif	""
-IGH	V	IGHV6S2*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV6S3*01	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV6S4*01	F	-1	0			partial	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV6S2*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV6S3*01	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV6S4*01	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
 IGH	V	IGHV7-1*01	F	291	0	CARDA	TGTGCAAGAGATGCA	ok	motif	""
 IGH	V	IGHV7-1*02	F	291	0	CARDA	TGTGCAAGAGATGCA	ok	motif	""
 IGH	V	IGHV7-1-1*01	F	291	1	CARD	TGTGCAAGAGATA	ok	motif	""
@@ -1242,25 +1242,25 @@ IGH	V	IGHV8-4-6*01	F	288	1	CARI	TGTGCTCGAATAG	ok	motif	""
 IGH	V	IGHV8-4-7*01	ORF	288	1	CARR	TGTGCTCGAAGAG	ok	motif	""
 IGH	V	IGHV8-4-8*01	F	288	1	CARR	TGTGCTCGAAGAG	ok	motif	""
 IGH	V	IGHV8-5*01	F	288	1	CAQI	TGTGCTCAAATAG	ok	motif	""
-IGH	V	IGHV8-5*02	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV8-5*02	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV8-6*01	F	288	1	CARR	TGTGCTCGAAGAG	ok	motif	""
 IGH	V	IGHV8-6*02	ORF	288	1	CARR	TGTGCTCGAAGAG	ok	motif	""
 IGH	V	IGHV8-6D*01	ORF	288	1	CARR	TGTGCTCGAAGAG	ok	motif	""
 IGH	V	IGHV8-7*01	P	288	0	CA	TGTGCT	truncated	motif	""
 IGH	V	IGHV8-7*02	P	288	1	CAHR	TGTGCTCACAGAG	ok	motif	""
 IGH	V	IGHV8-8*01	F	288	1	CARI	TGTGCTCGAATAG	ok	motif	""
-IGH	V	IGHV8-8*02	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV8-8*02	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV8-8*03	F	-1	0			no_anchor	no_anchor	""
 IGH	V	IGHV8-8-1*01	P	288	0	CAHR	TGTGCTCACAGA	ok	motif	""
 IGH	V	IGHV8-9*01	ORF	-1	0			no_anchor	no_anchor	""
-IGH	V	IGHV8-9*02	P	-1	0			partial	no_anchor	partial in 5' and in 3'
-IGH	V	IGHV8-9*03	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV8S6*01	P	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV8S9*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV8-9*02	P	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV8-9*03	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV8S6*01	P	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV8S9*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV9-1*01	F	285	0	CVR	TGTGTAAGA	ok	motif	""
 IGH	V	IGHV9-1*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
-IGH	V	IGHV9-1*03	F	-1	0			partial	no_anchor	partial in 3'
-IGH	V	IGHV9-1*04	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV9-1*03	F	-1	0			no_anchor	no_anchor	partial in 3'
+IGH	V	IGHV9-1*04	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	V	IGHV9-2*01	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV9-2*02	F	285	0	CAR	TGTGCAAGA	ok	motif	""
 IGH	V	IGHV9-2*03	F	285	0	CAR	TGTGCAAGA	ok	motif	""
@@ -1278,8 +1278,8 @@ IGH	V	IGHV9-4*01	F	285	0	CAR	TGTGCGAGA	ok	motif	""
 IGH	V	IGHV9-4*02	F	285	0	CAR	TGTGCGAGA	ok	motif	""
 IGH	V	IGHV9-4*03	F	-1	0			no_anchor	no_anchor	partial in 5'
 IGH	V	IGHV9-4*04	F	285	0	CAR	TGTGCGAGA	ok	motif	""
-IGH	V	IGHV9S7*01	F	-1	0			partial	no_anchor	partial in 5' and in 3'
-IGH	V	IGHV9S8*01	F	-1	0			partial	no_anchor	partial in 3'
+IGH	V	IGHV9S7*01	F	-1	0			no_anchor	no_anchor	partial in 5' and in 3'
+IGH	V	IGHV9S8*01	F	-1	0			no_anchor	no_anchor	partial in 3'
 IGH	J	IGHJ1*01	F	19	1	YWYFDVW	CTACTGGTACTTCGATGTCTGG	ok	aux	""
 IGH	J	IGHJ1*02	F	19	1	YWYFDVW	CTACTGGTACTTCGATGTCTGG	ok	aux	""
 IGH	J	IGHJ1*03	F	19	1	YWYFDVW	CTACTGGTACTTCGATGTCTGG	ok	aux	""

@@ -1330,7 +1330,7 @@ def guess_alleles(cdr3: str, segment: str, locus: str, anchors: dict,
 def _placeable(anchor: Anchor | None) -> bool:
     """Can this anchor place a junction boundary at all?
 
-    ``status == "ok"`` always can. ``truncated`` can when it still carries
+    ``status == "ok"`` always can. ``truncated`` / ``partial`` can when they carry
     ``_MIN_TRUNCATED_AA`` residues: IMGT ships those allele records as partial sequences that
     stop inside the anchor region, so the templated run is SHORT but correct as far as it goes,
     and refusing it throws away a boundary that is present. ``no_anchor`` never can.
@@ -1339,7 +1339,7 @@ def _placeable(anchor: Anchor | None) -> bool:
         return False
     if anchor.status == "ok":
         return True
-    return (anchor.status == "truncated"
+    return (anchor.status in ("truncated", "partial")
             and len(anchor.templated_aa) >= _MIN_TRUNCATED_AA)
 
 
@@ -1561,7 +1561,7 @@ def markup_cdr3(cdr3: str, v_call: str, j_call: str, species: str = "human", *,
             rec.errors.extend(errs)
             # A germline record IMGT ships incomplete still places a boundary, but a LOWER-bound
             # one: residues past the record's end are unattributed, not known non-templated.
-            if anchor.status == "truncated" and name in _GOOD:
+            if anchor.status in ("truncated", "partial") and name in _GOOD:
                 name = "TruncatedGermline"
         if side == "V":
             v_anchor = anchor
