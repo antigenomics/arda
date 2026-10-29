@@ -242,3 +242,8 @@ Where arda keeps its reference and how a plain ``pip install`` acquires one.
    :members:
    :undoc-members:
    :show-inheritance:
+
+Preliminary segment evidence
+----------------------------
+
+.. autofunction:: arda.alignment_candidates

@@ -12,11 +12,13 @@ endif()
 # nanobind needs the modern FindPython path and asks for it explicitly.
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 # Markup-transfer hot path: project reference region coordinates onto a query
 # sequence by walking the alignment CIGAR. See src/_markup/markup.cpp.
 nanobind_add_module(_markup src/_markup/markup.cpp)
 target_compile_options(_markup PRIVATE -O3)
+target_link_libraries(_markup PRIVATE Threads::Threads)
 
 install(TARGETS _markup DESTINATION arda)
 
@@ -24,7 +26,6 @@ install(TARGETS _markup DESTINATION arda)
 # See src/_prefilter/prefilter.cpp and OPTIMIZATION.md sections 3-4.
 nanobind_add_module(_prefilter src/_prefilter/prefilter.cpp)
 target_compile_options(_prefilter PRIVATE -O3)
-find_package(Threads REQUIRED)
 target_link_libraries(_prefilter PRIVATE Threads::Threads)
 
 install(TARGETS _prefilter DESTINATION arda)
