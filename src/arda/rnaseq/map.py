@@ -547,7 +547,6 @@ class RnaseqReport:
 
     input: str
     organism: str
-    major_only: bool = True
     #: Library shape, recorded here because nothing downstream can recover it: the AIRR carries
     #: only the reads that mapped, so its row count, its `sequence` lengths and its mate suffixes
     #: all describe the receptor subset rather than the library. `arda stats` reports them.
@@ -581,6 +580,7 @@ class RnaseqReport:
     # ⚠ This is a LEDGER: every read arda was handed is in exactly one bucket here or in
     # `mapped_reads`, and `unmapped_accounted` says so rather than leaving the reader to add up.
     unmapped: dict = field(default_factory=dict)
+    major_only: bool = True
 
     @property
     def mapped_fraction(self) -> float:
