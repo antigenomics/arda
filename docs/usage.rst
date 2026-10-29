@@ -12,7 +12,8 @@ Sequencing DNA input rule
 -------------------------
 
 All nucleotide sequencing inputs are uppercased, and every ambiguous DNA IUPAC
-base (``RYSWKMBDHVN``) is replaced with ``A`` before search or assembly. This rule
+base (``RYSWKMBDHVN``) is replaced with ``A`` before search or assembly. Other
+non-DNA symbols are rejected; gaps are permitted only in aligned strings. This rule
 applies to file and in-memory library inputs and has no opt-out. Imported AIRR
 correction/assembly inputs receive the same treatment for observed nucleotide
 fields and affected region translations. Protein inputs (``seqtype="aa"``),

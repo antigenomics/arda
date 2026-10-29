@@ -74,3 +74,51 @@ def test_airr_reader_normalizes_nt_but_preserves_protein(tmp_path):
     protein = read_airr(path, seqtype='aa')
     assert protein['sequence'][0] == 'NRYSWKM'
     assert read_airr(path)['germline_alignment'].equals(protein['germline_alignment'])
+
+
+@pytest.mark.parametrize('sequence', ['ACGX', 'ACG?', 'ACG-', 'ACG.', 'ACGU'])
+def test_raw_invalid_dna_symbols_are_rejected(sequence, tmp_path):
+    with pytest.raises(ValueError, match='invalid symbol'):
+        normalize_nt(sequence)
+    path = tmp_path/'bad.fa'
+    path.write_text(f'>r\n{sequence}\n')
+    with pytest.raises(ValueError, match='invalid symbol'):
+        list(read_sequences(path))
+    with pytest.raises(ValueError, match='invalid symbol'):
+        list(read_pairs(path))
+    with pytest.raises(ValueError, match='invalid symbol'):
+        list(read_records(path))
+    with pytest.raises(ValueError, match='invalid symbol'):
+        normalize_nt_frame(pl.DataFrame({'sequence': [sequence]}))
+
+
+def test_alignment_gaps_are_explicit_and_invalid_symbols_still_reject():
+    assert normalize_nt('n.-ry', aligned=True) == 'A.-AA'
+    frame = pl.DataFrame({'sequence_alignment': ['n.-ry']})
+    assert normalize_nt_frame(frame)['sequence_alignment'][0] == 'A.-AA'
+    with pytest.raises(ValueError, match='invalid symbol'):
+        normalize_nt('A-X', aligned=True)
+    with pytest.raises(ValueError, match='invalid symbol'):
+        normalize_nt_frame(pl.DataFrame({'sequence_alignment': ['A-X']}))
+
+
+def test_direct_projection_checks_normalized_strand_before_alignment(monkeypatch):
+    from arda.annotate import transfer
+    seen = []
+    def project(*args, **kwargs):
+        seen.append(args[0])
+        raise RuntimeError('projection reached')
+    monkeypatch.setattr(transfer._markup, 'transfer_regions', project)
+    from types import SimpleNamespace
+    ref = SimpleNamespace(starts=[1], ends=[3], v_sequence_end=0, j_sequence_start=0)
+    hit = dict(qaln='TTT', taln='NNN', qstart=1, qend=3, tstart=1)
+    # Normalize submitted N->A before reverse-complementing: coding T is valid.
+    with pytest.raises(RuntimeError, match='projection reached'):
+        transfer.transfer_hit('r', 'TTT', hit, ref, rev_comp=True, submitted_seq='NNN')
+    assert seen == ['TTT']
+    with pytest.raises(ValueError, match='disagrees'):
+        transfer.transfer_hit('r', 'AAA', dict(hit, qaln='AAA'), ref,
+                              rev_comp=True, submitted_seq='NNN')
+    with pytest.raises(ValueError, match='before alignment'):
+        transfer.transfer_hit('r', 'NNN', dict(hit, qaln='NNN'), ref,
+                              rev_comp=True, submitted_seq='NNN')

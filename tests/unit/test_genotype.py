@@ -45,14 +45,17 @@ def germlines(monkeypatch):
 
 
 def _airr(tmp_path, reads, name="in.tsv"):
-    """``reads`` is ``(v_call, germline_end, junction)`` per row; span always starts at 1."""
+    """Encode opaque clonotype labels as distinct valid DNA; spans start at 1."""
+    def junction(label):
+        return "".join("ACGT"[(byte >> shift) & 3]
+                       for byte in label.encode() for shift in (6, 4, 2, 0))
     path = tmp_path / name
     pl.DataFrame({
         "sequence_id": [f"r{i}" for i in range(len(reads))],
         "locus": ["TRB"] * len(reads),
         "v_call": [c for c, _e, _j in reads],
         "j_call": ["TRBJ1-1*01"] * len(reads),
-        "junction": [j for _c, _e, j in reads],
+        "junction": [junction(j) for _c, _e, j in reads],
         "v_germline_start": ["1"] * len(reads),
         "v_germline_end": [str(e) for _c, e, _j in reads],
         "v_mutations": [""] * len(reads),

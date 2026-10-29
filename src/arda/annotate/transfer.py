@@ -774,6 +774,10 @@ def transfer_hit(
     per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
     ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).
 
+    Direct calls require a canonical DNA query/alignment consistent with the
+    normalized submitted read and strand. Normalize before aligning; ambiguous
+    precomputed alignments are rejected rather than reinterpreted.
+
     ``d_max_evalue`` overrides the D-call E-value gate; see :func:`_map_d`.
 
     ``shm`` scopes the SHM fields — ``framework`` (default), ``both`` or ``off``; see
@@ -796,10 +800,17 @@ def transfer_hit(
     # and the aa path still projects one that is not.
     if seqtype == "nt":
         from .io import normalize_nt
-        query_seq = normalize_nt(query_seq)
+        coding = normalize_nt(query_seq)
+        qaln = normalize_nt(hit["qaln"], aligned=True)
+        if coding != query_seq.upper() or qaln != hit["qaln"].upper():
+            raise ValueError("normalize sequencing DNA before alignment")
+        query_seq = coding
         if submitted_seq is not None:
             submitted_seq = normalize_nt(submitted_seq)
-        hit = dict(hit, qaln=normalize_nt(hit["qaln"]))
+            expected = _markup.reverse_complement(submitted_seq) if rev_comp else submitted_seq
+            if query_seq != expected:
+                raise ValueError("coding sequence disagrees with normalized submitted read and strand")
+        hit = dict(hit, qaln=qaln)
     ts = int(hit["tstart"])
     t0 = ref.starts[0]
     # The V coding-frame anchor: first scaffold position >= tstart that is in the V reading frame.

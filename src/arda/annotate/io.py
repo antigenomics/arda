@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import gzip
 import queue
+import re
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -17,15 +18,22 @@ __all__ = ["open_text", "read_sequences", "detect_format", "write_fasta", "chunk
 
 # Sequencing observations only: reference/template readers deliberately do not call this.
 _IUPAC_TO_A = str.maketrans("RYSWKMBDHVN", "A" * 11)
+_INVALID_NT = re.compile("[^ACGT]")
+_INVALID_ALIGNED_NT = re.compile("[^ACGT.-]")
 
 
-def normalize_nt(sequence: str) -> str:
+def normalize_nt(sequence: str, *, aligned: bool = False) -> str:
     """Uppercase sequencing DNA and replace every ambiguous DNA IUPAC base with A.
 
-    This mandatory input rule preserves positions and leaves non-IUPAC characters
-    unchanged for the caller's existing validation. Never apply it to germlines.
+    This mandatory rule preserves positions and rejects invalid non-DNA symbols.
+    ``aligned=True`` additionally permits alignment gaps (- and .), never raw
+    read gaps. Never apply this sequencing-input rule to germlines.
     """
-    return sequence.upper().translate(_IUPAC_TO_A)
+    normalized = sequence.upper().translate(_IUPAC_TO_A)
+    invalid = (_INVALID_ALIGNED_NT if aligned else _INVALID_NT).search(normalized)
+    if invalid:
+        raise ValueError("invalid symbol in sequencing DNA input")
+    return normalized
 
 
 def normalize_nt_frame(frame):
@@ -39,13 +47,16 @@ def normalize_nt_frame(frame):
 
     regions = ("junction", "fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
     columns = ("sequence", "sequence_alignment", "v_sequence_alignment",
-               "d_sequence_alignment", "j_sequence_alignment", "c_sequence_alignment",
+               "d_sequence_alignment", "d2_sequence_alignment", "j_sequence_alignment", "c_sequence_alignment",
                "np1", "np2", "np3", *regions)
     expressions = []
     for name in columns:
         if name not in frame.columns:
             continue
         normalized = pl.col(name).cast(pl.String).str.to_uppercase().str.replace_all("[RYSWKMBDHVN]", "A")
+        invalid = "[^ACGT.-]" if name.endswith("_alignment") else "[^ACGT]"
+        if frame.select(normalized.str.contains(invalid).any()).item():
+            raise ValueError(f"invalid symbol in sequencing DNA column {name}")
         expressions.append(normalized.alias(name))
         aa = name + "_aa"
         if name in regions and aa in frame.columns:
