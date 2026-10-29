@@ -194,10 +194,11 @@ Two more properties worth knowing:
 * **Substitutions only.** An SHM indel is one event of unbounded length, not a per-position call;
   it stays in the CIGAR as ``I``/``D``. Germline coordinates on the far side of an indel are still
   correct, because the walk tracks the target position across gap columns.
-* **A read** ``N`` **is a no-call, not a mutation.** A column contributes only when both bases are
-  unambiguous ACGT.
+* **Sequencing IUPAC bases become A at input**, before SHM comparison. A column
+  contributes only when both the normalized read and reference bases are ACGT;
+  reference ambiguity is preserved.
 * **Positions are on the coding strand.** For ``rev_comp = T`` the ``sequence`` field is the read
-  as submitted, so a read-side lookup (a Phred quality, say) must be made against the reverse
+  in its input orientation after normalization, so a read-side lookup (a Phred quality, say) must be made against the reverse
   complement of it.
 
 Accuracy against IgBLAST

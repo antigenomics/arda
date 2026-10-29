@@ -19,6 +19,7 @@ import polars as pl
 
 from arda.paths import vdj_dir
 from arda.annotate.mapper import annotate_records
+from arda.annotate.io import normalize_nt
 from tests.conftest import requires_mmseqs, requires_human_db
 
 REGIONS = ("fwr1", "cdr1", "fwr2", "cdr2", "fwr3", "cdr3", "fwr4")
@@ -30,7 +31,8 @@ def human_ref():
     from pathlib import Path
     from arda.refbuild.imgt import read_fasta
 
-    fa = dict(read_fasta(Path(vdj_dir("human") / "alleles.fasta")))
+    # These are simulated sequencing observations; reference files remain raw.
+    fa = {sid: normalize_nt(seq) for sid, seq in read_fasta(vdj_dir("human") / "alleles.fasta")}
     nt = pl.read_csv(vdj_dir("human") / "markup.tsv", separator="\t", infer_schema_length=0)
     ref = {r["scaffold_id"]: r for r in nt.iter_rows(named=True)}
     # Prefer productive scaffolds with no N in regions for clean checks.

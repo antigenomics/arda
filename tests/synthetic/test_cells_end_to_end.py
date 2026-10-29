@@ -57,7 +57,8 @@ def droplet_library(tmp_path_factory):
     from arda.annotate.contig import reannotate_contigs
 
     rng = random.Random(11)
-    receptors = [s for s in _read_fasta(FIXTURE) if len(s) >= 300]
+    from arda.annotate.io import normalize_nt
+    receptors = [normalize_nt(s) for s in _read_fasta(FIXTURE) if len(s) >= 300]
     assert len(receptors) >= 10, "fixture no longer holds enough long receptors"
 
     # What arda calls on the WHOLE template is the ceiling this test scores against. One of the

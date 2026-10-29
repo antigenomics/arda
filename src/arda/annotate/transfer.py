@@ -768,7 +768,8 @@ def transfer_hit(
     """Build an AIRR record by projecting ``ref`` region coords onto the query.
 
     ``query_seq`` is the coding-strand sequence all markup/coords/CIGARs are computed on.
-    ``submitted_seq`` is the read AS SUBMITTED, stored verbatim in the AIRR ``sequence`` field;
+    ``submitted_seq`` is the input-strand read, stored in the AIRR ``sequence`` field
+    after mandatory sequencing DNA IUPAC-to-A normalization;
     for a reverse-strand hit it is the reverse complement of ``query_seq`` and ``rev_comp`` is set,
     per AIRR ("if rev_comp is True, all output data are based on the reverse complement of
     ``sequence``"). Defaults to ``query_seq`` (forward reads, where the two are identical).

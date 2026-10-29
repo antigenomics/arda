@@ -365,7 +365,7 @@ constant-region ``c_call``/``c_class`` (isotype), per-segment CIGARs
 
 On a score tie ``d_call``/``d2_call`` are comma-separated allele ambiguity lists, and ``d2_call``
 is the second (3′) segment of a D-D fusion — called in every D locus (IGH, TRB, TRD). The
-``sequence`` field holds the read **as submitted**; ``rev_comp`` = ``T`` signals that the other
+``sequence`` field holds the normalized read in its **input orientation**; ``rev_comp`` = ``T`` signals that the other
 output fields describe its reverse complement (per the AIRR spec).
 
 The D call is accepted on a Karlin–Altschul E-value (``d_support``, shipped so a consumer can
