@@ -39,7 +39,7 @@ _URL = "https://github.com/antigenomics/arda/releases/download/v{version}/" + _A
 #
 # Bump this ONLY when a release actually publishes a new reference tarball. `$ARDA_REFERENCE_TAG`
 # overrides it for testing a candidate asset.
-_REFERENCE_TAG = "2.5.7"
+_REFERENCE_TAG = "2.38.1"
 _PINNED_FILES = json.loads(Path(__file__).with_name("_reference_manifest.json").read_text())["files_sha256"]
 
 
@@ -72,7 +72,7 @@ def _candidate_urls(version: str | None = None) -> list[str]:
 
 _ORGANISMS = ("human", "mouse", "rat", "rabbit", "rhesus_monkey")
 _REQUIRED = ("alleles.fasta", "alleles.aa.fasta", "markup.tsv", "markup.aa.tsv",
-             "cdr3_anchors.tsv", "combinations.tsv", "d_germlines.fasta")
+             "cdr3_anchors.tsv", "combinations.tsv", "d_germlines.fasta", "d_germlines.tsv")
 
 
 def _validate_required(root: Path) -> None:

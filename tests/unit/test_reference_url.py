@@ -57,3 +57,18 @@ def test_leading_v_is_not_doubled(monkeypatch):
 def test_explicit_environment_tag_is_not_silently_replaced(monkeypatch):
     monkeypatch.setenv("ARDA_REFERENCE_TAG", "v9.9.9")
     assert _candidate_urls() == [reference_url()]
+
+
+def test_pinned_data_manifest_covers_current_completeness_resources():
+    import hashlib
+    import json
+    from pathlib import Path
+    from arda import _database_fetch as dbf
+    manifest=json.loads(Path(dbf.__file__).with_name('_reference_manifest.json').read_text())
+    assert manifest['tag'] == dbf._REFERENCE_TAG
+    base=Path(__file__).resolve().parents[2]/'database'
+    for relative,digest in manifest['files_sha256'].items():
+        assert hashlib.sha256((base/relative).read_bytes()).hexdigest() == digest
+    for organism in dbf._ORGANISMS:
+        assert f'vdj/{organism}/d_germlines.tsv' in manifest['files_sha256']
+        assert 'd_germlines.tsv' in dbf._REQUIRED
