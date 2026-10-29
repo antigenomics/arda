@@ -68,7 +68,9 @@ def test_pinned_data_manifest_covers_current_completeness_resources():
     assert manifest['tag'] == dbf._REFERENCE_TAG
     base=Path(__file__).resolve().parents[2]/'database'
     for relative,digest in manifest['files_sha256'].items():
-        assert hashlib.sha256((base/relative).read_bytes()).hexdigest() == digest
+        # Git may check text files out as CRLF; release assets use canonical LF.
+        canonical=(base/relative).read_bytes().replace(b'\r\n',b'\n')
+        assert hashlib.sha256(canonical).hexdigest() == digest
     for organism in dbf._ORGANISMS:
         assert f'vdj/{organism}/d_germlines.tsv' in manifest['files_sha256']
         assert 'd_germlines.tsv' in dbf._REQUIRED
