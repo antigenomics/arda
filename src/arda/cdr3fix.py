@@ -222,7 +222,7 @@ class Anchor:
     segment: str          # "V" | "J"
     templated_aa: str     # V: starts at Cys104. J: ends at [FW]118.
     functionality: str
-    status: str           # "ok" | "truncated" | "no_anchor"
+    status: str           # "ok" | "truncated" | "partial" | "no_anchor"
     source: str           # "ndm" | "aux" | "motif" | "no_anchor"
     anchor_nt: int = -1   # 0-based offset of the anchor codon in the germline
     partial_nt: int = 0   # V: dangling 3' nt; J: dangling 5' nt (mid-codon)

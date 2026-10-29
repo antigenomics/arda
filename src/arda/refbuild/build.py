@@ -255,6 +255,8 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
     out: list[tuple[str, str, str]] = []
     for locus in VDJ_LOCI:
         try:
+            partial = imgt.junction_partial_sequences(
+                imgt.gene_fasta_path(species_dir, locus.group, locus.d), "D")
             path = imgt.ungap_gene(species_dir, locus.group, locus.d)
         except FileNotFoundError:
             logger.info("%s: no IMGT D file (%s) for %s — no D germlines",
@@ -263,7 +265,7 @@ def _collect_d_germlines(species_dir: str, logger) -> list[tuple[str, str, str]]
         for header, seq in imgt.read_fasta(path):
             allele = header.split("|")[0].strip().split()[0]
             s = seq.upper().replace(".", "")
-            if allele and s:
+            if allele and s and (allele, s) not in partial:
                 out.append((locus.name, allele, s))
     return out
 
@@ -307,24 +309,24 @@ _V_TAIL_MIN, _V_TAIL_MAX = 1, 14   # residues the V templates into the junction 
 _J_FR4_MOTIF = re.compile(r"[FW]G.G")
 
 _ANCHOR_COLUMNS = ["locus", "segment", "allele", "functionality", "anchor_nt",
-                   "partial_nt", "templated_aa", "germline_nt", "status", "source"]
+                   "partial_nt", "templated_aa", "germline_nt", "status", "source", "imgt_completeness"]
 
 
-def _gapped_alleles(species_dir: str, group: str, stem: str) -> list[tuple[str, str, str]]:
-    """``(allele, functionality, gapped_seq)`` from an IMGT V-QUEST gene file.
+def _gapped_alleles(species_dir: str, group: str, stem: str) -> list[tuple[str, str, str, str]]:
+    """``(allele, functionality, gapped_seq, imgt_completeness)`` from an IMGT V-QUEST gene file.
 
     Keeps every allele regardless of functionality: VDJdb cites pseudogene and
     ORF alleles, and ``markup.tsv`` (which is scaffold-gated and deduped) is not
     a valid substitute.
     """
-    out: list[tuple[str, str, str]] = []
+    out: list[tuple[str, str, str, str]] = []
     for header, seq in imgt.read_fasta(imgt.gene_fasta_path(species_dir, group, stem)):
         fields = header.split("|")
         if len(fields) < 4 or not seq:
             continue
         allele = fields[1].strip()
         func = fields[3].strip().strip("()[]").split("/")[0].split()[0] or "?"
-        out.append((allele, func, seq.upper()))
+        out.append((allele, func, seq.upper(), fields[13].strip() if len(fields) > 13 else ""))
     return out
 
 
@@ -499,10 +501,12 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             logger.info("%s: no IMGT V file (%s) for %s — no anchors",
                         locus.name, locus.v, species_dir)
             v_alleles = []
-        for allele, func, gapped in v_alleles:
+        for allele, func, gapped, completeness in v_alleles:
             ungapped = gapped.replace(".", "")
             anchor, source = _v_anchor(ungapped, fwr3_stops.get(allele))
             status = "ok" if anchor >= 0 else "no_anchor"
+            if imgt.junction_incomplete(completeness, "V"):
+                status = "partial"
             tail = ungapped[anchor:] if anchor >= 0 else ""
             whole = len(tail) // 3 * 3
             rows.append({
@@ -511,6 +515,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
                 "partial_nt": len(tail) - whole,          # V ends mid-codon
                 "templated_aa": translate(tail[:whole], 0),
                 "germline_nt": tail, "status": status, "source": source,
+                "imgt_completeness": completeness,
             })
             counts[f"V:{status}"] += 1
 
@@ -521,7 +526,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             logger.info("%s: no IMGT J file (%s) for %s — no anchors",
                         locus.name, locus.j, species_dir)
             j_alleles = []
-        for allele, func, gapped in j_alleles:
+        for allele, func, gapped, completeness in j_alleles:
             seq = gapped.replace(".", "")
             if allele in fr4_offsets:
                 anchor, source = fr4_offsets[allele][0] + 1, "aux"
@@ -536,6 +541,8 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
             # cdr3_stop ((anchor - frame) % 3 == 1) and yields a garbage translation.
             frame = anchor % 3 if anchor >= 0 else 0
             status = "ok" if anchor >= 0 else "no_anchor"
+            if imgt.junction_incomplete(completeness, "J"):
+                status = "partial"
             slice_nt = seq[: anchor + 3] if anchor >= 0 else ""
             rows.append({
                 "locus": locus.name, "segment": "J", "allele": allele,
@@ -543,6 +550,7 @@ def _collect_cdr3_anchors(organism: str, species_dir: str, logger) -> list[dict]
                 "partial_nt": frame,                       # J starts mid-codon
                 "templated_aa": translate(slice_nt[frame:], 0) if slice_nt else "",
                 "germline_nt": slice_nt, "status": status, "source": source,
+                "imgt_completeness": completeness,
             })
             counts[f"J:{status}"] += 1
 
