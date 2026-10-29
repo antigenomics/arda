@@ -80,6 +80,9 @@ def _records(ref: Reference, kind: str) -> Iterator[_Record]:
     if kind == "segments":
         fasta, markup = base / "segments.fasta", base / "segments.markup.tsv"
         if not fasta.exists():
+            from .annotate.mapper import _generate_segments
+            _generate_segments(fasta, ref.organism)
+        if not fasta.exists():
             raise FileNotFoundError(
                 f"No segment reference at {fasta}. It is GENERATED, not shipped — run "
                 f"`arda build-index --organism {ref.organism} --force`."

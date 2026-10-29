@@ -100,3 +100,19 @@ def test_mapping_mode_survives_report_merge_and_cannot_mix(tmp_path):
         _merge_map_reports([{'major_only':False},{'major_only':True}])
     with pytest.raises(ValueError,match='recorded mapping'):
         finish('unused',tmp_path,'sample',major_only=True,map_report={'major_only':False})
+
+
+def test_raw_segment_export_builds_missing_derivative(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from arda.refexport import _records
+    from arda.refbuild import segments
+    calls=[]
+    def build(organism, *, out_dir):
+        calls.append(organism)
+        (out_dir/'segments.fasta').write_text('>V|V1*01\nTGT\n')
+        (out_dir/'segments.markup.tsv').write_text('scaffold_id\tlocus\tv_call\tj_call\nV|V1*01\tTRA\tV1*01\t\n')
+    monkeypatch.setattr(segments,'build_segment_reference',build)
+    ref=SimpleNamespace(target_fasta=tmp_path/'alleles.fasta',organism='human',seqtype='nt')
+    assert [record.seq_id for record in _records(ref,'segments')] == ['V|V1*01']
+    assert [record.seq_id for record in _records(ref,'segments')] == ['V|V1*01']
+    assert calls == ['human']
