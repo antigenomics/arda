@@ -42,13 +42,13 @@ the most likely nucleotide reading of an amino-acid junction, the D posterior â€
 you want "which D, and where" from an amino-acid junction, call
 `vdjtools.model.annotate_junctions`; it runs arda for the markup and the D alignment.
 
-## Planned
+The D/D-D integration audit verifies nonoverlapping, ordered tandem proposals and
+rejects two alleles of the same physical D gene. VDJtools uses this preliminary
+evidence without allowing a missing greedy D2 call to veto latent tandem histories.
+Single-D/tandem generation and exact Pgen remain in VDJtools; no second alignment
+engine or model refit is needed. Explicit low-level masks retain their meaning.
 
-- **D/D-D integration audit.** Verify batched ARDA preliminary D evidence and
-  tandem geometry against VDJtools' latent-history inference, generation and exact
-  Pgen. Missing greedy D2 calls must not veto tandem histories; preserve explicit
-  user-supplied low-level masks. Record limits, regression evidence and useful
-  native batching rather than adding a second alignment engine or refitting models.
+## Planned
 
 - **Exhaustive repository storage cleanup.** Inventory all repositories under
   `~/vcs/code` and their linked worktrees, including ignored and hidden build trees, scratch outputs, environments,
