@@ -5,6 +5,9 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+- Normalize repeated allele-call lists once per distinct call during gene-level
+  clonotype correction, preserving call order, ambiguity and read assignments.
+
 - Add independent `map_dd=False` / `--no-map-dd` controls to skip tandem-D
   searches while retaining single-D calls. Existing defaults and `--no-map-d`
   behavior remain compatible across annotation, pipelines and cluster jobs.

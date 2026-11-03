@@ -1206,7 +1206,9 @@ def correct_airr(
         # (locus, v, j, junction) key, so relabelling only one of the two frames strands reads.
         # Same rule the `--clonotype-key junction` relabel below is written to.
         raw = raw.with_columns(
-            pl.col(c).map_elements(_gene_level, return_dtype=pl.Utf8).alias(c)
+            pl.col(c).replace_strict(
+                {call: _gene_level(call) for call in raw[c].drop_nulls().unique()},
+                return_dtype=pl.Utf8).alias(c)
             for c in ("v_call", "j_call") if c in raw.columns)
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
     # complete-only filter below drops them, and the JUNCTION reads that build the clonotype carry no
