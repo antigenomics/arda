@@ -1010,7 +1010,7 @@ def run(
     map_d: bool = True,
     plot: str | None = None,
     gnuplot: str | None = None,
-    major_only: bool = True,
+    major_only: bool = True, map_dd: bool = True,
 ) -> dict:
     """Assemble, annotate, pair and diagnose a droplet V(D)J library. Returns the run report.
 
@@ -1053,7 +1053,7 @@ def run(
 
     annotated = reannotate_contigs(
         [(c.contig_id, c.sequence) for c in contigs], organism,
-        threads=threads, map_d=map_d, major_only=major_only,
+        threads=threads, map_d=map_d, map_dd=map_dd, major_only=major_only,
     ) if contigs else []
     support = {c.contig_id: c for c in contigs}
     rows: list[dict] = []

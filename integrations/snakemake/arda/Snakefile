@@ -37,6 +37,8 @@ ARDA     = config.get("arda", "arda")
 MAP_THREADS    = int(config.get("map_threads", 8))
 REDUCE_THREADS = int(config.get("reduce_threads", 8))
 EXTRA    = config.get("extra", "")
+MAP_D = config.get("map_d", True)
+MAP_DD = config.get("map_dd", True)
 
 if REGIME not in ("rnaseq", "amplicon"):
     raise WorkflowError(f"regime must be rnaseq or amplicon, got {REGIME!r}")
@@ -46,8 +48,8 @@ if REGIME not in ("rnaseq", "amplicon"):
 # that knowledge; ask it rather than restating it here and drifting.
 from arda.cluster import regime_flags
 
-MAP_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=MAP_THREADS)[0]
-REDUCE_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=REDUCE_THREADS)[1]
+MAP_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=MAP_THREADS, map_d=MAP_D, map_dd=MAP_DD)[0]
+REDUCE_FLAGS = regime_flags(REGIME, organism=ORGANISM, threads=REDUCE_THREADS, map_d=MAP_D, map_dd=MAP_DD)[1]
 
 
 def flags_for(sample, which, threads):
@@ -58,7 +60,7 @@ def flags_for(sample, which, threads):
     for a sheet that does not say. arda owns which flags the regime implies; this only chooses
     whose organism goes into them.
     """
-    return regime_flags(REGIME, organism=ORGANISM_OF[sample], threads=threads)[which]
+    return regime_flags(REGIME, organism=ORGANISM_OF[sample], threads=threads, map_d=MAP_D, map_dd=MAP_DD)[which]
 
 
 # ── the sheet ─────────────────────────────────────────────────────────────────────────────────

@@ -413,6 +413,18 @@ Accuracy against IgBLAST, and what a lineage-tree builder needs on top of this: 
 D segments
 ~~~~~~~~~~
 
+D and tandem-D mapping remain enabled by default for compatibility.
+Use ``--no-map-dd`` to search only the best single D, or ``--no-map-d`` to
+skip both searches. These controls apply to annotation, mapping, assembly,
+correction, mode commands and generated cluster jobs. Disabling tandem search
+keeps the single-D E-value gate unchanged; the remaining sequence belongs to
+``np1``/``np2`` and ``d2_*`` stays empty.
+
+Library callers use ``map_dd=False`` alongside the existing ``map_d`` option.
+The bare-junction API ``map_d_junction`` also accepts ``map_dd=False``.
+These are alignment proposals, not inferred recombination histories.
+
+
 ``--d-max-evalue`` moves the gate that accepts a D call (and a tandem second D) — the shipped
 operating point is 0.2 for nt and 0.05 for aa, and ``0.01`` is the band where D agrees .9985 with
 IgBLAST at gene level on a TRB amplicon, at roughly a third of the call rate. Germline geometry is

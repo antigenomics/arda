@@ -18,6 +18,25 @@ reports a D **with the E-value that accepted it**, and gives you the knob to mov
 (``map``, ``correct``, ``assemble``, ``run``, ``reduce``), and by
 :func:`arda.annotate.dmap.map_d_junction` in the library.
 
+Search controls
+---------------
+
+D and tandem-D searches remain enabled by default. ``--no-map-dd`` retains
+the best single-D call and skips second-D selection; ``--no-map-d`` skips
+both. The library equivalents are ``map_dd=False`` and ``map_d=False``.
+All annotation/pipeline commands and generated cluster jobs carry these
+controls through assembly and correction. Snakemake exposes ``map_d`` and
+``map_dd`` in its configuration; Nextflow accepts the CLI switches through
+``task.ext.args``.
+
+Both greedy selections reuse one native batch of per-allele alignments within
+each query. There is no persistent alignment-result cache. The output remains
+preliminary evidence: absence of ``d2_call`` must never exclude a tandem
+recombination history in a probabilistic consumer such as vdjtools. Its
+generator emits ``d_call``/``d2_call`` for a sampled history, whereas ARDA
+reports sequence evidence above the existing E-value gate. Trimming can make
+a generated D undetectable.
+
 How the call is made
 --------------------
 

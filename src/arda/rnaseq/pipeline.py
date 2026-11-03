@@ -84,7 +84,7 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
            map_report: dict | None = None, write_qc: bool = True,
-           cell_from: str = "", cell_regex: str | None = None, major_only: bool = True, echo=None) -> dict:
+           cell_from: str = "", cell_regex: str | None = None, major_only: bool = True, echo=None, map_dd: bool = True) -> dict:
     """Run Stages 2-3 over a Stage-1 AIRR and write the clonotype table + merged report.
 
     Called by both :func:`run` (single node) and :func:`reduce` (after a sharded Stage 1).
@@ -116,12 +116,12 @@ def finish(airr: str | Path, out_dir: str | Path, out_prefix: str, *,
         from .assemble import assemble_contigs
 
         extra = paths["assembled_airr"]
-        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d,
+        arep = assemble_contigs(airr, extra, organism=organism, threads=threads, map_d=map_d, map_dd=map_dd,
                                 d_max_evalue=d_max_evalue, major_only=major_only)
         say(f"assemble: {arep.contigs_complete}/{arep.contigs} complete contigs from "
             f"{arep.seeds} seeds; rescued {arep.reads_rescued} reads")
 
-    crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d, threads=threads,
+    crep = correct_airr(airr, paths["clones"], organism=organism, map_d=map_d, map_dd=map_dd, threads=threads,
                         d_max_evalue=d_max_evalue, ec_mode=ec_mode, major_only=major_only,
                         min_junction_q=min_junction_q, clonotype_key=clonotype_key,
                         call_level=call_level, isotype=isotype,
@@ -239,7 +239,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
         complete_junction_nt: int = 0,
         cell_from: str = "",
         cell_regex: str | None = None,
-        major_only: bool = True, echo=None) -> dict:
+        major_only: bool = True, echo=None, map_dd: bool = True) -> dict:
     """Single-node map -> assemble -> correct, over ONE sample's read groups.
 
     Args:
@@ -265,7 +265,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
         say(f"cell barcodes: --cell-from auto resolved to {cell_from!r} for every read group")
 
     map_kw = dict(organism=organism, threads=threads, major_only=major_only,
-                  reconstruct=reconstruct, min_score=min_score, map_d=map_d,
+                  reconstruct=reconstruct, min_score=min_score, map_d=map_d, map_dd=map_dd,
                   d_max_evalue=d_max_evalue,
                   kmer=kmer, limit=limit, two_pass=two_pass, adaptive=adaptive,
                   fast_segments=fast_segments, prefilter=prefilter,
@@ -286,7 +286,7 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
                                 say=say, **map_kw)
 
     report = finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
-                    assemble=assemble, complete_only=complete_only, map_d=map_d,
+                    assemble=assemble, complete_only=complete_only, map_d=map_d, map_dd=map_dd,
                     ec_mode=ec_mode, min_junction_q=min_junction_q,
                     clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                     d_max_evalue=d_max_evalue, cell_from=cell_from, cell_regex=cell_regex,
@@ -425,7 +425,7 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
            ec_mode: str = "fast", min_junction_q: int | None = None,
            clonotype_key: str = "full", call_level: str = "allele", isotype: bool = True,
            cell_from: str = "", cell_regex: str | None = None,
-           major_only: bool = True, echo=None) -> dict:
+           major_only: bool = True, echo=None, map_dd: bool = True) -> dict:
     """Merge sharded Stage-1 output, then run Stages 2-3 once over the whole thing.
 
     Never: the Stage-2/3 knobs are reachable here for one reason -- a sharded run must be able to
@@ -460,7 +460,7 @@ def reduce(shard_dir: str | Path, out_dir: str | Path, out_prefix: str, *,
         say(f"map (summed over {mrep['shards']} shards): "
             f"{mrep['mapped_reads']}/{mrep['total_reads']} reads mapped; loci={mrep['per_locus']}")
     return finish(airr, out_dir, out_prefix, organism=organism, threads=threads,
-                  assemble=assemble, complete_only=complete_only, map_d=map_d,
+                  assemble=assemble, complete_only=complete_only, map_d=map_d, map_dd=map_dd,
                   d_max_evalue=d_max_evalue, ec_mode=ec_mode, min_junction_q=min_junction_q,
                   clonotype_key=clonotype_key, call_level=call_level, isotype=isotype,
                   cell_from=cell_from, cell_regex=cell_regex,

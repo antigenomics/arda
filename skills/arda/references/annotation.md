@@ -55,6 +55,7 @@ for arbitrarily large inputs and read parsing overlaps compute.
   germline-similar queries). There is **no coverage filter**, so partial reads
   still map.
 - **threads** — `0` uses all cores.
+- **map_dd** — default True; False skips the tandem second-D search, retaining single-D mapping. `map_d=False` skips both.
 - **map_d** — map D segment(s) into the V..J interior for VDJ loci; nt only.
 
 ## AIRR output fields

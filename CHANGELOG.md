@@ -3,6 +3,12 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## Unreleased
+
+- Add independent `map_dd=False` / `--no-map-dd` controls to skip tandem-D
+  searches while retaining single-D calls. Existing defaults and `--no-map-d`
+  behavior remain compatible across annotation, pipelines and cluster jobs.
+
 ## 2.38.2
 
 - Always replace ambiguous DNA IUPAC bases (including N) in sequencing

@@ -192,3 +192,15 @@ def test_a_single_cell_sheet_is_refused_rather_than_folded_into_one_repertoire(t
     s = _airrflow_sheet(tmp_path, [_r(single_cell="TRUE")])
     with pytest.raises(_WorkflowError, match="single_cell=TRUE"):
         _prelude({"samples": str(s), "outdir": str(tmp_path / "out")})
+
+
+def test_d_controls_reach_both_snakemake_stages(sheet, tmp_path):
+    ns = _prelude({'samples': str(sheet([('A', 'r1.fq', '')])), 'outdir': str(tmp_path / 'out'),
+                   'map_d': False, 'map_dd': False})
+    for key in ('MAP_FLAGS', 'REDUCE_FLAGS'):
+        assert '--no-map-d' in ns[key].split()
+        assert '--no-map-dd' in ns[key].split()
+    for sample in ns['ORGANISM_OF']:
+        for stage in (0, 1):
+            flags = ns['flags_for'](sample, stage, 2).split()
+            assert '--no-map-d' in flags and '--no-map-dd' in flags

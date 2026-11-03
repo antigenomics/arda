@@ -634,7 +634,7 @@ def map_rnaseq(
     complete_junction_nt: int = 0,
     cell_from: str = "",
     cell_regex: str | None = None,
-    major_only: bool = True,
+    major_only: bool = True, map_dd: bool = True,
 ) -> RnaseqReport:
     """Filter + map an RNA-seq FASTQ (single or paired); write mapped reads as AIRR.
 
@@ -770,7 +770,7 @@ def map_rnaseq(
                     batch = [(r[0], r[1]) for r in batch]
                 keep = mapper._annotate_chunk(
                     batch, ref, target_db, seqtype, threads=search_threads,
-                    sensitivity=sens, mm_strand=mm_strand, map_d=map_d,
+                    sensitivity=sens, mm_strand=mm_strand, map_d=map_d, map_dd=map_dd,
                     d_max_evalue=d_max_evalue,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
                     segment_db=segment_db, combos=combos, adaptive=adaptive,
