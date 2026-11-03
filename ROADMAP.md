@@ -44,6 +44,12 @@ you want "which D, and where" from an amino-acid junction, call
 
 ## Planned
 
+- **D/D-D integration audit.** Verify batched ARDA preliminary D evidence and
+  tandem geometry against VDJtools' latent-history inference, generation and exact
+  Pgen. Missing greedy D2 calls must not veto tandem histories; preserve explicit
+  user-supplied low-level masks. Record limits, regression evidence and useful
+  native batching rather than adding a second alignment engine or refitting models.
+
 - **Exhaustive repository storage cleanup.** Inventory all repositories under
   `~/vcs/code` and their linked worktrees, including ignored and hidden build trees, scratch outputs, environments,
   duplicate reference indexes and obsolete generations. Remove verified disposable

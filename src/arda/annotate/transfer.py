@@ -286,12 +286,15 @@ def _dd_orientation_ok(alleles5, alleles3) -> bool:
 
     Either side may be an allele ambiguity list (byte-identical germlines across genes). One
     producible assignment is enough -- the call does not claim which member it was. A gene
-    outside :data:`_D_GENOMIC_ORDER` (all of IGH) constrains nothing and passes.
+    outside :data:`_D_GENOMIC_ORDER` (all of IGH) has no relative-order constraint;
+    two alleles of the same physical gene are still not a tandem pair.
     """
     genes5 = {a.split("*")[0] for a in alleles5}
     genes3 = {a.split("*")[0] for a in alleles3}
     for g5 in genes5:
         for g3 in genes3:
+            if g5 == g3:
+                continue
             r5, r3 = _D_GENOMIC_ORDER.get(g5), _D_GENOMIC_ORDER.get(g3)
             if r5 is None or r3 is None or r5 < r3:
                 return True

@@ -278,6 +278,8 @@ def test_dd_orientation_rule_runs_in_both_directions():
     assert not _dd_orientation_ok(("TRDD3*01",), ("TRDD1*01",))
     # The same gene twice needs two germline copies: not producible either.
     assert not _dd_orientation_ok(("TRBD1*01",), ("TRBD1*02",))
+    assert not _dd_orientation_ok(("IGHD1-1*01",), ("IGHD1-1*02",))
+    assert _dd_orientation_ok(("IGHD1-1*01", "IGHD6-19*01"), ("IGHD1-1*02",))
     # An ambiguity list passes on ONE producible assignment -- the call never claimed which.
     assert _dd_orientation_ok(("TRBD1*01", "TRBD2*01"), ("TRBD2*01",))
     # ...but a list whose every member sits 3' of the other side is still refused.

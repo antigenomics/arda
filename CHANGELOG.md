@@ -5,6 +5,9 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+- Reject tandem-D proposals that reuse the same physical D gene through different
+  alleles, including IGH, while retaining distinct-gene ambiguity alternatives.
+
 - Normalize repeated allele-call lists once per distinct call during gene-level
   clonotype correction, preserving call order, ambiguity and read assignments.
 
