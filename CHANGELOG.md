@@ -5,6 +5,12 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+- Pack exactly the pinned reference files with reproducible, neutral archive headers;
+  exclude host ownership and extended attributes without changing reference content.
+
+- Cap automatic native CPU budgets at 16 allocated CPUs; preserve larger explicit
+  requests within the allocation and serial inner kernels in sample workers.
+
 - Exclude historical reference build logs from source distributions and reference
   assets; pin only the unchanged runtime reference payloads.
 
