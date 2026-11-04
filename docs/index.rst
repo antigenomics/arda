@@ -1,6 +1,16 @@
 arda
 ====
 
+.. image:: ../assets/workflow-light.svg
+   :alt: arda workflow overview: inputs, processing and outputs.
+   :width: 100%
+   :class: only-light
+
+.. image:: ../assets/workflow-dark.svg
+   :alt: arda workflow overview: inputs, processing and outputs.
+   :width: 100%
+   :class: only-dark
+
 .. raw:: html
 
    <div class="proj-intro">
