@@ -260,3 +260,6 @@ database/vdj/*/segments.markup.tsv
 /NOTES.md
 /STATUS.md
 /ISSUES*.md
+
+# Private retired branches, notes and scratch; never package or publish.
+/attic/
