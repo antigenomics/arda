@@ -90,8 +90,19 @@ def test_release_reference_asset_contains_only_pinned_runtime_files(tmp_path):
     if shell is None:
         pytest.skip('reference packaging uses bash')
     archive = tmp_path / 'reference.tar.gz'
-    script = Path(__file__).resolve().parents[2] / 'scripts/pack_reference.sh'
-    subprocess.run([shell, str(script), str(archive)], check=True, capture_output=True,
+    source = Path(__file__).resolve().parents[2]
+    checkout = tmp_path / 'checkout'
+    (checkout / 'scripts').mkdir(parents=True)
+    shutil.copy2(source / 'scripts/pack_reference.sh', checkout / 'scripts/pack_reference.sh')
+    manifest = checkout / 'src/arda/_reference_manifest.json'
+    manifest.parent.mkdir(parents=True)
+    shutil.copy2(source / 'src/arda/_reference_manifest.json', manifest)
+    for relative in dbf._PINNED_FILES:
+        target = checkout / 'database' / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source / 'database' / relative).read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
+    script = checkout / 'scripts/pack_reference.sh'
+    subprocess.run([shell, str(script), str(archive)], check=True,
                    text=True, timeout=30)
     with tarfile.open(archive) as packed:
         for member in packed.getmembers():
@@ -104,7 +115,7 @@ def test_release_reference_asset_contains_only_pinned_runtime_files(tmp_path):
             assert hashlib.sha256(packed.extractfile(member).read()).hexdigest() == dbf._PINNED_FILES[name]
 
     duplicate = tmp_path / 'other-name.tar.gz'
-    subprocess.run([shell, str(script), str(duplicate)], check=True, capture_output=True,
+    subprocess.run([shell, str(script), str(duplicate)], check=True,
                    text=True, timeout=30)
     assert archive.read_bytes() == duplicate.read_bytes()
 

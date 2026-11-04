@@ -27,7 +27,7 @@ root, output = map(Path, sys.argv[1:])
 manifest = json.loads((root / 'src/arda/_reference_manifest.json').read_text())['files_sha256']
 payloads = []
 for name, expected in sorted(manifest.items()):
-    data = (root / 'database' / name).read_bytes()
+    data = (root / 'database' / name).read_bytes().replace(b'\r\n', b'\n')
     if hashlib.sha256(data).hexdigest() != expected:
         raise SystemExit(f'ERROR: reference does not match pinned manifest: {name}')
     payloads.append((name, data))
