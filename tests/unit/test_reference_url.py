@@ -66,6 +66,7 @@ def test_pinned_data_manifest_covers_current_completeness_resources():
     from arda import _database_fetch as dbf
     manifest=json.loads(Path(dbf.__file__).with_name('_reference_manifest.json').read_text())
     assert manifest['tag'] == dbf._REFERENCE_TAG
+    assert not any(name.endswith('.log') for name in manifest['files_sha256'])
     base=Path(__file__).resolve().parents[2]/'database'
     for relative,digest in manifest['files_sha256'].items():
         # Git may check text files out as CRLF; release assets use canonical LF.
@@ -74,3 +75,27 @@ def test_pinned_data_manifest_covers_current_completeness_resources():
     for organism in dbf._ORGANISMS:
         assert f'vdj/{organism}/d_germlines.tsv' in manifest['files_sha256']
         assert 'd_germlines.tsv' in dbf._REQUIRED
+
+
+def test_release_reference_asset_contains_only_pinned_runtime_files(tmp_path):
+    import hashlib
+    import shutil
+    import subprocess
+    import tarfile
+    from pathlib import Path
+    import pytest
+    from arda import _database_fetch as dbf
+
+    shell = shutil.which('bash')
+    if shell is None:
+        pytest.skip('reference packaging uses bash')
+    archive = tmp_path / 'reference.tar.gz'
+    script = Path(__file__).resolve().parents[2] / 'scripts/pack_reference.sh'
+    subprocess.run([shell, str(script), str(archive)], check=True, capture_output=True,
+                   text=True, timeout=30)
+    with tarfile.open(archive) as packed:
+        members = {m.name: m for m in packed.getmembers() if m.isfile()}
+        assert not any(name.endswith('.log') for name in members)
+        assert set(members) == set(dbf._PINNED_FILES)
+        for name, member in members.items():
+            assert hashlib.sha256(packed.extractfile(member).read()).hexdigest() == dbf._PINNED_FILES[name]

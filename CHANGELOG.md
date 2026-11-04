@@ -5,6 +5,9 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+- Exclude historical reference build logs from source distributions and reference
+  assets; pin only the unchanged runtime reference payloads.
+
 - Reject tandem-D proposals that reuse the same physical D gene through different
   alleles, including IGH, while retaining distinct-gene ambiguity alternatives.
 

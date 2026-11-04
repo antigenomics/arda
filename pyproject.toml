@@ -86,6 +86,7 @@ sdist.exclude = [
     "/AGENTS.md", "/CLAUDE.md", "/SOURCES.md", "/CHANGELOG_local.md", "/ROADMAP_local.md",
     "/TODO.md", "/NOTES.md", "/STATUS.md", "/ISSUES.md", "/ISSUES_ext.md",
     "/examples/rnaseq/ex.stats.json", "/examples/rnaseq/ex.stats.tsv",
+    "/database/**/*.log",
 ]
 cmake.version = ">=3.18"
 build-dir = "build/{wheel_tag}"
