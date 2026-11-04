@@ -298,7 +298,7 @@ def annotate(
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one usable major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     seqtype: str = typer.Option("nt", help="Input sequence type: nt or aa."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
     strand: str = typer.Option("both", help="nt only: 'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
         50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
@@ -309,12 +309,13 @@ def annotate(
              "mostly silent for the TR loci, whose D is too short to survive in protein."),
     d_max_evalue: Optional[float] = typer.Option(
         None, "--d-max-evalue", help=_D_EVALUE_HELP),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Annotate FR/CDR regions and write an AIRR TSV (streamed, memory-bounded)."""
     from .annotate.mapper import annotate_file
 
     annotate_file(input, output, organism=organism, seqtype=seqtype,
-                  threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d,
+                  threads=threads, strand=strand, chunk_size=chunk_size, map_d=map_d, map_dd=map_dd,
                   d_max_evalue=d_max_evalue, major_only=major_only)
 
 
@@ -428,6 +429,7 @@ def slurm_fasta(
     time: str = typer.Option("04:00:00"),
     mem: str = typer.Option("8G"),
     submit: bool = typer.Option(False, "--submit", help="Run the generated submit.sh now."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Write (and optionally submit) a SLURM submit.sh: split → array-annotate → merge.
 
@@ -441,7 +443,7 @@ def slurm_fasta(
 
     script = render_submit_script(
         input, output, work_dir, shards=shards, organism=organism, seqtype=seqtype,
-        threads=threads, strand=strand, map_d=map_d, partition=partition, time=time,
+        threads=threads, strand=strand, map_d=map_d, map_dd=map_dd, partition=partition, time=time,
         mem=mem, arda_mmseqs=os.environ.get("ARDA_MMSEQS"))
     work_dir.mkdir(parents=True, exist_ok=True)
     submit_sh = work_dir / "submit.sh"
@@ -459,7 +461,7 @@ def igblast_cmd(
     input: Path = typer.Option(..., "--input", "-i", help="Query FASTA/FASTQ."),
     output: Path = typer.Option(..., "--output", "-o", help="Merged AIRR TSV (gold standard)."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="igblast threads (0 = all cores)."),
+    threads: int = typer.Option(0, help="igblast threads (0 = automatic, up to 16 allocated cores)."),
     receptor: str = typer.Option(
         "both", "--receptor",
         help="Which receptor type(s) to align against: `both` (default), `ig` or `tr`. Both is "
@@ -494,7 +496,7 @@ def rnaseq_map(
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one usable major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
     sensitivity: Optional[float] = typer.Option(None, help="mmseqs -s (default: tuned)."),
     strand: str = typer.Option("both", help="'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
@@ -620,13 +622,14 @@ def rnaseq_map(
     emit_reads: Optional[Path] = typer.Option(
         None, "--emit-reads", help="Also write the mapped reads as FASTA (for handoff)."),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Stage 1 — filter + map receptor reads; write only the mapped ones (AIRR TSV)."""
     from .rnaseq.map import map_rnaseq
 
     map_rnaseq(r1, output, r2=r2, organism=organism, threads=threads,
                     sensitivity=sensitivity, strand=strand, chunk_size=chunk_size,
-                    map_d=map_d, d_max_evalue=d_max_evalue,
+                    map_d=map_d, map_dd=map_dd, d_max_evalue=d_max_evalue,
                     reconstruct=reconstruct, min_score=min_score,
                     max_seqs=max_seqs, kmer=(None if kmer == 0 else kmer),
                     drop_constant_only=drop_constant_only,
@@ -647,7 +650,7 @@ def rnaseq_map(
 def rnaseq_correct(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(..., "--output", "-o", help="Corrected clonotype table TSV."),
-    threads: int = typer.Option(0, help="CPU budget for batched correction searches (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget for batched correction searches (0 = automatic, up to 16 allocated CPUs)."),
     max_subs: int = typer.Option(
         3, help="Max substitutions between an error child and its parent. A search RADIUS, not a "
                 "threshold -- the length-scaled probability model still decides. Saturates at 3."),
@@ -733,11 +736,12 @@ def rnaseq_correct(
     cell_from: str = typer.Option("", "--cell-from", help=_UMI_COUNT_HELP),
     cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Stage 2 — collapse CDR3 sequencing errors into clonotypes (per-substitution/indel model)."""
     from .rnaseq.correct import correct_airr
 
-    rep = correct_airr(input, output, organism=organism, map_d=map_d, threads=threads,
+    rep = correct_airr(input, output, organism=organism, map_d=map_d, map_dd=map_dd, threads=threads,
                        d_max_evalue=d_max_evalue, major_only=major_only, max_subs=max_subs, max_indel=max_indel,
                        error_rate=_error_rate(error_rate),
                        indel_rate=indel_rate, require_vj=require_vj, error_method=error_method,
@@ -766,7 +770,7 @@ def rnaseq_assemble(
         help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget for re-annotation (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget for re-annotation (0 = automatic, up to 16 allocated CPUs)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
         help="Call D (and tandem D-D) on each assembled contig and carry it onto its member "
@@ -774,6 +778,7 @@ def rnaseq_assemble(
     d_max_evalue: Optional[float] = typer.Option(
         None, "--d-max-evalue", help=_D_EVALUE_HELP),
     report: Optional[Path] = typer.Option(None, "--report", help="Write a JSON run report."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Stage 3 — assemble long-CDR3 contigs the reads don't individually span.
 
@@ -783,7 +788,7 @@ def rnaseq_assemble(
     """
     from .rnaseq.assemble import assemble_contigs
 
-    rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d,
+    rep = assemble_contigs(input, output, organism=organism, threads=threads, map_d=map_d, map_dd=map_dd,
                            d_max_evalue=d_max_evalue, report_path=report, major_only=major_only)
     log.info("assemble: %d/%d complete contigs from %d seeds; rescued %d reads",
              rep.contigs_complete, rep.contigs, rep.seeds, rep.reads_rescued)
@@ -1168,7 +1173,7 @@ def rnaseq_mode(
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
     assemble: bool = typer.Option(
         True, "--assemble/--no-assemble",
         help="Stage 3: assemble long-CDR3 contigs no single 100-150 bp read spans (V(D)J "
@@ -1217,6 +1222,7 @@ def rnaseq_mode(
         0, "--limit", "-n",
         help="Analyse only the first N reads / read pairs, then stop. 0 = whole file."),
     exact: bool = typer.Option(False, "--exact", help=_EXACT_HELP),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """BULK RNA-seq -> clonotypes. map -> assemble -> correct, with the bulk speed preset.
 
@@ -1239,7 +1245,7 @@ def rnaseq_mode(
               out_dir=out_dir, organism=organism, major_only=major_only,
               threads=threads, reconstruct=reconstruct, min_score=min_score,
               kmer=(None if kmer == 0 else kmer), assemble=assemble,
-              complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
+              complete_only=complete_only, map_d=map_d, map_dd=map_dd, d_max_evalue=d_max_evalue,
               limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
               clonotype_key=clonotype_key, call_level=call_level,
               shm=shm, isotype=isotype,
@@ -1261,7 +1267,7 @@ def amplicon_mode(
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
     assemble: bool = typer.Option(
         True, "--assemble/--no-assemble",
         help="Stage 3: assemble long-CDR3 contigs no single read spans and fold them into the "
@@ -1308,6 +1314,7 @@ def amplicon_mode(
              "(+181 reads on a hypermutated repertoire, -14 on a naive one), so it never rides "
              "the preset."),
     exact: bool = typer.Option(False, "--exact", help=_EXACT_HELP),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """TARGETED RepSeq / 5'RACE amplicon -> clonotypes, with the amplicon speed preset.
 
@@ -1324,7 +1331,7 @@ def amplicon_mode(
               out_dir=out_dir, organism=organism, major_only=major_only,
               threads=threads, reconstruct=reconstruct, min_score=min_score,
               kmer=(None if kmer == 0 else kmer), assemble=assemble,
-              complete_only=complete_only, map_d=map_d, d_max_evalue=d_max_evalue,
+              complete_only=complete_only, map_d=map_d, map_dd=map_dd, d_max_evalue=d_max_evalue,
               limit=(limit or None), ec_mode=ec_mode, min_junction_q=min_junction_q,
               clonotype_key=clonotype_key, call_level=call_level,
               shm=shm, isotype=isotype,
@@ -1404,6 +1411,7 @@ def cells_cmd(
                                         "per-cell assembly is single-threaded; see the note in "
                                         "`arda.singlecell.assemble_cells`."),
     map_d: bool = typer.Option(True, "--map-d/--no-map-d", help="Call D on each contig."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Single cell — assemble each cell's contigs with no reference, then pair and diagnose.
 
@@ -1425,7 +1433,7 @@ def cells_cmd(
         min_informative_columns=min_informative_columns,
         min_extra_molecules=min_extra_molecules, min_extra_fraction=min_extra_fraction,
         require_productive=require_productive, cells_file=cells, reference=reference,
-        threads=threads, map_d=map_d, plot=plot, major_only=major_only,
+        threads=threads, map_d=map_d, map_dd=map_dd, plot=plot, major_only=major_only,
     )
     log.info("cells: %d cells, %d contigs (N50 %d nt) from %d molecules; %d chains",
              summary["cells"], summary["contigs"], summary["contig_n50"],
@@ -1490,7 +1498,7 @@ def rnaseq_reduce(
     out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Use the same major/all-allele choice as Stage 1."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = all allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
     assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
@@ -1515,6 +1523,7 @@ def rnaseq_reduce(
         True, "--isotype/--no-isotype", help="Resolve the IGH isotype (`c_call` / `c_class`)."),
     cell_from: str = typer.Option("", "--cell-from", help=_UMI_COUNT_HELP),
     cell_regex: Optional[str] = typer.Option(None, "--cell-regex", help=_CELL_REGEX_HELP),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Merge a sharded Stage 1, then run Stages 2-3 ONCE over the whole thing.
 
@@ -1525,7 +1534,7 @@ def rnaseq_reduce(
     from .rnaseq import pipeline
 
     pipeline.reduce(shard_dir, out_dir, out_prefix, organism=organism, threads=threads,
-                    assemble=assemble, complete_only=complete_only, map_d=map_d, major_only=major_only,
+                    assemble=assemble, complete_only=complete_only, map_d=map_d, map_dd=map_dd, major_only=major_only,
                     d_max_evalue=d_max_evalue, ec_mode=ec_mode,
                     min_junction_q=min_junction_q, call_level=call_level, isotype=isotype,
                     cell_from=cell_from, cell_regex=cell_regex)
@@ -1626,6 +1635,7 @@ def rnaseq_slurm(
         "16G", help="Memory for reduce. Stage 3 holds the clone set: budget ~4 GB, more for a "
                     "B-cell-rich sample (2,071.7 MB measured on 28,444 clonotypes)."),
     submit: bool = typer.Option(False, "--submit", help="Run the generated script."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Write (and optionally submit) a SLURM script: split → array-``map`` → reduce.
 
@@ -1643,7 +1653,7 @@ def rnaseq_slurm(
     script.write_text(render_rnaseq_submit_script(
         r1, out_prefix, work_dir, shards=shards, r2=r2, out_dir=out_dir, organism=organism,
         threads=threads, kmer=kmer, min_score=min_score, reconstruct=reconstruct,
-        assemble=assemble, complete_only=complete_only, map_d=map_d, partition=partition,
+        assemble=assemble, complete_only=complete_only, map_d=map_d, map_dd=map_dd, partition=partition,
         time=time_limit, mem=mem, reduce_time=reduce_time, reduce_mem=reduce_mem,
         arda_mmseqs=os.environ.get("ARDA_MMSEQS")))
     script.chmod(0o755)
@@ -1682,6 +1692,7 @@ def samples_slurm(
         "16G", help="Memory per reduce task. Stage 3 holds the clone set: budget ~4 GB, more for "
                     "a B-cell-rich sample (2,071.7 MB measured on 28,444 clonotypes)."),
     submit: bool = typer.Option(False, "--submit", help="Run the generated script."),
+    map_dd: bool = typer.Option(True, "--map-dd/--no-map-dd", help="Search a tandem second D; --no-map-d skips both D searches."),
 ) -> None:
     """Write (and optionally submit) a SLURM script for a whole sheet: array-``map`` -> reduce.
 
@@ -1709,7 +1720,7 @@ def samples_slurm(
     script.write_text(render_samples_submit_script(
         rg_path, s_path, n_read_groups=n_rg, n_samples=len(resolved), out_dir=out_dir,
         organism=organism, threads=threads, kmer=kmer, min_score=min_score,
-        reconstruct=reconstruct, assemble=assemble, complete_only=complete_only, map_d=map_d,
+        reconstruct=reconstruct, assemble=assemble, complete_only=complete_only, map_d=map_d, map_dd=map_dd,
         regime=regime, partition=partition, time=time_limit, mem=mem, reduce_time=reduce_time,
         reduce_mem=reduce_mem, arda_mmseqs=os.environ.get("ARDA_MMSEQS")))
     script.chmod(0o755)

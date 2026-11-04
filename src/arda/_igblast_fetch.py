@@ -81,7 +81,7 @@ def _safe_extract(tarball: Path, into: Path) -> Path:
                 raise RuntimeError(f"Refusing to extract link from IgBLAST archive: {member.name}")
             if not str((into / member.name).resolve()).startswith(str(resolved) + os.sep):
                 raise RuntimeError(f"Refusing to extract outside temp dir: {member.name}")
-        tf.extractall(into)
+        tf.extractall(into, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
     roots = [p for p in into.iterdir() if p.is_dir() and p.name.startswith("ncbi-igblast")]
     if not roots:
         raise RuntimeError(f"Unexpected IgBLAST archive layout in {tarball.name}")

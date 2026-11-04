@@ -322,16 +322,20 @@ def test_gene_level_calls_collapse_an_allele_split_and_carry_its_reads(tmp_path)
     assert pl.read_csv(gene, separator="\t")["v_call"][0] == "TRBV20-1"
 
 
-def test_gene_level_dedupes_a_tie_list_that_differs_only_by_allele(tmp_path):
+@pytest.mark.parametrize("call,expected", [
+    ("TRBV20-1*01,TRBV20-1*02", "TRBV20-1"),
+    (" TRBV20-1*01,,TRBV19*02, TRBV20-1*02 ", "TRBV20-1,TRBV19"),
+])
+def test_gene_level_dedupes_a_tie_list_that_differs_only_by_allele(tmp_path, call, expected):
     """`TRAV1*01,TRAV1*02` is ONE gene stated twice -- the artifact behind the 14-point spread
     between v_allele_exact (.8328) and v_allele_resolved (.9763) across 25 cluster datasets."""
     q = "I" * len(_PARENT)
-    rows = _rows(_PARENT, 10, q, prefix="t", v="TRBV20-1*01,TRBV20-1*02")
+    rows = _rows(_PARENT, 10, q, prefix="t", v=call)
     src = tmp_path / "ties.tsv"
     pl.DataFrame(rows).write_csv(src, separator="\t")
     out = tmp_path / "gene.tsv"
     correct_airr(src, out, map_d=False, call_level="gene", error_rate=1e-6)
-    assert pl.read_csv(out, separator="\t")["v_call"][0] == "TRBV20-1"
+    assert pl.read_csv(out, separator="\t")["v_call"][0] == expected
 
 
 def test_an_unknown_call_level_raises_rather_than_defaulting(tmp_path):

@@ -3,6 +3,29 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## Unreleased
+
+## 2.38.3
+
+- Pack exactly the pinned reference files with reproducible, neutral archive headers;
+  exclude host ownership and extended attributes without changing reference content.
+
+- Cap automatic native CPU budgets at 16 allocated CPUs; preserve larger explicit
+  requests within the allocation and serial inner kernels in sample workers.
+
+- Exclude historical reference build logs from source distributions and reference
+  assets; pin only the unchanged runtime reference payloads.
+
+- Reject tandem-D proposals that reuse the same physical D gene through different
+  alleles, including IGH, while retaining distinct-gene ambiguity alternatives.
+
+- Normalize repeated allele-call lists once per distinct call during gene-level
+  clonotype correction, preserving call order, ambiguity and read assignments.
+
+- Add independent `map_dd=False` / `--no-map-dd` controls to skip tandem-D
+  searches while retaining single-D calls. Existing defaults and `--no-map-d`
+  behavior remain compatible across annotation, pipelines and cluster jobs.
+
 ## 2.38.2
 
 - Always replace ambiguous DNA IUPAC bases (including N) in sequencing

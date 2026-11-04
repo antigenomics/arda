@@ -58,7 +58,7 @@ def import_polars():
 
 
 def resolve_threads(threads: int = 0) -> int:
-    """Zero selects all allocated CPUs; reject requests outside that allocation."""
+    """Zero selects up to 16 allocated CPUs; reject requests outside that allocation."""
     available = os.cpu_count() or 1
     if hasattr(os, "sched_getaffinity"):
         available = min(available, len(os.sched_getaffinity(0)))
@@ -74,5 +74,5 @@ def resolve_threads(threads: int = 0) -> int:
             raise ValueError("SLURM_CPUS_PER_TASK must be a positive integer")
         available = min(available, limit)
     if not isinstance(threads, int) or isinstance(threads, bool) or not 0 <= threads <= available:
-        raise ValueError(f"threads must be 0 (all allocated CPUs) or 1..{available}, got {threads!r}")
-    return threads or available
+        raise ValueError(f"threads must be 0 (automatic, at most 16 CPUs) or 1..{available}, got {threads!r}")
+    return threads or min(available, 16)

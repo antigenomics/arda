@@ -1387,6 +1387,7 @@ def _annotate_chunk(
     sensitivity: float,
     mm_strand: int | None,
     map_d: bool = True,
+    map_dd: bool = True,
     d_max_evalue: float | None = None,
     mapped_only: bool = False,
     max_seqs: int = _MAX_SEQS,
@@ -1497,7 +1498,7 @@ def _annotate_chunk(
             hit["qstart"], hit["qend"] = qlen - qs + 1, qlen - qe + 1
         dg = ref.d_germlines.get(entry.locus) if map_d else None
         out.append(transfer_hit(qid, work, hit, entry, seqtype, rev_comp=rev,
-                                d_germlines=dg, submitted_seq=qseq, anchors=ref.anchors,
+                                d_germlines=dg, map_dd=map_dd, submitted_seq=qseq, anchors=ref.anchors,
                                 d_max_evalue=d_max_evalue, shm=shm,
                                 complete_junction_nt=complete_junction_nt))
     return out
@@ -1534,6 +1535,7 @@ def annotate_records(
     sensitivity: float | None = None,
     strand: str = "both",
     map_d: bool = True,
+    map_dd: bool = True,
     d_max_evalue: float | None = None,
     shm: str = "framework",
     complete_junction_nt: int = 0,
@@ -1557,7 +1559,7 @@ def annotate_records(
         organism, seqtype, threads, sensitivity, strand, major_only)
     return _annotate_chunk(records, ref, target_db, seqtype,
                            threads=threads, sensitivity=sensitivity,
-                           mm_strand=mm_strand, map_d=map_d, d_max_evalue=d_max_evalue,
+                           mm_strand=mm_strand, map_d=map_d, map_dd=map_dd, d_max_evalue=d_max_evalue,
                            shm=shm, complete_junction_nt=complete_junction_nt)
 
 
@@ -1572,6 +1574,7 @@ def annotate_file(
     strand: str = "both",
     chunk_size: int = _CHUNK_SIZE,
     map_d: bool = True,
+    map_dd: bool = True,
     d_max_evalue: float | None = None,
     shm: str = "framework",
     complete_junction_nt: int = 0,
@@ -1598,7 +1601,7 @@ def annotate_file(
         for chunk in chunks:
             recs = _annotate_chunk(chunk, ref, target_db, seqtype,
                                    threads=search_threads, sensitivity=sensitivity,
-                                   mm_strand=mm_strand, map_d=map_d,
+                                   mm_strand=mm_strand, map_d=map_d, map_dd=map_dd,
                                    d_max_evalue=d_max_evalue, shm=shm,
                                    complete_junction_nt=complete_junction_nt)
             fh.write(format_rows(recs, extra_cols))

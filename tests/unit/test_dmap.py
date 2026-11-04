@@ -278,6 +278,8 @@ def test_dd_orientation_rule_runs_in_both_directions():
     assert not _dd_orientation_ok(("TRDD3*01",), ("TRDD1*01",))
     # The same gene twice needs two germline copies: not producible either.
     assert not _dd_orientation_ok(("TRBD1*01",), ("TRBD1*02",))
+    assert not _dd_orientation_ok(("IGHD1-1*01",), ("IGHD1-1*02",))
+    assert _dd_orientation_ok(("IGHD1-1*01", "IGHD6-19*01"), ("IGHD1-1*02",))
     # An ambiguity list passes on ONE producible assignment -- the call never claimed which.
     assert _dd_orientation_ok(("TRBD1*01", "TRBD2*01"), ("TRBD2*01",))
     # ...but a list whose every member sits 3' of the other side is still refused.
@@ -297,3 +299,30 @@ def test_d_max_evalue_tightens_the_gate_and_the_default_is_unchanged():
     e = float(shipped.d_support)
     assert map_d_junction(junction, V["human"], J2, "human", d_max_evalue=e / 100).d_call == ""
     assert map_d_junction(junction, V["human"], J2, "human", d_max_evalue=e * 100).called
+
+
+@pytest.mark.parametrize("locus", ["TRB", "TRD", "IGH"])
+def test_disable_tandem_keeps_single_d_without_second_search(locus, monkeypatch):
+    from arda.annotate import transfer
+
+    v, j, (d5, d3) = _TANDEM[locus]
+    junction = _tandem_junction(locus, d5, d3)
+    expected = map_d_junction(junction, v, j)
+    assert expected.is_dd
+    original = transfer._best_d
+    searches = []
+
+    def checked(*args, **kwargs):
+        searches.append(kwargs)
+        assert "exclude" not in kwargs, "disabled tandem mapping must skip the search"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(transfer, "_best_d", checked)
+    call = map_d_junction(junction, v, j, map_dd=False)
+    assert len(searches) == 1
+    assert call.called and not call.is_dd
+    assert call.d_call in (expected.d_call, expected.d2_call)
+    assert call.np3 == ""
+    interior = junction[call.v_sequence_end:call.j_sequence_start - 1]
+    d = junction[call.d_sequence_start - 1:call.d_sequence_end]
+    assert call.np1 + d + call.np2 == interior

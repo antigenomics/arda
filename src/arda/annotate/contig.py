@@ -63,6 +63,7 @@ def reannotate_contigs(
     sensitivity: float | None = None,
     strand: str = "both",
     map_d: bool = True,
+    map_dd: bool = True,
     d_max_evalue: float | None = None,
     major_only: bool = True,
 ) -> list[dict]:
@@ -72,11 +73,11 @@ def reannotate_contigs(
     :func:`~arda.annotate.mapper.annotate_records`: a contig is just a long query.
     """
     return annotate_records(records, organism, seqtype, threads=threads,
-                            sensitivity=sensitivity, strand=strand, map_d=map_d,
+                            sensitivity=sensitivity, strand=strand, map_d=map_d, map_dd=map_dd,
                             d_max_evalue=d_max_evalue, major_only=major_only)
 
 
-def merge_contig(contig: Contig, reference: Reference, *, map_d: bool = True) -> dict:
+def merge_contig(contig: Contig, reference: Reference, *, map_d: bool = True, map_dd: bool = True) -> dict:
     """Annotate one contig by stitching its reads' alignments (merge path).
 
     ``reference`` is a preloaded :class:`~arda.annotate.reference.Reference` (load it
@@ -99,7 +100,7 @@ def merge_contig(contig: Contig, reference: Reference, *, map_d: bool = True) ->
            "tlen": "", "bits": "", "evalue": "", "pident": "", "target": contig.target}
     dg = reference.d_germlines.get(entry.locus) if map_d else None
     return transfer_hit(contig.sequence_id, contig.sequence, hit, entry, reference.seqtype,
-                        d_germlines=dg, submitted_seq=contig.sequence,
+                        d_germlines=dg, map_dd=map_dd, submitted_seq=contig.sequence,
                         anchors=reference.anchors)
 
 
@@ -110,7 +111,8 @@ def merge_contigs(
     *,
     reference: Reference | None = None,
     map_d: bool = True,
+    map_dd: bool = True,
 ) -> list[dict]:
     """Annotate contigs by the merge path; loads the reference once for all of them."""
     ref = reference or load_reference(organism, seqtype, major_only=False)
-    return [merge_contig(c, ref, map_d=map_d) for c in contigs]
+    return [merge_contig(c, ref, map_d=map_d, map_dd=map_dd) for c in contigs]

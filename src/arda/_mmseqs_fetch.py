@@ -149,7 +149,7 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
                         raise RuntimeError(
                             f"Refusing to extract path outside temp dir: {member.name}"
                         )
-                tf.extractall(tmp)
+                tf.extractall(tmp, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
             extracted = next(tmp.rglob("bin/mmseqs"), None)  # static archives: mmseqs/bin/mmseqs
             if extracted is None:
                 raise RuntimeError(f"Unexpected MMseqs2 archive layout in {asset}")

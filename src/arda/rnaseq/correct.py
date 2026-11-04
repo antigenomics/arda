@@ -1022,7 +1022,7 @@ _D_INT_COLS = ("v_sequence_end", "d_sequence_start", "d_sequence_end",
 
 
 def _clonotype_d(out: pl.DataFrame, organism: str,
-                 d_max_evalue: float | None = None, major_only: bool = True) -> list[pl.Series]:
+                 d_max_evalue: float | None = None, major_only: bool = True, map_dd: bool = True) -> list[pl.Series]:
     """D (and tandem D-D) per clonotype, mapped into its error-corrected junction.
 
     Reads carry their own ``d_call``, but a read's D is called on a sequencing-error copy of
@@ -1042,7 +1042,7 @@ def _clonotype_d(out: pl.DataFrame, organism: str,
     for jn, vc, jc in zip(out["junction"], out["v_call"], out["j_call"]):
         try:
             call = map_d_junction(jn or "", vc or "", jc or "", organism,
-                                  d_max_evalue=d_max_evalue, major_only=major_only)
+                                  d_max_evalue=d_max_evalue, major_only=major_only, map_dd=map_dd)
         except (KeyError, ValueError):        # unknown allele / organism without anchors
             call = None
         for c in _D_STR_COLS:
@@ -1080,7 +1080,7 @@ def correct_airr(
     report_path: str | Path | None = None,
     cell_from: str = "",
     cell_regex: str | None = None,
-    major_only: bool = True,
+    major_only: bool = True, map_dd: bool = True,
 ) -> CorrectReport:
     """Aggregate mapped reads into clonotypes and collapse CDR3 sequencing errors.
 
@@ -1206,7 +1206,9 @@ def correct_airr(
         # (locus, v, j, junction) key, so relabelling only one of the two frames strands reads.
         # Same rule the `--clonotype-key junction` relabel below is written to.
         raw = raw.with_columns(
-            pl.col(c).map_elements(_gene_level, return_dtype=pl.Utf8).alias(c)
+            pl.col(c).replace_strict(
+                {call: _gene_level(call) for call in raw[c].drop_nulls().unique()},
+                return_dtype=pl.Utf8).alias(c)
             for c in ("v_call", "j_call") if c in raw.columns)
     # Isotype lives on the CONSTANT-region reads: they carry ``c_class`` but no junction, so the
     # complete-only filter below drops them, and the JUNCTION reads that build the clonotype carry no
@@ -1584,7 +1586,7 @@ def correct_airr(
         "consensus_count": [cons[r] for r in order],             # distinct fragment consensuses
     })
     if map_d:
-        out = out.with_columns(_clonotype_d(out, organism, d_max_evalue, major_only))
+        out = out.with_columns(_clonotype_d(out, organism, d_max_evalue, major_only, map_dd=map_dd))
     if flag_chimeras:
         # Never: Appended LAST and never used to drop a row -- see `_flag_chimeras` for the measured
         # rate (0.40 % of bulk IG clonotypes) and why that does not justify deletion.

@@ -42,7 +42,21 @@ the most likely nucleotide reading of an amino-acid junction, the D posterior â€
 you want "which D, and where" from an amino-acid junction, call
 `vdjtools.model.annotate_junctions`; it runs arda for the markup and the D alignment.
 
+The D/D-D integration audit verifies nonoverlapping, ordered tandem proposals and
+rejects two alleles of the same physical D gene. VDJtools uses this preliminary
+evidence without allowing a missing greedy D2 call to veto latent tandem histories.
+Single-D/tandem generation and exact Pgen remain in VDJtools; no second alignment
+engine or model refit is needed. Explicit low-level masks retain their meaning.
+
 ## Planned
+
+- **Exhaustive repository storage cleanup.** Inventory all repositories under
+  `~/vcs/code` and their linked worktrees, including ignored and hidden build trees, scratch outputs, environments,
+  duplicate reference indexes and obsolete generations. Remove verified disposable
+  artifacts, report exact file counts and allocated bytes reclaimed, and verify the
+  remaining footprint. Preserve raw inputs, accepted results, tracked assets and
+  files used by live processes. Correct producing code so obsolete artifacts do not
+  accumulate again. This is part of the active ecosystem audit and release goal.
 
 - **Promotion of the broader TRDV Ã— TRAJ reference.** The shipped default remains unchanged:
   the recorded real-amplicon comparison contains 680 truth reads of which it recovers 10 %.

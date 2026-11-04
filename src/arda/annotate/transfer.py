@@ -286,12 +286,15 @@ def _dd_orientation_ok(alleles5, alleles3) -> bool:
 
     Either side may be an allele ambiguity list (byte-identical germlines across genes). One
     producible assignment is enough -- the call does not claim which member it was. A gene
-    outside :data:`_D_GENOMIC_ORDER` (all of IGH) constrains nothing and passes.
+    outside :data:`_D_GENOMIC_ORDER` (all of IGH) has no relative-order constraint;
+    two alleles of the same physical gene are still not a tandem pair.
     """
     genes5 = {a.split("*")[0] for a in alleles5}
     genes3 = {a.split("*")[0] for a in alleles3}
     for g5 in genes5:
         for g3 in genes3:
+            if g5 == g3:
+                continue
             r5, r3 = _D_GENOMIC_ORDER.get(g5), _D_GENOMIC_ORDER.get(g3)
             if r5 is None or r3 is None or r5 < r3:
                 return True
@@ -473,7 +476,7 @@ def _germline_completed_junction(query_seq, cs, coding_start, v_end_q, *, j_call
     return jnt, jaa, c3aa, phase, len(tail)
 
 
-def _best_d(interior, d_germlines, min_score, exclude=None):
+def _best_d(interior, d_germlines, min_score, exclude=None, *, alignments=None):
     """Best-aligning D against ``interior`` as ``(score, length, alleles, s, e)``.
 
     ``s``/``e`` are 0-based inclusive offsets within ``interior``. ``exclude`` is an
@@ -496,8 +499,11 @@ def _best_d(interior, d_germlines, min_score, exclude=None):
     the alleles sharing *that* span are reported.
     """
     best = None                              # (rank, [alleles], s, e, ds, de)
-    for allele, dseq in d_germlines:
-        score, s, e, ds, de = _markup.d_local_align(interior, dseq)
+    if alignments is None:
+        alignments = ((i, *_markup.d_local_align(interior, dseq))
+                      for i, (_, dseq) in enumerate(d_germlines))
+    for index, score, s, e, ds, de in alignments:
+        allele = d_germlines[index][0]
         if score < min_score or s < 0:
             continue
         if exclude is not None:
@@ -657,7 +663,7 @@ def _anchored_vj_bounds(query_seq, cs, f4, v_call, j_call, anchors, seqtype="nt"
 
 
 def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
-           seqtype: str = "nt", d_max_evalue: float | None = None):
+           seqtype: str = "nt", d_max_evalue: float | None = None, *, map_dd: bool = True):
     """Map D segment(s) into the V..J interior and populate d_call/np regions.
 
     Coordinates emitted are AIRR (1-based closed, query space). A second, non-overlapping
@@ -670,6 +676,9 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
     ``_allowed_d``); pass it whenever the J is known. A tandem pair is additionally required
     to run 5'->3' in genomic order (see ``_dd_orientation_ok``); a pair that does not is
     reported as the single, higher-scoring D.
+
+    ``map_dd=False`` skips the second-D search while retaining the best single D.
+    The default preserves tandem-D calling.
 
     ``d_max_evalue`` overrides the shipped operating point (``_D_MAX_EVALUE`` = 0.2 for nt,
     0.05 for aa) for BOTH segments. Lower is stricter: measured against IgBLAST at gene level,
@@ -700,14 +709,21 @@ def _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, j_call: str = "",
     if not d_germlines:
         return
     min_score = _d_min_score(len(interior), db_nt, max_evalue=d_max_evalue, seqtype=seqtype)
-    d1 = _best_d(interior, d_germlines, min_score)
+    # Both greedy selections use the same per-allele span. Search once in native code;
+    # reuse only within this query, never retain computed alignment state across queries.
+    alignments = [(di, score, qs-1, qe-1, ds-1, de-1)
+                  for _, di, score, qs, qe, ds, de, _ in
+                  _markup.d_candidates_batch([interior], [s for _, s in d_germlines], 1)]
+    d1 = _best_d(interior, d_germlines, min_score, alignments=alignments)
     if d1 is None:
         return
 
     segs = [d1]
     # The same E-value gate serves the second segment: on true single-D junctions a
     # non-overlapping second D at this stringency is a false positive 0-1 % of the time.
-    d2 = _best_d(interior, d_germlines, min_score, exclude=(d1[3], d1[4]))
+    d2 = (_best_d(interior, d_germlines, min_score, exclude=(d1[3], d1[4]),
+                  alignments=alignments)
+          if map_dd else None)
     if d2 is not None:
         segs.append(d2)
     segs.sort(key=lambda c: c[3])                 # order 5'->3' by interior start
@@ -764,6 +780,7 @@ def transfer_hit(
     d_max_evalue: float | None = None,
     shm: str = "framework",
     complete_junction_nt: int = 0,
+    map_dd: bool = True,
 ) -> dict:
     """Build an AIRR record by projecting ``ref`` region coords onto the query.
 
@@ -1008,7 +1025,7 @@ def transfer_hit(
         # else: `productive` stays "" -- a V-less read is not "non-productive", it is unevaluable.
         # D-segment mapping (VDJ loci only; gated by presence of D germlines).
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call,
-               d_max_evalue=d_max_evalue)
+               d_max_evalue=d_max_evalue, map_dd=map_dd)
     else:  # aa input: regions are already amino acids; no frame bridging needed.
         for name, (qs, qe) in region_q.items():
             rec[f"{name}_aa"] = query_seq[qs - 1 : qe]
@@ -1025,7 +1042,7 @@ def transfer_hit(
         # keeps enough surviving D to see in protein; the TR loci mostly stay silent, which is
         # the honest answer. Same call, same columns, aa coordinates.
         _map_d(rec, query_seq, v_end_q, j_start_q, d_germlines, ref.j_call, seqtype="aa",
-               d_max_evalue=d_max_evalue)
+               d_max_evalue=d_max_evalue, map_dd=map_dd)
     # Last, because it reads what everything above wrote: the mutation lists, the alignment
     # strings and both anchors. See `arda.shm` for why the segment scoping is not enough.
     return scope_record(rec, shm, identity_fn=_aln_identity)

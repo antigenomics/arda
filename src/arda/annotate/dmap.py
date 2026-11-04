@@ -130,8 +130,11 @@ def _d_germlines(organism: str, major_only: bool = False) -> dict[str, list[tupl
 def map_d_junction(junction_nt: str, v_call: str, j_call: str,
                    species: str = "human", d_max_evalue: float | None = None,
                    v_end: int | None = None, j_start: int | None = None,
-                   major_only: bool = True) -> DCall:
+                   major_only: bool = True, *, map_dd: bool = True) -> DCall:
     """Map D (and a tandem second D) into a bare nucleotide junction.
+
+    ``map_dd=False`` skips the second-D search while retaining the best single D.
+    The default preserves tandem-D calling.
 
     ``d_max_evalue`` overrides the shipped E-value gate on the D call(s); see
     :func:`arda.annotate.transfer._map_d`. ``None`` keeps the shipped 0.2.
@@ -177,7 +180,7 @@ def map_d_junction(junction_nt: str, v_call: str, j_call: str,
 
     rec: dict = {}
     _map_d(rec, junction_nt, v_end, j_start + 1, germlines, j_call,
-           d_max_evalue=d_max_evalue)
+           d_max_evalue=d_max_evalue, map_dd=map_dd)
     if not rec.get("d_call"):
         return out
 

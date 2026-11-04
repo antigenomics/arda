@@ -117,3 +117,12 @@ else:
                             env=dict(os.environ, POLARS_MAX_THREADS="4"),
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stderr
+
+
+def test_auto_caps_at_16_without_restricting_explicit_counts(monkeypatch):
+    monkeypatch.setattr(_threads, '_cgroup_cpus', lambda: None)
+    monkeypatch.setattr(_threads.os, 'cpu_count', lambda: 64)
+    monkeypatch.setattr(_threads.os, 'sched_getaffinity', lambda _: set(range(64)), raising=False)
+    monkeypatch.setenv('SLURM_CPUS_PER_TASK', '32')
+    assert _threads.resolve_threads() == 16
+    assert _threads.resolve_threads(32) == 32

@@ -14,18 +14,17 @@ find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 
+# NOMINSIZE keeps CMake/toolchain optimization rather than nanobind's size override.
 # Markup-transfer hot path: project reference region coordinates onto a query
 # sequence by walking the alignment CIGAR. See src/_markup/markup.cpp.
-nanobind_add_module(_markup src/_markup/markup.cpp)
-target_compile_options(_markup PRIVATE -O3)
+nanobind_add_module(_markup NOMINSIZE src/_markup/markup.cpp)
 target_link_libraries(_markup PRIVATE Threads::Threads)
 
 install(TARGETS _markup DESTINATION arda)
 
 # Exact k-mer prefilter: reject reads that cannot align before MMseqs2 sees them.
 # See src/_prefilter/prefilter.cpp and OPTIMIZATION.md sections 3-4.
-nanobind_add_module(_prefilter src/_prefilter/prefilter.cpp)
-target_compile_options(_prefilter PRIVATE -O3)
+nanobind_add_module(_prefilter NOMINSIZE src/_prefilter/prefilter.cpp)
 target_link_libraries(_prefilter PRIVATE Threads::Threads)
 
 install(TARGETS _prefilter DESTINATION arda)
@@ -34,8 +33,7 @@ install(TARGETS _prefilter DESTINATION arda)
 # Deliberately a SEPARATE module from _prefilter -- that one is shipped, measured and load-bearing,
 # and this is opt-in until it is proven not to move the output.
 # See src/_segmap/segmap.cpp and results/round10/aligner_options.md in the benchmark repo.
-nanobind_add_module(_segmap src/_segmap/segmap.cpp)
-target_compile_options(_segmap PRIVATE -O3)
+nanobind_add_module(_segmap NOMINSIZE src/_segmap/segmap.cpp)
 target_link_libraries(_segmap PRIVATE Threads::Threads)
 
 install(TARGETS _segmap DESTINATION arda)
@@ -43,7 +41,6 @@ install(TARGETS _segmap DESTINATION arda)
 # Quality-aware clonotype denoising: per-read junction quality and the wide-radius parent search.
 # Separate from _markup (annotation) because this is Stage 2, and the measurements that justify
 # every rule in it live in the benchmark repo's round 22. See src/_denoise/denoise.cpp.
-nanobind_add_module(_denoise src/_denoise/denoise.cpp)
-target_compile_options(_denoise PRIVATE -O3)
+nanobind_add_module(_denoise NOMINSIZE src/_denoise/denoise.cpp)
 
 install(TARGETS _denoise DESTINATION arda)

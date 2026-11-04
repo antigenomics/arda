@@ -187,7 +187,7 @@ def _fetch_into(dest: Path, version: str | None) -> Path:
                     raise RuntimeError(f"Refusing to extract link from archive: {member.name}")
                 if not (staging / member.name).resolve().is_relative_to(staged):
                     raise RuntimeError(f"Refusing to extract path outside temp dir: {member.name}")
-            tf.extractall(staging)
+            tf.extractall(staging, **({"filter": "data"} if hasattr(tarfile, "data_filter") else {}))
         src = staging / "vdj"
         if not src.is_dir():
             candidates = [p for p in staging.rglob("vdj") if p.is_dir()]

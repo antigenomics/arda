@@ -66,6 +66,7 @@ def test_pinned_data_manifest_covers_current_completeness_resources():
     from arda import _database_fetch as dbf
     manifest=json.loads(Path(dbf.__file__).with_name('_reference_manifest.json').read_text())
     assert manifest['tag'] == dbf._REFERENCE_TAG
+    assert not any(name.endswith('.log') for name in manifest['files_sha256'])
     base=Path(__file__).resolve().parents[2]/'database'
     for relative,digest in manifest['files_sha256'].items():
         # Git may check text files out as CRLF; release assets use canonical LF.
@@ -74,3 +75,56 @@ def test_pinned_data_manifest_covers_current_completeness_resources():
     for organism in dbf._ORGANISMS:
         assert f'vdj/{organism}/d_germlines.tsv' in manifest['files_sha256']
         assert 'd_germlines.tsv' in dbf._REQUIRED
+
+
+def test_release_reference_asset_contains_only_pinned_runtime_files(tmp_path):
+    import hashlib
+    import shutil
+    import subprocess
+    import tarfile
+    from pathlib import Path
+    import pytest
+    from arda import _database_fetch as dbf
+
+    shell = shutil.which('bash')
+    if shell is None:
+        pytest.skip('reference packaging uses bash')
+    archive = tmp_path / 'reference.tar.gz'
+    source = Path(__file__).resolve().parents[2]
+    checkout = tmp_path / 'checkout'
+    (checkout / 'scripts').mkdir(parents=True)
+    shutil.copy2(source / 'scripts/pack_reference.sh', checkout / 'scripts/pack_reference.sh')
+    manifest = checkout / 'src/arda/_reference_manifest.json'
+    manifest.parent.mkdir(parents=True)
+    shutil.copy2(source / 'src/arda/_reference_manifest.json', manifest)
+    for relative in dbf._PINNED_FILES:
+        target = checkout / 'database' / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((source / 'database' / relative).read_bytes().replace(b'\r\n', b'\n').replace(b'\n', b'\r\n'))
+    script = checkout / 'scripts/pack_reference.sh'
+    subprocess.run([shell, str(script), str(archive)], check=True,
+                   text=True, timeout=30)
+    with tarfile.open(archive) as packed:
+        for member in packed.getmembers():
+            assert (member.uid, member.gid, member.uname, member.gname, member.mtime) == (0, 0, '', '', 0)
+            assert not member.pax_headers
+        members = {m.name: m for m in packed.getmembers() if m.isfile()}
+        assert not any(name.endswith('.log') for name in members)
+        assert set(members) == set(dbf._PINNED_FILES)
+        for name, member in members.items():
+            assert hashlib.sha256(packed.extractfile(member).read()).hexdigest() == dbf._PINNED_FILES[name]
+
+    duplicate = tmp_path / 'other-name.tar.gz'
+    subprocess.run([shell, str(script), str(duplicate)], check=True,
+                   text=True, timeout=30)
+    assert archive.read_bytes() == duplicate.read_bytes()
+
+
+def test_publication_waits_for_reference_asset():
+    from pathlib import Path
+
+    workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/publish.yml').read_text()
+    assert 'needs: [build-sdist, build-wheels, test-wheels, reference-asset]' in workflow
+    asset = workflow.split('  reference-asset:', 1)[1]
+    assert '    if:' not in asset.split('    steps:', 1)[0]
+    assert "      - name: Upload it to the release\n        if: github.event_name == 'release'" in asset
