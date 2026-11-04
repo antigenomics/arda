@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc"><title id="title">From receptor sequences to annotated repertoires</title><desc id="desc">One reference vocabulary connects reads, regions and clonotypes. Illustrations are schematic, not measured results.</desc><!-- Editable schematic, not measured observations. PNG: rsvg-convert assets/workflow-light.svg -o assets/workflow.png -->
+<rect width="1200" height="760" fill="#ffffff"/><g font-family="Arial, Helvetica, sans-serif">
+<text x="56" y="72" font-size="32" fill="#1a2332" font-weight="700">From receptor sequences to annotated repertoires</text>
+<text x="56" y="110" font-size="19" fill="#54657a" font-weight="400">One reference vocabulary connects reads, regions and clonotypes.</text>
+<path d="M56 142 H1144" fill="none" stroke="#e6e9ee" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="80" y="220" width="72" height="7" fill="#3f75ac" opacity="0.95"/>
+<rect x="158" y="220" width="28" height="7" fill="#b17b20" opacity="0.95"/>
+<rect x="192" y="220" width="70" height="7" fill="#168b78" opacity="0.95"/>
+<rect x="80" y="240" width="72" height="7" fill="#3f75ac" opacity="0.83"/>
+<rect x="158" y="240" width="28" height="7" fill="#b17b20" opacity="0.83"/>
+<rect x="192" y="240" width="70" height="7" fill="#168b78" opacity="0.83"/>
+<rect x="80" y="260" width="72" height="7" fill="#3f75ac" opacity="0.71"/>
+<rect x="158" y="260" width="28" height="7" fill="#b17b20" opacity="0.71"/>
+<rect x="192" y="260" width="70" height="7" fill="#168b78" opacity="0.71"/>
+<rect x="80" y="280" width="72" height="7" fill="#3f75ac" opacity="0.59"/>
+<rect x="158" y="280" width="28" height="7" fill="#b17b20" opacity="0.59"/>
+<rect x="192" y="280" width="70" height="7" fill="#168b78" opacity="0.59"/>
+<rect x="454" y="225" width="115" height="22" fill="#3f75ac" opacity="1"/>
+<text x="454" y="215" font-size="17" fill="#3f75ac" font-weight="400">V</text>
+<rect x="580" y="225" width="28" height="22" fill="#b17b20" opacity="1"/>
+<text x="580" y="215" font-size="17" fill="#b17b20" font-weight="400">D</text>
+<rect x="619" y="225" width="64" height="22" fill="#168b78" opacity="1"/>
+<text x="619" y="215" font-size="17" fill="#168b78" font-weight="400">J</text>
+<path d="M454 276 H690" fill="none" stroke="#54657a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="454" y="267" width="45" height="18" fill="#3f75ac" opacity="1"/>
+<rect x="499" y="267" width="24" height="18" fill="#b17b20" opacity="1"/>
+<rect x="523" y="267" width="45" height="18" fill="#3f75ac" opacity="1"/>
+<rect x="568" y="267" width="24" height="18" fill="#b17b20" opacity="1"/>
+<rect x="592" y="267" width="50" height="18" fill="#3f75ac" opacity="1"/>
+<rect x="642" y="267" width="28" height="18" fill="#b17b20" opacity="1"/>
+<rect x="670" y="267" width="20" height="18" fill="#168b78" opacity="1"/>
+<text x="454" y="320" font-size="12" fill="#54657a" font-weight="400">FR1   CDR1   FR2   CDR2   FR3   CDR3   FR4</text>
+<rect x="842" y="212" width="59" height="12" fill="#3f75ac" opacity="0.2"/>
+<rect x="908" y="212" width="59" height="12" fill="#3f75ac" opacity="0.33"/>
+<rect x="974" y="212" width="59" height="12" fill="#168b78" opacity="0.46"/>
+<rect x="1040" y="212" width="59" height="12" fill="#3f75ac" opacity="0.5900000000000001"/>
+<rect x="842" y="232" width="59" height="12" fill="#3f75ac" opacity="0.33"/>
+<rect x="908" y="232" width="59" height="12" fill="#3f75ac" opacity="0.46"/>
+<rect x="974" y="232" width="59" height="12" fill="#168b78" opacity="0.5900000000000001"/>
+<rect x="1040" y="232" width="59" height="12" fill="#3f75ac" opacity="0.2"/>
+<rect x="842" y="252" width="59" height="12" fill="#3f75ac" opacity="0.46"/>
+<rect x="908" y="252" width="59" height="12" fill="#3f75ac" opacity="0.5900000000000001"/>
+<rect x="974" y="252" width="59" height="12" fill="#168b78" opacity="0.2"/>
+<rect x="1040" y="252" width="59" height="12" fill="#3f75ac" opacity="0.33"/>
+<rect x="842" y="272" width="59" height="12" fill="#3f75ac" opacity="0.5900000000000001"/>
+<rect x="908" y="272" width="59" height="12" fill="#3f75ac" opacity="0.2"/>
+<rect x="974" y="272" width="59" height="12" fill="#168b78" opacity="0.33"/>
+<rect x="1040" y="272" width="59" height="12" fill="#3f75ac" opacity="0.46"/>
+<rect x="842" y="292" width="59" height="12" fill="#3f75ac" opacity="0.2"/>
+<rect x="908" y="292" width="59" height="12" fill="#3f75ac" opacity="0.33"/>
+<rect x="974" y="292" width="59" height="12" fill="#168b78" opacity="0.46"/>
+<rect x="1040" y="292" width="59" height="12" fill="#3f75ac" opacity="0.5900000000000001"/>
+<path d="M355 258 h40 m-8 -7 8 7 -8 7" fill="none" stroke="#54657a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<path d="M745 258 h40 m-8 -7 8 7 -8 7" fill="none" stroke="#54657a" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="56" y="386" font-size="24" fill="#1a2332" font-weight="700">Sequence input</text>
+<text x="56" y="420" font-size="17" fill="#54657a" font-weight="400">Bulk, amplicon or single cell</text>
+<text x="56" y="447" font-size="17" fill="#54657a" font-weight="400">Nucleotide or protein sequences</text>
+<text x="446" y="386" font-size="24" fill="#1a2332" font-weight="700">Batched annotation</text>
+<text x="446" y="420" font-size="17" fill="#54657a" font-weight="400">Germline search + region transfer</text>
+<text x="446" y="447" font-size="17" fill="#54657a" font-weight="400">V / D / J / C and candidate evidence</text>
+<text x="836" y="386" font-size="24" fill="#1a2332" font-weight="700">AIRR output</text>
+<text x="836" y="420" font-size="17" fill="#54657a" font-weight="400">Regions, junctions and gene calls</text>
+<text x="836" y="447" font-size="17" fill="#54657a" font-weight="400">Clonotypes, pairing and run QC</text>
+<path d="M56 483 H1144" fill="none" stroke="#e6e9ee" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<rect x="56" y="522" width="27" height="4" fill="#3f75ac" opacity="1"/>
+<text x="56" y="566" font-size="23" fill="#1a2332" font-weight="700">Reads → clonotypes</text>
+<text x="56" y="603" font-size="16" fill="#54657a" font-weight="400">Choose rnaseq, amplicon or cells.</text>
+<text x="56" y="629" font-size="16" fill="#54657a" font-weight="400">Paired reads stay paired through assembly.</text>
+<rect x="446" y="522" width="27" height="4" fill="#168b78" opacity="1"/>
+<text x="446" y="566" font-size="23" fill="#1a2332" font-weight="700">Sequences → regions</text>
+<text x="446" y="603" font-size="16" fill="#54657a" font-weight="400">Use annotate_sequences for one batch.</text>
+<text x="446" y="629" font-size="16" fill="#54657a" font-weight="400">Coordinates are 1-based and closed.</text>
+<rect x="836" y="522" width="27" height="4" fill="#b17b20" opacity="1"/>
+<text x="836" y="566" font-size="23" fill="#1a2332" font-weight="700">Evidence → inference</text>
+<text x="836" y="603" font-size="16" fill="#54657a" font-weight="400">Keep alternative alignments for models.</text>
+<text x="836" y="629" font-size="16" fill="#54657a" font-weight="400">A chosen call is not a recombination history.</text>
+<path d="M56 678 H1144" fill="none" stroke="#e6e9ee" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+<text x="56" y="719" font-size="17" fill="#54657a" font-weight="400">Python API + CLI</text>
+<text x="735" y="719" font-size="16" fill="#54657a" font-weight="400">Batch APIs · shared resources · automatic CPU budgets</text>
+</g></svg>

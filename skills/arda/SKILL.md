@@ -135,45 +135,11 @@ protein input as well as nucleotide. rat/rabbit/rhesus have no TR loci in IMGT, 
 
 ## CLI
 
-```bash
-arda info                                   # resolved paths + tool availability
-arda annotate -i reads.fastq.gz -o out.airr.tsv --organism human --seqtype nt
-arda annotate -i prot.fasta -o out.tsv --seqtype aa --no-map-d
-arda markup -i vdjdb.txt -o marked.tsv --vdjdb --report -   # bare (CDR3aa, V, J) records
-
-arda rnaseq   --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # bulk: map+assemble+correct
-arda amplicon --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE -d out/   # targeted RepSeq, other preset
-arda cells    asm/PBMC.consensus.fq.gz -p out/PBMC            # single cell (UMI consensus in)
-
-arda map      --r1 R1.fq.gz --r2 R2.fq.gz -o mapped.airr.tsv  # the stages, separately
-arda assemble -i mapped.airr.tsv -o assembled.airr.tsv
-arda correct  -i mapped.airr.tsv --extra-airr assembled.airr.tsv -o clones.tsv
-arda stats    -i mapped.airr.tsv -c clones.tsv -r SAMPLE.arda.json -o SAMPLE.stats.tsv
-arda qc batch  -d out/ -o out/batch --samples sheet.tsv   # every sample's QC as one table
-arda qc report -i out/batch.qc.json -o out/batch.qc.html  # ...as one self-contained page
-
-arda genotype     -i mapped.airr.tsv -o donor.genotype.tsv --loci TRB   # which V alleles this donor has
-arda resolve-ties -i mapped.airr.tsv -o widened.airr.tsv --loci IGK,IGL   # widen only where it helps
-arda resolve-ties -i mapped.airr.tsv -o narrowed.airr.tsv --genotype donor.genotype.tsv
-
-arda igblast    -i reads.fastq -o truth.airr.tsv              # gold-standard IgBLAST, all loci
-arda export-ref --kind segments --locus TRB --format fasta
-arda build-db    --organism all             # offline reference build (needs IgBLAST)
-arda build-index --organism all             # rebuild mmseqs indexes for the local mmseqs
-arda cluster submit --r1 R1.fq.gz --r2 R2.fq.gz -p SAMPLE --shards 8    # one big pair, sharded
-arda cluster plan --samples sheet.tsv --work-dir work/                  # any scheduler
-arda cluster submit-samples --samples sheet.tsv -d out/                 # two SLURM arrays
-```
-
-**Never: `-v` / `-q` / `--log-file` are GLOBAL and go BEFORE the subcommand**
-(`arda -v --log-file run.log amplicon --r1 ...`). Progress goes to **stderr**, results to
-**stdout** — a mode run prints its output paths one per line and nothing else, so `$(arda map
-...)` and `arda export-ref ... > out.tsv` are safe. `--log-file` is always DEBUG whatever the
-console level is, and `-q` does not silence it.
-
-**Never: `correct` needs `--extra-airr`.** Without it the contigs `assemble` just built are
-silently discarded and the clonotypes no single read spans never reach the table. The mode
-commands wire it for you.
+Use the [command reference](https://docs.isalgo.dev/arda/cli.html) for flags.
+Choose `rnaseq`, `amplicon` or `cells` for complete pipelines.
+Global `-v`, `-q` and `--log-file` precede the subcommand. Results go to stdout;
+progress goes to stderr. When running stages manually, `correct` needs
+`--extra-airr` to retain the contigs produced by `assemble`.
 
 ## Pick the mode, not the flags
 
@@ -228,50 +194,6 @@ pipeline and `build-db` / `build-index`.
   [annotation](references/annotation.md), [regions](references/region-segments.md),
   [genotype](references/genotype.md), [speed](references/speed-flags.md).
 
-## Preliminary alignment candidates
+## Further reading
 
-`arda.alignment_candidates([(id, coding_strand_nt), ...], organism="human",
-threads=0, max_seqs=300, evalue=1e-3, sensitivity=7.0)` returns flat Polars `queries` and `alignments` frames plus explicit `limits`.
-Each call accepts at most `batch_size=10000` records; iterate bounded batches.
-Candidates retain segment, locus, allele groups, query/reference 1-based closed
-coordinates, CIGAR, mismatches, aligned strings, source and alignment score.
-One batched V/J segment search retains MMseqs hits before best-hit reduction;
-D retains the best positive gapless local span per allele in one native
-batch. These are preliminary evidence, never fixed assignments or recombination
-boundaries. MMseqs target/evalue limits and local-span limits mean this is not
-exhaustive scenario enumeration; probabilistic consumers must reconsider trimming,
-insertions and mismatches. Inputs must be nucleotide coding-strand sequences.
-The `threads` budget applies sequentially to MMseqs and the GIL-released native
-D batch. D workers share immutable germlines and own contiguous query spans;
-queries preserve input order; alignments sort by sequence ID, segment, target,
-query start, target start, query end and target end at every thread count. Batches below 32 queries
-run serially to avoid startup cost; `limits` declares this threshold and actual
-D worker count. Thread startup failure raises instead of falling back.
-
-This API rejects `ARDA_MMSEQS_SEARCH_OPTS` overrides so declared limits match
-the search. Invalid query IDs/lengths/bounds raise; reverse/inverted hits are
-excluded with `limits["rejected_reverse_hits"]` reporting their count.
-
-## Major alleles
-
-Annotation/search defaults to `major_only=True` on `annotate_sequences`,
-`annotate_records`, `annotate_file`, `alignment_candidates`, `load_reference`,
-and `map_rnaseq`. CLI `annotate` and `map` default to `--major-only`; select
-`--all-alleles` (or `major_only=False`) for the full frozen reference.
-Searches use actual major templates; minor alignment coordinates are never relabelled.
-Between-gene alternatives remain available. Full base FASTAs/markup stay unchanged.
-
-`arda.select_major_alleles(eligible_names)` returns `gene -> allele`, preferring
-`*01`, otherwise the lowest numeric suffix; starless D names work. Callers own
-complete/functionality eligibility. `arda.major_allele_map(organism="human",
-locus=None)` describes annotation majors: prefer available ok F/ORF anchors,
-otherwise keep a preliminary template for a gene with only partial/no-anchor records.
-Its partial status never establishes complete emission eligibility. Candidates
-return the selected map as `major_alleles`. Models must filter incomplete templates
-before calling the name-only selector. Frozen resource export/raw metadata helpers
-explicitly use the full reference.
-
-`arda.d_germline_metadata(organism="human")` returns metadata keyed by
-`(allele, sequence)`: raw completeness, status and functionality. D FASTA
-alignment targets remain available; complete emission templates exclude partial
-records. `Anchor.imgt_completeness` preserves V/J raw completeness labels.
+Read [advanced workflows and contracts](references/candidate-evidence.md) for alignment candidates, major-allele selection and germline eligibility.

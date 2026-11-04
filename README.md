@@ -4,7 +4,7 @@
     <source media="(prefers-color-scheme: light)" srcset="assets/arda_light.svg">
     <!-- Absolute PNG fallback: PyPI strips <picture>/<source> and cannot render a relative or
          raw-served SVG, so the logo must be an absolute-URL raster here. GitHub uses the SVG sources. -->
-    <img alt="arda" src="https://raw.githubusercontent.com/antigenomics/arda/master/assets/arda_dark.png" width="340">
+    <img alt="arda" src="https://raw.githubusercontent.com/antigenomics/arda/master/assets/arda_light.png" width="340">
   </picture>
 </p>
 
@@ -40,6 +40,12 @@ ships no TR reference for those three). It also annotates records with no read b
 CDR3 amino acid plus a V and J call, as in a VDJdb row — marking up which residues each germline
 templates and repairing the junction. D inference from amino-acid junctions is provided by
 [vdjtools](https://github.com/antigenomics/vdjtools), using ARDA markup and germline.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/antigenomics/arda/master/assets/workflow-dark.svg">
+  <source srcset="https://raw.githubusercontent.com/antigenomics/arda/master/assets/workflow-light.svg">
+  <img alt="arda workflow: inputs, batched processing and outputs. Schematic illustrations." src="https://raw.githubusercontent.com/antigenomics/arda/master/assets/workflow.png" width="100%">
+</picture>
 
 ## Install
 
@@ -117,8 +123,8 @@ plain files in and out, so it drops into
 any workflow engine; the same sample sheet drives the CLI, a SLURM array, the Nextflow module and
 the Snakemake workflow, and a sharded run is byte-identical to a single-node one.
 
-Every figure above is measured. Methods, repetition spread, and what each comparison is and is not
-entitled to claim: **[Benchmarks](https://docs.isalgo.dev/arda/benchmarks.html)**.
+The performance numbers above are measured; the workflow illustration is schematic.
+Methods and comparison scope: **[Benchmarks](https://docs.isalgo.dev/arda/benchmarks.html)**.
 
 ## Documentation
 
