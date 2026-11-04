@@ -107,3 +107,13 @@ def test_release_reference_asset_contains_only_pinned_runtime_files(tmp_path):
     subprocess.run([shell, str(script), str(duplicate)], check=True, capture_output=True,
                    text=True, timeout=30)
     assert archive.read_bytes() == duplicate.read_bytes()
+
+
+def test_publication_waits_for_reference_asset():
+    from pathlib import Path
+
+    workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/publish.yml').read_text()
+    assert 'needs: [build-sdist, build-wheels, test-wheels, reference-asset]' in workflow
+    asset = workflow.split('  reference-asset:', 1)[1]
+    assert '    if:' not in asset.split('    steps:', 1)[0]
+    assert "      - name: Upload it to the release\n        if: github.event_name == 'release'" in asset
