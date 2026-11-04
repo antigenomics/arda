@@ -6,7 +6,7 @@ via offline IgBLAST-built references mapped at runtime with MMseqs2.
 
 from __future__ import annotations
 
-__version__ = "2.38.2"
+__version__ = "2.38.3"
 
 from .adapter import annotate_sequences  # noqa: E402
 

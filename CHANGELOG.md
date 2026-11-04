@@ -5,6 +5,8 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+## 2.38.3
+
 - Pack exactly the pinned reference files with reproducible, neutral archive headers;
   exclude host ownership and extended attributes without changing reference content.
 
