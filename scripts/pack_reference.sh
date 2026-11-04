@@ -13,37 +13,30 @@
 set -euo pipefail
 OUT="${1:-arda-reference-vdj.tar.gz}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export COPYFILE_DISABLE=1   # macOS bsdtar: no ._AppleDouble members
+# Use the pinned manifest, not the working directory's generated files or OS metadata.
+python3 - "$ROOT" "$OUT" <<'PYTHON'
+import gzip
+import hashlib
+import io
+import json
+from pathlib import Path
+import sys
+import tarfile
 
-tar czf "$OUT" -C "$ROOT/database" --exclude='vdj/*/mmseqs' --exclude='vdj/*/segments.*' --exclude='*.log' vdj
-# Capture the listing once. Piping `tar tzf | grep -q` SIGPIPEs tar under `pipefail` (grep exits on the
-# first match, closing the pipe) -> a false failure; here-strings have no producer to break.
-members=$(tar tzf "$OUT")
-echo "wrote $OUT ($(du -h "$OUT" | cut -f1)); $(grep -c . <<<"$members") members"
-# Every file a pip user needs at runtime must be in here, per organism. `arda markup`, D mapping
-# and -- in the other repository -- `vdjtools.model.posterior_d` all read these, and a missing one is
-# a 404-shaped failure that only shows up on someone else's machine.
-for org in human mouse rat rabbit rhesus_monkey; do
-  for f in alleles.fasta alleles.aa.fasta markup.tsv markup.aa.tsv cdr3_anchors.tsv; do
-    grep -q "^vdj/$org/$f\$" <<<"$members" || { echo "ERROR: vdj/$org/$f missing"; exit 1; }
-    # Present is not enough: a build-db run without IgBLAST emits 0-byte alleles/markup, which pass
-    # the presence check, ship, and then crash every fresh install with `NoDataError: empty CSV`.
-    # (v2.5.7 shipped exactly this.) The smallest real file is rat/cdr3_anchors.tsv at ~24 KB, so a
-    # 1 KB floor catches empty without ever tripping on a valid small-repertoire organism.
-    sz=$(tar -xzf "$OUT" -O "vdj/$org/$f" | wc -c)
-    [ "$sz" -gt 1000 ] || { echo "ERROR: vdj/$org/$f is empty ($sz B) -- was build-db run without IgBLAST?"; exit 1; }
-  done
-done
-# Completeness metadata accompanies every organism, including an empty D set.
-for org in human mouse rat rabbit rhesus_monkey; do
-  grep -q "^vdj/$org/d_germlines.tsv\$" <<<"$members" || { echo "ERROR: vdj/$org/d_germlines.tsv missing"; exit 1; }
-done
-# D germlines exist only for organisms with a D locus; d_prior only where a model was published. The
-# prior table is still shipped although the POSTERIOR moved to vdjtools in 2.33.0 (#144): `arda.hmm`
-# and `arda.scenarios` read it too, and vdjtools reads this copy rather than vendoring a second one.
-for org in human mouse; do
-  grep -q "^vdj/$org/d_germlines.fasta\$" <<<"$members" || { echo "ERROR: vdj/$org/d_germlines.fasta missing"; exit 1; }
-  grep -q "^vdj/$org/d_prior.tsv\$" <<<"$members" || { echo "ERROR: vdj/$org/d_prior.tsv missing"; exit 1; }
-done
-if grep -q 'mmseqs' <<<"$members"; then echo "ERROR: mmseqs indexes leaked into the asset"; exit 1; fi
-echo "OK: asset root holds vdj/ (markup + anchors + D priors), no mmseqs indexes"
+root, output = map(Path, sys.argv[1:])
+manifest = json.loads((root / 'src/arda/_reference_manifest.json').read_text())['files_sha256']
+payloads = []
+for name, expected in sorted(manifest.items()):
+    data = (root / 'database' / name).read_bytes()
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise SystemExit(f'ERROR: reference does not match pinned manifest: {name}')
+    payloads.append((name, data))
+with output.open('wb') as stream, gzip.GzipFile(filename='', fileobj=stream, mode='wb', mtime=0) as compressed:
+    with tarfile.open(fileobj=compressed, mode='w|', format=tarfile.USTAR_FORMAT) as archive:
+        for name, data in payloads:
+            member = tarfile.TarInfo(name)
+            member.size = len(data)
+            member.mode = 0o644
+            archive.addfile(member, io.BytesIO(data))
+print(f'wrote {output} ({output.stat().st_size} bytes); {len(payloads)} pinned runtime files')
+PYTHON

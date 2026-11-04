@@ -94,8 +94,16 @@ def test_release_reference_asset_contains_only_pinned_runtime_files(tmp_path):
     subprocess.run([shell, str(script), str(archive)], check=True, capture_output=True,
                    text=True, timeout=30)
     with tarfile.open(archive) as packed:
+        for member in packed.getmembers():
+            assert (member.uid, member.gid, member.uname, member.gname, member.mtime) == (0, 0, '', '', 0)
+            assert not member.pax_headers
         members = {m.name: m for m in packed.getmembers() if m.isfile()}
         assert not any(name.endswith('.log') for name in members)
         assert set(members) == set(dbf._PINNED_FILES)
         for name, member in members.items():
             assert hashlib.sha256(packed.extractfile(member).read()).hexdigest() == dbf._PINNED_FILES[name]
+
+    duplicate = tmp_path / 'other-name.tar.gz'
+    subprocess.run([shell, str(script), str(duplicate)], check=True, capture_output=True,
+                   text=True, timeout=30)
+    assert archive.read_bytes() == duplicate.read_bytes()
