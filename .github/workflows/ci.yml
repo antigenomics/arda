@@ -100,3 +100,34 @@ jobs:
           else:
               raise AssertionError("Oversized Windows CPU budget accepted")
           print({"logical": logical, "physical": physical, "automatic": resolve()})
+
+  annotation-windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install wheel from source
+        run: python -m pip install .
+      - name: Cold native Windows annotation outside checkout
+        shell: python
+        run: |
+          import csv, os, pathlib, subprocess, tempfile
+          source = pathlib.Path.cwd() / "examples" / "example.fasta"
+          work = pathlib.Path(tempfile.mkdtemp(prefix="arda windows space "))
+          os.chdir(work)
+          for key in ("ARDA_HOME", "ARDA_MMSEQS", "ARDA_NO_AUTO_FETCH", "PYTHONPATH"):
+              os.environ.pop(key, None)
+          os.environ["XDG_CACHE_HOME"] = str(work / "cold cache")
+          import arda
+          from arda import mmseqs
+          assert mmseqs.run(["not-a-real-command"], check=False).returncode != 0
+          out = work / "annotation output.tsv"
+          subprocess.run(["arda", "annotate", "-i", str(source), "-o", str(out)], check=True)
+          rows = list(csv.DictReader(out.open(), delimiter="\t", quoting=csv.QUOTE_NONE))
+          assert len(rows) == 5 and all(row["v_call"] and row["j_call"] for row in rows)
+          records = arda.annotate_sequences([("q", rows[0]["sequence"])])
+          assert len(records) == 1 and records[0]["v_call"] and records[0]["junction"]
+          print({"binary": mmseqs.mmseqs_binary(), "rows": len(rows)})

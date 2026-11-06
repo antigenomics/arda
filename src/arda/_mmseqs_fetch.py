@@ -8,6 +8,9 @@ so auto-fetch works for wheel installs, not only editable checkouts.
 from __future__ import annotations
 
 import os
+import hashlib
+import subprocess
+import zipfile
 import http.client
 import platform
 import shutil
@@ -79,16 +82,59 @@ def default_asset() -> str:
     machine = platform.machine().lower()
     if system == "Darwin":
         return "mmseqs-osx-universal.tar.gz"
+    if system == "Windows" and machine in ("amd64", "x86_64"):
+        return "mmseqs-win64.zip"
     if system == "Linux":
         if machine in ("aarch64", "arm64"):
             return "mmseqs-linux-arm64.tar.gz"
         return "mmseqs-linux-avx2.tar.gz"
     raise RuntimeError(
         f"Unsupported platform for MMseqs2 auto-fetch: {system}/{machine}. "
-        "On Windows use Linux Python inside WSL2 for search workflows. Otherwise install "
+        "Install "
         "a compatible MMseqs2 and set $ARDA_MMSEQS, or select a supported tar asset with "
         "$ARDA_MMSEQS_ASSET."
     )
+
+
+def installed_binary(bin_dir: Path) -> Path:
+    """Resolve an atomically published Windows runtime, or the Unix executable."""
+    marker = Path(bin_dir) / "mmseqs-windows" / "CURRENT"
+    if platform.system() == "Windows" and marker.is_file():
+        generation = marker.read_text().strip()
+        if len(generation) == 64 and all(c in "0123456789abcdef" for c in generation):
+            return marker.parent / generation / "bin" / "mmseqs.exe"
+    return Path(bin_dir) / ("mmseqs.exe" if platform.system() == "Windows" else "mmseqs")
+
+
+def _install_windows(archive: Path, bin_dir: Path, tmp: Path) -> Path:
+    """Stage the official DLL/BusyBox runtime; publish a complete immutable generation."""
+    generation = hashlib.sha256(archive.read_bytes()).hexdigest()
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            name = member.filename.replace("\\", "/")
+            path = (tmp / name).resolve()
+            if (not path.is_relative_to(tmp.resolve()) or ":" in name or
+                    stat.S_ISLNK(member.external_attr >> 16)):
+                raise RuntimeError(f"Unsafe MMseqs2 zip member: {member.filename}")
+        zf.extractall(tmp)
+    source = tmp / "mmseqs"
+    runtime = source / "bin"
+    if not all((runtime / name).is_file() for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll")):
+        raise RuntimeError("Unexpected MMseqs2 Windows archive layout")
+    # Hard links need no Administrator/developer-mode permission, unlike upstream's -s.
+    subprocess.run([str(runtime / "busybox.exe"), "--install", str(runtime)],
+                   check=True, capture_output=True, timeout=60)
+    subprocess.run([str(runtime / "mmseqs.exe"), "version"],
+                   check=True, capture_output=True, timeout=60)
+    root = bin_dir / "mmseqs-windows"
+    root.mkdir(exist_ok=True)
+    target = root / generation
+    if not target.exists():
+        os.replace(source, target)
+    marker = tmp / "CURRENT"
+    marker.write_text(generation)
+    os.replace(marker, root / "CURRENT")
+    return target / "bin" / "mmseqs.exe"
 
 
 def fetch(bin_dir: Path, *, force: bool = False) -> Path:
@@ -115,16 +161,16 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
     """
     bin_dir = Path(bin_dir)
     bin_dir.mkdir(parents=True, exist_ok=True)
-    dest = bin_dir / "mmseqs"
+    dest = installed_binary(bin_dir)
     if dest.exists() and not force:
         return dest
 
     # Under --force the work is ours by definition; otherwise whoever we queued behind may have
     # finished it while we waited, and there is then nothing left to do.
-    done = (lambda: False) if force else dest.exists
+    done = (lambda: False) if force else lambda: installed_binary(bin_dir).exists()
     with build_lock(bin_dir / ".mmseqs.lock", done=done) as ours:
         if not ours:
-            return dest
+            return installed_binary(bin_dir)
         asset = default_asset()
         url = RELEASE_URL.format(asset=asset)
         print(f"[arda] fetching mmseqs: {url}", file=sys.stderr)
@@ -137,6 +183,8 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
             tmp = Path(td)
             tarball = tmp / asset
             _download(url, tarball)
+            if asset.endswith(".zip"):
+                return _install_windows(tarball, bin_dir, tmp)
             with tarfile.open(tarball) as tf:
                 tmp_resolved = tmp.resolve()
                 for member in tf.getmembers():

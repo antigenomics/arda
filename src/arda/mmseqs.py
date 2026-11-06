@@ -137,8 +137,10 @@ def mmseqs_binary() -> str:
     if env:
         return env
 
+    from ._mmseqs_fetch import installed_binary
+    local = installed_binary(bin_dir())
     candidates = [c for c in (_bundled_binary(),
-                              str(bin_dir() / "mmseqs") if (bin_dir() / "mmseqs").exists() else None,
+                              str(local) if local.exists() else None,
                               shutil.which("mmseqs")) if c]
 
     want = committed_index_version()
@@ -214,7 +216,11 @@ def run(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
     # independently of the search budget. Do not mutate the embedding caller's env.
     env = dict(os.environ, OMP_NUM_THREADS=str(threads), OMP_THREAD_LIMIT=str(threads),
                OMP_MAX_ACTIVE_LEVELS="1")
-    cmd = [mmseqs_binary(), *map(str, args)]
+    binary = mmseqs_binary()
+    if os.name == "nt":
+        env["PATH"] = str(Path(binary).parent) + os.pathsep + env.get("PATH", "")
+        args = [arg.replace("\\", "/") for arg in args]
+    cmd = [binary, *map(str, args)]
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if check and proc.returncode != 0:
         raise MMseqsError(

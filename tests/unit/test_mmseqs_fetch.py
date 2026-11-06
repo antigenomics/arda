@@ -14,6 +14,7 @@ from arda import _mmseqs_fetch, mmseqs
         ("Darwin", "x86_64", "mmseqs-osx-universal.tar.gz"),
         ("Linux", "x86_64", "mmseqs-linux-avx2.tar.gz"),
         ("Linux", "aarch64", "mmseqs-linux-arm64.tar.gz"),
+        ("Windows", "amd64", "mmseqs-win64.zip"),
     ],
 )
 def test_default_asset_per_platform(monkeypatch, system, machine, expected):
@@ -31,7 +32,7 @@ def test_default_asset_env_override(monkeypatch):
 def test_default_asset_unsupported_platform(monkeypatch):
     monkeypatch.delenv("ARDA_MMSEQS_ASSET", raising=False)
     monkeypatch.setattr(_mmseqs_fetch.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(_mmseqs_fetch.platform, "machine", lambda: "amd64")
+    monkeypatch.setattr(_mmseqs_fetch.platform, "machine", lambda: "arm64")
     with pytest.raises(RuntimeError, match="Unsupported platform"):
         _mmseqs_fetch.default_asset()
 
@@ -176,3 +177,25 @@ def test_an_interrupted_copy_never_leaves_a_partial_binary_at_dest(tmp_path, mon
     monkeypatch.setattr(_mmseqs_fetch.shutil, "copy2", real_copy2)
     dest = _mmseqs_fetch.fetch(tmp_path / "bin")
     assert dest.exists() and dest.read_bytes() == b"#!/bin/sh\ntrue\n"
+
+
+def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch):
+    import zipfile
+    monkeypatch.setattr(_mmseqs_fetch.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(_mmseqs_fetch, "default_asset", lambda: "mmseqs-win64.zip")
+    def download(url, dest):
+        with zipfile.ZipFile(dest, "w") as zf:
+            for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll"):
+                zf.writestr("mmseqs/bin/" + name, b"binary")
+    monkeypatch.setattr(_mmseqs_fetch, "_download", download)
+    def fail(*args, **kwargs):
+        raise OSError("runtime setup failed")
+    monkeypatch.setattr(_mmseqs_fetch.subprocess, "run", fail)
+    with pytest.raises(OSError, match="runtime setup"):
+        _mmseqs_fetch.fetch(tmp_path)
+    assert not (tmp_path / "mmseqs-windows" / "CURRENT").exists()
+    monkeypatch.setattr(_mmseqs_fetch.subprocess, "run", lambda *a, **k: None)
+    binary = _mmseqs_fetch.fetch(tmp_path)
+    assert binary.is_file()
+    assert (binary.parent / "cygwin1.dll").is_file()
+    assert _mmseqs_fetch.installed_binary(tmp_path) == binary
