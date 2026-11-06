@@ -258,6 +258,8 @@ def test_windows_executables_are_ready_and_resolved(monkeypatch, tmp_path):
         assert _igblast_fetch.installed_root(root) == root
         assert igblast.tool("igblastn") == root / "igblastn.exe"
         assert igblast.tool("makeblastdb") == root / "makeblastdb.exe"
+        (root / "blastdbcmd.exe").write_bytes(b"tool")
+        assert igblast.tool("blastdbcmd") == root / "blastdbcmd.exe"
         assert igblast.tool("edit_imgt_file.pl") == root / "edit_imgt_file.pl"
     finally:
         igblast.igblast_root.cache_clear()

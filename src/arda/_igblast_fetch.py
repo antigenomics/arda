@@ -106,8 +106,9 @@ def lay_out(release_root: Path, dest: Path) -> None:
 def executable_path(root: Path, name: str) -> Path:
     """Resolve NCBI's extensionless POSIX or .exe Windows tool names."""
     path = root / name
-    if name in {"igblastn", "igblastp", "makeblastdb"} and not path.is_file():
-        return root / (name + ".exe")
+    candidate = root / (name + ".exe")
+    if not path.suffix and not path.is_file() and candidate.is_file():
+        return candidate
     return path
 
 
