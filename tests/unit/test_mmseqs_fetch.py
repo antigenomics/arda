@@ -199,6 +199,10 @@ def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch):
     assert binary.is_file()
     assert (binary.parent / "cygwin1.dll").is_file()
     assert _mmseqs_fetch.installed_binary(tmp_path) == binary
+    (binary.parent / "cygwin1.dll").unlink()
+    assert not _mmseqs_fetch.installed_binary(tmp_path).exists()
+    repaired = _mmseqs_fetch.fetch(tmp_path)
+    assert repaired == binary and (binary.parent / "cygwin1.dll").is_file()
 
 
 def test_windows_waiter_resolves_published_generation(tmp_path, monkeypatch):
@@ -216,3 +220,13 @@ def test_windows_waiter_resolves_published_generation(tmp_path, monkeypatch):
         yield False
     monkeypatch.setattr(_mmseqs_fetch, "build_lock", winner_publishes)
     assert _mmseqs_fetch.fetch(tmp_path).read_bytes() == b"complete"
+
+
+@pytest.mark.parametrize("name", ["../escape", "C:/escape", "mmseqs/../../../escape"])
+def test_windows_zip_rejects_unsafe_paths(tmp_path, name):
+    import zipfile
+    archive = tmp_path / "archive.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(name, b"unsafe")
+    with pytest.raises(RuntimeError, match="Unsafe"):
+        _mmseqs_fetch._install_windows(archive, tmp_path, tmp_path)
