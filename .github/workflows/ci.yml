@@ -141,5 +141,6 @@ jobs:
           gapped.write_text(">sequence\nAC.G.T\n")
           igblast.edit_imgt_file(gapped, ungapped)
           assert ungapped.read_text() == ">sequence\nACGT\n"
-          igblast.makeblastdb(ungapped, work / "tiny db")
+          db = igblast.makeblastdb(ungapped, work / "tiny db")
+          subprocess.run([str(igblast.tool("blastdbcmd")), "-db", '"' + str(db) + '"', "-info"], check=True)
           print({"igblast": str(tool), "version": version.stdout.strip()})
