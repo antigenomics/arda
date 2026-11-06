@@ -2,14 +2,15 @@
 
 The IMGT V-QUEST reference directory ships gapped germline FASTAs laid out as
 ``<Species>/<IG|TR>/<GENE>.fasta`` (e.g. ``Homo_sapiens/IG/IGHV.fasta``).
-Sequences carry IMGT-numbering gap dots; IgBLAST's ``edit_imgt_file.pl`` ungaps
-them and rewrites headers to bare allele names (what ``makeblastdb`` wants).
+Sequences carry IMGT-numbering gap dots. NCBI's IMGT conversion ungaps them
+and rewrites headers to allele names (what ``makeblastdb`` wants); the packaged
+Python implementation follows ``edit_imgt_file.pl`` without requiring Perl.
 
 This module:
 
 * downloads & extracts the reference zip into ``data/imgt`` (gitignored),
 * parses the original gapped FASTA headers for per-allele *functionality*,
-* ungaps a gene file via ``edit_imgt_file.pl`` into ``data/imgt/ungapped``.
+* ungaps a gene file using NCBI's IMGT conversion into ``data/imgt/ungapped``.
 """
 
 from __future__ import annotations
@@ -157,7 +158,7 @@ def parse_functionality(path: Path) -> dict[str, str]:
 
 
 def ungap_gene(species_dir: str, group: str, gene_stem: str) -> Path:
-    """Ungap a gene file with ``edit_imgt_file.pl``; return the ungapped path."""
+    """Ungap a gene file with NCBI's IMGT conversion; return the ungapped path."""
     src = gene_fasta_path(species_dir, group, gene_stem)
     out_dir = _imgt_root() / "ungapped" / species_dir
     out_dir.mkdir(parents=True, exist_ok=True)
