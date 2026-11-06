@@ -93,12 +93,7 @@ jobs:
           assert 1 <= physical <= logical
           assert resolve() == physical
           assert resolve(logical) == logical
-          try:
-              resolve(logical + 1)
-          except ValueError:
-              pass
-          else:
-              raise AssertionError("Oversized Windows CPU budget accepted")
+          assert resolve(logical + 1) == logical
           print({"logical": logical, "physical": physical, "automatic": resolve()})
 
   annotation-windows:
