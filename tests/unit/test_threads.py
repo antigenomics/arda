@@ -12,7 +12,8 @@ def test_all_uses_smallest_process_and_scheduler_limit(monkeypatch):
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "4")
     assert _threads.resolve_threads(0) == 4
     assert _threads.resolve_threads(2) == 2
-    for invalid in (-1, 5):
+    assert _threads.resolve_threads(5) == 4
+    for invalid in (-1, True, 1.5):
         with pytest.raises(ValueError, match="threads"):
             _threads.resolve_threads(invalid)
 
@@ -57,8 +58,7 @@ def test_quota_only_container_limits_threads(tmp_path, monkeypatch, version):
         (root / "cpu.cfs_quota_us").write_text("200000\n")
         (root / "cpu.cfs_period_us").write_text("100000\n")
     assert _threads.resolve_threads(0) == 2
-    with pytest.raises(ValueError, match="threads"):
-        _threads.resolve_threads(3)
+    assert _threads.resolve_threads(3) == 2
 
 
 def test_nested_v1_quota_does_not_depend_on_controller_order(tmp_path, monkeypatch):
@@ -149,8 +149,7 @@ def test_windows_budget_preserves_explicit_logical_capacity(monkeypatch):
     monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
     assert _threads.resolve_threads() == 20
     assert _threads.resolve_threads(40) == 40
-    with pytest.raises(ValueError):
-        _threads.resolve_threads(41)
+    assert _threads.resolve_threads(41) == 40
 
 
 def test_mapper_initializes_polars_before_importing_helpers():

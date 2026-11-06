@@ -5,6 +5,11 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+## 2.38.4
+
+- Clamp oversized CPU/thread requests to the available budget instead of aborting.
+  Preserve automatic selection, explicit smaller budgets and bounded native workers.
+
 ## 2.38.3
 
 - Pack exactly the pinned reference files with reproducible, neutral archive headers;

@@ -1,5 +1,6 @@
 """Resolve one search-thread budget within the process and SLURM allocation."""
 
+import logging
 import os
 import subprocess
 import sys
@@ -161,7 +162,7 @@ def import_polars():
 
 
 def resolve_threads(threads: int = 0) -> int:
-    """Zero selects physical cores within allocated CPUs; reject requests outside that allocation."""
+    """Zero selects physical cores within allocated CPUs; cap requests to that allocation."""
     windows = _windows_cpu_counts() if sys.platform == "win32" else None
     available = windows[0] if windows else os.cpu_count() or 1
     if hasattr(os, "sched_getaffinity"):
@@ -177,6 +178,8 @@ def resolve_threads(threads: int = 0) -> int:
         if limit < 1:
             raise ValueError("SLURM_CPUS_PER_TASK must be a positive integer")
         available = min(available, limit)
-    if not isinstance(threads, int) or isinstance(threads, bool) or not 0 <= threads <= available:
+    if not isinstance(threads, int) or isinstance(threads, bool) or threads < 0:
         raise ValueError(f"threads must be 0 (automatic physical-core budget) or 1..{available}, got {threads!r}")
-    return threads or min(available, windows[1] if windows else _physical_cpus())
+    if threads > available:
+        logging.getLogger("arda").warning("Requested %d threads; available allocation %d; using %d threads", threads, available, available)
+    return min(threads, available) if threads else min(available, windows[1] if windows else _physical_cpus())
