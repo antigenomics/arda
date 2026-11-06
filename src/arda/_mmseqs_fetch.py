@@ -11,6 +11,7 @@ import os
 import hashlib
 import subprocess
 import zipfile
+import uuid
 import http.client
 import platform
 import shutil
@@ -96,19 +97,30 @@ def default_asset() -> str:
     )
 
 
+def _windows_ready(root: Path) -> bool:
+    required = ("mmseqs.exe", "busybox.exe", "cygwin1.dll", "cyggomp-1.dll", "cyggcc_s-seh-1.dll", "cygz.dll", "cygbz2-1.dll")
+    return all((root / "bin" / name).is_file() and (root / "bin" / name).stat().st_size
+               for name in required) and any((root / "bin" / name).is_file() for name in ("sh", "sh.exe"))
+
+
 def installed_binary(bin_dir: Path) -> Path:
     """Resolve an atomically published Windows runtime, or the Unix executable."""
     marker = Path(bin_dir) / "mmseqs-windows" / "CURRENT"
     if platform.system() == "Windows" and marker.is_file():
         generation = marker.read_text().strip()
-        if len(generation) == 64 and all(c in "0123456789abcdef" for c in generation):
+        if (len(generation) == 64 and all(c in "0123456789abcdef" for c in generation)
+                and _windows_ready(marker.parent / generation)):
             return marker.parent / generation / "bin" / "mmseqs.exe"
     return Path(bin_dir) / ("mmseqs.exe" if platform.system() == "Windows" else "mmseqs")
 
 
 def _install_windows(archive: Path, bin_dir: Path, tmp: Path) -> Path:
     """Stage the official DLL/BusyBox runtime; publish a complete immutable generation."""
-    generation = hashlib.sha256(archive.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with archive.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    generation = digest.hexdigest()
     with zipfile.ZipFile(archive) as zf:
         for member in zf.infolist():
             name = member.filename.replace("\\", "/")
@@ -129,8 +141,20 @@ def _install_windows(archive: Path, bin_dir: Path, tmp: Path) -> Path:
     root = bin_dir / "mmseqs-windows"
     root.mkdir(exist_ok=True)
     target = root / generation
-    if not target.exists():
-        os.replace(source, target)
+    if not _windows_ready(source):
+        raise RuntimeError("Incomplete MMseqs2 Windows runtime after BusyBox setup")
+    if not _windows_ready(target):
+        previous = root / (generation + ".broken-" + uuid.uuid4().hex)
+        if target.exists():
+            os.replace(target, previous)
+        try:
+            os.replace(source, target)
+        except OSError:
+            if previous.exists():
+                os.replace(previous, target)
+            raise
+        if previous.exists():
+            shutil.rmtree(previous, ignore_errors=True)
     marker = tmp / "CURRENT"
     marker.write_text(generation)
     os.replace(marker, root / "CURRENT")

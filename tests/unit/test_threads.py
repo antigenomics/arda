@@ -151,3 +151,15 @@ def test_windows_budget_preserves_explicit_logical_capacity(monkeypatch):
     assert _threads.resolve_threads(40) == 40
     with pytest.raises(ValueError):
         _threads.resolve_threads(41)
+
+
+def test_mapper_initializes_polars_before_importing_helpers():
+    import os
+    import subprocess
+    import sys
+    env = dict(os.environ)
+    env.pop("POLARS_MAX_THREADS", None)
+    result = subprocess.run([sys.executable, "-c",
+        "from arda.annotate import mapper; assert mapper.pl.thread_pool_size() == 1"],
+        env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr

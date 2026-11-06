@@ -5,6 +5,8 @@ DB -> best hit per query -> project reference region markup onto the query (C++
 hot path) -> AIRR TSV.
 """
 
+# Pool initialization must precede helper imports that import Polars.
+# ruff: noqa: E402
 from __future__ import annotations
 
 import hashlib
@@ -18,6 +20,9 @@ from pathlib import Path
 
 from .._threads import import_polars, streaming_threads
 
+# Initialize before importing helpers that themselves import Polars.
+pl = import_polars()
+
 from .. import mmseqs
 from .._locking import build_lock
 from ..paths import data_dir, vdj_dir
@@ -27,8 +32,6 @@ from . import io as seqio
 from .reference import load_reference, Reference, REGIONS
 from .transfer import transfer_hit, AIRR_COLUMNS
 from .airr_out import airr_header, format_rows
-
-pl = import_polars()
 
 logger = logging.getLogger(__name__)
 

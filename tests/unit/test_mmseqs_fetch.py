@@ -185,7 +185,7 @@ def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(_mmseqs_fetch, "default_asset", lambda: "mmseqs-win64.zip")
     def download(url, dest):
         with zipfile.ZipFile(dest, "w") as zf:
-            for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll"):
+            for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll", "cyggomp-1.dll", "cyggcc_s-seh-1.dll", "cygz.dll", "cygbz2-1.dll", "sh.exe"):
                 zf.writestr("mmseqs/bin/" + name, b"binary")
     monkeypatch.setattr(_mmseqs_fetch, "_download", download)
     def fail(*args, **kwargs):
@@ -199,3 +199,20 @@ def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch):
     assert binary.is_file()
     assert (binary.parent / "cygwin1.dll").is_file()
     assert _mmseqs_fetch.installed_binary(tmp_path) == binary
+
+
+def test_windows_waiter_resolves_published_generation(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    monkeypatch.setattr(_mmseqs_fetch.platform, "system", lambda: "Windows")
+    generation = "a" * 64
+    @contextmanager
+    def winner_publishes(lock, done):
+        binary = tmp_path / "mmseqs-windows" / generation / "bin" / "mmseqs.exe"
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b"complete")
+        monkeypatch.setattr(_mmseqs_fetch, "_windows_ready", lambda root: True)
+        (tmp_path / "mmseqs-windows" / "CURRENT").write_text(generation)
+        assert done()
+        yield False
+    monkeypatch.setattr(_mmseqs_fetch, "build_lock", winner_publishes)
+    assert _mmseqs_fetch.fetch(tmp_path).read_bytes() == b"complete"
