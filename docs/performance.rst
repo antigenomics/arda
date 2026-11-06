@@ -25,7 +25,7 @@ Assign CPUs once
 restricted by process affinity, visible Linux cgroup CPU quotas and
 ``SLURM_CPUS_PER_TASK`` when set. Fractional quotas select at least one CPU and
 round down to avoid exceeding the quota with an extra worker. A positive value selects an explicit count within that allocation;
-negative values and requests exceeding it raise an error. The Python batch API
+requests exceeding it are capped with a warning; negative values raise an error. The Python batch API
 accepts the same ``threads`` argument.
 
 .. code-block:: bash
