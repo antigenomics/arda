@@ -139,3 +139,15 @@ def test_physical_count_uses_affinity_topology(tmp_path, monkeypatch):
         (root / "physical_package_id").write_text("0")
         (root / "core_id").write_text(str(cpu % 20))
     assert _threads._physical_cpus() == 20
+
+
+def test_windows_budget_preserves_explicit_logical_capacity(monkeypatch):
+    monkeypatch.setattr(_threads.sys, "platform", "win32")
+    monkeypatch.setattr(_threads, "_windows_cpu_counts", lambda: (40, 20))
+    monkeypatch.setattr(_threads, "_cgroup_cpus", lambda: None)
+    monkeypatch.delattr(_threads.os, "sched_getaffinity", raising=False)
+    monkeypatch.delenv("SLURM_CPUS_PER_TASK", raising=False)
+    assert _threads.resolve_threads() == 20
+    assert _threads.resolve_threads(40) == 40
+    with pytest.raises(ValueError):
+        _threads.resolve_threads(41)

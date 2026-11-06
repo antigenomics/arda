@@ -192,6 +192,9 @@ Automatic sizing counts distinct physical cores within the process affinity mask
 then respects scheduler and container limits. When topology is unavailable, it
 uses the available logical CPU count. A 40-logical-CPU, 20-core node therefore
 uses up to 20 workers automatically; an explicit budget may use SMT threads.
+Windows uses native core topology, process affinity and the current job CPU-rate
+limit. Processes spanning processor groups must be bound to one group. Parent
+job quotas are not exposed by this query; supply a budget within any parent limit.
 
 ## Development
 
