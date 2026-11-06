@@ -131,3 +131,15 @@ jobs:
           records = arda.annotate_sequences([("q", rows[0]["sequence"])])
           assert len(records) == 1 and records[0]["v_call"] and records[0]["junction"]
           print({"binary": mmseqs.mmseqs_binary(), "rows": len(rows)})
+          from arda import igblast
+          os.environ.pop("ARDA_IGBLAST", None)
+          tool = igblast.tool("igblastn")
+          version = subprocess.run([str(tool), "-version"], check=True, capture_output=True, text=True)
+          assert "igblastn" in version.stdout
+          ungapped = work / "ungapped.fa"
+          gapped = work / "gapped.fa"
+          gapped.write_text(">sequence\nAC.G.T\n")
+          igblast.edit_imgt_file(gapped, ungapped)
+          assert ungapped.read_text() == ">sequence\nACGT\n"
+          igblast.makeblastdb(ungapped, work / "tiny db")
+          print({"igblast": str(tool), "version": version.stdout.strip()})
