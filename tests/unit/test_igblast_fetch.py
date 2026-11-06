@@ -272,3 +272,32 @@ def test_imgt_conversion_needs_no_external_runtime(tmp_path):
     assert target.read_text() == (
         ">TRAV1*01\nacg\n>IGHV1*01\nacg\n>IGHV2*01_Mus_spretus\nacg\n>plain\ntt\n"
     )
+
+
+def test_makeblastdb_uses_safe_relative_names_for_space_paths(monkeypatch, tmp_path):
+    source = tmp_path / "input sequence.fa"
+    destination = tmp_path / "output db"
+    source.write_text(">gene\nACGT\n")
+    monkeypatch.setattr(igblast, "tool", lambda name: tmp_path / name)
+    def run(args, *, cwd):
+        assert args[-6:] == ["-in", "input.fa", "-out", "db", "-blastdb_version", "4"]
+        assert (cwd / "input.fa").read_text() == source.read_text()
+        (cwd / "db.nin").write_bytes(b"database")
+        (cwd / "db.nsq").write_bytes(b"sequences")
+    monkeypatch.setattr(igblast, "_run", run)
+    assert igblast.makeblastdb(source, destination) == destination
+    assert (tmp_path / "output db.nin").read_bytes() == b"database"
+    assert (tmp_path / "output db.nsq").read_bytes() == b"sequences"
+    assert not list(tmp_path.glob(".blast-*"))
+
+
+def test_igblast_database_list_keeps_space_paths_together(monkeypatch, tmp_path):
+    monkeypatch.setattr(igblast, "tool", lambda name: tmp_path / name)
+    def run(args, *, stdout_path):
+        assert args[args.index("-germline_db_V") + 1] == '\"v database\"'
+        assert args[args.index("-germline_db_J") + 1] == "j_database"
+        assert args[args.index("-germline_db_D") + 1] == '\"d database\"'
+    monkeypatch.setattr(igblast, "_run", run)
+    igblast.igblastn_airr("query.fa", tmp_path / "out.tsv", organism="human",
+                         germline_db_v="v database", germline_db_j="j_database",
+                         germline_db_d="d database")

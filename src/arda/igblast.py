@@ -192,7 +192,7 @@ def igdata_env() -> dict[str, str]:
     return env
 
 
-def _run(cmd: list[str], *, stdout_path: Path | None = None) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], *, stdout_path: Path | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
     out = open(stdout_path, "w") if stdout_path else subprocess.PIPE
     try:
         proc = subprocess.run(
@@ -201,6 +201,7 @@ def _run(cmd: list[str], *, stdout_path: Path | None = None) -> subprocess.Compl
             stderr=subprocess.PIPE,
             text=True,
             env=igdata_env(),
+            cwd=cwd,
         )
     finally:
         if stdout_path:
@@ -233,14 +234,41 @@ def edit_imgt_file(imgt_fasta: str | Path, out_fasta: str | Path) -> Path:
 
 def makeblastdb(in_fasta: str | Path, out_db: str | Path, *, dbtype: str = "nucl") -> Path:
     """Build a germline BLAST database from an ungapped FASTA."""
-    _run([
-        tool("makeblastdb"),
-        "-in", str(in_fasta),
-        "-parse_seqids",
-        "-dbtype", dbtype,
-        "-out", str(out_db),
-    ])
-    return Path(out_db)
+    source, destination = Path(in_fasta), Path(out_db)
+    executable = tool("makeblastdb").resolve()
+    args = [str(executable), "-parse_seqids", "-dbtype", dbtype]
+    if any(char.isspace() for char in str(source) + str(destination)):
+        import shutil
+        import tempfile
+
+        # NCBI splits -in/-out on spaces internally, even after shell quoting.
+        # NCBI also reparses the absolute working directory; keep it space-free.
+        parents = [Path(tempfile.gettempdir())]
+        if os.name == "nt":
+            parents.append(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "Temp")
+        else:
+            parents.append(Path("/tmp"))
+        staging = None
+        for parent in parents:
+            if any(char.isspace() for char in str(parent)):
+                continue
+            try:
+                staging = tempfile.TemporaryDirectory(prefix="arda-blast-", dir=parent)
+                break
+            except OSError:
+                continue
+        if staging is None:
+            raise IgBlastError("NCBI makeblastdb requires an accessible temporary directory without spaces")
+        with staging as directory:
+            stage = Path(directory)
+            shutil.copyfile(source, stage / "input.fa")
+            # Version 4 is relocatable; v5 embeds the original prefix in its LMDB files.
+            _run(args + ["-in", "input.fa", "-out", "db", "-blastdb_version", "4"], cwd=stage)
+            for part in stage.glob("db.*"):
+                shutil.move(part, destination.parent / (destination.name + part.name[2:]))
+    else:
+        _run(args + ["-in", str(source), "-out", str(destination)])
+    return destination
 
 
 def igblastn_airr(
@@ -273,5 +301,10 @@ def igblastn_airr(
         pass
     if auxiliary_data is not None:
         cmd += ["-auxiliary_data", str(auxiliary_data)]
+    # BLAST database options are lists parsed again by NCBI, after subprocess quoting.
+    for index, argument in enumerate(cmd[:-1]):
+        if argument in {"-germline_db_V", "-germline_db_J", "-germline_db_D"}:
+            if any(char.isspace() for char in str(cmd[index + 1])):
+                cmd[index + 1] = f'"{cmd[index + 1]}"'
     _run(cmd, stdout_path=Path(out_tsv))
     return Path(out_tsv)
