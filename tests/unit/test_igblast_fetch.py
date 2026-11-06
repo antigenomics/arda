@@ -259,3 +259,16 @@ def test_windows_executables_are_ready_and_resolved(monkeypatch, tmp_path):
         assert igblast.tool("edit_imgt_file.pl") == root / "edit_imgt_file.pl"
     finally:
         igblast.igblast_root.cache_clear()
+
+
+def test_imgt_conversion_needs_no_external_runtime(tmp_path):
+    source = tmp_path / "germline.fasta"
+    target = tmp_path / "ungapped.fasta"
+    headers = ["TRAV1*01|Homo sapiens", "IGHV1*01|Homo sapiens", "IGHV2*01|Mus spretus"]
+    source.write_text("".join(
+        ">accession|" + header + "|" + "field|" * 12 + "\na.c..g\n" for header in headers
+    ) + ">plain\nt..t\n")
+    assert igblast.edit_imgt_file(source, target) == target
+    assert target.read_text() == (
+        ">TRAV1*01\nacg\n>IGHV1*01\nacg\n>IGHV2*01_Mus_spretus\nacg\n>plain\ntt\n"
+    )

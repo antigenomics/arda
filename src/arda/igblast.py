@@ -213,9 +213,21 @@ def _run(cmd: list[str], *, stdout_path: Path | None = None) -> subprocess.Compl
 
 
 def edit_imgt_file(imgt_fasta: str | Path, out_fasta: str | Path) -> Path:
-    """Ungap an IMGT germline FASTA via ``edit_imgt_file.pl``."""
-    _run(["perl", tool("edit_imgt_file.pl"), str(imgt_fasta)],
-         stdout_path=Path(out_fasta))
+    """Apply NCBI's edit_imgt_file.pl conversion without a Perl prerequisite."""
+    import re
+
+    tr = re.compile(r"^>.*\|(TR.+)\|" + r".*\|" * 13)
+    ig = re.compile(r"^>.*\|(IG.+)\|(.*)\|" + r".*\|" * 12)
+    with open(imgt_fasta) as source, open(out_fasta, "w") as output:
+        for line in source:
+            match = tr.match(line)
+            if match:
+                output.write(f">{match[1]}\n")
+            elif match := ig.match(line):
+                suffix = "_Mus_spretus" if re.search(r"Mus\s+spretus", match[2], re.I) else ""
+                output.write(f">{match[1]}{suffix}\n")
+            else:
+                output.write(line.replace(".", ""))
     return Path(out_fasta)
 
 
