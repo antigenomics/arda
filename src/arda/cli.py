@@ -298,7 +298,7 @@ def annotate(
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one usable major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
     seqtype: str = typer.Option("nt", help="Input sequence type: nt or aa."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, allocated physical cores)."),
     strand: str = typer.Option("both", help="nt only: 'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
         50000, help="Reads per streaming chunk (bounds memory for large FASTQ)."),
@@ -461,7 +461,7 @@ def igblast_cmd(
     input: Path = typer.Option(..., "--input", "-i", help="Query FASTA/FASTQ."),
     output: Path = typer.Option(..., "--output", "-o", help="Merged AIRR TSV (gold standard)."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="igblast threads (0 = automatic, up to 16 allocated cores)."),
+    threads: int = typer.Option(0, help="igblast threads (0 = automatic, allocated physical cores)."),
     receptor: str = typer.Option(
         "both", "--receptor",
         help="Which receptor type(s) to align against: `both` (default), `ig` or `tr`. Both is "
@@ -496,7 +496,7 @@ def rnaseq_map(
     r2: Optional[Path] = typer.Option(None, "--r2", help="R2 FASTQ for paired input."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one usable major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, allocated physical cores)."),
     sensitivity: Optional[float] = typer.Option(None, help="mmseqs -s (default: tuned)."),
     strand: str = typer.Option("both", help="'both' strands or 'forward'."),
     chunk_size: int = typer.Option(
@@ -650,7 +650,7 @@ def rnaseq_map(
 def rnaseq_correct(
     input: Path = typer.Option(..., "--input", "-i", help="Mapped-reads AIRR TSV (from `map`)."),
     output: Path = typer.Option(..., "--output", "-o", help="Corrected clonotype table TSV."),
-    threads: int = typer.Option(0, help="CPU budget for batched correction searches (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget for batched correction searches (0 = automatic, allocated physical cores)."),
     max_subs: int = typer.Option(
         3, help="Max substitutions between an error child and its parent. A search RADIUS, not a "
                 "threshold -- the length-scaled probability model still decides. Saturates at 3."),
@@ -770,7 +770,7 @@ def rnaseq_assemble(
         help="Assembled-reads AIRR TSV: one row per rescued read carrying its contig's junction."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget for re-annotation (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget for re-annotation (0 = automatic, allocated physical cores)."),
     map_d: bool = typer.Option(
         True, "--map-d/--no-map-d",
         help="Call D (and tandem D-D) on each assembled contig and carry it onto its member "
@@ -1173,7 +1173,7 @@ def rnaseq_mode(
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, allocated physical cores)."),
     assemble: bool = typer.Option(
         True, "--assemble/--no-assemble",
         help="Stage 3: assemble long-CDR3 contigs no single 100-150 bp read spans (V(D)J "
@@ -1267,7 +1267,7 @@ def amplicon_mode(
     out_dir: Path = typer.Option(Path("."), "--out-dir", "-d", help="Directory for the outputs."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Search one major allele per gene; --all-alleles restores the full reference."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, allocated physical cores)."),
     assemble: bool = typer.Option(
         True, "--assemble/--no-assemble",
         help="Stage 3: assemble long-CDR3 contigs no single read spans and fold them into the "
@@ -1498,7 +1498,7 @@ def rnaseq_reduce(
     out_prefix: str = typer.Option(..., "--out-prefix", "-p", help="Output basename."),
     major_only: bool = typer.Option(True, "--major-only/--all-alleles", help="Use the same major/all-allele choice as Stage 1."),
     organism: str = typer.Option("human", help="Reference organism."),
-    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, up to 16 allocated CPUs)."),
+    threads: int = typer.Option(0, help="CPU budget including the input reader (0 = automatic, allocated physical cores)."),
     assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions", help="Keep only complete junctions."),

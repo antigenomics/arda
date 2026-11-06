@@ -109,7 +109,7 @@ records across five organisms. IgBLAST is needed only to rebuild the reference.
 Wilson 95 % CIs): recall **0.986** [.982–.989], precision lower bound **0.889** [.881–.897]. Recall
 ties TRUST4; precision does not — arda's lower bound sits above every competitor's upper bound.
 
-**Cheap, not only fast.** Mapping holds a flat **300–650 MB** at any read depth, which is what lets
+**Cheap, not only fast.** Streaming mapping was measured at **300–650 MB** in the benchmark configuration, which is what lets
 many samples share a node. On a 100,000-read TRA amplicon arda uses **3.2× less peak memory** and
 **1.4× less CPU** than MiXCR, and returns the most clonotypes over the most reads.
 
@@ -182,6 +182,17 @@ human reads (of 7,341, across five organisms) carrying a tandem D-D; seven VDJdb
 every junction-repair outcome; and a 1,035-read FASTQ that runs the whole bulk RNA-seq pipeline in
 about six seconds.
 
+## Parallel processing
+
+CPU budgets use `threads=0` for automatic parallel work, using physical cores within the allocation.
+Use `1` for serial work or a positive
+count to select logical CPUs within the scheduler/container allocation.
+
+Automatic sizing counts distinct physical cores within the process affinity mask,
+then respects scheduler and container limits. When topology is unavailable, it
+uses the available logical CPU count. A 40-logical-CPU, 20-core node therefore
+uses up to 20 workers automatically; an explicit budget may use SMT threads.
+
 ## Development
 
 ```bash
@@ -214,7 +225,3 @@ clonotype matching — belongs to [vdjtools](https://github.com/antigenomics/vdj
 ## License
 
 ISALGO LAB Academic and Non-Commercial Research License v1.0. See [`LICENSE`](LICENSE).
-
-CPU budgets use `threads=0` for automatic parallel work, capped at 16 allocated CPUs.
-Use `1` for serial work or a positive
-count to override the automatic cap within the scheduler/container allocation.

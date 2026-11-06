@@ -119,10 +119,23 @@ else:
     assert result.returncode == 0, result.stderr
 
 
-def test_auto_caps_at_16_without_restricting_explicit_counts(monkeypatch):
+def test_auto_prefers_physical_without_restricting_explicit_counts(monkeypatch):
+    monkeypatch.setattr(_threads, "_physical_cpus", lambda: 20)
     monkeypatch.setattr(_threads, '_cgroup_cpus', lambda: None)
     monkeypatch.setattr(_threads.os, 'cpu_count', lambda: 64)
     monkeypatch.setattr(_threads.os, 'sched_getaffinity', lambda _: set(range(64)), raising=False)
     monkeypatch.setenv('SLURM_CPUS_PER_TASK', '32')
-    assert _threads.resolve_threads() == 16
+    assert _threads.resolve_threads() == 20
     assert _threads.resolve_threads(32) == 32
+
+
+def test_physical_count_uses_affinity_topology(tmp_path, monkeypatch):
+    monkeypatch.setattr(_threads.sys, "platform", "linux")
+    monkeypatch.setattr(_threads.os, "sched_getaffinity", lambda _: set(range(40)), raising=False)
+    monkeypatch.setattr(_threads, "Path", lambda p: tmp_path / p.lstrip("/"))
+    for cpu in range(40):
+        root = tmp_path / f"sys/devices/system/cpu/cpu{cpu}/topology"
+        root.mkdir(parents=True)
+        (root / "physical_package_id").write_text("0")
+        (root / "core_id").write_text(str(cpu % 20))
+    assert _threads._physical_cpus() == 20

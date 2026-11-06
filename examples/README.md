@@ -63,7 +63,7 @@ D-D rearrangements are rare. Scanning all five committed realworld fixtures for 
 | mouse | 2093 | **0** |
 | rat | 514 | **0** |
 
-[`dd.fasta`](dd.fasta) holds the two human ones.
+[`dd.fasta`](dd.fasta) holds two of the three human records.
 
 | sequence_id | locus | d_call | d_support | d2_call | d2_support | np1 | np2 | np3 |
 |---|---|---|---|---|---|---|---|---|
@@ -120,9 +120,9 @@ than *inventing* residues, which is capped separately at `_MAX_FIX = 2`.
 anchor (`status = no_anchor` in `cdr3_anchors.tsv`). The junction comes back untouched and the
 record is flagged. The gene's `*01` marks the same junction up cleanly. Flag, never guess.
 
-**Every repair lands on a canonical junction.** `cdr3_repaired` is accepted only if it opens
-with Cys104 and closes with Phe/Trp118 — a repair exists to restore the anchors, and everything
-downstream trusts the result. So `good` implies canonical, by rule rather than by luck.
+**Repair uses the reference anchors.** Most junctions open with Cys104 and close
+with Phe/Trp118, but functional alleles can have other anchor residues. Interpret
+`good` against the allele-specific anchor table, not a universal F/W motif.
 
 On the full 250-row fixture arda reproduces VDJdb's own repair on **all 100 records VDJdb marks
 as needing one**, agrees with its `good` / `vCanonical` / `jCanonical` verdict on every row, and

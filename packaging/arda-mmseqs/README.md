@@ -18,8 +18,9 @@ is the shape `cmake`, `ninja`, `ruff` and `patchelf` all use on PyPI.
 ## Why arda still checks the binary
 
 An mmseqs index is only reusable by the release that compiled it. `arda.mmseqs.mmseqs_binary()`
-therefore version-matches every candidate against the precompiled indexes in `database/`, and
+therefore version-matches automatically discovered candidates against the precompiled indexes in `database/`, and
 this wheel is just the first candidate it tries — a stale bundle gets rejected like any other.
+An explicit `ARDA_MMSEQS` override bypasses that check.
 That is why the version pin on this package does not have to be exact to be safe.
 
 ## Building

@@ -63,7 +63,7 @@ records = arda.annotate_sequences(
     [("q1", "TGTGCCAGCAGCTTAGCGGGAGGGAACACCGGGGAGCTGTTTTTTGGA")],
     seqtype="nt",          # "nt" or "aa"
     organism="human",      # human | mouse | rat | rabbit | rhesus_monkey
-    threads=0,            # up to 16 affinity/cgroup/SLURM CPUs; positive = explicit budget
+    threads=0,            # physical cores within affinity/cgroup/SLURM limits; positive = explicit budget
     map_d=True,            # False skips both D searches
     map_dd=True,           # False retains single-D mapping and skips the second search
 )

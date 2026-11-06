@@ -83,7 +83,7 @@ without a translation step anywhere.
 **A sample may arrive in several files.** One FASTQ per lane is still one repertoire and must give
 one clonotype table. arda maps each read group and concatenates before the global stages, which is
 byte-identical to the same reads in one file — so pass them all rather than `cat`-ing.
-Never sorted by filename: `A_L010` sorts before `A_L002`, and the clonotype fold is not
+Never sorted by filename: `A_L10` sorts before `A_L2`, and the clonotype fold is not
 permutation-invariant.
 
 ---
@@ -126,11 +126,13 @@ passthrough.
 
 ## Resources
 
+The bulk `--prefilter` adds roughly 1.4 GB; include it when sizing memory.
+
 arda is CPU-bound — the MMseqs2 search dominates. ~40–50k reads/s on 32 cores; a full-depth
 ~100 M-read sample takes ~45 min. The module is `label 'process_high'`.
 
 **Memory scales with repertoire richness, not with FASTQ size.** Stage 1 (`map`) is flat at
-**300–650 MB** at any depth because it streams. Stage 3 (`correct`) holds the whole clone set:
+**300–650 MB** in the recorded streaming benchmark. Stage 3 (`correct`) holds the whole clone set:
 it peaked **2,071.7 MB** on a B-cell-rich tumour (28,444 clonotypes, 105 M reads), while a colder
 **139 M**-read sample — more reads, almost no repertoire — peaked **549 MB**. Budget ~4 GB.
 

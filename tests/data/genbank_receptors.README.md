@@ -23,7 +23,7 @@ Full-length antibody / T-cell-receptor mRNA records, one FASTA entry each, used 
   `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nuccore&id=<acc>&rettype=fasta&retmode=text`.
 - **Provenance**: experimental — deposited cDNA sequences, not derived or computed by this project.
 
-## Two records that are edge cases, not errors
+## Edge cases in the reference records
 
 - **BC100294.1** — a real 5′-truncated TRA cDNA. arda's alignment starts *inside* the J (no V),
   runs into C, so it yields `j_call` + `c_call` but no junction. It is the natural V-less J→C case.

@@ -21,14 +21,14 @@ snakemake -s Snakefile --config samples=sheet.tsv outdir=results --profile slurm
 ## Why the read group is the unit
 
 Stage 1 (`arda map`) is per-read and shards perfectly, so every read group of every sample is an
-independent job: a sheet of 5 samples × 4 lanes is **20 concurrent jobs, not 5**. Stages 2–3
+independent job: a sheet of 5 samples × 4 lanes is **20 schedulable jobs, not 5**. Stages 2–3
 (`assemble`, `correct`) are global **per sample** — a clone split across read groups would be
 counted once per group, and contigs that tile across them would never be built — so they run once
 per sample, in `arda cluster reduce`, over that sample's merged Stage-1 AIRR.
 
 Read groups are consumed in **sheet order**, which is what makes each sample's result
-byte-identical to its reads concatenated into one file. Do not sort them: `A_L010` sorts before
-`A_L002`, and the clonotype fold is not permutation-invariant.
+byte-identical to its reads concatenated into one file. Do not sort them: `A_L10` sorts before
+`A_L2`, and the clonotype fold is not permutation-invariant.
 
 ## The sheet
 
@@ -82,7 +82,9 @@ Per sample, under `outdir`:
 
 ## Resources
 
-`arda map` is flat at **300–650 MB** whatever the depth. `arda cluster reduce` holds the clone
+The bulk `--prefilter` adds roughly 1.4 GB; include it when sizing memory.
+
+`arda map` used **300–650 MB** in the recorded streaming benchmark. `arda cluster reduce` holds the clone
 set: budget ~4 GB, more for a B-cell-rich sample (2,071.7 MB measured on 28,444 clonotypes from
 105 M reads). A SLURM profile wants roughly:
 

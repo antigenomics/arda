@@ -1,6 +1,8 @@
 """Resolve one search-thread budget within the process and SLURM allocation."""
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -35,6 +37,30 @@ def _cgroup_cpus() -> int | None:
     return min(limits) if limits else None
 
 
+def _physical_cpus() -> int:
+    """Count distinct cores in the affinity mask; never guess the SMT ratio."""
+    if sys.platform == "darwin":
+        try:
+            return max(1, int(subprocess.check_output(
+                ["sysctl", "-n", "hw.physicalcpu"], text=True, timeout=5)))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return os.cpu_count() or 1
+    allowed = (os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity")
+               else range(os.cpu_count() or 1))
+    cores = set()
+    try:
+        for cpu in allowed:
+            root = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology")
+            package = int((root / "physical_package_id").read_text())
+            core = int((root / "core_id").read_text())
+            if package < 0 or core < 0:
+                return len(allowed) or 1
+            cores.add((package, core))
+    except (OSError, ValueError):
+        return len(allowed) or 1
+    return len(cores) or 1
+
+
 def streaming_threads(threads: int, table_threads: int) -> tuple[int, bool]:
     """Reserve a reader CPU only when both table and search phases can spare it."""
     read_ahead = threads > max(1, table_threads)
@@ -58,7 +84,7 @@ def import_polars():
 
 
 def resolve_threads(threads: int = 0) -> int:
-    """Zero selects up to 16 allocated CPUs; reject requests outside that allocation."""
+    """Zero selects physical cores within allocated CPUs; reject requests outside that allocation."""
     available = os.cpu_count() or 1
     if hasattr(os, "sched_getaffinity"):
         available = min(available, len(os.sched_getaffinity(0)))
@@ -74,5 +100,5 @@ def resolve_threads(threads: int = 0) -> int:
             raise ValueError("SLURM_CPUS_PER_TASK must be a positive integer")
         available = min(available, limit)
     if not isinstance(threads, int) or isinstance(threads, bool) or not 0 <= threads <= available:
-        raise ValueError(f"threads must be 0 (automatic, at most 16 CPUs) or 1..{available}, got {threads!r}")
-    return threads or min(available, 16)
+        raise ValueError(f"threads must be 0 (automatic physical-core budget) or 1..{available}, got {threads!r}")
+    return threads or min(available, _physical_cpus())

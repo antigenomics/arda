@@ -13,7 +13,7 @@ manages temporary search files internally:
        [("q1", "TGTGCCAGCAGCTTAGCGGGAGGGAACACCGGGGAGCTGTTTTTTGGA")],
        seqtype="nt",          # "nt" or "aa"
        organism="human",      # human | mouse | rat | rabbit | rhesus_monkey
-       threads=0,             # automatic: up to 16 allocated CPUs
+       threads=0,             # automatic: allocated physical cores
        map_d=True,            # D segments for VDJ loci; works on amino-acid input too
    )
 
