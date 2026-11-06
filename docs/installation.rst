@@ -50,10 +50,11 @@ needs it. The default macOS IgBLAST download is x86_64 and needs Rosetta on Appl
 A complete native arm64 installation can be selected with ``ARDA_IGBLAST``; its tools,
 ``internal_data`` and ``optional_file`` must come from the same installation.
 
-On Windows, use Linux Python inside WSL2 for search workflows, following the
-`MMseqs2 Windows guidance <https://github.com/soedinglab/MMseqs2/wiki#install-mmseqs2-for-windows-preview>`_.
-The native Windows Python wheel installs the library and its extensions; ARDA's automatic
-MMseqs2 downloader currently targets Linux and macOS.
+On Windows x86-64, use native Python and ``python -m pip install arda-mapper``.
+First use installs the complete upstream MMseqs2 Windows runtime, including its DLLs
+and command helpers, without WSL or administrator privileges. ARDA invokes the executable
+directly so search failures retain their nonzero exit codes. The upstream Windows build
+uses its bundled Cygwin runtime; no separate Cygwin installation is needed.
 
 Reference cache and concurrent starts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

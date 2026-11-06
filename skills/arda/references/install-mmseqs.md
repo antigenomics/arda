@@ -22,12 +22,15 @@ The optional `arda-mmseqs` companion wheel is checked before checkout/PATH binar
 An explicit `ARDA_MMSEQS` bypasses version checking. A mismatched fallback warns
 and requires a private index rebuild.
 
-On Windows, use Linux Python in WSL2 for searches; automatic downloads target Linux/macOS.
+Native Windows x86-64 automatically installs the complete upstream MMseqs2 runtime
+with its DLLs and command helpers. No WSL, separate Cygwin installation or administrator
+privileges are required. ARDA invokes the executable directly and preserves failure codes.
 
 ## Auto-fetch
 
 On first use with nothing found, arda downloads the platform-appropriate static
-release from the MMseqs2 GitHub `latest` release into `bin/mmseqs`. Logic lives in
+release from the MMseqs2 GitHub `latest` release into `bin/mmseqs` on Unix, or an
+atomically selected runtime generation below `bin/mmseqs-windows` on Windows. Logic lives in
 the packaged module `arda._mmseqs_fetch` (so it works for wheel installs), with
 `scripts/fetch_mmseqs.py` as a CLI wrapper:
 

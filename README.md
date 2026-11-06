@@ -56,8 +56,9 @@ pip install arda-mapper
 That is all. The distribution is `arda-mapper` and imports as `arda`; binary wheels carry its C++
 extensions for CPython 3.10–3.13 on Linux, macOS (arm64) and Windows. The MMseqs2 search binary and
 the curated germline reference are fetched automatically on first use into `~/.cache/arda` — no
-conda, no manual reference build on Linux and macOS. On Windows, run search workflows
-with Linux Python inside WSL2; the automatic MMseqs2 downloader targets Linux and macOS. Run `arda info` to see what got resolved.
+conda or manual reference build. Native Windows x86-64 installs automatically fetch the
+complete MMseqs2 runtime; WSL and administrator privileges are not required. Run `arda info`
+to see what got resolved.
 
 For a development checkout, `bash setup.sh` builds a uv venv, compiles the extensions and fetches
 IgBLAST and MMseqs2. See the [installation guide](https://docs.isalgo.dev/arda/installation.html).
