@@ -83,3 +83,20 @@ jobs:
           tests/unit/test_database_fetch_atomic.py tests/unit/test_download_reliability.py
           tests/unit/test_reference_url.py tests/unit/test_igblast_fetch.py
           tests/unit/test_mmseqs_fetch.py -q
+      - name: Verify native Windows CPU topology and budget
+        shell: python
+        run: |
+          import runpy
+          cpu = runpy.run_path("src/arda/_threads.py")
+          logical, physical = cpu["_windows_cpu_counts"]()
+          resolve = cpu["resolve_threads"]
+          assert 1 <= physical <= logical
+          assert resolve() == physical
+          assert resolve(logical) == logical
+          try:
+              resolve(logical + 1)
+          except ValueError:
+              pass
+          else:
+              raise AssertionError("Oversized Windows CPU budget accepted")
+          print({"logical": logical, "physical": physical, "automatic": resolve()})
