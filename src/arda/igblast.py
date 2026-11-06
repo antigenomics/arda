@@ -33,7 +33,7 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-from ._igblast_fetch import fetch, installed_root, VERSION_FILE
+from ._igblast_fetch import fetch, installed_root, executable_path, VERSION_FILE
 from .paths import bin_dir, project_root
 
 __all__ = [
@@ -114,7 +114,7 @@ def _selected_root() -> Path:
             raise IgBlastError(f"Incomplete managed IgBLAST installation at {supplied}; "
                                "repair it or select a complete runtime with ARDA_IGBLAST.")
         root = managed or supplied
-        if not (root / "igblastn").exists():
+        if not executable_path(root, "igblastn").is_file():
             raise IgBlastError(f"$ARDA_IGBLAST={override} does not contain igblastn. "
                                "Select a complete IgBLAST installation including its metadata.")
         return root
@@ -124,7 +124,7 @@ def _selected_root() -> Path:
         return managed
     if (binary_root / VERSION_FILE).exists():
         raise FileNotFoundError(errno.ENOENT, "Incomplete managed IgBLAST", str(binary_root))
-    if (binary_root / "igblastn").exists():
+    if executable_path(binary_root, "igblastn").is_file():
         return binary_root  # explicitly/manual installed source-checkout layout
     root = project_root() / "igblast"
     managed = installed_root(root)
@@ -164,7 +164,7 @@ def igblast_version() -> str | None:
 
 def tool(name: str) -> Path:
     """Resolve an IgBLAST executable, fetching the release if it is not installed yet."""
-    p = igblast_root() / name
+    p = executable_path(igblast_root(), name)
     if not p.exists():
         raise IgBlastError(
             f"IgBLAST tool {name!r} not found at {p}. The IgBLAST release at "

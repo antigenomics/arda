@@ -244,3 +244,18 @@ def test_metadata_and_execution_stay_on_one_runtime_across_refresh(tmp_path, mon
         assert igblast.igblast_root() == dest
     finally:
         igblast.igblast_root.cache_clear()
+
+
+def test_windows_executables_are_ready_and_resolved(monkeypatch, tmp_path):
+    root = _fake_release(tmp_path / "windows runtime")
+    for name in ("igblastn", "makeblastdb"):
+        (root / name).rename(root / (name + ".exe"))
+    monkeypatch.setenv("ARDA_IGBLAST", str(root))
+    igblast.igblast_root.cache_clear()
+    try:
+        assert _igblast_fetch.installed_root(root) == root
+        assert igblast.tool("igblastn") == root / "igblastn.exe"
+        assert igblast.tool("makeblastdb") == root / "makeblastdb.exe"
+        assert igblast.tool("edit_imgt_file.pl") == root / "edit_imgt_file.pl"
+    finally:
+        igblast.igblast_root.cache_clear()

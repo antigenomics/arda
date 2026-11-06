@@ -103,11 +103,20 @@ def lay_out(release_root: Path, dest: Path) -> None:
             shutil.copytree(src, dest / tree, dirs_exist_ok=True)
 
 
+def executable_path(root: Path, name: str) -> Path:
+    """Resolve NCBI's extensionless POSIX or .exe Windows tool names."""
+    path = root / name
+    if name in {"igblastn", "igblastp", "makeblastdb"} and not path.is_file():
+        return root / (name + ".exe")
+    return path
+
+
 def _flat_ready(root: Path) -> bool:
     required = (VERSION_FILE, "igblastn", "makeblastdb", "edit_imgt_file.pl",
                 "internal_data/human/human.ndm.imgt", "optional_file/human_gl.aux")
     try:
-        return all((root / name).is_file() and (root / name).stat().st_size > 0 for name in required)
+        return all(executable_path(root, name).is_file() and
+                   executable_path(root, name).stat().st_size > 0 for name in required)
     except OSError:
         return False
 
