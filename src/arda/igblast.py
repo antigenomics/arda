@@ -237,7 +237,7 @@ def makeblastdb(in_fasta: str | Path, out_db: str | Path, *, dbtype: str = "nucl
     source, destination = Path(in_fasta), Path(out_db)
     executable = tool("makeblastdb").resolve()
     args = [str(executable), "-parse_seqids", "-dbtype", dbtype]
-    if any(char.isspace() for char in str(source) + str(destination)):
+    if any(char.isspace() for char in str(source.resolve()) + str(destination.resolve())):
         import shutil
         import tempfile
 

@@ -6,6 +6,8 @@ would have skipped on exactly the installation where the bug lives.
 """
 
 
+from pathlib import Path
+
 import pytest
 
 from arda import _igblast_fetch, igblast
@@ -274,9 +276,13 @@ def test_imgt_conversion_needs_no_external_runtime(tmp_path):
     )
 
 
-def test_makeblastdb_uses_safe_relative_names_for_space_paths(monkeypatch, tmp_path):
-    source = tmp_path / "input sequence.fa"
-    destination = tmp_path / "output db"
+@pytest.mark.parametrize("relative", [False, True])
+def test_makeblastdb_uses_safe_relative_names_for_space_paths(monkeypatch, tmp_path, relative):
+    workspace = tmp_path / "working directory"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    source = Path("input.fa") if relative else workspace / "input sequence.fa"
+    destination = Path("db") if relative else workspace / "output db"
     source.write_text(">gene\nACGT\n")
     monkeypatch.setattr(igblast, "tool", lambda name: tmp_path / name)
     def run(args, *, cwd):
@@ -286,9 +292,9 @@ def test_makeblastdb_uses_safe_relative_names_for_space_paths(monkeypatch, tmp_p
         (cwd / "db.nsq").write_bytes(b"sequences")
     monkeypatch.setattr(igblast, "_run", run)
     assert igblast.makeblastdb(source, destination) == destination
-    assert (tmp_path / "output db.nin").read_bytes() == b"database"
-    assert (tmp_path / "output db.nsq").read_bytes() == b"sequences"
-    assert not list(tmp_path.glob(".blast-*"))
+    assert destination.with_name(destination.name + ".nin").read_bytes() == b"database"
+    assert destination.with_name(destination.name + ".nsq").read_bytes() == b"sequences"
+    assert not list(workspace.glob(".blast-*"))
 
 
 def test_igblast_database_list_keeps_space_paths_together(monkeypatch, tmp_path):
