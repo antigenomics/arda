@@ -1,5 +1,6 @@
 """A contradictory shortlist is not a substitute for full-reference competition."""
 from types import SimpleNamespace
+import pytest
 from arda.annotate import mapper
 
 
@@ -24,7 +25,9 @@ def test_jc_winner_over_shortlisted_v_requires_full_reference(tmp_path, monkeypa
     assert best["q"]["target"]=="full_VJ"
 
 
-def test_rejected_extended_anchor_gets_original_extension_batch(tmp_path, monkeypatch):
+@pytest.mark.parametrize("bounds", [dict(cdr3_start=4, fwr4_start=10),
+                                   dict(cdr3_start=4), dict(fwr4_start=10)])
+def test_rejected_extended_anchor_gets_original_extension_batch(tmp_path, monkeypatch, bounds):
     searches=[]
     monkeypatch.setattr(mapper.mmseqs,"createdb",lambda *a,**k:None)
     def search(*a,**k): searches.append(k.get("zdrop",200))
@@ -33,7 +36,7 @@ def test_rejected_extended_anchor_gets_original_extension_batch(tmp_path, monkey
     monkeypatch.setattr(mapper.mmseqs,"convertalis",lambda *a,**k:None)
     monkeypatch.setattr(mapper,"_best_hits",lambda *a:{"q":dict(target="VJ",qstart=1,qend=12)})
     def transfer(qid,*a,**k):
-        return dict(sequence_id=qid,cdr3_start=4,fwr4_start=10,
+        return dict(sequence_id=qid,**bounds,
                     junction="TGTAAATGG" if searches[-1]==40 else "")
     monkeypatch.setattr(mapper,"transfer_hit",transfer)
     ref=SimpleNamespace(get=lambda *a:SimpleNamespace(locus="TRB"),d_germlines={},anchors={})

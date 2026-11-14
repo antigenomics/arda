@@ -17,9 +17,13 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
   Protein search and observed-only junction reporting remain unchanged.
 - Retry the full reference when a contradictory J+C candidate beats a shortlisted
   V+J candidate. If an extended nucleotide alignment rejects an otherwise bounded
-  junction anchor, retry once with the original extension setting and retain only
+  junction anchor or loses one junction boundary, retry once with the original
+  extension setting and retain only
   a valid observed junction. These rescues preserve genuine prior calls without
   forcing V+J assignments or completing missing sequence.
+- Resolve indels beside mutated conserved V codons by comparing the endpoint and
+  aligned CDR3 projections under the same existing germline-anchor gate. Keep the
+  endpoint projection whenever it is supported; do not scan for new motifs.
 
 ## 2.38.4
 

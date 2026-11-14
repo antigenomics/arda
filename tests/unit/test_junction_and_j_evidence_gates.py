@@ -145,3 +145,21 @@ def test_insertion_after_observed_cysteine_stays_inside_junction():
     assert rec["junction"] == query[3:21]
     assert rec["cdr3_start"] == 7
     assert rec["cdr3"] == query[6:18]
+
+
+def test_inserted_mutated_anchor_retains_supported_aligned_boundary():
+    """Two CIGAR projections compete under the same existing germline-anchor gate."""
+    target = "GCTTGTCAGCAATATTGCCTATGGGGT"
+    query = "GCTTTTACAGCAATATTGCCTATGGGGT"
+    f4 = target.index("TGG", 9) + 1
+    ref = RefEntry(locus="TRB", v_call="TRBV1*01", j_call="TRBJ1-1*01",
+                   starts=[1, -1, -1, -1, 1, 7, f4],
+                   ends=[3, -1, -1, -1, 6, f4-1, len(target)],
+                   v_sequence_end=9, j_sequence_start=10, vj_end=len(target))
+    hit = dict(qaln=query, taln=target[:6] + "-" + target[6:],
+               qstart=1, qend=len(query), qlen=len(query), tstart=1,
+               tend=len(target), tlen=len(target))
+    anchors = {("V", "TRBV1*01"): SimpleNamespace(status="ok", germline_nt="TGTCAGCAATATTGCCTA", anchor_nt=4)}
+    rec = transfer_hit("synthetic", query, hit, ref, anchors=anchors)
+    assert rec["junction"] == query[4:f4+3]
+    assert rec["cdr3_start"] == 8

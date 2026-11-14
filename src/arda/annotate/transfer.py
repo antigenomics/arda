@@ -847,7 +847,22 @@ def transfer_hit(
     coords = all_coords[:n_reg]
     cys_end_q = all_coords[n_reg + 3][0]
     if cys_end_q > 0 and coords[cdr3_index][0] > 0:
-        coords[cdr3_index] = (cys_end_q + 1, coords[cdr3_index][1])
+        aligned_start = coords[cdr3_index][0]
+        projected_start = cys_end_q + 1
+        f4 = coords[REGIONS.index("fwr4")][0]
+        if (seqtype == "nt" and anchors and projected_start != aligned_start
+                and min(projected_start, aligned_start) > 3 and f4 > 0
+                and f4 + 2 <= len(query_seq)):
+            # An indel beside a mutated conserved codon can make its endpoint
+            # projection fail the existing germline gate while the aligned
+            # CDR3 boundary passes it. Compare only these two CIGAR projections;
+            # no motif scan or new anchor tolerance is introduced.
+            projected = query_seq[projected_start - 4:f4 + 2]
+            aligned = query_seq[aligned_start - 4:f4 + 2]
+            if (not v_anchor_ok(projected, ref.v_call, anchors)
+                    and v_anchor_ok(aligned, ref.v_call, anchors)):
+                projected_start = aligned_start
+        coords[cdr3_index] = (projected_start, coords[cdr3_index][1])
     # `transfer_regions` returns (-1, -1) for an uncovered position; `_project_point` returned 0.
     v_end_pt, j_start_pt, frame_pt = (max(0, all_coords[n_reg + i][0]) for i in range(3))
 

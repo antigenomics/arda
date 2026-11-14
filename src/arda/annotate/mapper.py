@@ -1510,7 +1510,7 @@ def _annotate_chunk(
                                 complete_junction_nt=complete_junction_nt))
     if seqtype == "nt" and nt_zdrop != 40:
         rejected = {rec["sequence_id"] for rec in out
-                    if rec.get("cdr3_start") and rec.get("fwr4_start")
+                    if (rec.get("cdr3_start") or rec.get("fwr4_start"))
                     and not rec.get("junction")}
         if rejected:
             fallback = _annotate_chunk(
