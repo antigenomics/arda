@@ -1219,8 +1219,10 @@ def _segment_best_hits(
                 # clonotype, which no counter in the report would have shown going missing.
                 continue
             if float(row["bits"]) > float(cur["bits"]):
-                best[q] = row
-                failed.discard(q)         # a real contest: the J+C scaffold outscored the V×J one
+                # A J+C winner contradicts the shortlisted V evidence. Other
+                # V alleles/scaffolds have not competed yet; let the full
+                # reference decide rather than discard an observed junction.
+                failed.add(q)
 
     # A read whose ONLY segment evidence is a constant-region hit has no (V, J) pair, so the
     # shortlist never sees it. It is real receptor mRNA carrying no V(D)J -- rescue it against the
@@ -1406,6 +1408,7 @@ def _annotate_chunk(
     shm: str = "framework",
     complete_junction_nt: int = 0,
     unmapped: dict | None = None,
+    nt_zdrop: int = mmseqs.NUCLEOTIDE_ZDROP,
 ) -> list[dict]:
     """Annotate one batch against a preloaded reference + cached target DB.
 
@@ -1455,7 +1458,7 @@ def _annotate_chunk(
                 query_db, target_db, res_db, tmp / "mmseqs_tmp",
                 search_type=_SEARCH_TYPE[seqtype], sensitivity=sensitivity,
                 max_seqs=max_seqs, threads=threads, kmer=kmer,
-                extra=(strand + capped) or None,
+                extra=(strand + capped) or None, zdrop=nt_zdrop,
             )
             # Reduce to one alignment per query BEFORE materialising it as text. With --max-seqs 300
             # a 100 k-read chunk emits ~804 k alignment rows -- 194 MB of cigar/qaln/taln -- of which
@@ -1505,6 +1508,19 @@ def _annotate_chunk(
                                 d_germlines=dg, map_dd=map_dd, submitted_seq=qseq, anchors=ref.anchors,
                                 d_max_evalue=d_max_evalue, shm=shm,
                                 complete_junction_nt=complete_junction_nt))
+    if seqtype == "nt" and nt_zdrop != 40:
+        rejected = {rec["sequence_id"] for rec in out
+                    if rec.get("cdr3_start") and rec.get("fwr4_start")
+                    and not rec.get("junction")}
+        if rejected:
+            fallback = _annotate_chunk(
+                [(sid, seq) for sid, seq in records if sid in rejected], ref, target_db, seqtype,
+                threads=threads, sensitivity=sensitivity, mm_strand=mm_strand,
+                map_d=map_d, map_dd=map_dd, d_max_evalue=d_max_evalue,
+                mapped_only=mapped_only, max_seqs=max_seqs, kmer=kmer,
+                shm=shm, complete_junction_nt=complete_junction_nt, nt_zdrop=40)
+            recovered = {rec["sequence_id"]: rec for rec in fallback if rec.get("junction")}
+            out = [recovered.get(rec["sequence_id"], rec) for rec in out]
     return out
 
 

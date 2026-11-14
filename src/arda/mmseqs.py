@@ -313,6 +313,7 @@ def search(
     threads: int = 1,
     kmer: int | None = None,
     extra: list[str] | None = None,
+    zdrop: int | None = None,
 ) -> Path:
     """Run ``mmseqs search`` with backtrace enabled (``-a``).
 
@@ -332,7 +333,7 @@ def search(
         "-a",  # keep backtrace so convertalis can emit cigar/qaln/taln
     ]
     if search_type == SEARCH_TYPE_NUCLEOTIDE:
-        args += ["--zdrop", str(NUCLEOTIDE_ZDROP)]
+        args += ["--zdrop", str(NUCLEOTIDE_ZDROP if zdrop is None else zdrop)]
     if kmer is not None:
         args += ["-k", str(kmer)]
     if extra:
