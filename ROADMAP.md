@@ -3,6 +3,24 @@
 What arda does today, and what is planned. The maintainer's working backlog — measured dead ends,
 per-round evidence, open questions — is kept out of the published tree.
 
+## Current release gate: default recovery
+
+Preserve previously verified annotations and RNA-seq behavior, with IgBLAST as the
+annotation reference, while checking possible IgBLAST allele or boundary errors
+against observed sequence and germline alternatives with seqtree Smith–Waterman.
+Investigate supported lost junctions or clone classes. Explicitly measured, negligible
+dataset-specific tradeoffs may be acceptable; material regressions remain blockers.
+Retain the repaired fast amplicon preset and existing RNA-seq defaults: the broader
+automatic-k full-reference profile does not preserve whole-workload recovery and
+resource use. Selected witness recovery alone is insufficient to promote a preset.
+Measure wall time, CPU and peak memory on matched inputs. Compare appropriate complete workloads with
+MiXCR and TRUST4; retain existing score, quality and anchor semantics. Profile and reuse
+native batch APIs before introducing new implementation.
+
+Publish only after native tests, required CI/docs, matched recovery gates and installed
+package/reference checks pass. Peptide-to-clonotype attribution remains a separate
+downstream analysis using its existing search libraries and scripts, outside ARDA.
+
 ## What works
 
 **Reference build.** An offline IMGT + IgBLAST build of every in-frame V·J germline scaffold with
