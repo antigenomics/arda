@@ -395,3 +395,23 @@ def test_no_hit_yields_empty_record():
     assert rec["sequence_id"] == "random"
     # A random sequence should not produce region calls.
     assert rec["cdr3"] in ("", None)
+
+
+def test_upstream_v_frameshift_keeps_local_junction_but_not_productivity(human_ref):
+    """Observed local translation survives upstream indels without certifying the receptor."""
+    fa, ref, ids = human_ref
+    sid = next(i for i in ids if i.startswith("IGH_") and ref[i]["cdr3_start"])
+    sequence = fa[sid]
+    position = int(ref[sid]["cdr3_start"]) - 30
+    inputs = [("control", sequence)] + [
+        (f"upstream{n}", sequence[:position] + "A" * n + sequence[position:])
+        for n in (1, 2)
+    ]
+    rows = {r["sequence_id"]: r for r in annotate_records(inputs, "human", "nt", threads=4)}
+    control = rows["control"]
+    for n in (1, 2):
+        row = rows[f"upstream{n}"]
+        assert row["junction"] == control["junction"]
+        assert row["junction_aa"] == control["junction_aa"]
+        assert row["vj_in_frame"] == "F"
+        assert row["productive"] == "F"
