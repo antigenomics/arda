@@ -362,3 +362,22 @@ def test_no_isotype_leaves_the_constant_columns_empty(tmp_path):
     assert pl.read_csv(on, separator="\t")["c_call"][0] == "IGHG"
     assert not pl.read_csv(off, separator="\t", infer_schema_length=0)["c_call"][0]
     assert _totals(on)[1] == _totals(off)[1] == 6, "the isotype switch must not move reads"
+
+
+@pytest.mark.parametrize("ec_mode", ["amplicon", "rnaseq"])
+@pytest.mark.parametrize("quality, expected_clones", [("I", 2), ("!", 1), ("5", 2), ("4", 1), (None, 1)])
+def test_default_amplicon_correction_respects_discriminating_quality(tmp_path, quality, expected_clones, ec_mode):
+    parent = "TGTGCCAGCAGCTTAGACGGGACAGGGTTC"
+    child = parent[:12] + "C" + parent[13:]
+    rows = [dict(sequence_id=f"parent{i}", junction=parent, junction_aa="CASSLDGTF",
+                 v_call="TRBV1*01", j_call="TRBJ1-1*01", locus="TRB",
+                 junction_quality="I" * len(parent)) for i in range(100)]
+    rows.append(dict(sequence_id="observed_variant", junction=child, junction_aa="CASSLDGTF",
+                     v_call="TRBV1*01", j_call="TRBJ1-1*01", locus="TRB",
+                     junction_quality=("I" * 12 + quality + "I" * (len(child) - 13)) if quality else ""))
+    src, out = tmp_path / "reads.tsv", tmp_path / "clones.tsv"
+    pl.DataFrame(rows).write_csv(src, separator="\t", quote_style="never")
+    correct_airr(src, out, ec_mode=ec_mode, map_d=False, coverage=False, threads=1)
+    clones = pl.read_csv(out, separator="\t", quote_char=None)
+    assert clones.height == expected_clones
+    assert clones["duplicate_count"].sum() == 101

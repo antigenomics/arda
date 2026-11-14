@@ -5,6 +5,11 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+- Preserve observed substitution variants supported by discriminating-base quality
+  in quality-aware correction modes; later abundance collapse and wide rescue no
+  longer override the quality gate. Low-quality errors still route to parents,
+  and missing-quality fallback and read counts are preserved.
+
 - Keep observed insertions immediately after the conserved V codon inside CDR3
   and the junction by projecting the anchor directly.
 - Extend nucleotide alignments across long observed V(D)J junctions instead of

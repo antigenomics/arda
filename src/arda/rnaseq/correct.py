@@ -1356,6 +1356,31 @@ def correct_airr(
         parent = _error_pileup(raw, junctions, v, j, locus, parent, span_counts,
                                error_rate=error_rate, indel_rate=indel_rate, method=error_method, threads=threads)
 
+    # A retained high-quality discriminating base is evidence for an observed
+    # variant. The abundance proposal must not undo the quality gate. Missing
+    # quality keeps the historical abundance rule; indels need their own model.
+    protected = set()
+    if min_junction_q > 0:
+        proposed = {key: i for i, key in enumerate(g.select(keys).iter_rows())
+                    if parent[i] is not None
+                    and len(junctions[i]) == len(junctions[parent[i]])}
+        candidates = g.select(keys).filter(pl.int_range(pl.len()).is_in(list(proposed.values())))
+        evidence = df.select(*keys, "junction_quality").join(candidates, on=keys, how="semi")
+        for row in evidence.iter_rows(named=True):
+            ci = proposed.get(tuple(row[k] for k in keys))
+            if ci is None or ci in protected:
+                continue
+            pi = parent[ci]
+            q = row["junction_quality"] or ""
+            if len(q) != len(junctions[ci]):
+                continue
+            positions = [k for k, (a, b) in enumerate(zip(junctions[ci], junctions[pi]))
+                         if a != b]
+            if positions and all(ord(q[k]) >= min_junction_q + 33 for k in positions):
+                protected.add(ci)
+        for ci in protected:
+            parent[ci] = None
+
     # QUALITY-DIRECTED RESCUE (arda.rnaseq.denoise). The abundance model above is only valid where
     # a ladder of observed intermediates exists -- measured at k <= 2, with 3 as headroom. Beyond
     # that there is no ladder (0 of 13 clonotypes at k=4 on Jurkat have any observed k-1 neighbour,
@@ -1387,7 +1412,7 @@ def correct_airr(
         # Only clonotypes the abundance model did NOT already claim: a read routed twice is a bug,
         # and re-deciding a parent the ladder already justified would be strictly worse evidence.
         free = set(i for i in range(len(junctions)) if parent[i] is None)
-        gated_q = [clono_q[i] if i in free else -1.0 for i in range(len(junctions))]
+        gated_q = [clono_q[i] if i in free and i not in protected else -1.0 for i in range(len(junctions))]
         # Never: PER LOCUS. `quality_rescue` groups candidate parents by junction LENGTH and nothing
         # else -- no locus guard in either `_nearest_py` or the C++ `nearest_more_abundant` -- while
         # `amplicon` opens the radius to 12 substitutions. A rearrangement of a DIFFERENT locus is
