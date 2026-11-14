@@ -3,7 +3,7 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
-## Unreleased
+## 2.38.5
 
 - Preserve observed substitution variants supported by discriminating-base quality
   in quality-aware correction modes; later abundance collapse and wide rescue no
@@ -15,6 +15,11 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 - Extend nucleotide alignments across long observed V(D)J junctions instead of
   truncating before FR4, in both default mapping and amplicon shortlist paths.
   Protein search and observed-only junction reporting remain unchanged.
+- Retry the full reference when a contradictory J+C candidate beats a shortlisted
+  V+J candidate. If an extended nucleotide alignment rejects an otherwise bounded
+  junction anchor, retry once with the original extension setting and retain only
+  a valid observed junction. These rescues preserve genuine prior calls without
+  forcing V+J assignments or completing missing sequence.
 
 ## 2.38.4
 
