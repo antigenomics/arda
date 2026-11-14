@@ -5,6 +5,8 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## 2.38.5
 
+- Rescue queries with no segment hit against the full reference instead of silently discarding valid whole-scaffold alignments. Rejected shortlist junctions also receive the standard full-reference search before the legacy-extension retry.
+
 - Preserve observed substitution variants supported by discriminating-base quality
   in quality-aware correction modes; later abundance collapse and wide rescue no
   longer override the quality gate. Low-quality errors still route to parents,

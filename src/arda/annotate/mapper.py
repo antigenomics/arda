@@ -1229,7 +1229,12 @@ def _segment_best_hits(
     # full reference rather than letting it fall out of `seen`, which is how a read gets lost with
     # no error: the partition assertion below only checks what the shortlist was told about.
     c_only = set(best_c) - set(best_v) - set(best_j)
-    rescue = sorted(set(sl.rescue) | failed | c_only)
+    seen = set(best_v) | set(best_j) | set(best_c)
+    query_ids = set(_db_keys(query_db))
+    # Separate V/J seeds can both miss while their whole-scaffold alignment
+    # clears min_score. Absence of a segment hit is not a negative annotation.
+    unseen = query_ids - seen
+    rescue = sorted(set(sl.rescue) | failed | c_only | unseen)
 
     # A `v_only` read carries NO J -- that is the definition of the class, not a search failure --
     # so searching it against 15,414 V×J scaffolds asks a question whose J half the read cannot
@@ -1293,32 +1298,26 @@ def _segment_best_hits(
         _dump_vonly(rescue, best_v, best_j, seg_rows, best, seqs)
     best.update(v_seg_hits)
 
-    seen = set(best_v) | set(best_j) | set(best_c)
-    # Never: Assert what actually matters: every read the segment pass SAW either came back with a hit
-    # or was handed to the full-reference rescue. The obvious form of this check --
+    # Assert that every query either has a hit or was handed to full-reference rescue. The obvious form of this check --
     # `implied | rescue | c_only == seen` -- is a TAUTOLOGY: `shortlist` already asserts
     # `implied | rescue == set(best_v) | set(best_j)` internally, and `c_only` is defined three
     # lines up as `set(best_c) - set(best_v) - set(best_j)`, so the two sides are equal by
     # construction and it can never fire. It was standing in for this one, which can.
-    unaccounted = seen - set(best) - set(rescue)
+    unaccounted = query_ids - set(best) - set(rescue)
     assert not unaccounted, (
-        f"{len(unaccounted)} read(s) hit a segment target but were neither aligned nor rescued, "
+        f"{len(unaccounted)} read(s) were neither aligned nor rescued, "
         f"e.g. {sorted(unaccounted)[:3]}")
     n_fast = len(sl.implied) - len(failed & set(sl.implied))
-    # Reads the segment pass never hit at all. Nearly all are genuinely non-receptor -- on bulk
-    # that is ~97% of the library, which is the entire point -- but a few are real: a
-    # junction-spanning read with weak homology can clear threshold on the concatenated
-    # `V+pad+J` scaffold while neither half clears it alone, and raising sensitivity does not
-    # recover them (measured to `-s 7.5 -e 1.0`). Counted here so the exposure is auditable
-    # rather than implicit. Measured: 1 of 5,278 on amplicon at bits 56, 0 of 1,956 on bulk --
-    # and **none at or above the default `--min-score 75`**, so nothing arda would report is lost.
-    n_unseen = max(0, len(_db_keys(query_db)) - len(seen))
-    report = {"implied": n_fast, "rescued": len(rescue), "no_segment_hit": n_unseen,
-              "fast_fraction": round(n_fast / len(seen), 4) if seen else 0.0,
+    # No query is now left unsearched. Keep the residual counter for report
+    # compatibility and record the formerly unseen reads as a rescue reason.
+    accounted = n_fast + len(rescue)
+    report = {"implied": n_fast, "rescued": len(rescue), "no_segment_hit": 0,
+              "fast_fraction": round(n_fast / accounted, 4) if accounted else 0.0,
               "reasons": {**sl.reasons,
                           **({"second_pass_failed": len(failed)} if failed else {}),
                           **({"indel_rescued": seg_report_split} if seg_report_split else {}),
-                          **({"c_only": len(c_only)} if c_only else {})},
+                          **({"c_only": len(c_only)} if c_only else {}),
+                          **({"no_segment_hit": len(unseen)} if unseen else {})},
               **({"v_only_on_segment": len(v_seg_hits)} if v_seg_hits else {})}
     return best, report
 
@@ -1518,7 +1517,10 @@ def _annotate_chunk(
                 threads=threads, sensitivity=sensitivity, mm_strand=mm_strand,
                 map_d=map_d, map_dd=map_dd, d_max_evalue=d_max_evalue,
                 mapped_only=mapped_only, max_seqs=max_seqs, kmer=kmer,
-                shm=shm, complete_junction_nt=complete_junction_nt, nt_zdrop=40)
+                # A shortlisted nominee has not competed in the standard full
+                # search yet. That full search owns the legacy-extension retry.
+                shm=shm, complete_junction_nt=complete_junction_nt,
+                nt_zdrop=nt_zdrop if segment_db is not None else 40)
             recovered = {rec["sequence_id"]: rec for rec in fallback if rec.get("junction")}
             out = [recovered.get(rec["sequence_id"], rec) for rec in out]
     return out
