@@ -3,7 +3,29 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
-## Unreleased
+## 2.38.5
+
+- Rescue queries with no segment hit against the full reference instead of silently discarding valid whole-scaffold alignments. Rejected shortlist junctions also receive the standard full-reference search before the legacy-extension retry.
+
+- Preserve observed substitution variants supported by discriminating-base quality
+  in quality-aware correction modes; later abundance collapse and wide rescue no
+  longer override the quality gate. Low-quality errors still route to parents,
+  and missing-quality fallback and read counts are preserved.
+
+- Keep observed insertions immediately after the conserved V codon inside CDR3
+  and the junction by projecting the anchor directly.
+- Extend nucleotide alignments across long observed V(D)J junctions instead of
+  truncating before FR4, in both default mapping and amplicon shortlist paths.
+  Protein search and observed-only junction reporting remain unchanged.
+- Retry the full reference when a contradictory J+C candidate beats a shortlisted
+  V+J candidate. If an extended nucleotide alignment rejects an otherwise bounded
+  junction anchor or loses one junction boundary, retry once with the original
+  extension setting and retain only
+  a valid observed junction. These rescues preserve genuine prior calls without
+  forcing V+J assignments or completing missing sequence.
+- Resolve indels beside mutated conserved V codons by comparing the endpoint and
+  aligned CDR3 projections under the same existing germline-anchor gate. Keep the
+  endpoint projection whenever it is supported; do not scan for new motifs.
 
 ## 2.38.4
 

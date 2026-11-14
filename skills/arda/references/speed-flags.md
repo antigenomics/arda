@@ -140,9 +140,12 @@ FP 62 → 59 and zero control FP** — better on every accuracy axis measured th
 **Where it is worth the most: IGH amplicon, 1.87× at 41 % less memory** (100 k pairs, 90 % receptor,
 319.74 s → 170.77 s, RSS 4,016 → 2,382 MB), because it raises `fast_fraction` 0.052 → 0.5018 there.
 It also **reverses** `--two-pass`'s bulk penalty: 0.73× → **1.24×** on a 0.15 %-receptor library,
-where `no_segment_hit` is 99.87 % and those reads skip the full search entirely. `--two-pass` has
-always been a structure-preserving prefilter that keeps the V/J call; it just was not worth paying
-an `mmseqs search` for on bulk.
+where the historical implementation skipped 99.87 % of reads with no segment hit. That
+skip was removed in 2.38.5: separate segment seeds can miss accepted whole-scaffold alignments.
+Every unseeded query now receives full-reference rescue, so these historical bulk speedups do
+not describe the current implementation. The default RNA-seq preset uses the separate k-mer
+prefilter, not two-pass search. In reports, `no_segment_hit` is the unsearched residual (now zero);
+`reasons.no_segment_hit` counts unseeded queries included in `rescued`.
 
 ⚠ **Cost, measured against an independent IgBLAST truth on 344,554 real mates** (two IGH RepSeq
 amplicons): recall **.99525** vs the default's .99582 — **197 reads**, of which **200 are in the
@@ -169,8 +172,9 @@ Two constants make it equivalent, and both were wrong first:
 
 - **`K = 12`**, the `-k` arda already passes MMseqs2 — *not* 16, which is `prefilter`'s value and is
   calibrated for **rejection**. Seed length sets sensitivity to mismatches: at k=16 the mapper
-  seeded 53,048 reads against mmseqs' 53,121, and a read with no segment hit is assumed
-  non-receptor and **never rescued**, so those 73 were lost outright.
+  seeded 53,048 reads against mmseqs' 53,121. The historical implementation assumed unseeded
+  reads were non-receptor and never rescued them, losing those 73 outright. Since 2.38.5,
+  unseeded reads receive full-reference rescue; this calibration remains a performance choice.
 - **`MIN_SCORE = 40`.** mmseqs applies `-e 1e-3`; this scheme has no e-value, so with no floor
   43,010 reads pick up a constant-region hit against mmseqs' 473 — half of them scoring exactly 38,
   a bare seed plus a couple of flanking matches.

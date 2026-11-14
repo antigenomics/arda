@@ -180,8 +180,12 @@ Measured at the discriminating base over 310,559 real MIGEC spike-in windows:
      - **6**
      - **91.1 %**
 
-``--min-junction-q Q`` drops a read whose junction differs from its putative parent at **any base
-below Q**.
+``--min-junction-q Q`` reassigns a plausible error read to its more abundant
+parent when a discriminating base is below Q; it does not discard the read.
+A retained read whose discriminating bases all meet Q protects its observed
+substitution variant from subsequent abundance collapse and wide quality rescue.
+Missing or length-mismatched quality retains the abundance-only fallback.
+This protection uses the existing Q cutoff and does not apply to indel proposals.
 
 .. code-block:: bash
 

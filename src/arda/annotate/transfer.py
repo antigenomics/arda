@@ -834,12 +834,35 @@ def transfer_hit(
     # Depends only on `t0` and `tstart`, so it is knowable here. -1 (no V, e.g. a J+C scaffold)
     # projects to 0, which is exactly what `_project_point` returned for it.
     frame_pos = ts + ((t0 - ts) % 3) if t0 > 0 else 0
-    extra = [ref.v_sequence_end or 0, ref.j_sequence_start or 0, frame_pos]
+    # CDR3 starts immediately after the conserved V codon. Project that codon's
+    # last base directly: an insertion at the CDR3 boundary belongs to the
+    # junction, so subtracting three from the first aligned CDR3 base is wrong.
+    cdr3_index = REGIONS.index("cdr3")
+    cys_end = ref.starts[cdr3_index] - 1 if ref.starts[cdr3_index] > 3 else 0
+    extra = [ref.v_sequence_end or 0, ref.j_sequence_start or 0, frame_pos, cys_end]
     n_reg = len(ref.starts)
     all_coords = _markup.transfer_regions(
         hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
         list(ref.starts) + extra, list(ref.ends) + extra)
     coords = all_coords[:n_reg]
+    cys_end_q = all_coords[n_reg + 3][0]
+    if cys_end_q > 0 and coords[cdr3_index][0] > 0:
+        aligned_start = coords[cdr3_index][0]
+        projected_start = cys_end_q + 1
+        f4 = coords[REGIONS.index("fwr4")][0]
+        if (seqtype == "nt" and anchors and projected_start != aligned_start
+                and min(projected_start, aligned_start) > 3 and f4 > 0
+                and f4 + 2 <= len(query_seq)):
+            # An indel beside a mutated conserved codon can make its endpoint
+            # projection fail the existing germline gate while the aligned
+            # CDR3 boundary passes it. Compare only these two CIGAR projections;
+            # no motif scan or new anchor tolerance is introduced.
+            projected = query_seq[projected_start - 4:f4 + 2]
+            aligned = query_seq[aligned_start - 4:f4 + 2]
+            if (not v_anchor_ok(projected, ref.v_call, anchors)
+                    and v_anchor_ok(aligned, ref.v_call, anchors)):
+                projected_start = aligned_start
+        coords[cdr3_index] = (projected_start, coords[cdr3_index][1])
     # `transfer_regions` returns (-1, -1) for an uncovered position; `_project_point` returned 0.
     v_end_pt, j_start_pt, frame_pt = (max(0, all_coords[n_reg + i][0]) for i in range(3))
 

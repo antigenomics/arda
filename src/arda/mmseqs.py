@@ -54,6 +54,10 @@ SEARCH_TYPE_PROTEIN = 1   # aa query vs aa target
 SEARCH_TYPE_TRANSLATED = 2  # nt query vs aa target (blastx-like)
 SEARCH_TYPE_NUCLEOTIDE = 3  # nt query vs nt target
 
+# The generic nucleotide Z-drop (40) truncates observed long V(D)J junctions
+# before the J anchor. Keep sufficient extension headroom for those insertions.
+NUCLEOTIDE_ZDROP = 200
+
 
 class MMseqsError(RuntimeError):
     """Raised when an ``mmseqs`` invocation exits non-zero."""
@@ -309,6 +313,7 @@ def search(
     threads: int = 1,
     kmer: int | None = None,
     extra: list[str] | None = None,
+    zdrop: int | None = None,
 ) -> Path:
     """Run ``mmseqs search`` with backtrace enabled (``-a``).
 
@@ -327,6 +332,8 @@ def search(
         "--threads", str(threads),
         "-a",  # keep backtrace so convertalis can emit cigar/qaln/taln
     ]
+    if search_type == SEARCH_TYPE_NUCLEOTIDE:
+        args += ["--zdrop", str(NUCLEOTIDE_ZDROP if zdrop is None else zdrop)]
     if kmer is not None:
         args += ["-k", str(kmer)]
     if extra:

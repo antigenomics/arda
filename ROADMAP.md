@@ -3,6 +3,24 @@
 What arda does today, and what is planned. The maintainer's working backlog — measured dead ends,
 per-round evidence, open questions — is kept out of the published tree.
 
+## Current release gate: default recovery
+
+Preserve previously verified annotations and RNA-seq behavior, with IgBLAST as the
+annotation reference, while checking possible IgBLAST allele or boundary errors
+against observed sequence and germline alternatives with seqtree Smith–Waterman.
+Investigate supported lost junctions or clone classes. Explicitly measured, negligible
+dataset-specific tradeoffs may be acceptable; material regressions remain blockers.
+Retain the repaired fast amplicon preset and existing RNA-seq defaults: the broader
+automatic-k full-reference profile does not preserve whole-workload recovery and
+resource use. Selected witness recovery alone is insufficient to promote a preset.
+Measure wall time, CPU and peak memory on matched inputs. Compare appropriate complete workloads with
+MiXCR and TRUST4; retain existing score, quality and anchor semantics. Profile and reuse
+native batch APIs before introducing new implementation.
+
+Publish only after native tests, required CI/docs, matched recovery gates and installed
+package/reference checks pass. Peptide-to-clonotype attribution remains a separate
+downstream analysis using its existing search libraries and scripts, outside ARDA.
+
 ## What works
 
 **Reference build.** An offline IMGT + IgBLAST build of every in-frame V·J germline scaffold with
@@ -76,3 +94,16 @@ stops across the annotated span, and empty calls when the junction cannot be eva
 A start-codon requirement is not appropriate for partial reads; matching the junction tail
 to germline is not a frame test.
 They are not prerequisites missing from the repaired reference-index API.
+
+## Default annotation verification
+
+An insertion immediately after the observed conserved V codon must remain inside
+CDR3 and the junction. The transfer path now projects that codon's endpoint in
+the existing native batch instead of deriving it from the first aligned CDR3
+base. A synthetic regression covers the boundary. Full default amplicon and
+RNA-seq workload verification remains required before release promotion.
+
+The nucleotide search and implied-scaffold alignment now share explicit extension
+headroom for long observed V(D)J junctions; the generic Z-drop stopped verified
+alignments before FR4. Protein search is unchanged. Both repairs pass the native
+suite; matched real-workload checks remain in progress before release promotion.

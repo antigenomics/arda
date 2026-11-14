@@ -110,7 +110,8 @@ def test_direct_projection_checks_normalized_strand_before_alignment(monkeypatch
         raise RuntimeError('projection reached')
     monkeypatch.setattr(transfer._markup, 'transfer_regions', project)
     from types import SimpleNamespace
-    ref = SimpleNamespace(starts=[1], ends=[3], v_sequence_end=0, j_sequence_start=0)
+    ref = SimpleNamespace(starts=[1] + [-1] * 6, ends=[3] + [-1] * 6,
+                          v_sequence_end=0, j_sequence_start=0)
     hit = dict(qaln='TTT', taln='NNN', qstart=1, qend=3, tstart=1)
     # Normalize submitted N->A before reverse-complementing: coding T is valid.
     with pytest.raises(RuntimeError, match='projection reached'):
