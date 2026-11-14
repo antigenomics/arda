@@ -31,3 +31,14 @@ def test_search_keeps_budget_and_disables_nested_openmp(monkeypatch):
     assert kw["env"]["OMP_NUM_THREADS"] == "2"
     assert kw["env"]["OMP_MAX_ACTIVE_LEVELS"] == "1"
     assert mmseqs.os.environ["OMP_NUM_THREADS"] == "1000"
+
+
+def test_nucleotide_search_can_extend_across_long_observed_junction(monkeypatch):
+    calls = []
+    monkeypatch.setattr(mmseqs, "run", lambda args: calls.append(args))
+    mmseqs.search("q", "t", "r", "tmp", search_type=mmseqs.SEARCH_TYPE_NUCLEOTIDE)
+    args = calls[0]
+    assert args[args.index("--zdrop") + 1] == "200"
+    calls.clear()
+    mmseqs.search("q", "t", "r", "tmp", search_type=mmseqs.SEARCH_TYPE_PROTEIN)
+    assert "--zdrop" not in calls[0]

@@ -821,7 +821,8 @@ def _align_implied(query_db: Path, full_db: Path, implied: dict[str, str],
         aln = tmp / f"impAln_{tag}"
         # No `--search-type`: `mmseqs align` does not accept it (it infers nt from the DB type).
         mmseqs.run(["align", str(sub), str(full_db), str(pref_db), str(aln),
-                    "-a", "--alignment-mode", "3", "--threads", str(threads)])
+                    "-a", "--alignment-mode", "3", "--threads", str(threads),
+                    "--zdrop", str(mmseqs.NUCLEOTIDE_ZDROP)])
         out_tsv = tmp / f"implied_{tag}.tsv"
         # Reduce to one alignment per query BEFORE materialising it as text, as the one-pass path
         # does: `convertalis` writes `cigar`/`qaln`/`taln` per row, and offering every tied V

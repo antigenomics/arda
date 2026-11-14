@@ -128,3 +128,20 @@ def test_a_read_that_reaches_j_germline_keeps_its_j_call():
     rec = transfer_hit("r2", "A" * _VJ_END, _hit(1, _VJ_END), _ref())
     assert rec["j_germline_start"] == 1
     assert rec["j_call"] == "TRBJ1-1*01"
+
+
+def test_insertion_after_observed_cysteine_stays_inside_junction():
+    """Project the conserved codon itself: CDR3's first aligned base can follow an insertion."""
+    target = "GCTTGTAAAGGGTGGGGT"
+    query = target[:6] + "CCCGGG" + target[6:]
+    ref = RefEntry(locus="TRB", v_call="TRBV1*01", j_call="TRBJ1-1*01",
+                   starts=[1, -1, -1, -1, 1, 7, 13],
+                   ends=[3, -1, -1, -1, 6, 12, 18],
+                   v_sequence_end=9, j_sequence_start=10, vj_end=18)
+    hit = dict(qaln=query, taln=target[:6] + "------" + target[6:],
+               qstart=1, qend=len(query), qlen=len(query), tstart=1,
+               tend=len(target), tlen=len(target))
+    rec = transfer_hit("synthetic", query, hit, ref)
+    assert rec["junction"] == query[3:21]
+    assert rec["cdr3_start"] == 7
+    assert rec["cdr3"] == query[6:18]

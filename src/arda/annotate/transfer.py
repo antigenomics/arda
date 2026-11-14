@@ -834,12 +834,20 @@ def transfer_hit(
     # Depends only on `t0` and `tstart`, so it is knowable here. -1 (no V, e.g. a J+C scaffold)
     # projects to 0, which is exactly what `_project_point` returned for it.
     frame_pos = ts + ((t0 - ts) % 3) if t0 > 0 else 0
-    extra = [ref.v_sequence_end or 0, ref.j_sequence_start or 0, frame_pos]
+    # CDR3 starts immediately after the conserved V codon. Project that codon's
+    # last base directly: an insertion at the CDR3 boundary belongs to the
+    # junction, so subtracting three from the first aligned CDR3 base is wrong.
+    cdr3_index = REGIONS.index("cdr3")
+    cys_end = ref.starts[cdr3_index] - 1 if ref.starts[cdr3_index] > 3 else 0
+    extra = [ref.v_sequence_end or 0, ref.j_sequence_start or 0, frame_pos, cys_end]
     n_reg = len(ref.starts)
     all_coords = _markup.transfer_regions(
         hit["qaln"], hit["taln"], int(hit["qstart"]), ts,
         list(ref.starts) + extra, list(ref.ends) + extra)
     coords = all_coords[:n_reg]
+    cys_end_q = all_coords[n_reg + 3][0]
+    if cys_end_q > 0 and coords[cdr3_index][0] > 0:
+        coords[cdr3_index] = (cys_end_q + 1, coords[cdr3_index][1])
     # `transfer_regions` returns (-1, -1) for an uncovered position; `_project_point` returned 0.
     v_end_pt, j_start_pt, frame_pt = (max(0, all_coords[n_reg + i][0]) for i in range(3))
 

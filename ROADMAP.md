@@ -76,3 +76,16 @@ stops across the annotated span, and empty calls when the junction cannot be eva
 A start-codon requirement is not appropriate for partial reads; matching the junction tail
 to germline is not a frame test.
 They are not prerequisites missing from the repaired reference-index API.
+
+## Default annotation verification
+
+An insertion immediately after the observed conserved V codon must remain inside
+CDR3 and the junction. The transfer path now projects that codon's endpoint in
+the existing native batch instead of deriving it from the first aligned CDR3
+base. A synthetic regression covers the boundary. Full default amplicon and
+RNA-seq workload verification remains required before release promotion.
+
+The nucleotide search and implied-scaffold alignment now share explicit extension
+headroom for long observed V(D)J junctions; the generic Z-drop stopped verified
+alignments before FR4. Protein search is unchanged. Both repairs pass the native
+suite; matched real-workload checks remain in progress before release promotion.

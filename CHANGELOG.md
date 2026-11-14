@@ -5,6 +5,12 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 
 ## Unreleased
 
+- Keep observed insertions immediately after the conserved V codon inside CDR3
+  and the junction by projecting the anchor directly.
+- Extend nucleotide alignments across long observed V(D)J junctions instead of
+  truncating before FR4, in both default mapping and amplicon shortlist paths.
+  Protein search and observed-only junction reporting remain unchanged.
+
 ## 2.38.4
 
 - Clamp oversized CPU/thread requests to the available budget instead of aborting.
