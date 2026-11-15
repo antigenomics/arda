@@ -333,7 +333,11 @@ mode retain their independent-mate defaults; ``--reconstruct`` enables merging t
 A mismatch in the overlap follows the higher-Phred observation (R1 wins ties). Each merged
 base retains its selected input quality, without boosting confidence at agreeing bases.
 Both observed tails are retained, including a mate contained inside R1. Missing qualities
-remain unknown. Overlap, mismatch and annotation-score gates are unchanged.
+remain unknown. If a longer merged J+C hit masks a junction, original mates are checked in
+one bounded batch; a mate's existing complete junction above the unchanged score gate is
+retained instead. ``paired_fallback_fragments`` counts these restored pairs;
+``merged_fragments`` counts the unions actually retained. Overlap, mismatch and
+annotation-score gates are unchanged.
 
 A merged overlap is one fragment record; an unmerged pair remains two mate records.
 Consequently, record counts, read-length summaries and ``duplicate_count`` can change

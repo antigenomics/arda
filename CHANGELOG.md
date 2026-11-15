@@ -12,6 +12,9 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 - Preserve the measured quality of every selected merged base without confidence
   inflation, allowing junction/mutation quality output with reconstruction. Preserve
   R1's observed trailing bases when the second mate is contained in it.
+- If a longer merged J+C hit masks a complete original-mate junction, retry those
+  mates in one native batch and retain their established evidence. Track restored
+  pairs and actual unions separately, with a complete record ledger.
 - Merged overlaps are one fragment record; unmerged pairs remain two mate records.
   This changes mapped-record/read denominators and can change calls and correction;
   compare physical-fragment support separately when comparing older RNA runs.

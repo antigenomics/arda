@@ -351,6 +351,8 @@ def _merge_map_reports(shards: list[dict]) -> dict:
                   / sum(weights), 3) if weights else 0.0),
         "total_reads": total,
         "mapped_reads": mapped,
+        "merged_fragments": sum(int(s.get("merged_fragments", 0)) for s in shards),
+        "paired_fallback_fragments": sum(int(s.get("paired_fallback_fragments", 0)) for s in shards),
         "mapped_fraction": (mapped / total) if total else 0.0,
         "per_locus": dict(sorted(per_locus.items())),
         "constant_only_fragments": sum(int(s.get("constant_only_fragments", 0)) for s in shards),
