@@ -3,6 +3,13 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.38.6
+
+- Base junction amino-acid frame bridging on its own observed anchor span. An upstream V
+  frameshift no longer inserts unnecessary bridge bases into a locally in-frame junction.
+  Keep observed nucleotide bounds and the separate global V/J phase unchanged; junction-derived
+  stop and productivity labels may change when the prior amino-acid rendering was incorrect.
+
 ## 2.38.5
 
 - Rescue queries with no segment hit against the full reference instead of silently discarding valid whole-scaffold alignments. Rejected shortlist junctions also receive the standard full-reference search before the legacy-extension retry.

@@ -397,13 +397,18 @@ def _junction_nt(query_seq, cs, f4, coding_start, v_end_q):
     junction is the real query slice (no synthetic bases). For translation, if the
     rearrangement is out of frame, 1-2 N are inserted after the V germline end so
     the J side reads correctly; the codon containing inserted N becomes ``_``.
+    Bridge size follows the local anchor span. Returned ``phase`` retains the
+    upstream V-to-J frame relationship for productivity assessment.
     """
     js, je = cs - 3, f4 + 2            # Cys104 codon start .. [FW]118 codon end
     if js < 1 or je > len(query_seq):
         return "", "", "", None
     junction_nt = query_seq[js - 1 : je]
     phase = (f4 - coding_start) % 3    # 0 => J in V frame (in-frame rearrangement)
-    k = (3 - phase) % 3
+    # Translation starts at the observed Cys codon, not at the upstream V frame.
+    # An upstream indel can change global V/J phase without changing this span.
+    # Bridge only a local junction frameshift; retain global phase for productivity.
+    k = (3 - ((f4 - js) % 3)) % 3
     if k:
         # Insert N after the V germline end, but keep the bridge strictly inside
         # CDR3 so the conserved Cys (first codon) and [FW] (last codon) are

@@ -32,6 +32,11 @@ transfers the markup through the alignment, emitting spec-valid AIRR Rearrangeme
 V/D/J/C CIGARs, sequence and germline alignments, reverse-complement handling, out-of-frame junction
 translation, and D-segment mapping including D-D fusions on IGH and TRD.
 
+**Junction translation.** Frame bridging follows the observed junction's local anchor span;
+the upstream V/J coding phase remains separate. A canonical local junction does not certify a
+productive whole receptor. Correcting a previously inconsistent rendering can change derived
+stop/productivity labels while retaining the nucleotide sequence, coordinates and global phase.
+
 **Junction repair** (`arda markup`, `arda.cdr3fix`). For a bare `(junction_aa, V, J, species)`
 record: confirm or re-call the V and J, repair the junction against the germline it names, and place
 the V/J boundary in residues and in nucleotides. A side the record leaves blank is proposed from the
