@@ -13,6 +13,24 @@ description: >-
 
 # arda
 
+## Scope and verification contracts
+
+Peptide-to-clonotype placement belongs to seqtree and existing project scripts/pipelines,
+with placement tables separate from evidence and scores. Do not add a peptide-mapping tool
+or place that responsibility in ARDA/MIGEC. These packages can share a pipeline without
+calling one another; check actual dependency metadata before assuming a release dependency.
+
+Use the owning isolated environment. Verify current CLI help and API signatures before
+constructing commands; do not infer flags from another tool. Preserve raw inputs, molecule
+identifiers, counts and provenance. Software fixtures do not authorize cohort recomputation.
+
+Local junction translation uses the observed anchor span. Upstream V coding phase remains
+separate: a canonical local junction does not establish whole-receptor productivity. Keep
+observed nucleotide sequence and coordinates distinct from translated/rendered fields.
+IgBLAST is independent evidence, not infallible allele or boundary truth; inspect aligned
+observations when calls disagree instead of forcing agreement.
+
+
 arda annotates TCR and BCR sequences and returns AIRR Rearrangement records: V/D/J/C gene calls,
 FR1–FR4 and CDR1–CDR3 coordinates, and the junction. Input can be reads (bulk RNA-seq, amplicon or
 single cell) or sequences you already have, nucleotide or amino acid, with all loci searched at
@@ -198,20 +216,3 @@ pipeline and `build-db` / `build-index`.
 ## Further reading
 
 Read [advanced workflows and contracts](references/candidate-evidence.md) for alignment candidates, major-allele selection and germline eligibility.
-
-## Scope and verification contracts
-
-Peptide-to-clonotype placement belongs to seqtree and existing project scripts/pipelines,
-with placement tables separate from evidence and scores. Do not add a peptide-mapping tool
-or place that responsibility in ARDA/MIGEC. These packages can share a pipeline without
-calling one another; check actual dependency metadata before assuming a release dependency.
-
-Use the owning isolated environment. Verify current CLI help and API signatures before
-constructing commands; do not infer flags from another tool. Preserve raw inputs, molecule
-identifiers, counts and provenance. Software fixtures do not authorize cohort recomputation.
-
-Local junction translation uses the observed anchor span. Upstream V coding phase remains
-separate: a canonical local junction does not establish whole-receptor productivity. Keep
-observed nucleotide sequence and coordinates distinct from translated/rendered fields.
-IgBLAST is independent evidence, not infallible allele or boundary truth; inspect aligned
-observations when calls disagree instead of forcing agreement.

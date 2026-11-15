@@ -1,0 +1,4 @@
+interface:
+  display_name: "ARDA receptor annotation"
+  short_description: "Batch receptor annotation and AIRR workflow guidance"
+  default_prompt: "Use ARDA to annotate receptor sequences in one native batch, preserving observed sequence provenance, junction boundaries and global productivity semantics."
