@@ -106,10 +106,12 @@ def test_a_quality_string_of_the_wrong_length_is_refused():
     assert mutation_quality(_rec(), _QUAL[:-2]) == {_VQ: "", _JQ: ""}
 
 
-def test_reconstruct_is_refused_rather_than_given_one_mates_quality(tmp_path):
-    """A merged fragment's bases come from two reads, so no input quality string describes it."""
-    from arda.rnaseq.map import map_rnaseq
+def test_reconstructed_mutations_use_selected_observation_quality(tmp_path):
+    from arda.rnaseq.map import read_pairs
 
-    with pytest.raises(ValueError, match="mutation-quality"):
-        map_rnaseq(tmp_path / "r1.fq", tmp_path / "out.tsv", r2=tmp_path / "r2.fq",
-                   reconstruct=True, with_mutation_quality=True)
+    r1, r2 = tmp_path / "r1.fq", tmp_path / "r2.fq"
+    r1.write_text(f"@a\n{_QUERY}\n+\n{_QUAL}\n")
+    r2.write_text(f"@a\n{reverse_complement(_QUERY)}\n+\n{'!' * len(_QUERY)}\n")
+    [(sid, sequence, quality)] = read_pairs(r1, r2, reconstruct=True, with_qual=True)
+    assert sequence == _QUERY and quality == _QUAL
+    assert mutation_quality(_rec(sequence=sequence), quality) == mutation_quality(_rec(), _QUAL)

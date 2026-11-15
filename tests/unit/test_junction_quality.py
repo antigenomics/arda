@@ -25,7 +25,7 @@ import pytest
 from arda.annotate.airr_out import airr_header, format_rows, _format_rows_py, _format_rows_cpp
 from arda.annotate.transfer import AIRR_COLUMNS
 from arda.rnaseq.correct import EC_MODES, correct_airr
-from arda.rnaseq.map import JUNCTION_QUALITY, junction_quality, map_rnaseq, read_pairs
+from arda.rnaseq.map import JUNCTION_QUALITY, junction_quality, read_pairs
 from arda.refbuild.translate import reverse_complement
 
 # ---------------------------------------------------------------------------------------------
@@ -142,12 +142,13 @@ def test_read_pairs_with_qual_yields_the_quality_paired(tmp_path):
         ("a/1", "ACGT", "IIII"), ("a/2", "TTTT", "!!!!")]
 
 
-def test_junction_quality_refuses_reconstruct(tmp_path):
-    """A merged fragment's bases come from two reads, so no input quality describes it."""
-    f = tmp_path / "r.fq"
-    _fastq(f, [("a", "ACGT", "IIII")])
-    with pytest.raises(ValueError, match="reconstruct"):
-        map_rnaseq(f, tmp_path / "o.tsv", r2=f, reconstruct=True, with_junction_quality=True)
+def test_reconstructed_junction_uses_selected_observation_quality(tmp_path):
+    r1, r2 = tmp_path / "r1.fq", tmp_path / "r2.fq"
+    _fastq(r1, [("a", _SEQ, _QUAL)])
+    _fastq(r2, [("a", reverse_complement(_SEQ), "!" * len(_SEQ))])
+    [(sid, sequence, quality)] = read_pairs(r1, r2, reconstruct=True, with_qual=True)
+    assert sequence == _SEQ and quality == _QUAL
+    assert junction_quality(_rec(sequence=sequence), quality) == _QUAL[len(_LEAD):len(_LEAD)+len(_JUNC)]
 
 
 # ------------------------------------------------------------------------------- the Stage-2 gate

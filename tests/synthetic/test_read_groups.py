@@ -86,25 +86,27 @@ def test_the_parts_directory_does_not_outlive_a_successful_run(regrouped):
     assert not (many / "S.parts").exists()
 
 
-def test_the_read_group_reports_are_summed_not_lost(regrouped, chunks):
+def test_the_read_group_reports_are_summed_not_lost(whole, regrouped, chunks):
     """`reduce` used to drop the library shape, so a sharded run wrote no `sample` stats scope."""
     _, rep = regrouped
     m = rep["map"]
     assert m["read_groups"] == 4
     assert m["paired"] is True
     assert m["input_bytes"] == sum(p.stat().st_size for pair in chunks for p in pair)
-    assert m["read_length_min"] == m["read_length_max"] == m["read_length_mean"] == 100
+    for key in ("read_length_min", "read_length_max", "read_length_mean", "read_length_sum", "total_reads"):
+        assert m[key] == whole[1]["map"][key]
+    assert m["read_length_min"] == 100 and m["read_length_max"] > 100
 
 
-def test_the_library_shape_reaches_the_stats_table(regrouped):
+def test_the_library_shape_reaches_the_stats_table(whole, regrouped):
     """These `run`/`map` rows exist only if Stage 1's own fields survived the merge."""
     many, _ = regrouped
     rows = [r.split("\t") for r in (many / "S.stats.tsv").read_text().splitlines()[1:]]
     m = {r[2]: r[3] for r in rows if r[0] == "run" and r[1] == "map"}
     assert m["paired"] == "1"
     assert m["read_groups"] == "4"
-    assert int(m["read_length_min"]) == int(m["read_length_max"]) == 100
-    assert int(m["total_reads"]) == 1320
+    for key in ("read_length_min", "read_length_max", "total_reads"):
+        assert int(m[key]) == whole[1]["map"][key]
 
 
 # --------------------------------------------------------- why a sample may not simply be split

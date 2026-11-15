@@ -3,11 +3,24 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
-## Unreleased
+## 2.38.7
 
 - Make developer setup supply isolated CMake and prepare AIRR source builds with
   build isolation. Repeated setup preserves the existing environment and interpreter,
   and an external interpreter override cannot redirect its dependency installs.
+- RNA mode now merges established observed mate overlaps by default; use
+  `--no-reconstruct` (Python `reconstruct=False`) for independent mates. Standalone
+  `map` and amplicon defaults are unchanged. The same policy reaches scheduled RNA
+  workflows. Overlap, mismatch and annotation score cutoffs are unchanged.
+- Preserve the measured quality of every selected merged base without confidence
+  inflation, allowing junction/mutation quality output with reconstruction. Preserve
+  R1's observed trailing bases when the second mate is contained in it.
+- If a longer merged J+C hit masks a complete original-mate junction, retry those
+  mates in one native batch and retain their established evidence. Track restored
+  pairs and actual unions separately, with a complete record ledger.
+- Merged overlaps are one fragment record; unmerged pairs remain two mate records.
+  This changes mapped-record/read denominators and can change calls and correction;
+  compare physical-fragment support separately when comparing older RNA runs.
 
 ## 2.38.6
 
