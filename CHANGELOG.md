@@ -3,6 +3,11 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## Unreleased
+
+- Make developer setup supply isolated CMake and prepare AIRR source builds with
+  build isolation. Repeated setup preserves the existing environment and interpreter.
+
 ## 2.38.6
 
 - Base junction amino-acid frame bridging on its own observed anchor span. An upstream V

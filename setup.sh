@@ -36,19 +36,23 @@ command -v uv >/dev/null 2>&1 || {
 # --- 1. venv + editable install --------------------------------------------
 # Build deps go in the venv so the scikit-build editable on-import rebuild can
 # find nanobind (hence --no-build-isolation).
-log "creating .venv and installing arda (uv)"
+log "preparing .venv and installing arda (uv)"
 # Never: A stale build/ dir is not harmless. scikit-build-core caches CMake's configuration, including
 # the ABSOLUTE PATH of the interpreter it configured against; if that venv is gone (a previous
 # checkout, a deleted conda env) every later on-import rebuild fails with "Could NOT find Python"
 # and arda silently falls back to the pure-Python markup path. Start clean.
 rm -rf "$ROOT/build"
-uv venv "$ROOT/.venv"
+if [[ ! -x "$ROOT/.venv/bin/python" ]]; then
+  uv venv "$ROOT/.venv"
+fi
 # shellcheck disable=SC1091
 source "$ROOT/.venv/bin/activate"
 # Pinned to the same range as pyproject.toml's build-system: a binding library's module macro
 # has changed semantics in a minor-looking major before (pybind11 3.0.0 went multi-phase), so
 # multi-phase init in 3.0.0, so an unbounded install builds against whatever PyPI serves today.
-uv pip install 'nanobind>=2.5,<3' scikit-build-core ninja
+# AIRR is a source-only test dependency; prepare it with build isolation before
+# the editable step disables isolation (the same order used in CI).
+uv pip install 'nanobind>=2.5,<3' scikit-build-core 'cmake>=3.18' ninja 'airr>=1.4'
 # `.[test,dev]` -- not a bare install. `--tests` used to run `pytest` that was never installed,
 # print "No module named pytest", and be swallowed by `|| true` while the script reported success.
 uv pip install -e "$ROOT[test,dev]" --no-build-isolation
