@@ -327,8 +327,22 @@ The modes run these for you; run them separately when you want to shard Stage 1 
 **map** streams paired FASTQ and writes only the reads that map to a receptor scaffold. The
 reference includes ``J + C`` constant-region scaffolds, so a read spanning the J→C splice still
 maps and carries a ``c_call`` (CH1 exon) and a ``c_class`` isotype (``IGHG``/``IGHM``/``IGHA`` …
-— the class, never the subclass). With ``--reconstruct``, overlapping mates are merged into one
-fragment; a mismatch in the overlap is resolved base-by-base in favour of the higher-Phred call.
+— the class, never the subclass). RNA mode merges established observed mate overlaps by
+default (``--no-reconstruct`` retains independent mates). Standalone ``map`` and amplicon
+mode retain their independent-mate defaults; ``--reconstruct`` enables merging there.
+A mismatch in the overlap follows the higher-Phred observation (R1 wins ties). Each merged
+base retains its selected input quality, without boosting confidence at agreeing bases.
+Both observed tails are retained, including a mate contained inside R1. Missing qualities
+remain unknown. If a longer merged J+C hit masks a junction, original mates are checked in
+one bounded batch; a mate's existing complete junction above the unchanged score gate is
+retained instead. ``paired_fallback_fragments`` counts these restored pairs;
+``merged_fragments`` counts the unions actually retained. Overlap, mismatch and
+annotation-score gates are unchanged.
+
+A merged overlap is one fragment record; an unmerged pair remains two mate records.
+Consequently, record counts, read-length summaries and ``duplicate_count`` can change
+against independent-mate runs. Compare ``consensus_count`` and physical-fragment membership
+separately when evaluating that change.
 
 **assemble** reconstructs clonotypes with a CDR3 too long for any single 100–150 bp read to span
 (V(DD)J ultralong, ~20–40 aa): it anchors on Stage-1's per-read ``cdr3_start`` and grows contigs
@@ -450,8 +464,8 @@ from the third. ``arda stats`` reads it to score its ``allele_candidate`` shortl
 
    **The two quality columns use different encodings.** ``junction_quality`` is raw Phred+33
    characters, so it lines up byte for byte with ``junction``; ``v_mutation_quality`` is comma-joined
-   integers. Reading one as the other gives plausible numbers off by 33. Both are refused with
-   ``--reconstruct``. See :doc:`qc`.
+   integers. Reading one as the other gives plausible numbers off by 33. Both work with
+   ``--reconstruct`` using selected-input base qualities. See :doc:`qc`.
 
 Finishing a truncated junction from the germline
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

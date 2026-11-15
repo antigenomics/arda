@@ -48,7 +48,7 @@ _MAX_SHARDS = 10 ** _SHARD_WIDTH - 1
 
 
 def regime_flags(regime: str, *, organism: str = "human", threads: int = 8, kmer: int = 12,
-                 min_score: float = 75.0, reconstruct: bool = False, map_d: bool = True,
+                 min_score: float = 75.0, reconstruct: bool | None = None, map_d: bool = True,
                  assemble: bool = True, complete_only: bool = True,
                  ec_mode: str | None = None, cell_from: str = "", map_dd: bool = True) -> tuple[str, str]:
     """The ``arda map`` and ``arda cluster reduce`` flags one regime implies. Returns both.
@@ -80,7 +80,7 @@ def regime_flags(regime: str, *, organism: str = "human", threads: int = 8, kmer
     # if Stage 1 was asked to write it.
     if ec_mode != "fast":
         m.append("--junction-quality")
-    if reconstruct:
+    if reconstruct is True or (reconstruct is None and regime == "rnaseq"):
         m.append("--reconstruct")
     if not map_d:
         m.append("--no-map-d")
@@ -355,7 +355,7 @@ def render_rnaseq_submit_script(
     threads: int = 8,
     kmer: int = 12,
     min_score: float = 75.0,
-    reconstruct: bool = False,
+    reconstruct: bool | None = None,
     assemble: bool = True,
     complete_only: bool = True,
     map_d: bool = True,
@@ -504,7 +504,7 @@ def render_samples_submit_script(
     threads: int = 8,
     kmer: int = 12,
     min_score: float = 75.0,
-    reconstruct: bool = False,
+    reconstruct: bool | None = None,
     assemble: bool = True,
     complete_only: bool = True,
     map_d: bool = True,

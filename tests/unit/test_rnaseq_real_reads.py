@@ -112,20 +112,21 @@ def test_repeated_runs_are_byte_identical(tmp_path):
         assert outs[0][name] == outs[1][name], f"{name} differs between two identical runs"
 
 
-def test_sharded_run_matches_single_node_on_real_reads(tmp_path):
+@pytest.mark.parametrize("reconstruct", [False, True])
+def test_sharded_run_matches_single_node_on_real_reads(tmp_path, reconstruct):
     """The mode-equivalence guarantee, on real data rather than a hand-built AIRR."""
     from arda.cluster import split_pairs
     from arda.rnaseq import pipeline
     from arda.rnaseq.map import map_rnaseq
 
     single = tmp_path / "single"
-    pipeline.run([(READS_1, READS_2)], single, "R", threads=2)
+    pipeline.run([(READS_1, READS_2)], single, "R", threads=2, reconstruct=reconstruct)
 
     shards = split_pairs(READS_1, tmp_path / "sh", shards=4, r2=READS_2)
     mapdir = tmp_path / "map"
     mapdir.mkdir()
     for i, (s1, s2) in enumerate(shards):
-        map_rnaseq(s1, mapdir / f"shard_{i:05d}.airr.tsv", r2=s2, threads=2,
+        map_rnaseq(s1, mapdir / f"shard_{i:05d}.airr.tsv", r2=s2, threads=2, reconstruct=reconstruct,
                    report_path=mapdir / f"shard_{i:05d}.map.json")
     sharded = tmp_path / "sharded"
     pipeline.reduce(mapdir, sharded, "R", threads=2)
@@ -395,3 +396,25 @@ def test_v_mutations_agree_with_the_alignment_strings_on_real_reads(mapped):
     # The scope has to REMOVE something on this fixture or it is untested: a bound that excludes
     # nothing passes every assertion above.
     assert past_anchor > 0, "no junction-internal entries in the fixture -- the scope is untested"
+
+
+def test_pair_union_preserves_junctions_masked_by_a_long_constant_hit(tmp_path):
+    """A longer J+C match must not discard a junction observed by an original mate."""
+    from arda.annotate.airr_out import read_airr
+    from arda.rnaseq.map import map_rnaseq
+
+    output = tmp_path / 'paired.airr.tsv'
+    report = map_rnaseq(READS_1, output, r2=READS_2, reconstruct=True,
+                        with_junction_quality=True, threads=2)
+    from arda.rnaseq.map import read_pairs
+    original_records = sum(1 for _ in read_pairs(READS_1, READS_2))
+    assert report.total_reads + report.merged_fragments == original_records
+    assert report.as_dict()['unmapped']['accounted'] == report.total_reads
+    assert report.paired_fallback_fragments >= 4
+    expected = {
+        'TGCAGCTCATATACAACCAGCAGCACTCTTGTGGTATTC',
+        'TGCGGAACATGGGATAGCAGCCTGAGTGTTTGGGTGTTC',
+        'TGTACCACCCCCCGCGATTATAGTGGGAGCTCAACTAATGACTACTGG',
+        'TGTGCTTCATGGGATGACAGTCTGAGTGGTTTTTGTGTCTTC',
+    }
+    assert expected <= set(read_airr(output)['junction'].drop_nulls())

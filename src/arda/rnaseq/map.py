@@ -19,6 +19,7 @@ import gzip
 import json
 import logging
 from itertools import islice, zip_longest
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -283,26 +284,14 @@ def _apply_constant_rule(records: list[dict]) -> tuple[list[dict], int, int]:
 _MIN_SCORE = 75.0
 
 
-def _overlap_consensus(a: str, qa: str, b: str, qb: str) -> str:
-    """Per-base consensus of two aligned overlap strings: keep the higher-Phred base on a mismatch
-    (R1 wins a tie). Phred+33 is monotonic in the quality char, so compare the chars directly."""
-    return "".join(a[i] if (a[i] == b[i] or qa[i] >= qb[i]) else b[i] for i in range(len(a)))
+def _merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
+                min_overlap: int = 12, max_mismatch_rate: float = 0.1
+                ) -> tuple[str, str] | None:
+    """Shared overlap decision, returning observed bases and their selected-input qualities.
 
-
-def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
-               min_overlap: int = 12, max_mismatch_rate: float = 0.1) -> str | None:
-    """Overlap-merge a read pair into one fragment, or ``None`` if they don't overlap.
-
-    Aligns ``s1`` (R1) with ``reverse_complement(s2)`` (R2 flipped to the same strand)
-    by finding an exact ``_MERGE_ANCHOR``-mer from the flipped R2's 5' end inside R1
-    (C-level ``str.find`` → O(len), so non-overlapping pairs — the common RNA-seq case —
-    cost almost nothing), then verifying the implied overlap; the mate provides the V/J
-    context a short read lacks.
-
-    In the overlap the two mates may disagree. Given Phred qualities ``q1``/``q2`` the base
-    with the higher quality wins per position (``rc(R2)``'s quality is ``q2`` reversed, not
-    complemented); without them R2 wins the whole overlap (the historical behaviour). Outside
-    the overlap, R1 supplies its 5' part and R2 its 3' tail.
+    Matching bases use the higher measured quality without increasing it. A disagreement
+    uses the same higher-quality base (R1 wins ties). If either mate lacks qualities, the
+    sequence-only legacy rule applies and quality stays unknown, never synthesized.
     """
     s1, s2 = seqio.normalize_nt(s1), seqio.normalize_nt(s2)
     r2 = reverse_complement(s2)
@@ -315,14 +304,55 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
     if ov < min_overlap:
         return None
     a, b = s1[pos:pos + ov], r2[:ov]
-    mism = sum(1 for x, y in zip(a, b) if x != y)
+    mism = sum(x != y for x, y in zip(a, b))
     if mism > max_mismatch_rate * ov:
         return None
+    tail = s1[pos + ov:] or r2[ov:]
     if q1 is None or q2 is None:
-        overlap = b                                   # no quality: R2 wins the overlap (legacy)
-    else:
-        overlap = _overlap_consensus(a, q1[pos:pos + ov], b, q2[::-1][:ov])
-    return s1[:pos] + overlap + r2[ov:]
+        return s1[:pos] + b + tail, ""
+    if len(q1) != len(s1) or len(q2) != len(s2):
+        raise ValueError("mate quality length must match its sequence")
+    qb = q2[::-1]
+    qa = q1[pos:pos + ov]
+    use_r1 = [qa[i] >= qb[i] for i in range(ov)]
+    overlap = "".join(a[i] if use_r1[i] else b[i] for i in range(ov))
+    quality = (q1[:pos] + "".join(qa[i] if use_r1[i] else qb[i] for i in range(ov))
+               + (q1[pos + ov:] or qb[ov:]))
+    return s1[:pos] + overlap + tail, quality
+
+
+def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
+               min_overlap: int = 12, max_mismatch_rate: float = 0.1) -> str | None:
+    """Merge an observed R1/rc(R2) overlap, or return ``None``.
+
+    Locate the existing exact12nt anchor and retain the established overlap/mismatch gates.
+    Higher-quality bases win disagreements (R1 wins ties); without qualities R2 wins.
+    Both non-overlapping observed tails are preserved, including a contained mate.
+    """
+    merged = _merge_pair(s1, s2, q1=q1, q2=q2, min_overlap=min_overlap,
+                         max_mismatch_rate=max_mismatch_rate)
+    return merged[0] if merged is not None else None
+
+def _reconstruct_batch(records: list) -> tuple[list, dict]:
+    """Merge adjacent observed pairs, retaining their original records for bounded fallback."""
+    merged_records, originals = [], {}
+    i = 0
+    while i < len(records):
+        a = records[i]
+        if i + 1 < len(records):
+            b = records[i + 1]
+            if frag_stem(a[0]) == frag_stem(b[0]):
+                merged = _merge_pair(a[1], b[1], q1=a[2] or None, q2=b[2] or None)
+                if merged is not None:
+                    sid = a[0][:-2]   # remove the suffix added by read_pairs
+                    merged_records.append((sid, *merged))
+                    originals[sid] = (a, b)
+                    i += 2
+                    continue
+        merged_records.append(a)
+        i += 1
+    return merged_records, originals
+
 
 # Records per mmseqs invocation. Larger chunks amortise the fixed per-call cost; memory stays
 # bounded because only one chunk is resident.
@@ -402,9 +432,8 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
     """Stream ``(id, sequence)`` reads for single-end (``r1`` only) or paired input.
 
     ``with_qual`` yields ``(id, sequence, quality)`` instead — the Phred+33 string, ``""`` for
-    FASTA input. It is incompatible with ``reconstruct``: a merged fragment's bases come from two
-    different reads, so no single input quality string describes it (:func:`map_rnaseq` refuses
-    the combination rather than emitting a quality that does not belong to the sequence).
+    FASTA input. With ``reconstruct``, each merged base retains the quality of its selected
+    input observation; agreement does not boost quality. Missing mate qualities stay unknown.
 
     For paired input the two mates carry the same id, so they are tagged ``<id>/1`` and
     ``<id>/2`` to keep query ids unique (strip the suffix to recover the pair). With
@@ -465,9 +494,9 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
                 f"R1/R2 mate mismatch at record {n}: {i1!r} vs {i2!r}. "
                 f"The FASTQs are not in the same order.")
         if reconstruct:
-            merged = merge_pair(s1, s2, q1=q1, q2=q2)
+            merged = _merge_pair(s1, s2, q1=q1, q2=q2)
             if merged is not None:
-                yield i1, merged
+                yield (i1, *merged) if with_qual else (i1, merged[0])
                 continue
         if with_qual:
             yield f"{i1}/1", s1, q1 or ""
@@ -508,10 +537,9 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool,
             for a, b in fh:
                 s1, s2 = seqio.normalize_nt(a.sequence), seqio.normalize_nt(b.sequence)
                 if reconstruct:
-                    merged = merge_pair(s1, s2,
-                                        q1=a.qualities, q2=b.qualities)
+                    merged = _merge_pair(s1, s2, q1=a.qualities, q2=b.qualities)
                     if merged is not None:
-                        yield a.id, merged
+                        yield (a.id, *merged) if with_qual else (a.id, merged[0])
                         continue
                 if with_qual:
                     yield f"{a.id}/1", s1, a.qualities or ""
@@ -557,8 +585,11 @@ class RnaseqReport:
     read_length_min: int = 0
     read_length_max: int = 0
     read_length_mean: float = 0.0
+    read_length_sum: int = 0          # exact observation lengths before display rounding
     total_reads: int = 0
     mapped_reads: int = 0
+    merged_fragments: int = 0
+    paired_fallback_fragments: int = 0
     per_locus: dict[str, int] = field(default_factory=dict)
     # fragments whose every read lay wholly inside the constant region: receptor mRNA, no V(D)J
     constant_only_fragments: int = 0
@@ -657,8 +688,8 @@ def map_rnaseq(
             :func:`junction_quality`). OFF by default: it appends a non-schema column, so the
             default output stays byte-identical. This is the only place the FASTQ quality is
             still in hand — Stage 1 otherwise discards it — and it is what
-            ``correct --min-junction-q`` gates on. Refused with ``reconstruct`` (a merged
-            fragment has no single input quality string).
+            ``correct --min-junction-q`` gates on. With ``reconstruct``, quality follows the
+            actual selected base from either mate without a confidence boost.
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
@@ -697,15 +728,7 @@ def map_rnaseq(
         The run :class:`RnaseqReport` (also printed by the CLI).
     """
     want_qual = with_junction_quality or with_mutation_quality
-    if with_mutation_quality and reconstruct:
-        raise ValueError("--mutation-quality cannot be combined with --reconstruct: a merged "
-                         "fragment has no single input quality string")
-    if with_junction_quality and reconstruct:
-        # A merged fragment's bases come from two reads, so no input quality string describes it.
-        # Emitting one of the two would put a quality beside bases it does not belong to -- the
-        # exact silent-misalignment failure `junction_quality` verifies against. Refuse instead.
-        raise ValueError("--junction-quality cannot be combined with --reconstruct: a merged "
-                         "fragment has no single input quality string")
+    read_qual = want_qual or reconstruct
     if shm not in SHM_MODES:
         # Reject rather than fall through to the default: a mode that is accepted and silently
         # does nothing is the failure this project keeps hitting.
@@ -729,7 +752,7 @@ def map_rnaseq(
     # The reader and native scan/search share this one allocation. Serial mode
     # reads synchronously instead of quietly computing on a second core.
     search_threads, read_ahead = streaming_threads(threads, mapper.pl.thread_pool_size())
-    pairs = read_pairs(r1, r2, reconstruct=reconstruct, limit=limit, with_qual=want_qual)
+    pairs = read_pairs(r1, r2, reconstruct=False, limit=limit, with_qual=read_qual)
     source = chunked_fragments(pairs, chunk_size)
 
     report = RnaseqReport(input=str(r1), organism=organism, threads=threads, major_only=major_only,
@@ -740,6 +763,7 @@ def map_rnaseq(
     stage = Stage()
     tick = Throttle()
     _len_sum = 0
+    length_counts: Counter = Counter()
     # Every extra goes at the END, in a fixed order, so a consumer reading the shipped set by
     # position is unaffected whichever combination is on.
     # Never: `cell_id` goes LAST, after `FULL_COLUMNS`, for the same reason: prepending it would move
@@ -759,17 +783,19 @@ def map_rnaseq(
         with seqio.prefetched(source, enabled=read_ahead) as chunks, open(output, "w") as fh:
             fh.write(airr_header(extra_cols) + "\n")
 
-            def flush(batch: list) -> None:
-                """Search one batch and write its mapped reads."""
+            def flush(batch: list, originals: dict) -> None:
+                """Search one batch; a J+C union must not mask an original mate's junction."""
+                nonlocal _len_sum
                 quals = {}
-                if want_qual:
+                if read_qual:
                     # Split the quality off HERE, not in the reader: `_annotate_chunk`,
                     # `write_fasta` and `prefilter.keep_records` all take `(id, sequence)` pairs,
                     # and a third element would reach every one of them.
                     quals = {r[0]: r[2] for r in batch}
                     batch = [(r[0], r[1]) for r in batch]
-                keep = mapper._annotate_chunk(
-                    batch, ref, target_db, seqtype, threads=search_threads,
+                def search(records, *, unmapped=None):
+                    return mapper._annotate_chunk(
+                        records, ref, target_db, seqtype, threads=search_threads,
                     sensitivity=sens, mm_strand=mm_strand, map_d=map_d, map_dd=map_dd,
                     d_max_evalue=d_max_evalue,
                     mapped_only=True, max_seqs=max_seqs, kmer=kmer,
@@ -779,7 +805,46 @@ def map_rnaseq(
                     segment_only_v=segment_only_v, shm=shm,
                     complete_junction_nt=complete_junction_nt,
                     report=report.segment_search if segment_db else None,
-                    unmapped=report.unmapped)
+                    unmapped=unmapped)
+                keep = search(batch, unmapped=report.unmapped)
+                # Only mapped unions lacking a junction are retried. The primary search's
+                # no-hit ledger therefore stays untouched. All original mates compete in
+                # one native batch; neither score gates nor junction criteria are weakened.
+                retry = {r["sequence_id"] for r in keep
+                         if r["sequence_id"] in originals and not r.get("junction")}
+                if retry:
+                    from .correct import _COMPLETE
+                    source_records = [rec for sid in originals if sid in retry
+                                      for rec in originals[sid]]
+                    owners = {rec[0]: sid for sid in retry for rec in originals[sid]}
+                    mate_rows = search([(rec[0], rec[1]) for rec in source_records])
+                    if mate_rows:
+                        accepted = mapper.pl.DataFrame(mate_rows).filter(
+                            _COMPLETE & (mapper.pl.col("mmseqs2_score").cast(mapper.pl.Float64)
+                                         >= min_score))
+                        restored = {owners[sid] for sid in accepted["sequence_id"]}
+                        replacements: dict[str, list] = defaultdict(list)
+                        for row in mate_rows:
+                            sid = owners[row["sequence_id"]]
+                            if sid in restored:
+                                replacements[sid].append(row)
+                        if restored:
+                            quals.update({rec[0]: rec[2] for rec in source_records})
+                            merged_lengths = dict(batch)
+                            for sid in restored:
+                                old_length = len(merged_lengths[sid])
+                                lengths = [len(rec[1]) for rec in originals[sid]]
+                                length_counts[old_length] -= 1
+                                length_counts.update(lengths)
+                                _len_sum += sum(lengths) - old_length
+                                report.total_reads += 1
+                                report.merged_fragments -= 1
+                            report.paired_fallback_fragments += len(restored)
+                            missing = sum(2 - len(replacements[sid]) for sid in restored)
+                            report.unmapped["paired_fallback_no_row"] = (
+                                report.unmapped.get("paired_fallback_no_row", 0) + missing)
+                            keep = [row for r in keep for row in
+                                    replacements.get(r["sequence_id"], [r])]
                 if drop_constant_only:
                     n_before = len(keep)
                     keep, n_drop, n_iso = _apply_constant_rule(keep)
@@ -844,7 +909,12 @@ def map_rnaseq(
             # guarantees a fragment's mates land in the same chunk, and splitting them is a bug
             # this pipeline has already shipped once under --reconstruct.
             pending: list = []
+            pending_originals: dict = {}
             for chunk in chunks:
+                originals = {}
+                if reconstruct and r2 is not None:
+                    chunk, originals = _reconstruct_batch(chunk)
+                    report.merged_fragments += len(originals)
                 report.total_reads += len(chunk)
                 # Read length, over the WHOLE library rather than the mapped subset -- the AIRR
                 # only holds reads that mapped, so nothing downstream can recover this. One pass
@@ -853,10 +923,7 @@ def map_rnaseq(
                 lens = [len(r[1]) for r in chunk]
                 if lens:
                     _len_sum += sum(lens)
-                    lo, hi = min(lens), max(lens)
-                    report.read_length_min = lo if not report.read_length_min else min(
-                        report.read_length_min, lo)
-                    report.read_length_max = max(report.read_length_max, hi)
+                    length_counts.update(lens)
                 if tick.ready():
                     logger.info("map: %s reads read, %s mapped (%.2f %%), %.0f reads/s, %.0f MB",
                                 f"{report.total_reads:,}", f"{report.mapped_reads:,}",
@@ -864,7 +931,7 @@ def map_rnaseq(
                                 report.total_reads / max(1e-9, stage.wall_seconds), peak_rss_mb())
                 if prefilter and seqtype == "nt":
                     from ..prefilter import keep_records  # noqa: PLC0415 — optional native ext
-                    if want_qual:
+                    if read_qual:
                         qmap = {r[0]: r[2] for r in chunk}
                         survivors = [(i, s, qmap[i]) for i, s in
                                      keep_records([(r[0], r[1]) for r in chunk],
@@ -881,18 +948,26 @@ def map_rnaseq(
                 else:
                     survivors = chunk
                 pending.extend(survivors)
+                surviving_ids = {rec[0] for rec in survivors} if originals else set()
+                pending_originals.update({sid: recs for sid, recs in originals.items()
+                                          if sid in surviving_ids})
                 if len(pending) >= chunk_size:
-                    flush(pending)
+                    flush(pending, pending_originals)
                     pending = []
+                    pending_originals = {}
             if pending:
-                flush(pending)
+                flush(pending, pending_originals)
     finally:
         if reads_fh is not None:
             reads_fh.close()
 
+    observed_lengths = [length for length, count in length_counts.items() if count > 0]
+    report.read_length_min = min(observed_lengths, default=0)
+    report.read_length_max = max(observed_lengths, default=0)
     stage.finish(report)   # wall_seconds / peak_rss_mb / rss_gain_mb, same definition as Stages 2-3
     report.reads_per_second = round(
         report.total_reads / report.wall_seconds if report.wall_seconds else 0.0, 1)
+    report.read_length_sum = _len_sum
     report.read_length_mean = round(_len_sum / report.total_reads, 1) if report.total_reads else 0.0
     logger.info("map: %s/%s reads mapped (%.2f %%) in %.1f s (%.0f reads/s), peak %.0f MB; loci=%s",
                 f"{report.mapped_reads:,}", f"{report.total_reads:,}",
