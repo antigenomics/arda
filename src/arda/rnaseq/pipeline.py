@@ -227,7 +227,7 @@ def _map_read_groups(pairs: list, airr: Path, parts_dir: Path, *, say, **map_kw)
 
 def run(pairs, out_dir: str | Path, out_prefix: str, *,
         organism: str = "human", threads: int = 0,
-        reconstruct: bool = False, min_score: float = 75.0, kmer: int | None = 12,
+        reconstruct: bool = True, min_score: float = 75.0, kmer: int | None = 12,
         assemble: bool = True, complete_only: bool = True, map_d: bool = True,
         d_max_evalue: float | None = None,
         limit: int | None = None, two_pass: bool = False, adaptive: bool = False,
@@ -246,6 +246,9 @@ def run(pairs, out_dir: str | Path, out_prefix: str, *,
         pairs: ``[(r1, r2 | None), ...]`` for this sample, **in the order they were declared**.
             One pair is the ordinary case; several are the lanes or chunks one sample was
             delivered in, and they are concatenated after Stage 1, never before.
+        reconstruct: merge established observed overlaps by default. Each selected base
+            retains its measured input quality; False keeps the historical independent mates.
+            Merged overlaps count as one fragment record, not two separate mate records.
 
     Stages 2-3 stay global over the sample, exactly as they are for a single file. Nothing below
     Stage 1 knows read groups exist.
@@ -328,6 +331,8 @@ def _merge_map_reports(shards: list[dict]) -> dict:
     sized = [s for s in shards if int(s.get("total_reads", 0)) > 0
              and float(s.get("read_length_max", 0)) > 0]
     weights = [int(s["total_reads"]) for s in sized]
+    exact_lengths = all("read_length_sum" in s for s in shards)
+    length_sum = sum(int(s.get("read_length_sum", 0)) for s in shards)
     wall_sum = round(sum(float(s.get("wall_seconds", 0.0)) for s in shards), 3)
     return {
         "major_only": modes.pop(),
@@ -339,7 +344,9 @@ def _merge_map_reports(shards: list[dict]) -> dict:
         "input_bytes": sum(int(s.get("input_bytes", 0)) for s in shards),
         "read_length_min": min((int(s["read_length_min"]) for s in sized), default=0),
         "read_length_max": max((int(s["read_length_max"]) for s in sized), default=0),
+        **({"read_length_sum": length_sum} if exact_lengths else {}),
         "read_length_mean": (
+            round(length_sum / total, 1) if total else 0.0) if exact_lengths else (
             round(sum(float(s["read_length_mean"]) * w for s, w in zip(sized, weights))
                   / sum(weights), 3) if weights else 0.0),
         "total_reads": total,

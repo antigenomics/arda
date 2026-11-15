@@ -602,8 +602,8 @@ def rnaseq_map(
              "is still in hand, and `correct --min-junction-q` needs it -- measured on a MIGEC "
              "spike-in library, the mismatching base of a real variant reads median Q 34-35 "
              "against median Q 16 for the sequencing-error cloud around it. OFF by default: it "
-             "appends a non-schema column, so the default output is unchanged. Not usable with "
-             "--reconstruct (a merged fragment has no single input quality string)."),
+             "appends a non-schema column, so the default output is unchanged. Merged bases "
+             "retain the measured quality of their selected input observation."),
     mutation_quality: bool = typer.Option(
         False, "--mutation-quality/--no-mutation-quality",
         help="Also emit `v_mutation_quality` / `j_mutation_quality`: the read's Phred score at "
@@ -612,8 +612,8 @@ def rnaseq_map(
              "string in the mutation list -- what separates them is how often the mutation recurs "
              "across an allele's reads and how good the base is, and only the second of those "
              "needs a column. `arda stats` reads it for `allele_candidate mean_quality`. OFF by "
-             "default (non-schema columns, and it re-walks the alignment in Python); not usable "
-             "with --reconstruct."),
+             "default (non-schema columns, and it re-walks the alignment in Python). Merged "
+             "bases retain their selected-input qualities."),
     shm: str = typer.Option("framework", "--shm", help=_SHM_HELP),
     complete_junction_nt: int = typer.Option(
         0, "--complete-junctions", help=_COMPLETE_JUNCTION_HELP),
@@ -1212,7 +1212,7 @@ def rnaseq_mode(
         help="Keep only complete junctions (C104..[FW]118, in frame, no stop) when forming "
              "clonotypes."),
     reconstruct: bool = typer.Option(
-        False, "--reconstruct", help="Merge overlapping paired mates into one fragment."),
+        True, "--reconstruct/--no-reconstruct", help="Merge observed overlapping mates; retain selected-base qualities."),
     min_score: float = typer.Option(
         75.0, "--min-score", help="Min MMseqs2 bit score to keep a mapped read (0 = keep all)."),
     kmer: int = typer.Option(
@@ -1622,7 +1622,7 @@ def rnaseq_slurm(
     threads: int = typer.Option(8, help="--cpus-per-task, and mmseqs threads."),
     kmer: int = typer.Option(12, "--kmer", "-k", help="MMseqs2 -k (the memory knob)."),
     min_score: float = typer.Option(75.0, "--min-score", help="Min bit score to keep a read."),
-    reconstruct: bool = typer.Option(False, "--reconstruct", help="Merge overlapping mates."),
+    reconstruct: bool = typer.Option(True, "--reconstruct/--no-reconstruct", help="Merge observed overlapping mates."),
     assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions", help="Keep only complete junctions."),
@@ -1679,7 +1679,7 @@ def samples_slurm(
     threads: int = typer.Option(8, help="--cpus-per-task, and mmseqs threads."),
     kmer: int = typer.Option(12, "--kmer", "-k", help="MMseqs2 -k (the memory knob)."),
     min_score: float = typer.Option(75.0, "--min-score", help="Min bit score to keep a read."),
-    reconstruct: bool = typer.Option(False, "--reconstruct", help="Merge overlapping mates."),
+    reconstruct: Optional[bool] = typer.Option(None, "--reconstruct/--no-reconstruct", help="Merge observed overlaps (default in RNA mode)."),
     assemble: bool = typer.Option(True, "--assemble/--no-assemble", help="Stage 3."),
     complete_only: bool = typer.Option(
         True, "--complete-only/--all-junctions", help="Keep only complete junctions."),

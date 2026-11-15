@@ -283,26 +283,14 @@ def _apply_constant_rule(records: list[dict]) -> tuple[list[dict], int, int]:
 _MIN_SCORE = 75.0
 
 
-def _overlap_consensus(a: str, qa: str, b: str, qb: str) -> str:
-    """Per-base consensus of two aligned overlap strings: keep the higher-Phred base on a mismatch
-    (R1 wins a tie). Phred+33 is monotonic in the quality char, so compare the chars directly."""
-    return "".join(a[i] if (a[i] == b[i] or qa[i] >= qb[i]) else b[i] for i in range(len(a)))
+def _merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
+                min_overlap: int = 12, max_mismatch_rate: float = 0.1
+                ) -> tuple[str, str] | None:
+    """Shared overlap decision, returning observed bases and their selected-input qualities.
 
-
-def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
-               min_overlap: int = 12, max_mismatch_rate: float = 0.1) -> str | None:
-    """Overlap-merge a read pair into one fragment, or ``None`` if they don't overlap.
-
-    Aligns ``s1`` (R1) with ``reverse_complement(s2)`` (R2 flipped to the same strand)
-    by finding an exact ``_MERGE_ANCHOR``-mer from the flipped R2's 5' end inside R1
-    (C-level ``str.find`` → O(len), so non-overlapping pairs — the common RNA-seq case —
-    cost almost nothing), then verifying the implied overlap; the mate provides the V/J
-    context a short read lacks.
-
-    In the overlap the two mates may disagree. Given Phred qualities ``q1``/``q2`` the base
-    with the higher quality wins per position (``rc(R2)``'s quality is ``q2`` reversed, not
-    complemented); without them R2 wins the whole overlap (the historical behaviour). Outside
-    the overlap, R1 supplies its 5' part and R2 its 3' tail.
+    Matching bases use the higher measured quality without increasing it. A disagreement
+    uses the same higher-quality base (R1 wins ties). If either mate lacks qualities, the
+    sequence-only legacy rule applies and quality stays unknown, never synthesized.
     """
     s1, s2 = seqio.normalize_nt(s1), seqio.normalize_nt(s2)
     r2 = reverse_complement(s2)
@@ -315,14 +303,34 @@ def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None
     if ov < min_overlap:
         return None
     a, b = s1[pos:pos + ov], r2[:ov]
-    mism = sum(1 for x, y in zip(a, b) if x != y)
+    mism = sum(x != y for x, y in zip(a, b))
     if mism > max_mismatch_rate * ov:
         return None
+    tail = s1[pos + ov:] or r2[ov:]
     if q1 is None or q2 is None:
-        overlap = b                                   # no quality: R2 wins the overlap (legacy)
-    else:
-        overlap = _overlap_consensus(a, q1[pos:pos + ov], b, q2[::-1][:ov])
-    return s1[:pos] + overlap + r2[ov:]
+        return s1[:pos] + b + tail, ""
+    if len(q1) != len(s1) or len(q2) != len(s2):
+        raise ValueError("mate quality length must match its sequence")
+    qb = q2[::-1]
+    qa = q1[pos:pos + ov]
+    use_r1 = [qa[i] >= qb[i] for i in range(ov)]
+    overlap = "".join(a[i] if use_r1[i] else b[i] for i in range(ov))
+    quality = (q1[:pos] + "".join(qa[i] if use_r1[i] else qb[i] for i in range(ov))
+               + (q1[pos + ov:] or qb[ov:]))
+    return s1[:pos] + overlap + tail, quality
+
+
+def merge_pair(s1: str, s2: str, *, q1: str | None = None, q2: str | None = None,
+               min_overlap: int = 12, max_mismatch_rate: float = 0.1) -> str | None:
+    """Merge an observed R1/rc(R2) overlap, or return ``None``.
+
+    Locate the existing exact12nt anchor and retain the established overlap/mismatch gates.
+    Higher-quality bases win disagreements (R1 wins ties); without qualities R2 wins.
+    Both non-overlapping observed tails are preserved, including a contained mate.
+    """
+    merged = _merge_pair(s1, s2, q1=q1, q2=q2, min_overlap=min_overlap,
+                         max_mismatch_rate=max_mismatch_rate)
+    return merged[0] if merged is not None else None
 
 # Records per mmseqs invocation. Larger chunks amortise the fixed per-call cost; memory stays
 # bounded because only one chunk is resident.
@@ -402,9 +410,8 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
     """Stream ``(id, sequence)`` reads for single-end (``r1`` only) or paired input.
 
     ``with_qual`` yields ``(id, sequence, quality)`` instead — the Phred+33 string, ``""`` for
-    FASTA input. It is incompatible with ``reconstruct``: a merged fragment's bases come from two
-    different reads, so no single input quality string describes it (:func:`map_rnaseq` refuses
-    the combination rather than emitting a quality that does not belong to the sequence).
+    FASTA input. With ``reconstruct``, each merged base retains the quality of its selected
+    input observation; agreement does not boost quality. Missing mate qualities stay unknown.
 
     For paired input the two mates carry the same id, so they are tagged ``<id>/1`` and
     ``<id>/2`` to keep query ids unique (strip the suffix to recover the pair). With
@@ -465,9 +472,9 @@ def read_pairs(r1: str | Path, r2: str | Path | None = None,
                 f"R1/R2 mate mismatch at record {n}: {i1!r} vs {i2!r}. "
                 f"The FASTQs are not in the same order.")
         if reconstruct:
-            merged = merge_pair(s1, s2, q1=q1, q2=q2)
+            merged = _merge_pair(s1, s2, q1=q1, q2=q2)
             if merged is not None:
-                yield i1, merged
+                yield (i1, *merged) if with_qual else (i1, merged[0])
                 continue
         if with_qual:
             yield f"{i1}/1", s1, q1 or ""
@@ -508,10 +515,9 @@ def _read_pairs_dnaio(r1, r2, *, reconstruct: bool,
             for a, b in fh:
                 s1, s2 = seqio.normalize_nt(a.sequence), seqio.normalize_nt(b.sequence)
                 if reconstruct:
-                    merged = merge_pair(s1, s2,
-                                        q1=a.qualities, q2=b.qualities)
+                    merged = _merge_pair(s1, s2, q1=a.qualities, q2=b.qualities)
                     if merged is not None:
-                        yield a.id, merged
+                        yield (a.id, *merged) if with_qual else (a.id, merged[0])
                         continue
                 if with_qual:
                     yield f"{a.id}/1", s1, a.qualities or ""
@@ -557,6 +563,7 @@ class RnaseqReport:
     read_length_min: int = 0
     read_length_max: int = 0
     read_length_mean: float = 0.0
+    read_length_sum: int = 0          # exact observation lengths before display rounding
     total_reads: int = 0
     mapped_reads: int = 0
     per_locus: dict[str, int] = field(default_factory=dict)
@@ -657,8 +664,8 @@ def map_rnaseq(
             :func:`junction_quality`). OFF by default: it appends a non-schema column, so the
             default output stays byte-identical. This is the only place the FASTQ quality is
             still in hand — Stage 1 otherwise discards it — and it is what
-            ``correct --min-junction-q`` gates on. Refused with ``reconstruct`` (a merged
-            fragment has no single input quality string).
+            ``correct --min-junction-q`` gates on. With ``reconstruct``, quality follows the
+            actual selected base from either mate without a confidence boost.
         emit_reads: optional path — write the mapped reads' sequences as FASTA
             (coding-strand oriented) for downstream handoff.
         report_path: optional path — write the :class:`RnaseqReport` as JSON.
@@ -697,15 +704,6 @@ def map_rnaseq(
         The run :class:`RnaseqReport` (also printed by the CLI).
     """
     want_qual = with_junction_quality or with_mutation_quality
-    if with_mutation_quality and reconstruct:
-        raise ValueError("--mutation-quality cannot be combined with --reconstruct: a merged "
-                         "fragment has no single input quality string")
-    if with_junction_quality and reconstruct:
-        # A merged fragment's bases come from two reads, so no input quality string describes it.
-        # Emitting one of the two would put a quality beside bases it does not belong to -- the
-        # exact silent-misalignment failure `junction_quality` verifies against. Refuse instead.
-        raise ValueError("--junction-quality cannot be combined with --reconstruct: a merged "
-                         "fragment has no single input quality string")
     if shm not in SHM_MODES:
         # Reject rather than fall through to the default: a mode that is accepted and silently
         # does nothing is the failure this project keeps hitting.
@@ -893,6 +891,7 @@ def map_rnaseq(
     stage.finish(report)   # wall_seconds / peak_rss_mb / rss_gain_mb, same definition as Stages 2-3
     report.reads_per_second = round(
         report.total_reads / report.wall_seconds if report.wall_seconds else 0.0, 1)
+    report.read_length_sum = _len_sum
     report.read_length_mean = round(_len_sum / report.total_reads, 1) if report.total_reads else 0.0
     logger.info("map: %s/%s reads mapped (%.2f %%) in %.1f s (%.0f reads/s), peak %.0f MB; loci=%s",
                 f"{report.mapped_reads:,}", f"{report.total_reads:,}",

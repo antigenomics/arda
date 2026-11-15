@@ -112,20 +112,21 @@ def test_repeated_runs_are_byte_identical(tmp_path):
         assert outs[0][name] == outs[1][name], f"{name} differs between two identical runs"
 
 
-def test_sharded_run_matches_single_node_on_real_reads(tmp_path):
+@pytest.mark.parametrize("reconstruct", [False, True])
+def test_sharded_run_matches_single_node_on_real_reads(tmp_path, reconstruct):
     """The mode-equivalence guarantee, on real data rather than a hand-built AIRR."""
     from arda.cluster import split_pairs
     from arda.rnaseq import pipeline
     from arda.rnaseq.map import map_rnaseq
 
     single = tmp_path / "single"
-    pipeline.run([(READS_1, READS_2)], single, "R", threads=2)
+    pipeline.run([(READS_1, READS_2)], single, "R", threads=2, reconstruct=reconstruct)
 
     shards = split_pairs(READS_1, tmp_path / "sh", shards=4, r2=READS_2)
     mapdir = tmp_path / "map"
     mapdir.mkdir()
     for i, (s1, s2) in enumerate(shards):
-        map_rnaseq(s1, mapdir / f"shard_{i:05d}.airr.tsv", r2=s2, threads=2,
+        map_rnaseq(s1, mapdir / f"shard_{i:05d}.airr.tsv", r2=s2, threads=2, reconstruct=reconstruct,
                    report_path=mapdir / f"shard_{i:05d}.map.json")
     sharded = tmp_path / "sharded"
     pipeline.reduce(mapdir, sharded, "R", threads=2)
