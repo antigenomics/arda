@@ -3,7 +3,7 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
-## Unreleased
+## 2.38.6
 
 - Base junction amino-acid frame bridging on its own observed anchor span. An upstream V
   frameshift no longer inserts unnecessary bridge bases into a locally in-frame junction.
