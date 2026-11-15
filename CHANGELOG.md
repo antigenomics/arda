@@ -6,7 +6,8 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 ## Unreleased
 
 - Make developer setup supply isolated CMake and prepare AIRR source builds with
-  build isolation. Repeated setup preserves the existing environment and interpreter.
+  build isolation. Repeated setup preserves the existing environment and interpreter,
+  and an external interpreter override cannot redirect its dependency installs.
 
 ## 2.38.6
 

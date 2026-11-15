@@ -52,10 +52,11 @@ source "$ROOT/.venv/bin/activate"
 # multi-phase init in 3.0.0, so an unbounded install builds against whatever PyPI serves today.
 # AIRR is a source-only test dependency; prepare it with build isolation before
 # the editable step disables isolation (the same order used in CI).
-uv pip install 'nanobind>=2.5,<3' scikit-build-core 'cmake>=3.18' ninja 'airr>=1.4'
+# Pin the install target: UV_PYTHON can otherwise override the activated venv.
+uv pip install --python "$ROOT/.venv/bin/python" 'nanobind>=2.5,<3' scikit-build-core 'cmake>=3.18' ninja 'airr>=1.4'
 # `.[test,dev]` -- not a bare install. `--tests` used to run `pytest` that was never installed,
 # print "No module named pytest", and be swallowed by `|| true` while the script reported success.
-uv pip install -e "$ROOT[test,dev]" --no-build-isolation
+uv pip install --python "$ROOT/.venv/bin/python" -e "$ROOT[test,dev]" --no-build-isolation
 
 # --- 2. IgBLAST release (offline DB build only) ----------------------------
 python "$ROOT/scripts/fetch_igblast.py" --dest "$ROOT/bin"
