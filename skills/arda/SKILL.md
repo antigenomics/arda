@@ -198,3 +198,20 @@ pipeline and `build-db` / `build-index`.
 ## Further reading
 
 Read [advanced workflows and contracts](references/candidate-evidence.md) for alignment candidates, major-allele selection and germline eligibility.
+
+## Scope and verification contracts
+
+Peptide-to-clonotype placement belongs to seqtree and existing project scripts/pipelines,
+with placement tables separate from evidence and scores. Do not add a peptide-mapping tool
+or place that responsibility in ARDA/MIGEC. These packages can share a pipeline without
+calling one another; check actual dependency metadata before assuming a release dependency.
+
+Use the owning isolated environment. Verify current CLI help and API signatures before
+constructing commands; do not infer flags from another tool. Preserve raw inputs, molecule
+identifiers, counts and provenance. Software fixtures do not authorize cohort recomputation.
+
+Local junction translation uses the observed anchor span. Upstream V coding phase remains
+separate: a canonical local junction does not establish whole-receptor productivity. Keep
+observed nucleotide sequence and coordinates distinct from translated/rendered fields.
+IgBLAST is independent evidence, not infallible allele or boundary truth; inspect aligned
+observations when calls disagree instead of forcing agreement.
