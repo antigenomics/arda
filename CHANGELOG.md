@@ -3,6 +3,11 @@
 What changed for you, per release. Anything not listed is internal.
 Full release notes: <https://github.com/antigenomics/arda/releases>.
 
+## 2.38.8
+
+- Provision MMseqs2 19 on clean Windows installations while retaining support
+  for existing MMseqs2 18 runtimes.
+
 ## 2.38.7
 
 - Make developer setup supply isolated CMake and prepare AIRR source builds with
