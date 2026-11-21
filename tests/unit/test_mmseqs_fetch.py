@@ -85,6 +85,7 @@ def _install_fakes(monkeypatch, payload=b"#!/bin/sh\ntrue\n"):
     monkeypatch.setattr(_mmseqs_fetch, "default_asset", lambda: "asset.tar.gz")
 
     def fake_download(url, dest, **kw):
+        assert "/18-8cc5c/" in url
         _fake_archive(dest.parent, payload)
 
     monkeypatch.setattr(_mmseqs_fetch, "_download", fake_download)
@@ -188,6 +189,7 @@ def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch, d
     monkeypatch.setattr(_mmseqs_fetch.platform, "system", lambda: "Windows")
     monkeypatch.setattr(_mmseqs_fetch, "default_asset", lambda: "mmseqs-win64.zip")
     def download(url, dest):
+        assert "/19-ab57c/" in url
         with zipfile.ZipFile(dest, "w") as zf:
             for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll", "sh.exe", *dlls):
                 zf.writestr("mmseqs/bin/" + name, b"binary")

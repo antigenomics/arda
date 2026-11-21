@@ -6,7 +6,8 @@ Full release notes: <https://github.com/antigenomics/arda/releases>.
 ## 2.38.8
 
 - Provision MMseqs2 19 on clean Windows installations while retaining support
-  for existing MMseqs2 18 runtimes.
+  for existing MMseqs2 18 runtimes. Pin Unix auto-provisioning to MMseqs2
+  18-8cc5c so upstream releases cannot silently change annotation coordinates.
 
 ## 2.38.7
 

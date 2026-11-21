@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ._locking import build_lock
 
-RELEASE_URL = "https://github.com/soedinglab/MMseqs2/releases/latest/download/{asset}"
+RELEASE_URL = "https://github.com/soedinglab/MMseqs2/releases/download/{release}/{asset}"
 
 # GitHub rejects the default Python-urllib User-Agent on some networks; mimic a
 # real client so the release redirect chain resolves.
@@ -206,7 +206,10 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
         if not ours:
             return installed_binary(bin_dir)
         asset = default_asset()
-        url = RELEASE_URL.format(asset=asset)
+        # Keep Unix annotation on the release used by the reference fixtures.
+        # Windows provisioning also supports existing release 18 runtimes.
+        release = "19-ab57c" if asset.endswith(".zip") else "18-8cc5c"
+        url = RELEASE_URL.format(release=release, asset=asset)
         print(f"[arda] fetching mmseqs: {url}", file=sys.stderr)
         # Scratch next to the destination, NOT in the system temp dir: on a cluster /tmp is
         # routinely a small node-local filesystem (aldan3's is 2.0 GB with 29 MB free) and this
