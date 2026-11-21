@@ -85,6 +85,7 @@ def _install_fakes(monkeypatch, payload=b"#!/bin/sh\ntrue\n"):
     monkeypatch.setattr(_mmseqs_fetch, "default_asset", lambda: "asset.tar.gz")
 
     def fake_download(url, dest, **kw):
+        assert "/18-8cc5c/" in url
         _fake_archive(dest.parent, payload)
 
     monkeypatch.setattr(_mmseqs_fetch, "_download", fake_download)
@@ -179,13 +180,18 @@ def test_an_interrupted_copy_never_leaves_a_partial_binary_at_dest(tmp_path, mon
     assert dest.exists() and dest.read_bytes() == b"#!/bin/sh\ntrue\n"
 
 
-def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch):
+@pytest.mark.parametrize("dlls", [
+    ("cyggomp-1.dll", "cyggcc_s-seh-1.dll", "cygz.dll", "cygbz2-1.dll"),
+    ("cygintl-8.dll", "cygiconv-2.dll"),
+], ids=["mmseqs18", "mmseqs19"])
+def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch, dlls):
     import zipfile
     monkeypatch.setattr(_mmseqs_fetch.platform, "system", lambda: "Windows")
     monkeypatch.setattr(_mmseqs_fetch, "default_asset", lambda: "mmseqs-win64.zip")
     def download(url, dest):
+        assert "/19-ab57c/" in url
         with zipfile.ZipFile(dest, "w") as zf:
-            for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll", "cyggomp-1.dll", "cyggcc_s-seh-1.dll", "cygz.dll", "cygbz2-1.dll", "sh.exe"):
+            for name in ("mmseqs.exe", "busybox.exe", "cygwin1.dll", "sh.exe", *dlls):
                 zf.writestr("mmseqs/bin/" + name, b"binary")
     monkeypatch.setattr(_mmseqs_fetch, "_download", download)
     def fail(*args, **kwargs):
@@ -199,10 +205,10 @@ def test_windows_bundle_publishes_only_complete_runtime(tmp_path, monkeypatch):
     assert binary.is_file()
     assert (binary.parent / "cygwin1.dll").is_file()
     assert _mmseqs_fetch.installed_binary(tmp_path) == binary
-    (binary.parent / "cygwin1.dll").unlink()
+    (binary.parent / dlls[0]).unlink()
     assert not _mmseqs_fetch.installed_binary(tmp_path).exists()
     repaired = _mmseqs_fetch.fetch(tmp_path)
-    assert repaired == binary and (binary.parent / "cygwin1.dll").is_file()
+    assert repaired == binary and (binary.parent / dlls[0]).is_file()
 
 
 def test_windows_waiter_resolves_published_generation(tmp_path, monkeypatch):

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from ._locking import build_lock
 
-RELEASE_URL = "https://github.com/soedinglab/MMseqs2/releases/latest/download/{asset}"
+RELEASE_URL = "https://github.com/soedinglab/MMseqs2/releases/download/{release}/{asset}"
 
 # GitHub rejects the default Python-urllib User-Agent on some networks; mimic a
 # real client so the release redirect chain resolves.
@@ -98,9 +98,19 @@ def default_asset() -> str:
 
 
 def _windows_ready(root: Path) -> bool:
-    required = ("mmseqs.exe", "busybox.exe", "cygwin1.dll", "cyggomp-1.dll", "cyggcc_s-seh-1.dll", "cygz.dll", "cygbz2-1.dll")
-    return all((root / "bin" / name).is_file() and (root / "bin" / name).stat().st_size
-               for name in required) and any((root / "bin" / name).is_file() for name in ("sh", "sh.exe"))
+    runtime = root / "bin"
+    common = ("mmseqs.exe", "busybox.exe", "cygwin1.dll")
+    # MMseqs2 19 replaced the four auxiliary DLLs shipped in 18.
+    layouts = (
+        ("cyggomp-1.dll", "cyggcc_s-seh-1.dll", "cygz.dll", "cygbz2-1.dll"),
+        ("cygintl-8.dll", "cygiconv-2.dll"),
+    )
+
+    def complete(names):
+        return all((runtime / name).is_file() and (runtime / name).stat().st_size for name in names)
+
+    return (complete(common) and any(complete(layout) for layout in layouts)
+            and any((runtime / name).is_file() for name in ("sh", "sh.exe")))
 
 
 def installed_binary(bin_dir: Path) -> Path:
@@ -196,7 +206,10 @@ def fetch(bin_dir: Path, *, force: bool = False) -> Path:
         if not ours:
             return installed_binary(bin_dir)
         asset = default_asset()
-        url = RELEASE_URL.format(asset=asset)
+        # Keep Unix annotation on the release used by the reference fixtures.
+        # Windows provisioning also supports existing release 18 runtimes.
+        release = "19-ab57c" if asset.endswith(".zip") else "18-8cc5c"
+        url = RELEASE_URL.format(release=release, asset=asset)
         print(f"[arda] fetching mmseqs: {url}", file=sys.stderr)
         # Scratch next to the destination, NOT in the system temp dir: on a cluster /tmp is
         # routinely a small node-local filesystem (aldan3's is 2.0 GB with 29 MB free) and this

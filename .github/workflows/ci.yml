@@ -28,7 +28,7 @@ jobs:
 
       - name: Install MMseqs2 (static binary)
         run: |
-          curl -fsSL https://mmseqs.com/latest/mmseqs-linux-avx2.tar.gz -o mmseqs.tar.gz
+          curl -fsSL https://github.com/soedinglab/MMseqs2/releases/download/18-8cc5c/mmseqs-linux-avx2.tar.gz -o mmseqs.tar.gz
           tar xzf mmseqs.tar.gz
           echo "ARDA_MMSEQS=$PWD/mmseqs/bin/mmseqs" >> "$GITHUB_ENV"
 
